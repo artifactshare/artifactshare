@@ -97,6 +97,46 @@ const flow = ({ start, action, pending, success, failure, recovery, next }) => [
 /** @type {Task[]} */
 export const tasks = [
   {
+    id: 'search-file',
+    title: '本文からファイルを探す',
+    persona: 'team-collaborator',
+    actor: 'ログインしている閲覧者',
+    startingSituation: 'ファイルの名前や保存先がわからない',
+    prerequisite: '閲覧できるファイルの本文が検索対象になっている',
+    goal: 'キーワードと絞り込みで目的のファイルを見つける',
+    completion: '目的のファイルが Viewer で開いている',
+    confirmation: 'タイトルと内容から目的のファイルだと確認できる',
+    loopStage: 'view',
+    metric: '検索から目的のファイルを開けた割合',
+    flow: flow({
+      start: { description: '上部の検索欄を開く', screens: ['home/default'] },
+      action: {
+        description: 'キーワードで検索し、結果を絞り込む',
+        screens: ['search/default'],
+      },
+      pending: {
+        description: '検索結果の表示を待つ',
+        screens: ['search/default'],
+      },
+      success: {
+        description: '閲覧できる検索結果を開く',
+        screens: ['viewer/default'],
+      },
+      failure: {
+        description: '検索条件に一致するファイルがない',
+        screens: ['search/empty'],
+      },
+      recovery: {
+        description: 'キーワードを変えるか絞り込みを解除する',
+        screens: ['search/default', 'search/filters'],
+      },
+      next: {
+        description: '検索条件と閲覧位置を保って結果へ戻る',
+        screens: ['search/default'],
+      },
+    }),
+  },
+  {
     id: 'return-to-recent-file',
     title: '最近見たファイルへ戻る',
     persona: 'team-collaborator',

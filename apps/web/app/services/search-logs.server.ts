@@ -1,7 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { sql } from 'kysely'
+import { searchHistoryParams } from '~/lib/search-query'
 import type { Db } from './db.server'
-import { discoverCandidates } from './search-discovery.server'
+import {
+  discoverCandidates,
+  resolveSearchSelections,
+} from './search-discovery.server'
 
 export async function readSearchLogs(db: Db, actorId: string) {
   const logs = await db
@@ -60,7 +64,22 @@ export async function readSearchLogs(db: Db, actorId: string) {
         allowed.add(row.id)
     }
   }
+  const conditions = logs.map((log) => searchHistoryParams(log.filters_json))
+  const selectedScope = await resolveSearchSelections(
+    db,
+    actorId,
+    [...new Set(conditions.flatMap((params) => params.getAll('owner')))],
+    [
+      ...new Set(
+        conditions.flatMap((params) => {
+          const project = params.get('project')
+          return project && project !== 'home' ? [project] : []
+        }),
+      ),
+    ],
+  )
   return logs.map(({ token_key: _key, ...log }) => ({
+    selectedScope,
     ...log,
     opens: opens
       .filter(
@@ -136,9 +155,10 @@ export async function pruneSearchLogs(db: Db, cutoff: string) {
 /** A per-search key lives only on the actor-bound log. */
 export const newSearchTokenKey = () => randomBytes(32).toString('base64url')
 type SearchTokenPayload = {
-  kind: 'cursor' | 'open'
+  kind: 'cursor' | 'open' | 'group-cursor'
   rank: number
   file?: string
+  group?: string
 }
 export function sealSearchToken(
   id: string,

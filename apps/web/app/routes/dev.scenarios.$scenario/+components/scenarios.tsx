@@ -1,3 +1,4 @@
+import { SearchFixture } from './search-fixture'
 import type { ElementType } from 'react'
 import { FocusedConsentFixture } from './focused-consent-fixture'
 import { FocusedDeviceFixture } from './focused-device-fixture'
@@ -15,6 +16,18 @@ import {
 } from './viewer-fixture'
 
 export const SCENARIO_IDS = [
+  'search-mobile-search',
+  'search-mobile-filters',
+  'search-mobile-search-ja',
+  'search-mobile-filters-ja',
+  'search-loading',
+  'search-error',
+  'search-continuation-error',
+  'search-group-expanded',
+  'search-results',
+  'search-empty',
+  'search-any',
+  'search-capped',
   'landing-default',
   'landing-invite',
   'focused-sign-in',
@@ -36,6 +49,7 @@ export type ScenarioId = (typeof SCENARIO_IDS)[number]
 
 export interface ScenarioDefinition {
   title: string
+  locale?: 'en' | 'ja'
   component: ElementType
   requiredRegions: readonly string[]
   requiresHeading: boolean
@@ -46,6 +60,93 @@ export interface ScenarioDefinition {
 }
 
 export const scenarioRegistry: Record<ScenarioId, ScenarioDefinition> = {
+  'search-mobile-search': {
+    title: 'search-mobile-search',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-mobile-filters': {
+    title: 'search-mobile-filters',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-mobile-search-ja': {
+    title: 'search-mobile-search-ja',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+    locale: 'ja',
+  },
+  'search-mobile-filters-ja': {
+    title: 'search-mobile-filters-ja',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+    locale: 'ja',
+  },
+  'search-loading': {
+    title: 'search-loading',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-error': {
+    title: 'search-error',
+    component: () => <SearchFixture state="error" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: false,
+    requiresPrimary: false,
+  },
+  'search-continuation-error': {
+    title: 'search-continuation-error',
+    component: () => <SearchFixture state="continuation-error" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-group-expanded': {
+    title: 'search-group-expanded',
+    component: () => <SearchFixture state="group-expanded" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-results': {
+    title: 'Search results',
+    component: () => <SearchFixture state="results" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-empty': {
+    title: 'Search empty',
+    component: () => <SearchFixture state="empty" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-any': {
+    title: 'Search any',
+    component: () => <SearchFixture state="any" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'search-capped': {
+    title: 'Search capped',
+    component: () => <SearchFixture state="capped" />,
+    requiredRegions: ['header', 'main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+
   'landing-default': {
     title: 'Landing default',
     component: LandingFixture,

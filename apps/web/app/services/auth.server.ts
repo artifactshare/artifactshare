@@ -1881,6 +1881,13 @@ export async function ensureDevSignInUser(
       userId,
     )
   }
+  if (scenario?.startsWith('search/')) {
+    const index = env.WORKSPACE_SEARCH_INDEX.getByName(`${workspaceId}:0`)
+    await index.sync(workspaceId)
+    const ready = await index.search({ query: 'Quarterly' })
+    if ('error' in ready || !ready.items.length)
+      throw new Error('Search scenario index is not ready')
+  }
   return {
     userId,
     workspaceId,

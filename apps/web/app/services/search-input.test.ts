@@ -108,3 +108,22 @@ test('allowed-ID bindings preserve large sets and multibyte IDs within each byte
     SearchCapacityError,
   )
 })
+
+test('highlight spans preserve Japanese segmented, prefix and normalized source matches', async () => {
+  const { searchMatchSpans } = await import('./search-index/query')
+  for (const [body, query, expected] of [
+    ['ordinary alpha text', 'alpha', 'alpha'],
+    [
+      'フロント エンド エンジニアの募集',
+      'フロントエンドエンジニア',
+      'フロント エンド エンジニア',
+    ],
+    ['エンジニアの募集', 'エンジ', 'エンジ'],
+    ['ｺﾝﾋﾟｭｰﾀの募集', 'コンピューター', 'ｺﾝﾋﾟｭｰﾀ'],
+  ]) {
+    expect(
+      searchMatchSpans(body, query).map(([a, b]) => body.slice(a, b)),
+    ).toContain(expected)
+    expect(searchMatchSpans(body, 'unmatched')).toEqual([])
+  }
+})

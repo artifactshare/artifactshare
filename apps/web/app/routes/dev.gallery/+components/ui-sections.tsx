@@ -86,6 +86,12 @@ import {
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { Progress } from '~/components/ui/progress'
+import { Checkbox } from '~/components/ui/checkbox'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from '~/components/ui/popover'
 import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
 import { SegmentedControlGroup } from '~/components/ui/segmented-control'
 import {
@@ -577,6 +583,30 @@ export const uiSections: GallerySection[] = [
           </Inline>
         ))}
       </Stack>
+    ),
+  },
+  {
+    id: 'ui-checkbox',
+    title: 'Checkbox',
+    file: 'ui/checkbox',
+    element: (
+      <label className="flex items-center gap-2">
+        <Checkbox defaultChecked />
+        所有者を選択
+      </label>
+    ),
+  },
+  {
+    id: 'ui-popover',
+    title: 'Popover',
+    file: 'ui/popover',
+    element: (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="outline">絞り込み</Button>
+        </PopoverTrigger>
+        <PopoverContent>検索条件を選択</PopoverContent>
+      </Popover>
     ),
   },
   {

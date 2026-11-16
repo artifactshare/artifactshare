@@ -181,7 +181,7 @@ test('result API validates inputs, paginates opaquely, logs once and accepts onl
   })
 })
 
-test('suggestions cap files, eligible owners and accessible projects without excerpts or logs', async () => {
+test('suggestions cap files, eligible owners and accessible projects with authorized excerpts and no logs', async () => {
   const url = new URL('https://example.com/api/search-suggestions?q=alpha')
   const response = await suggestions({
     request: new Request(url),
@@ -204,7 +204,12 @@ test('suggestions cap files, eligible owners and accessible projects without exc
     }),
   )
   expect(JSON.stringify(body)).not.toContain('@example.com')
-  expect(rpc.details).not.toHaveBeenCalled()
+  expect(rpc.details).toHaveBeenCalledTimes(1)
+  expect(rpc.details).toHaveBeenCalledWith(
+    expect.anything(),
+    body.files.map((row) => row.id),
+  )
+  expect(body.files.every((row) => row.excerpt === 'alpha body')).toBe(true)
   expect(
     await fixture.db.selectFrom('search_logs').selectAll().execute(),
   ).toEqual([])
@@ -265,7 +270,12 @@ test.each(['owned', 'shared'])(
     const body =
       await response.json<Awaited<ReturnType<typeof searchSuggestions>>>()
     expect.soft(body.files.map((row) => row.id)).toEqual([])
-    expect.soft(body.owners).toEqual([{ id: owner, name: term + ' owner' }])
+    expect.soft(body.owners).toEqual([
+      {
+        id: owner,
+        name: term + ' owner',
+      },
+    ])
     expect(rpc.search).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ limit: 6, allowedIds: expect.any(Array) }),
     )
@@ -359,7 +369,7 @@ test('suggestions rank within the eligible domain so denied and unseen prefixes 
   ).json<Awaited<ReturnType<typeof searchSuggestions>>>()
   expect(body.files.map((row) => row.id)).toEqual(['file-7'])
   expect(rpc.search).toHaveBeenCalledTimes(1)
-  expect(rpc.details).not.toHaveBeenCalled()
+  expect(rpc.details).toHaveBeenCalledWith(expect.anything(), ['file-7'])
 })
 
 test('index capacity errors return a private failure instead of a partial search', async () => {
@@ -416,4 +426,34 @@ test('typeahead bounds ranked candidate checks without enumerating the current w
     enumerate.mockRestore()
     owners.mockRestore()
   }
+})
+
+test('blank-query recent files use view order and omit newly denied metadata', async () => {
+  fixture.sqlite.exec(
+    `INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES ('file-0','viewer','2026-09-15','2026-09-15'),('file-4','viewer','2026-09-14','2026-09-14'),('file-5','viewer','2026-09-16','2026-09-16')`,
+  )
+  const url = new URL('https://example.com/api/search-suggestions')
+  const args = {
+    request: new Request(url),
+    url,
+    pattern: '/api/search-suggestions',
+    params: {},
+    context,
+  }
+  const healthy = await (
+    await suggestions(args)
+  ).json<Awaited<ReturnType<typeof searchSuggestions>>>()
+  expect(healthy.recent.map((row) => row.id)).toEqual([
+    'file-5',
+    'file-0',
+    'file-4',
+  ])
+  fixture.sqlite.exec(
+    "DELETE FROM shareable_grants WHERE shareable_id='file-0'",
+  )
+  const denied = await (
+    await suggestions(args)
+  ).json<Awaited<ReturnType<typeof searchSuggestions>>>()
+  expect(denied.recent.map((row) => row.id)).toEqual(['file-5', 'file-4'])
+  expect(JSON.stringify(denied.recent)).not.toMatch(/alpha a|alpha Owner 0/)
 })

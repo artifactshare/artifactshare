@@ -47,8 +47,8 @@ export function checkTaskLedger({
     failures.push('change procedure required')
   const registry = Array.isArray(ledgerPersonas) ? ledgerPersonas : []
   if (registry.length === 0) failures.push('personas required')
-  if (ledgerTasks.length < 8 || ledgerTasks.length > 12)
-    failures.push(`expected 8-12 primary tasks, found ${ledgerTasks.length}`)
+  if (ledgerTasks.length < 8 || ledgerTasks.length > 13)
+    failures.push(`expected 8-13 primary tasks, found ${ledgerTasks.length}`)
 
   for (const persona of registry) {
     if (!persona || typeof persona !== 'object') {

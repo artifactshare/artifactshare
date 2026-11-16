@@ -37,6 +37,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.project-candidates.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.share-defaults.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.tsx': 'requireUserApiMiddleware',
+  'api.search-groups.tsx': 'requireUserApiMiddleware',
   'api.search.tsx': 'requireUserApiMiddleware',
   'api.search-suggestions.tsx': 'requireUserApiMiddleware',
   'api.search-logs.tsx': 'requireUserApiMiddleware',

@@ -675,7 +675,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   return redirect(`/projects/${updated.project.id}`)
 }
 
-export default function ProjectDetail({ loaderData }: Route.ComponentProps) {
+export default function ProjectDetail({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { t } = useT()
   const seenFetcher = useFetcher()
@@ -801,6 +803,7 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
   return (
     <>
       <Topbar
+        searchProject={{ id: project.id, name: project.name }}
         workspaceName={loaderData.workspaceName}
         user={loaderData.user}
         joinedProjects={loaderData.joinedNav}
@@ -1121,6 +1124,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
   return (
     <>
       <Topbar
+        searchProject={{ id: project.id, name: project.name }}
         workspaceName={loaderData.workspaceName}
         user={loaderData.user}
         joinedProjects={loaderData.joinedNav}

@@ -58,7 +58,6 @@ This uses a temporary persistence directory. It proves setup on an empty databas
 
 `.dev.vars`, `.dev-certs/`, and `.wrangler/` are local inputs or state and must remain untracked. Never place production credentials in them for this harness.
 
-
 Artifact execution uses `a-<id>--v-<hex-version>.usercontent.localhost:5174`
 for authenticated viewing and `l-<id>--v-<hex-version>.usercontent.localhost:5174`
 for anonymous link viewing. The app stays at `localhost:5173` and link viewers
@@ -114,7 +113,6 @@ Extraction lives under `search-text/<workspace>/<shareable>/<version>/<path-sha2
 
 The existing Workers integration harness exercises real HTMLRewriter, FTS5, D1, and R2. Oversized fixtures are generated in memory; they require neither browser rendering nor committed binary fixtures. Publication assertions have a 55-second completion deadline; tests containing multiple publications allow those deadlines within their total test timeout. DO eviction tests dispatch through the scheduled Worker entrypoint so Node-side RPC property proxies do not retain a reference to the object being evicted.
 
-
 ### Full-text search APIs and benchmark
 
 `GET /api/search` accepts `q`, repeated `owner`, `location=home|project`
@@ -128,13 +126,19 @@ parameters to continue. Handles expire after 30 minutes and are bound to the act
 
 `GET /api/search-suggestions` accepts the same filters and returns `files` (at most
 six), `owners` and `projects` (at most three each). It creates no search log.
+Owner suggestions omit file counts to avoid unbounded aggregate queries on each keystroke. They still require a currently discoverable owned/viewed/shared file under the active filters. Bounded collected-file counts remain available on result facets.
+
+Design: blank-query recent history is read newest first in batches of 50 rows,
+up to 500 rows per request. Each batch is checked against current discovery and
+active filters; stop once six eligible files are collected or history is exhausted.
+Denied or out-of-scope recent entries do not consume the six display slots.
+
 Design: typeahead searches the newest 2,000 findable files per indexed source
 (owned, viewed, direct shares, project membership and project defaults), with filters
 applied before each source limit. Each workspace receives one allowed-ID index call.
 Older files outside this domain are omitted; Enter searches the full results domain.
 Owner suggestions use a separate D1 query limited to three matching owners with
-findable files, including files outside the recent domain. Suggestions omit totals,
-excerpts, and relaxation queries. Continuation pages also omit relaxation queries.
+findable files, including files outside the recent domain. Suggestions include authorized excerpts but omit totals and relaxation queries. Continuation pages also omit relaxation queries.
 
 Design: active members use ranked batches of 2,000 in their current workspace,
 without enumerating that workspace. Stop on exhaustion, the requested page plus
@@ -182,7 +186,7 @@ the actor-bound log and expire 30 minutes after that log's creation. The cursor
 contains the merge position; receipts need no rows. Daily retention drains
 batches of 500 expired logs to exhaustion, with opened results cascading from
 each log; the exact cutoff is retained.
-The legacy search palette is unchanged. `GET /api/search-logs` reads only the
+The header uses the full-text suggestions and results endpoints. `GET /api/search-logs` reads only the
 caller's most recent 50 searches and at most 500 latest opens per returned search,
 with at most 1,000 opens across the request
 (ordered by opened time descending, then open ID). Current discovery is checked
@@ -207,3 +211,11 @@ title key to verify exact group sizes. Suggestions and the legacy palette are
 measured separately. The launcher prints size, eligibility rate, samples, warmup, durations and p95 per query class, plus suggestion and palette p95 milliseconds after success. Each class receives the requested warmup and sample count.
 Ordinary post-build integration checks use 40 rows, one warmup and two samples.
 The large run is opt-in and has no wall-clock pass threshold.
+
+### Search screen presentation
+
+Cookie-authenticated search responses include project, visibility, activity date and actor-specific last-viewed date. Suggestions include authorized excerpts and blank queries include up to six currently discoverable recent files. First-page facets count distinct authorized collected files, whereas the heading total counts normalized title groups. Facet counts are omitted for lower-bound totals. Pagination stops at 1,000 top-level groups. Results and history include `selectedScope` owner/project names only when current discovery can find a file belonging to that selection; unresolved IDs use neutral UI labels, even in zero-result searches. Video and PDF descriptions remain searchable, but presentation marks these content kinds as bodyless.
+
+`GET /api/search-groups?receipt=...&cursor=...` expands a representative using its actor-bound open receipt. Every read checks current discovery, returns up to 20 other members in newest-first order and issues a separately bound group cursor. No new search log is created. Each expansion or continuation reruns the bounded search collection to include authorized hits whose indexed title key lags behind their current title, then reads group members and checks discovery again. This costs a search collection per group page and can return a search-capacity error; group handles do not cache result bodies or authorized ID sets.
+
+The screen URL translates `project` and `period` into the existing API location/date fields. `dateField`, `from`, `to` and `includeArchived` extend the short URL form to represent the required viewed/custom-date and archive controls. These are cookie-only UI endpoints, not CLI or MCP capabilities.

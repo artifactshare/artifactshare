@@ -35,6 +35,9 @@ export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-billing/subscribed',
   'viewer/revisit-context',
   'viewer/bridge-attribution',
+  'search/capped',
+  'search/error',
+  'search/continuation-error',
 ]
 
 export function isScreenScenario(value: unknown): value is string {
@@ -114,6 +117,23 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario.startsWith('search/')) {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+    )
+    // The recent fixture's second "Archived review 21" (file 22) has no body,
+    // so the index would hold only one of the two same-title files. Give it
+    // the earlier body so search shows a same-title group.
+    await bucket.put(
+      `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-22`)}-v1`,
+      RECENT_CONTENT_RICH_BODIES.archivedReview21[0].html,
+      { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+    )
+    return
+  }
   if (managedRetentionScenarios.has(scenario)) {
     await seedDevScreenArtifactBodies(
       bucket,
@@ -305,6 +325,14 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (scenario.startsWith('search/'))
+    return seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
   if (managedRetentionScenarios.has(scenario)) {
     const readonly = scenario === 'viewer/retention-managed-readonly'
     const index = readonly ? 1 : 21

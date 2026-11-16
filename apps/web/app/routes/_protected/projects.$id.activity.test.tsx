@@ -36,7 +36,17 @@ vi.mock('react-router', async (importOriginal) => {
     useFetcher: () => ({ ...fetcherState, load: vi.fn() }),
   }
 })
-vi.mock('../_home/+components/topbar', () => ({ Topbar: () => null }))
+vi.mock('../_home/+components/topbar', () => ({
+  Topbar: ({
+    searchProject,
+  }: {
+    searchProject?: { id: string; name: string }
+  }) => (
+    <header data-search-project={searchProject?.id}>
+      {searchProject?.name}
+    </header>
+  ),
+}))
 vi.mock('../_home/+components/bottom-tab-bar', () => ({
   BottomTabBar: () => <div data-bottom-tab-bar />,
 }))
@@ -295,4 +305,16 @@ describe('project activity subpage loader', () => {
     }
     await expect(loader(args())).rejects.toMatchObject({ status: 404 })
   })
+})
+
+test('activity route supplies the loaded project to header search', async () => {
+  const { db } = await fixture()
+  try {
+    const data = await loader(args())
+    const html = renderToStaticMarkup(<ProjectActivity loaderData={data} />)
+    expect(html).toContain('data-search-project="proj1"')
+    expect(html).toContain('>Project proj1</header>')
+  } finally {
+    await db.destroy()
+  }
 })

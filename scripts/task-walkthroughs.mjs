@@ -9,6 +9,10 @@ export const championLoopTaskIds = [
 ]
 
 export const walkthroughActionKinds = new Set([
+  'sequence',
+  'fill',
+  'select',
+  'back',
   'goto',
   'gotoArtifact',
   'gotoArtifactAndClick',
@@ -39,6 +43,91 @@ const phase = (name, description, action) => ({
 })
 
 export const taskWalkthroughs = [
+  {
+    taskId: 'search-file',
+    scenario: 'search/results',
+    // The failure branch runs in a new session with no history, so it starts
+    // on the results page instead of going back from the viewer.
+    failureStart: { kind: 'goto', path: '/search?q=Quarterly' },
+    steps: [
+      phase('start', 'Open header search', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'goto', path: '/' },
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+        ],
+      }),
+      phase('action', 'Type keywords and submit search', {
+        kind: 'sequence',
+        steps: [
+          {
+            // Appears only in the body of the seeded report, not its title.
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: '前月比',
+            submit: true,
+          },
+          // Result rows carry this id; Home's file rows do not.
+          { kind: 'inspect', selector: '[id^="search-file-"] >> nth=0' },
+        ],
+      }),
+      phase('pending', 'Change filters and observe the live result count', {
+        kind: 'sequence',
+        steps: [{ kind: 'inspect', selector: 'main h1' }],
+        mobileSteps: [
+          { kind: 'click', selector: '[data-search-filters]' },
+          {
+            kind: 'click',
+            selector:
+              '[data-slot="sheet-content"] [data-search-sort-value="newest"]',
+          },
+          { kind: 'click', selector: '[data-search-show-results]' },
+        ],
+        desktopSteps: [
+          { kind: 'click', selector: '[data-search-sort]:visible' },
+          { kind: 'click', selector: '[data-search-sort-value="newest"]' },
+        ],
+      }),
+      phase('success', 'Open a matching file', {
+        kind: 'click',
+        selector: 'main a[href^="/a/"] >> nth=0',
+      }),
+      phase('failure', 'Search for an absent keyword from the results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+          {
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: 'unfindablekeyword',
+            submit: true,
+          },
+          { kind: 'inspect', selector: '[data-search-zero]' },
+        ],
+      }),
+      phase('recovery', 'Edit keywords to recover results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+          {
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: 'Quarterly',
+            submit: true,
+          },
+          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
+        ],
+      }),
+      phase('next', 'Open a result and return to the same results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'main a[href^="/a/"] >> nth=0' },
+          { kind: 'back' },
+          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
+        ],
+      }),
+    ],
+  },
   {
     taskId: 'return-to-recent-file',
     scenario: 'recent/content-rich',

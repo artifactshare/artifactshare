@@ -45,5 +45,11 @@
   "device/publisher-continue",
   "device/publisher-invalid",
   "device/publisher-long-name",
-  "settings-cli-sessions/mixed-presets"
+  "settings-cli-sessions/mixed-presets",
+  "search/results",
+  "search/empty",
+  "search/any",
+  "search/capped",
+  "search/error",
+  "search/continuation-error"
 ]

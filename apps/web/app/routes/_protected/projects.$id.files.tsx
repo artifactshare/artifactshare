@@ -156,7 +156,9 @@ export async function loader({
 
 const EMPTY_PAGES: LoaderData[] = []
 
-export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
+export default function ProjectFiles({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { tPlural, t, locale } = useT()
   const { hydrated, timeZone, now } = useViewerCalendar()
   const fetcher = useFetcher<LoaderData>()
@@ -203,6 +205,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <Topbar
+        searchProject={{ id: ctx.projectId, name: ctx.projectName }}
         workspaceName={ctx.workspaceName}
         user={ctx.user}
         joinedProjects={ctx.joinedNav}

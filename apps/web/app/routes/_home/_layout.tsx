@@ -1,3 +1,4 @@
+import { searchQueryKeys } from '~/lib/search-query'
 import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 import type { ShouldRevalidateFunctionArgs } from 'react-router'
@@ -91,14 +92,25 @@ export function shouldRevalidate({
   currentUrl,
   nextUrl,
   formAction,
+  formMethod,
+  actionStatus,
   defaultShouldRevalidate,
 }: ShouldRevalidateFunctionArgs) {
   if (
+    !formAction &&
+    !actionStatus &&
+    (!formMethod || formMethod.toUpperCase() === 'GET') &&
     currentUrl.pathname === nextUrl.pathname &&
     currentUrl.search !== nextUrl.search
   ) {
     const currentParams = new URLSearchParams(currentUrl.search)
     const nextParams = new URLSearchParams(nextUrl.search)
+    if (currentUrl.pathname === '/search') {
+      for (const key of searchQueryKeys) {
+        currentParams.delete(key)
+        nextParams.delete(key)
+      }
+    }
     currentParams.delete('tab')
     nextParams.delete('tab')
     if (currentParams.toString() === nextParams.toString()) return false
