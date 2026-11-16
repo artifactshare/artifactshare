@@ -428,10 +428,15 @@ function readDispositions(path, repo) {
 const critiqueStatusComplete = 'CRITIQUE_STATUS: COMPLETE'
 const critiqueStatusNeedsInput = 'CRITIQUE_STATUS: NEEDS_INPUT'
 
-// Only the exact final line of a layer's reply decides completion; no other
-// reviewer text is parsed. A missing or malformed line is not completion.
-function layerCompleted(text) {
-  return text.trimEnd().split('\n').at(-1) === critiqueStatusComplete
+// Only the final non-empty line of a layer's reply decides completion; no
+// other reviewer text is parsed. Surrounding Markdown code or emphasis marks
+// are ignored as in the implementation gate's decision line. Returns the
+// status line, or undefined when it is missing or malformed.
+function layerStatus(text) {
+  const last = text.trimEnd().split('\n').at(-1)?.replace(/[`*]/gu, '').trim()
+  return [critiqueStatusComplete, critiqueStatusNeedsInput].includes(last)
+    ? last
+    : undefined
 }
 
 function commonPrompt(input) {
@@ -677,10 +682,14 @@ async function main({
       throw new Error('HEAD or worktree changed during task critique.')
     return 0
   }
-  let completed = true
+  const incomplete = []
   for (const layer of selectedLayers) {
     const text = await runLayer(layer, input, { run, repo })
-    if (!layerCompleted(text)) completed = false
+    const status = layerStatus(text)
+    if (status !== critiqueStatusComplete)
+      incomplete.push(
+        `${layer.id}: ${status ? `ended with ${status}` : `did not end with ${critiqueStatusComplete} or ${critiqueStatusNeedsInput}`}`,
+      )
     // A pipe failure is reported asynchronously; the outcome is recorded only
     // after the stream has accepted every layer's output.
     await writeText(stdout, `## ${layer.id} critique\n\n${text}\n`)
@@ -689,28 +698,30 @@ async function main({
   }
   if (gitOutput(exec, repo, ['branch', '--show-current']) !== branch)
     throw new Error('The branch changed during task critique.')
+  const completed = incomplete.length === 0
   if (!branch) {
     stderr.write(
       'No branch is checked out; the critique finished but recorded no Ready evidence.\n',
     )
-    return 0
-  }
-  // Ready accepts only a completed record for the exact HEAD. It is written
-  // after every selected layer was delivered on the unchanged clean checkout.
-  await recordCompletion(
-    critiqueRecord({
-      head,
-      completed,
-      walkthroughRoot: input.root,
-      screenRoots: input.screenRoots,
-    }),
-    branch,
-  )
-  if (!completed)
-    stderr.write(
-      `A critique layer did not end with ${critiqueStatusComplete}; this HEAD is recorded as not critiqued, so Ready refuses. Supply the requested evidence and run the critique again.\n`,
+  } else {
+    // Ready accepts only a completed record for the exact HEAD. It is written
+    // after every selected layer was delivered on the unchanged clean
+    // checkout.
+    await recordCompletion(
+      critiqueRecord({
+        head,
+        completed,
+        walkthroughRoot: input.root,
+        screenRoots: input.screenRoots,
+      }),
+      branch,
     )
-  return 0
+  }
+  if (completed) return 0
+  stderr.write(
+    `The critique is not complete:\n${incomplete.map((line) => `- ${line}`).join('\n')}\n${branch ? 'This HEAD is recorded as not critiqued, so Ready refuses. ' : ''}Supply the requested evidence and run the critique again.\n`,
+  )
+  return 2
 }
 
 if (

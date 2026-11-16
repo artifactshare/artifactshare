@@ -148,12 +148,27 @@ function completedPairs({ codexState, claudeState, profile }) {
   )
 }
 
+/** The most recently completed pair under `profile`, whatever its HEAD. */
+export function lastCompletedPair({ codexState, claudeState, profile } = {}) {
+  const pair = completedPairs({ codexState, claudeState, profile }).at(-1)
+  return pair ? { head: pair.head, base: pair.base } : undefined
+}
+
+/** Whether `ancestor` is `head` or one of its ancestors. */
+export function isAncestorOrSelf(ancestor, head, run = commandOutput) {
+  if (!ancestor || !head) return false
+  return ancestor === head || isStrictAncestor(ancestor, head, run)
+}
+
 /**
  * Whether `pair` and the pairs it narrowed from together reviewed the whole
  * branch. A pair reads `base...head`, which starts at their merge base. It
- * covers the branch when that start is `mergeBase`, or when its base is the
- * HEAD of an earlier completed pair under the same profile whose own chain
- * reaches `mergeBase`. A narrower explicit base breaks the chain.
+ * covers the branch when that start is `mergeBase` or one of its ancestors
+ * (target-branch commits merged in since are not branch work), or when its
+ * base is the HEAD of any earlier completed pair under the same profile whose
+ * own chain reaches `mergeBase`. Every completed pair on that HEAD is
+ * considered, so a later narrow rerun does not hide an earlier full one. A
+ * narrower explicit base that reaches no such pair breaks the chain.
  */
 export function pairCoversBranch({
   codexState,
@@ -166,23 +181,26 @@ export function pairCoversBranch({
   if (!pair?.head || !pair.base || !mergeBase) return false
   const pairs = completedPairs({ codexState, claudeState, profile })
   const visited = new Set()
-  let current = pair
-  while (current && !visited.has(current.head)) {
-    visited.add(current.head)
+  const pending = [pair]
+  while (pending.length) {
+    const current = pending.pop()
+    const key = `${current.head}\u0000${current.base}`
+    if (visited.has(key)) continue
+    visited.add(key)
     let start
     try {
       start = run('git', ['merge-base', current.base, current.head])
     } catch {
       start = undefined
     }
-    if (start === mergeBase) return true
-    const base = current.base
-    current = pairs.findLast((earlier) => earlier.head === base)
+    if (start && isAncestorOrSelf(start, mergeBase, run)) return true
+    pending.push(...pairs.filter((earlier) => earlier.head === current.base))
   }
   return false
 }
 
-/** The latest round-cap consultation for a branch: the HEAD it judged, its
+/** The latest round-cap consultation for a branch: the HEAD it judged, the
+ * HEAD of the last completed pair whose unreviewed change it read, its
  * decision and the consulted profile. No consultation prose is stored. */
 export const consultationDecisions = Object.freeze([
   'PROCEED',
@@ -201,6 +219,8 @@ export function readConsultation(path, profile) {
     !consultation ||
     typeof consultation.head !== 'string' ||
     !/^[0-9a-f]{40}$/u.test(consultation.head) ||
+    typeof consultation.pairHead !== 'string' ||
+    !/^[0-9a-f]{40}$/u.test(consultation.pairHead) ||
     !consultationDecisions.includes(consultation.decision) ||
     !sameJson(consultation.profile, profile)
   )
@@ -208,10 +228,16 @@ export function readConsultation(path, profile) {
   return consultation
 }
 
-export function writeConsultation(path, { head, decision, profile }) {
+export function writeConsultation(path, { head, pairHead, decision, profile }) {
   writeRounds(path, {
     schema_version: 1,
-    consultation: { head, decision, profile, at: new Date().toISOString() },
+    consultation: {
+      head,
+      pairHead,
+      decision,
+      profile,
+      at: new Date().toISOString(),
+    },
   })
 }
 

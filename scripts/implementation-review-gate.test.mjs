@@ -1067,8 +1067,16 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
     '- deferred: I1 blocker, because the scope lock excludes it.\n',
   )
   const mergeBase = 'c'.repeat(40)
+  // The third pair read P; commit C (HEAD) came after it.
+  const pairHead = 'e'.repeat(40)
   const run = (_file, args) => {
+    if (args.join(' ') === `merge-base --is-ancestor ${pairHead} ${head}`)
+      return ''
     if (args[0] === 'merge-base') return mergeBase
+    if (args.join(' ') === `diff --name-status ${pairHead}..${head}`)
+      return 'M\tscripts/after-pair.mjs'
+    if (args.join(' ') === `diff --no-color ${pairHead}..${head}`)
+      return '+export const addedAfterPair = true'
     if (args.join(' ') === `diff --name-status ${mergeBase}...${head}`)
       return 'D\tscripts/removed.mjs'
     if (args.join(' ') === `diff --no-color ${mergeBase}...${head}`)
@@ -1095,6 +1103,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
       const result = main({
         argv: ['--dispositions-file', dispositions],
         countRounds: () => 3,
+        readLastPairHead: () => pairHead,
         localInstructionsPresent: () => false,
         ...scopeHarness({ getBranch: () => 'feat/x' }),
         acquireLock: () => Promise.resolve(() => Promise.resolve()),
@@ -1115,7 +1124,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
       if (typeof expected === 'number') {
         assert.equal(await result, expected)
         assert.deepEqual(records, [
-          { branch: 'feat/x', head, decision: name, run },
+          { branch: 'feat/x', head, pairHead, decision: name, run },
         ])
         assert.match(
           logs.at(-1),
@@ -1128,10 +1137,18 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
       assert.equal(prompts.length, 1)
       assert.match(prompts[0], new RegExp(`HEAD ${head}`))
       assert.match(prompts[0], new RegExp(`merge base ${mergeBase}`))
-      // The objective scope, dispositions and fixed diff reach it as one file.
+      assert.match(prompts[0], new RegExp(`${pairHead}\\.\\.${head}`))
+      // The objective scope, dispositions, the change no pair read, and the
+      // fixed diff reach it as one file.
       assert.match(evidence[0], new RegExp(`Objective: ${scope.objective}`))
       assert.match(evidence[0], /- I1: Both reviewers inspect/u)
       assert.match(evidence[0], /deferred: I1 blocker/u)
+      assert.match(
+        evidence[0],
+        new RegExp(`# Unreviewed change ${pairHead}\\.\\.${head}`),
+      )
+      assert.match(evidence[0], /M\tscripts\/after-pair\.mjs/u)
+      assert.match(evidence[0], /\+export const addedAfterPair = true/u)
       assert.match(evidence[0], /D\tscripts\/removed\.mjs/u)
       assert.match(evidence[0], /-export const removedGuard = true/u)
     })
@@ -1150,6 +1167,7 @@ test('the consultation decision is stored for HEAD without its prose', async (t)
   await main({
     argv: ['--dispositions-file', dispositions],
     countRounds: () => 3,
+    readLastPairHead: () => head,
     localInstructionsPresent: () => false,
     ...scopeHarness({ getBranch: () => 'feat/x' }),
     acquireLock: () => Promise.resolve(() => Promise.resolve()),
@@ -1161,11 +1179,58 @@ test('the consultation decision is stored for HEAD without its prose', async (t)
   const path = roundsPath('feat/x', 'consultation', run)
   assert.deepEqual(readConsultation(path, roundCapConsultation), {
     head,
+    pairHead: head,
     decision: 'PROCEED',
     profile: roundCapConsultation,
     at: readConsultation(path, roundCapConsultation).at,
   })
   assert.doesNotMatch(readFileSync(path, 'utf8'), /Secret|I1/u)
+})
+
+test('a spent round cap refuses the consultation off the last pair or with --base', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-consultation-refusal-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dispositions = join(directory, 'dispositions.md')
+  writeFileSync(dispositions, '- deferred: I1 blocker.\n')
+  const divergent = 'e'.repeat(40)
+  const cases = [
+    [
+      'last pair HEAD is not an ancestor',
+      ['--dispositions-file', dispositions],
+      new RegExp(
+        `HEAD ${divergent} is not HEAD ${head} or one of its ancestors`,
+      ),
+    ],
+    [
+      '--base with dispositions',
+      ['--base', 'release', '--dispositions-file', dispositions],
+      /accepts only --dispositions-file, not --base/u,
+    ],
+    ['--base alone', ['--base', 'release'], /not --base/u],
+  ]
+  for (const [name, argv, expected] of cases)
+    await t.test(name, async () => {
+      await assert.rejects(
+        main({
+          argv,
+          countRounds: () => 3,
+          readLastPairHead: () => divergent,
+          localInstructionsPresent: () => false,
+          ...scopeHarness({ getBranch: () => 'feat/x' }),
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
+          run: (_file, args) => {
+            if (args[1] === '--is-ancestor') throw new Error('not an ancestor')
+            return ''
+          },
+          readCleanHead: () => head,
+          review: () => assert.fail('a reviewer launched after the cap'),
+          consult: () => assert.fail('the consultation ran'),
+          recordConsultation: () => assert.fail('a consultation was recorded'),
+          log: () => assert.fail('the cap result was printed'),
+        }),
+        expected,
+      )
+    })
 })
 
 test('the round cap counts only completed pairs under the current profile', () => {

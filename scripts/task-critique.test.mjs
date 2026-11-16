@@ -2036,6 +2036,7 @@ test('records Ready evidence only after every selected layer completes on the un
       reply:
         '## Findings\n\n- Recapture the mobile state.\nCRITIQUE_STATUS: NEEDS_INPUT',
       completed: false,
+      reason: /task: ended with CRITIQUE_STATUS: NEEDS_INPUT/u,
     },
     {
       name: 'a later layer omits the status line',
@@ -2044,7 +2045,25 @@ test('records Ready evidence only after every selected layer completes on the un
       replyLayer: 2,
       reply: '## Findings\n\nNo findings.',
       completed: false,
+      reason: /task: did not end with CRITIQUE_STATUS: COMPLETE or/u,
     },
+    // Markdown code or emphasis around the final line is not part of it.
+    ...[
+      ['`CRITIQUE_STATUS: COMPLETE`', true],
+      ['**CRITIQUE_STATUS: COMPLETE**', true],
+      ['`CRITIQUE_STATUS: NEEDS_INPUT`', false],
+      ['**CRITIQUE_STATUS: NEEDS_INPUT**', false],
+    ].map(([line, completed]) => ({
+      name: `a later layer ends with ${line}`,
+      argv: walkthrough,
+      layers: 2,
+      replyLayer: 2,
+      reply: `## Findings\n\nNo findings.\n${line}\n`,
+      completed,
+      ...(completed
+        ? {}
+        : { reason: /task: ended with CRITIQUE_STATUS: NEEDS_INPUT/u }),
+    })),
   ]
   for (const item of cases)
     await t.test(item.name, async (subtest) => {
@@ -2083,9 +2102,11 @@ test('records Ready evidence only after every selected layer completes on the un
       let branchReads = 0
       let layers = 0
       let writes = 0
+      let errors = ''
       const result = main({
         argv: item.argv,
         repo: f.repo,
+        stderr: { write: (value) => (errors += value) },
         exec: (_command, args) => {
           if (args[0] === 'status') return item.dirty ? ' M source.tsx' : ''
           if (args[0] === 'branch')
@@ -2114,7 +2135,10 @@ test('records Ready evidence only after every selected layer completes on the un
         },
       })
       if (item.error) await assert.rejects(result, item.error)
-      else assert.equal(await result, 0)
+      // An incomplete critique fails after recording, naming the layer.
+      else assert.equal(await result, item.completed === false ? 2 : 0)
+      if (item.reason) assert.match(errors, item.reason)
+      else assert.equal(errors, '')
       if (!healthy) {
         assert.equal(readCritiqueRecord(statePath).head, earlier)
         return

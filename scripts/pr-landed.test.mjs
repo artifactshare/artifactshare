@@ -238,6 +238,52 @@ test('landing cleanup removes the branch review and critique state on every path
     })
 })
 
+test('landing removes the branch state even when the branch cleanup fails', async (t) => {
+  const cases = [
+    [
+      'main cannot be synced',
+      { here: '/repo/feature', mainWorktree: null, firstWorktree: '/repo' },
+      () => false,
+      /No worktree has main checked out/u,
+    ],
+    [
+      'branch deletion fails',
+      {},
+      (args) => args[0] === 'branch' && args[1] === '-D',
+      /cannot delete branch/u,
+    ],
+  ]
+  for (const [name, options, fails, problem] of cases)
+    await t.test(name, async () => {
+      const h = harness(options)
+      const exec = (file, args) => {
+        if (fails(args)) {
+          h.calls.push([file, args])
+          throw new Error('cannot delete branch feat/x')
+        }
+        return h.exec(file, args)
+      }
+      const files = [
+        ...['codex', 'claude', 'consultation'].map((reviewer) =>
+          roundsPathIn(sharedGitCommon, 'feat/x', reviewer),
+        ),
+        critiqueStatePath(sharedGitCommon, 'feat/x'),
+      ]
+      for (const file of files) writeRounds(file, { schema_version: 1 })
+      const result = await landed({
+        exec,
+        parsed: { pr: 7, dryRun: false },
+        ledger: emptyLedger(),
+      })
+      assert.equal(result.exitCode, 1)
+      assert.match(result.problems[0], problem)
+      assert.deepEqual(
+        files.filter((file) => existsSync(file)),
+        [],
+      )
+    })
+})
+
 test('a merged branch is recognised only by its full ref', async () => {
   const path = ledgerWith(['name the select'])
   const h = harness()
@@ -581,7 +627,17 @@ for (const cleanupFails of [false, true]) {
     })
     assert.equal(result.exitCode, 1)
     assert.deepEqual(readLedger(ledger).entries, [])
-    assert.deepEqual(result.problems, cleanupFails ? ['Checkout is dirty'] : [])
+    // Removing the branch state is attempted after a failed checkout cleanup,
+    // and fails here too because every git call does.
+    assert.deepEqual(
+      result.problems,
+      cleanupFails
+        ? [
+            'Checkout is dirty',
+            'branch review state was not removed: Checkout is dirty',
+          ]
+        : [],
+    )
     const logs = []
     const errors = []
     renderLandedResult(result, {

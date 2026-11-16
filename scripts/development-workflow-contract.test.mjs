@@ -174,10 +174,11 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
     workflow,
     /at most three completed review pairs under the current review profile; `review:implementation` never runs a fourth pair/u,
   )
-  // The cap ends in a recorded consultation for the exact HEAD, not a dead end.
+  // The cap ends in a recorded consultation for the exact HEAD, not a dead
+  // end, and it reads the change no pair has read.
   assert.match(
     workflow,
-    /run `pnpm review:implementation -- --dispositions-file <path>` on the current clean HEAD: the gate consults the round-cap profile .*?\(Fable at medium\) with one read-only snapshot of the branch's objective scope, those dispositions, and the changed files and full diff from the merge base to HEAD, prints its decision, `PROCEED` or `RETURN TO OWNER`, and records that decision for this exact HEAD/u,
+    /run `pnpm review:implementation -- --dispositions-file <path>` on the current clean HEAD: the gate consults the round-cap profile .*?\(Fable at medium\) with one read-only snapshot of the branch's objective scope, those dispositions, the changed files and diff from the last completed pair's HEAD to HEAD \(the change no pair has read\), and the changed files and full diff from the merge base to HEAD, prints its decision, `PROCEED` or `RETURN TO OWNER`, and records that decision for this exact HEAD, with the last completed pair's HEAD it covered/u,
   )
   assert.match(
     workflow,

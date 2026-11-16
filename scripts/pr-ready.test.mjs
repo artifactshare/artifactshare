@@ -159,6 +159,8 @@ function harness({
   body = undefined,
   otherPrs = [],
   evidence = { pair: true, critique: true },
+  // [ancestor, descendant] pairs `git merge-base --is-ancestor` accepts.
+  ancestry = [],
 } = {}) {
   const calls = []
   const usageReport = tempUsageReport()
@@ -171,6 +173,15 @@ function harness({
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
     if (file === 'git' && args[0] === 'rev-parse')
       return `${args[1] === '--git-common-dir' ? commonDir : localHead}\n`
+    if (
+      file === 'git' &&
+      args[0] === 'merge-base' &&
+      args[1] === '--is-ancestor'
+    ) {
+      if (ancestry.some(([from, to]) => from === args[2] && to === args[3]))
+        return ''
+      throw new Error('not an ancestor')
+    }
     if (file === 'git' && args[0] === 'merge-base')
       return `${args[1].startsWith('origin/') ? mergeBase : args[1]}\n`
     if (file === 'git' && args[0] === 'status') return dirty ? ' M file' : ''
@@ -1588,6 +1599,9 @@ test('a pair on HEAD that reported a blocker does not authorize Ready', () => {
 test('a round-cap consultation for HEAD decides Ready', async (t) => {
   const consultationPath = (h) =>
     roundsPath('topic', 'consultation', () => h.commonDir)
+  // The last completed pair read P; commit C (HEAD) came after it.
+  const pairHead = 'f'.repeat(40)
+  const stale = /no longer the last completed implementation pair/u
   const cases = [
     ['PROCEED on HEAD', head, 'PROCEED', true],
     ['RETURN TO OWNER on HEAD', head, 'RETURN TO OWNER', /RETURN TO OWNER/u],
@@ -1597,20 +1611,41 @@ test('a round-cap consultation for HEAD decides Ready', async (t) => {
       'PROCEED',
       new RegExp(`pair for HEAD ${head} reported 1 blocker`),
     ],
+    ['PROCEED after the pair on P', head, 'PROCEED', true, pairHead, true],
+    ['P is not an ancestor of HEAD', head, 'PROCEED', stale, pairHead, false],
+    ['a later pair replaced P', head, 'PROCEED', stale, pairHead, true, head],
   ]
-  for (const [name, target, decision, expected] of cases)
+  for (const [
+    name,
+    target,
+    decision,
+    expected,
+    lastPair = head,
+    onLine = false,
+    laterPair,
+  ] of cases)
     await t.test(name, () => {
-      // The cap is spent and the last pair, on HEAD, still reported a blocker.
-      const h = harness({ body: 'Public body', evidence: { pair: false } })
-      recordEvidence(h.commonDir, head, {
+      // The cap is spent and the last pair still reported a blocker.
+      const h = harness({
+        body: 'Public body',
+        evidence: { pair: false },
+        ancestry: onLine ? [[pairHead, head]] : [],
+      })
+      recordEvidence(h.commonDir, lastPair, {
         critique: false,
         blockers: { codex: 1, claude: 0 },
       })
       writeConsultation(consultationPath(h), {
         head: target,
+        pairHead: lastPair,
         decision,
         profile: roundCapConsultation,
       })
+      if (laterPair)
+        recordEvidence(h.commonDir, laterPair, {
+          critique: false,
+          blockers: { codex: 1, claude: 0 },
+        })
       const ledger = tempLedger()
       const attempt = () =>
         ready({ exec: h.exec, parsed: evidenceParsed(), ledger })

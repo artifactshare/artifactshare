@@ -15,6 +15,8 @@ import { implementationReviewProfile } from './implementation-review-gate.mjs'
 import { roundCapConsultation } from './agent-role-settings.mjs'
 import {
   gitCommonDir,
+  isAncestorOrSelf,
+  lastCompletedPair,
   matchingPairHistory,
   pairCoversBranch,
   readConsultation,
@@ -730,15 +732,30 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
     roundsPathIn(commonDir, branch, 'consultation'),
     roundCapConsultation,
   )
-  if (consultation?.head === head) {
-    if (consultation.decision === 'PROCEED') return
-    throw new Error(
-      `The round-cap consultation for HEAD ${head} decided RETURN TO OWNER. Ready was not changed; return the remaining blockers to the owner.`,
-    )
-  }
   const codexState = readRounds(roundsPathIn(commonDir, branch, 'codex'))
   const claudeState = readRounds(roundsPathIn(commonDir, branch, 'claude'))
   const profile = implementationReviewProfile
+  if (consultation?.head === head) {
+    if (consultation.decision !== 'PROCEED')
+      throw new Error(
+        `The round-cap consultation for HEAD ${head} decided RETURN TO OWNER. Ready was not changed; return the remaining blockers to the owner.`,
+      )
+    // The consultation covered only the change after the pair it recorded;
+    // a later pair, or a pair off this line, leaves that coverage stale.
+    const lastPair = lastCompletedPair({ codexState, claudeState, profile })
+    if (
+      consultation.pairHead === lastPair?.head &&
+      isAncestorOrSelf(consultation.pairHead, head, run)
+    )
+      return
+    throw new Error(
+      [
+        `The round-cap consultation for HEAD ${head} covered the change after pair HEAD ${consultation.pairHead}, which is no longer the last completed implementation pair (${lastPair?.head ?? 'none'}) on this line. Ready was not changed.`,
+        'Run the round-cap consultation again on this HEAD:',
+        '  pnpm review:implementation -- --dispositions-file <path>',
+      ].join('\n'),
+    )
+  }
   const pair = matchingPairHistory({ codexState, claudeState, profile })
   if (pair?.head !== head)
     throw new Error(

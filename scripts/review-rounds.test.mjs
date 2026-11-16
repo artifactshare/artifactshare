@@ -370,4 +370,33 @@ test('a pair covers the branch only from the merge base or through earlier pairs
   const partial = rounds(chained)
   partial.codexState.rounds.shift()
   assert.equal(covers(partial, parent), false)
+  // A later narrow rerun on HEAD~1 does not hide the earlier full pair there.
+  const rerun = [
+    [parent, mergeBase],
+    [parent, commits.at(-3)],
+    [head, parent],
+  ]
+  assert.equal(covers(rounds(rerun), parent), true)
+
+  // Merging main after the pair on HEAD moves the merge base; the commits it
+  // brings in are not branch work, so the old chain still reaches it.
+  git('switch', '--quiet', 'main')
+  git('commit', '--quiet', '--allow-empty', '-m', 'main moves')
+  const newMergeBase = git('rev-parse', 'HEAD')
+  git('switch', '--quiet', 'topic')
+  git('merge', '--quiet', '--no-ff', '-m', 'merge main', 'main')
+  const merged = git('rev-parse', 'HEAD')
+  assert.equal(
+    pairCoversBranch({
+      ...rounds([
+        [head, mergeBase],
+        [merged, head],
+      ]),
+      profile: finalReviews,
+      pair: { head: merged, base: head },
+      mergeBase: newMergeBase,
+      run,
+    }),
+    true,
+  )
 })

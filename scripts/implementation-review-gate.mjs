@@ -25,6 +25,8 @@ import {
   parseArgs as parseClaudeArgs,
 } from './claude-review.mjs'
 import {
+  isAncestorOrSelf,
+  lastCompletedPair,
   readRounds,
   recordRound,
   rangeIsEmpty,
@@ -183,6 +185,18 @@ function coordinatedBase({ base, head, run = commandOutput } = {}) {
   }
 }
 
+/** HEAD of the branch's most recently completed pair under the current
+ * profile, or undefined when none is recorded. */
+function lastCompletedPairHead({ run = commandOutput } = {}) {
+  const branch = run('git', ['branch', '--show-current'])
+  if (!branch) return undefined
+  return lastCompletedPair({
+    codexState: readRounds(roundsPath(branch, 'codex', run)),
+    claudeState: readRounds(roundsPath(branch, 'claude', run)),
+    profile: implementationReviewProfile,
+  })?.head
+}
+
 function completedPairRounds({ run = commandOutput } = {}) {
   const branch = run('git', ['branch', '--show-current'])
   if (!branch) return 0
@@ -231,12 +245,12 @@ function blockerCount(output) {
   ).length
 }
 
-function consultationPrompt({ head, mergeBase, evidencePath }) {
+function consultationPrompt({ head, pairHead, mergeBase, evidencePath }) {
   return [
     'Round-cap consultation for the implementation review gate. Read only: do not edit files, run commands, or write to remote services.',
-    `The branch has spent its ${implementationRoundCap} implementation review pairs. The target is HEAD ${head}, reviewed against merge base ${mergeBase} (git diff ${mergeBase}...${head}).`,
-    `Read ${evidencePath} first. It holds the branch's immutable objective scope, the remaining blockers and their dispositions (under Dispositions), and the changed files and full diff of the fixed range. Read checkout files the blockers concern for further context, and judge each disposition against the objective scope and the diff.`,
-    'Decide PROCEED when no remaining blocker breaks what the issue sets out to do, so the remaining findings can be recorded as deferred for Ready. Decide RETURN TO OWNER when a remaining blocker is unresolved, or when the issue or its premise should be reconsidered.',
+    `The branch has spent its ${implementationRoundCap} implementation review pairs. The target is HEAD ${head}, reviewed against merge base ${mergeBase} (git diff ${mergeBase}...${head}). The last completed pair read HEAD ${pairHead}; no pair has read the change ${pairHead}..${head}.`,
+    `Read ${evidencePath} first. It holds the branch's immutable objective scope, the remaining blockers and their dispositions (under Dispositions), the changed files and diff of the unreviewed change ${pairHead}..${head}, and the changed files and full diff of the fixed range. Read checkout files the blockers concern for further context, and judge each disposition against the objective scope and the diff.`,
+    'Decide PROCEED when no remaining blocker breaks what the issue sets out to do and the unreviewed change introduces no new blocker, so the remaining findings can be recorded as deferred for Ready. Decide RETURN TO OWNER when a remaining blocker is unresolved, when the unreviewed change introduces one, or when the issue or its premise should be reconsidered.',
     'Explain the decision briefly, then end with exactly one final line: DECISION: PROCEED or DECISION: RETURN TO OWNER.',
   ].join('\n\n')
 }
@@ -310,9 +324,10 @@ async function runRoundCapConsultation(
   return envelope.result.trim()
 }
 
-function recordConsultationDecision({ branch, head, decision, run }) {
+function recordConsultationDecision({ branch, head, pairHead, decision, run }) {
   writeConsultation(roundsPath(branch, 'consultation', run), {
     head,
+    pairHead,
     decision,
     profile: roundCapConsultation,
   })
@@ -415,6 +430,7 @@ async function main({
     collectTestChanges({ base, head, run }),
   recordRounds = recordCompletedRounds,
   countRounds = () => completedPairRounds({ run }),
+  readLastPairHead = () => lastCompletedPairHead({ run }),
   consult = runRoundCapConsultation,
   recordConsultation = recordConsultationDecision,
   localInstructionsPresent: hasLocalInstructions = () =>
@@ -452,11 +468,25 @@ async function main({
     // Counted under the branch lock so two gates cannot both pass the cap.
     const rounds = countRounds()
     if (rounds >= implementationRoundCap) {
+      // The consultation always reads the fixed branch range; a narrower
+      // base would be silently ignored, so refuse it instead.
+      if (options.base !== undefined)
+        throw new Error(
+          `The implementation review-round cap is spent; the round-cap consultation accepts only --dispositions-file, not --base. Rerun without --base:\n  pnpm review:implementation -- --dispositions-file <path>`,
+        )
       const dispositions = readDispositionsBody(options.dispositionsFile)
       if (!dispositions?.trim()) {
         await log(roundCapResult(rounds))
         return 2
       }
+      // The consultation stands in for a pair only on top of the last one:
+      // it must read what no pair has read, which exists only when that
+      // pair's HEAD is on this line.
+      const pairHead = readLastPairHead()
+      if (!pairHead || !isAncestorOrSelf(pairHead, head, run))
+        throw new Error(
+          `The last completed implementation pair's HEAD ${pairHead ?? '(none)'} is not HEAD ${head} or one of its ancestors; the round-cap consultation cannot cover this HEAD and nothing was recorded. Return to the owner.`,
+        )
       // The consultation judges the dispositions against the branch's
       // immutable objective scope and the fixed change, which it reads from
       // one immutable snapshot because it cannot run Git itself.
@@ -466,15 +496,20 @@ async function main({
       )
       const mergeBase = run('git', ['merge-base', defaultBase, head]).trim()
       const range = `${mergeBase}...${head}`
+      const unreviewed = `${pairHead}..${head}`
+      const unreviewedSection =
+        pairHead === head
+          ? `# Unreviewed change ${unreviewed}\n\n(none: the last completed pair read this HEAD)`
+          : `# Unreviewed change ${unreviewed}\n\n## Changed files\n\n${run('git', ['diff', '--name-status', unreviewed]) || '(none)'}\n\n## Diff\n\n${run('git', ['diff', '--no-color', unreviewed])}`
       snapshotDirectory = mkdtempSync(
         join(tmpdir(), `artifactshare-round-cap-${process.pid}-`),
       )
       const evidencePath = createContextSnapshot(
-        `${scopeContext}\n\n# Fixed change ${range}\n\n## Changed files\n\n${run('git', ['diff', '--name-status', range]) || '(none)'}\n\n## Diff\n\n${run('git', ['diff', '--no-color', range])}\n`,
+        `${scopeContext}\n\n${unreviewedSection}\n\n# Fixed change ${range}\n\n## Changed files\n\n${run('git', ['diff', '--name-status', range]) || '(none)'}\n\n## Diff\n\n${run('git', ['diff', '--no-color', range])}\n`,
         snapshotDirectory,
       )
       const text = await consult(
-        consultationPrompt({ head, mergeBase, evidencePath }),
+        consultationPrompt({ head, pairHead, mergeBase, evidencePath }),
         { evidenceDirectory: snapshotDirectory, signal },
       )
       const decision = consultationDecision(text)
@@ -482,8 +517,9 @@ async function main({
         throw new Error(
           'HEAD or worktree changed during the round-cap consultation; nothing was recorded.',
         )
-      // Ready reads only the decision for this exact HEAD.
-      recordConsultation({ branch, head, decision, run })
+      // Ready reads only the decision for this exact HEAD, on top of the
+      // pair HEAD it covered.
+      recordConsultation({ branch, head, pairHead, decision, run })
       await log(
         `## Round-cap consultation (${roundCapConsultation.claude.model}, ${roundCapConsultation.claude.effort})\n\n${text}\n\nRecorded DECISION: ${decision} for HEAD ${head}.${decision === 'PROCEED' ? ' Record the remaining findings as deferred for Ready.' : ' Return to the owner; Ready refuses this HEAD.'}`,
       )
@@ -640,6 +676,7 @@ export {
   formatCapture,
   implementationReviewProfile,
   implementationRoundCap,
+  lastCompletedPairHead,
   main,
   parseArgs,
   recordCompletedRounds,
