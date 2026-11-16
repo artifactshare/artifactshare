@@ -558,6 +558,8 @@ test('Back and viewer return reload later pages before restoring their visible a
     expect(member.getBoundingClientRect().top).toBeGreaterThanOrEqual(0)
     expect(member.getBoundingClientRect().top).toBeLessThan(window.innerHeight)
     expect(document.activeElement?.tagName).not.toBe('H1')
+    // Keyboard focus continues from the opened file.
+    expect(document.activeElement?.textContent).toBe('Member 23')
   })
   await page.getByRole('button', { name: /^Search(?::|$)/ }).click()
   await page.getByRole('combobox', { name: 'Keywords' }).fill('beta')

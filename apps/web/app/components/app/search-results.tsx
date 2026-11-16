@@ -1436,13 +1436,20 @@ function SearchResultListing({
         document.getElementById(
           `search-file-${items[Math.min(restore.position, items.length - 1)]?.id}`,
         )
-      if (anchor)
+      if (anchor) {
         window.scrollTo({
           top:
             window.scrollY +
             anchor.getBoundingClientRect().top -
             restore.offset,
         })
+        // Returning from a file: keyboard users continue from the result they
+        // opened, unless something else already took focus.
+        if (document.activeElement === document.body)
+          anchor
+            .querySelector<HTMLElement>('a[href^="/a/"]')
+            ?.focus({ preventScroll: true })
+      }
       setRestored(true)
     })
     return () => cancelAnimationFrame(frame)
