@@ -5,7 +5,10 @@ import { requireUser } from '~/middleware/context'
 import { parseSearchQuery } from '~/lib/search-query'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { search } from '~/services/search.server'
-import { withSearchTiming } from '~/services/search-timing.server'
+import {
+  probeIndexLocations,
+  withSearchTiming,
+} from '~/services/search-timing.server'
 import { data, type HeadersFunction } from 'react-router'
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
 import { SearchResults } from '~/components/app/search-results'
@@ -126,6 +129,8 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
       actor: user.id,
     }
+  // Temporary: measured alongside the search, never failing it.
+  const probes = probeIndexLocations().catch(() => [])
   const { value: result, serverTiming } = await withSearchTiming(
     'search',
     (db, indexes) => search(db, indexes, user.id, input, 'screen'),
@@ -163,7 +168,9 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   return data(
     { result, actor: user.id },
     {
-      headers: { 'Server-Timing': serverTiming },
+      headers: {
+        'Server-Timing': [serverTiming, ...(await probes)].join(', '),
+      },
     },
   )
 }

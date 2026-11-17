@@ -222,3 +222,28 @@ export async function withSearchTiming<T, E = never>(
     throw error
   }
 }
+
+/**
+ * Temporary location check: the round trip to two new, empty index objects,
+ * one created with the apac-ne location hint and one without a hint. The
+ * first call creates each object, so the second call is the one reported.
+ */
+export async function probeIndexLocations(): Promise<string[]> {
+  const ping = async (
+    label: string,
+    name: string,
+    options?: DurableObjectNamespaceGetDurableObjectOptions,
+  ) => {
+    const index = env.WORKSPACE_SEARCH_INDEX.getByName(name, options)
+    await index.details({ query: 'probe' }, [])
+    const started = performance.now()
+    await index.details({ query: 'probe' }, [])
+    return `${label};dur=${Math.round(performance.now() - started)}`
+  }
+  return Promise.all([
+    ping('probe-apac-ne', 'location-probe-apac-ne:0', {
+      locationHint: 'apac-ne',
+    }),
+    ping('probe-default', 'location-probe-default:0'),
+  ])
+}
