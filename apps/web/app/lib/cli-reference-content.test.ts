@@ -745,3 +745,33 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'documents owner IDs, automatic fallback and capacity recovery in %s',
+  (locale) => {
+    const body = cliReferenceContent(locale).sections.recovery.body.join(' ')
+    for (const text of [
+      '--owner-user-ids',
+      'owner_user_ids',
+      'Rephrase the query and search again before concluding that nothing exists.',
+      'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+      '503',
+      'search_capacity_exceeded',
+    ])
+      expect(body).toContain(text)
+    for (const text of locale === 'en'
+      ? [
+          'not email addresses',
+          'fewer or different words',
+          'automatically retries',
+          'Narrow the query or filters and search again. This error is not a zero-result search.',
+        ]
+      : [
+          'メールアドレスではなくユーザー ID',
+          '語を減らすか別の語',
+          '自動で切り替わります',
+          '検索語や条件を絞って再検索してください。このエラーは検索が成功して 0 件だったことを意味しません。',
+        ])
+      expect(body).toContain(text)
+  },
+)

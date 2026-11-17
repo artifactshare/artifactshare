@@ -14,6 +14,7 @@ describe('GuideFreshness', () => {
       'workspace-owner': '2026-07-18',
       'workspace-admin': '2026-07-18',
       'link-sharing': '2026-09-09',
+      search: '2026-11-17',
       'private-mobile-design-handoff': '2026-07-21',
     })
   })

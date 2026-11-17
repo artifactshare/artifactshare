@@ -556,6 +556,7 @@ describe('AnalyticsGtag', () => {
     ['/guides/workspace-admin', 'Guide'],
     ['/guides/workspace-owner', 'Guide'],
     ['/guides/link-sharing', 'Guide'],
+    ['/guides/search', 'Guide'],
     ['/guides/private-mobile-design-handoff', 'Guide'],
     ['/en/updates/name', 'Updates'],
     ['/updates', 'Updates'],

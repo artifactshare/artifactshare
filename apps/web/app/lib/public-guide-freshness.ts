@@ -3,6 +3,7 @@ export const PUBLIC_GUIDE_KEYS = {
   workspaceOwner: 'workspace-owner',
   workspaceAdmin: 'workspace-admin',
   linkSharing: 'link-sharing',
+  search: 'search',
   privateMobileDesignHandoff: 'private-mobile-design-handoff',
 } as const
 
@@ -14,6 +15,7 @@ export const PUBLIC_GUIDE_VERIFIED_DATES = {
   [PUBLIC_GUIDE_KEYS.workspaceOwner]: '2026-07-18',
   [PUBLIC_GUIDE_KEYS.workspaceAdmin]: '2026-07-18',
   [PUBLIC_GUIDE_KEYS.linkSharing]: '2026-09-09',
+  [PUBLIC_GUIDE_KEYS.search]: '2026-11-17',
   [PUBLIC_GUIDE_KEYS.privateMobileDesignHandoff]: '2026-07-21',
 } satisfies Record<PublicGuideKey, string>
 

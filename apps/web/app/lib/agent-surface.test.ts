@@ -60,7 +60,9 @@ describe('agentSurface', () => {
       workspace_admin: 'https://artifactshare.com/guides/workspace-admin',
       workspace_admin_ja: 'https://artifactshare.com/ja/guides/workspace-admin',
       link_sharing: 'https://artifactshare.com/guides/link-sharing',
+      search: 'https://artifactshare.com/guides/search',
       link_sharing_ja: 'https://artifactshare.com/ja/guides/link-sharing',
+      search_ja: 'https://artifactshare.com/ja/guides/search',
       connect: 'https://artifactshare.com/connect',
       connect_ja: 'https://artifactshare.com/ja/connect',
       terms: 'https://artifactshare.com/terms',
@@ -98,6 +100,8 @@ describe('agentSurface', () => {
     )
     expect(llmsTxt).toContain('https://artifactshare.com/guides/cli')
     expect(llmsTxt).toContain('https://artifactshare.com/guides/link-sharing')
+    expect(llmsTxt).toContain('https://artifactshare.com/guides/search')
+    expect(capabilitiesMd).toContain('https://artifactshare.com/guides/search')
     expect(llmsTxt).toContain('link_expires_at')
     expect(capabilitiesMd).toContain('https://artifactshare.com/guides/cli')
     expect(capabilitiesMd).toContain(

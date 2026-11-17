@@ -155,3 +155,28 @@ describe('locale-aware legal routes', () => {
     },
   )
 })
+
+test.each(['en', 'ja'] as const)(
+  'discloses search records and retention in %s',
+  (locale) => {
+    const html = privacyHtml(locale)
+    expect(html).toContain('2026-11-17')
+    const facts =
+      locale === 'en'
+        ? [
+            'the query, search conditions, result count, and results you opened',
+            'Only you and the service operator',
+            '90 days',
+            'periodic deletion',
+            'delay deletion',
+          ]
+        : [
+            '検索語、検索条件、結果の件数、検索結果から開いたファイル',
+            '検索した本人と運営者だけ',
+            '90日後',
+            '定期削除',
+            '削除が遅れる',
+          ]
+    for (const fact of facts) expect(html).toContain(fact)
+  },
+)

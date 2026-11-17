@@ -189,10 +189,18 @@ test('discovers typed screen specifications from route modules', () => {
     assert.ok(routeModules.includes(`_public/($locale)/${page}.tsx`))
   }
   assert.ok(routeModules.every((file) => !/\.test\.(?:ts|tsx)$|\+/u.test(file)))
-  assert.equal(screenSpecModules.length, 41)
+  assert.ok(
+    screenSpecModules.some(
+      ({ screen }) =>
+        screen.id === 'guides-search' &&
+        screen.route.en === '/guides/search' &&
+        screen.route.ja === '/ja/guides/search',
+    ),
+  )
+  assert.equal(screenSpecModules.length, 42)
   assert.equal(
     new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
-    41,
+    42,
   )
 })
 

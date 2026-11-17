@@ -27,6 +27,7 @@ export function GuideStaticPage({
     | '/guides/workspace-owner'
     | '/guides/workspace-admin'
     | '/guides/link-sharing'
+    | '/guides/search'
 }) {
   const { t } = useT()
   const freshnessKey =
@@ -36,7 +37,9 @@ export function GuideStaticPage({
         ? PUBLIC_GUIDE_KEYS.workspaceAdmin
         : path === '/guides/link-sharing'
           ? PUBLIC_GUIDE_KEYS.linkSharing
-          : null
+          : path === '/guides/search'
+            ? PUBLIC_GUIDE_KEYS.search
+            : null
   return (
     <>
       <GuideTopbar>
