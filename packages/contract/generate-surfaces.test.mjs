@@ -1238,6 +1238,8 @@ test('both agent skills explain owner IDs and automatic search fallback', () => 
       'fewer or different words',
       'automatically retries',
       'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+      'search_capacity_exceeded',
+      'narrow the query or filters and search again',
     ])
       assert.ok(text.includes(advice), `${path}: ${advice}`)
   }
