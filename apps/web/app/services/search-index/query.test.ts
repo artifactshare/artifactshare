@@ -16,38 +16,52 @@ const filler = (length: number) =>
 
 test.each([
   ['at the start', 0],
-  ['inside the first window', 1200],
-  ['just before a window boundary', 16_378],
-  ['across a window boundary', 16_380],
-  ['just after a window boundary', 16_386],
+  ['early in the body', 1200],
   ['deep in a long body', 150_000],
 ])(
   'a long body excerpts its first match %s like a whole-body scan',
   (_, at) => {
     const body = `${filler(at)}needleterm ${filler(160_000 - at)}`
-    for (const query of ['needleterm', 'NEEDLETERM', 'needle term'])
+    for (const query of ['needleterm', 'NEEDLETERM', 'needle term', 'term'])
       expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
     expect(excerpt(body, 'needleterm')).toContain('needleterm')
   },
 )
 
-test('Japanese and katakana matches across a boundary match a whole-body scan', () => {
-  const body = `${'共有の設定を確認します。'.repeat(1365)}フロントエンドエンジニアの募集${'あ'.repeat(9000)}`
-  for (const query of ['フロントエンドエンジニア', 'エンジニア', '募集'])
+test.each([
+  ['spaces', ' '.repeat(700)],
+  ['hyphens', '-'.repeat(2000)],
+  ['ideographic spaces', '　'.repeat(20_000)],
+  ['combining marks after spaces', ' ́'.repeat(1000)],
+  ['symbols', '❶❷❸─'.repeat(500)],
+])('a segmented match bridging %s matches a whole-body scan', (_, gap) => {
+  const body = `${filler(16_000)} フロント${gap}エンド エンジニア ${filler(40_000)}`
+  for (const query of [
+    'フロントエンドエンジニア',
+    'フロント エンド エンジニア',
+    'エンジニア',
+  ])
     expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
 })
 
-test('a segmented match with a long gap before a window boundary matches a whole-body scan', () => {
-  for (const gap of [' '.repeat(700), '-'.repeat(2000), '　'.repeat(20_000)]) {
-    const body = `${filler(16_000)} フロント${gap}エンド エンジニア ${filler(40_000)}`
-    for (const query of [
-      'フロントエンドエンジニア',
-      'フロント エンド エンジニア',
-    ])
-      expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
-  }
+test('a later shorter match does not hide an earlier longer one', () => {
+  const body = `${filler(3000)} alpha beta gamma ${filler(3000)} gamma ${filler(9000)}`
+  for (const query of ['alpha beta gamma', 'gamma alpha', 'beta gamma'])
+    expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
+})
+
+test('Japanese, katakana and soft-hyphen text match a whole-body scan', () => {
+  const body = `${'共有の設定を確認します。'.repeat(1365)}フロ­ントエンドエンジニアの募集フロントエンドエンジニア${'あ'.repeat(9000)}`
+  for (const query of [
+    'フロントエンドエンジニア',
+    'エンジニア',
+    '募集',
+    '設定',
+  ])
+    expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
 })
 
 test('a body without a match has no excerpt', () => {
   expect(excerpt(filler(50_000), 'absent')).toBe('')
+  expect(excerpt(filler(50_000), '')).toBe(wholeBodyExcerpt(filler(50_000), ''))
 })

@@ -116,13 +116,7 @@ export function searchMatchSpans(
   body: string,
   query: string,
 ): Array<[number, number]> {
-  return matchSpans(body, prepareQuery(query))
-}
-
-function matchSpans(
-  body: string,
-  prepared: ReturnType<typeof prepareQuery>,
-): Array<[number, number]> {
+  const prepared = prepareQuery(query)
   const starts: number[] = [],
     ends: number[] = [],
     pieces: string[] = []
@@ -178,56 +172,89 @@ function matchSpans(
   return spans
 }
 
-const EXCERPT_WINDOW = 16_384
-const EXCERPT_OVERLAP = 512
-const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu
-
 /**
- * Where a window must end so every match starting before coreEnd fits in it.
- * A segmented match skips separators of any length between its tokens, so
- * the window reaches past as many word runs as the longest term has tokens.
+ * The earliest start searchMatchSpans would report, found without building
+ * every word token. Word segmentation is read lazily and stops once no later
+ * token can start a match before the best one found so far.
  */
-function windowEnd(
-  body: string,
-  coreEnd: number,
-  overlap: number,
-  tokens: number,
-) {
-  let end = coreEnd
-  WORD_RUN.lastIndex = coreEnd
-  for (let run = 0; run < tokens; run++) {
-    const found = WORD_RUN.exec(body)
-    if (!found) break
-    end = found.index + found[0].length
-  }
-  return Math.min(body.length, end + overlap)
-}
-
-/** The first match position, scanning forward so long bodies stop early. */
-function firstMatch(body: string, query: string): number | undefined {
-  // Segmenting a whole body costs time in proportion to its length, and only
-  // the first match is needed. Each window keeps matches that start in its
-  // own core; the overlap before the core gives segmentation context.
+function firstMatchStart(body: string, query: string): number | undefined {
   const prepared = prepareQuery(query)
-  const tokens = Math.max(
-    1,
-    ...prepared.terms.map((term) => term.split(' ').length),
-  )
-  const overlap = EXCERPT_OVERLAP + query.length * 4
-  for (let core = 0; core < body.length; core += EXCERPT_WINDOW) {
-    const from = Math.max(0, core - overlap)
-    const coreEnd = Math.min(body.length, core + EXCERPT_WINDOW)
-    const window = body.slice(from, windowEnd(body, coreEnd, overlap, tokens))
-    const starts = matchSpans(window, prepared)
-      .map(([start]) => from + start)
-      .filter((start) => start >= core && start < coreEnd)
-    if (starts.length) return Math.min(...starts)
+  const starts: number[] = [],
+    ends: number[] = [],
+    pieces: string[] = []
+  for (const part of graphemeSegmenter.segment(body)) {
+    const normalized = part.segment.normalize('NFKC').toLowerCase()
+    pieces.push(normalized)
+    for (let i = 0; i < normalized.length; i++) {
+      starts.push(part.index)
+      ends.push(part.index + part.segment.length)
+    }
   }
-  return undefined
+  const normalized = pieces.join('')
+  let best: number | undefined
+  const consider = (start: number) => {
+    if (best === undefined || start < best) best = start
+  }
+  // Literal and prefix matches: the first occurrence of each term is its
+  // earliest, and normalized positions map to source positions in order.
+  for (const term of [...prepared.terms, ...prepared.prefixes]) {
+    if (!term) continue
+    const at = normalized.indexOf(term)
+    if (at >= 0) consider(starts[at])
+  }
+  const terms = prepared.terms.filter(Boolean)
+  if (!terms.length) return best
+  const longest = Math.max(...terms.map((term) => term.length))
+  // Search only the newly appended text plus the tail a match could start
+  // in, so the joined token text is never rescanned or built in full.
+  let joinedLength = 0,
+    tail = ''
+  const tokenStarts: number[] = []
+  for (const part of wordSegmenter.segment(normalized)) {
+    if (!part.isWordLike) continue
+    let added = ''
+    let sourceOffset = 0
+    for (const token of normalizeSearchText(part.segment)
+      .split(' ')
+      .filter(Boolean)) {
+      const start = part.segment.indexOf(token, sourceOffset)
+      if (joinedLength + added.length) {
+        added += ' '
+        tokenStarts.push(starts[part.index + start])
+      }
+      added += token
+      for (let i = 0; i < token.length; i++)
+        tokenStarts.push(starts[part.index + start + i])
+      sourceOffset = start + token.length
+    }
+    if (!added) continue
+    const text = tail + added,
+      offset = joinedLength - tail.length
+    for (const term of terms) {
+      let at = text.indexOf(term)
+      while (at >= 0) {
+        // Matches wholly inside the tail were counted with earlier text.
+        if (at + term.length > tail.length) consider(tokenStarts[offset + at])
+        at = text.indexOf(term, at + 1)
+      }
+    }
+    joinedLength += added.length
+    tail = longest > 1 ? text.slice(-(longest - 1)) : ''
+    // Later matches start at or after this point, which maps to source
+    // positions in order, so none can come before the best one.
+    const earliestNext = Math.max(0, joinedLength - longest + 1)
+    if (
+      best !== undefined &&
+      earliestNext < tokenStarts.length &&
+      tokenStarts[earliestNext] > best
+    )
+      break
+  }
+  return best
 }
 
 export function excerpt(body: string, query: string): string {
-  const first = firstMatch(body, query)
+  const first = firstMatchStart(body, query)
   if (first === undefined) return ''
   const start = Math.max(0, first - 80)
   return `${start ? '…' : ''}${body.slice(start, start + 240)}${body.length > start + 240 ? '…' : ''}`
