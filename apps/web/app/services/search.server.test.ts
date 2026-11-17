@@ -1641,11 +1641,14 @@ test('a search waits on few sequential round trips and reads the viewer once', a
       }, 0)
     }))
   // Count viewer reads in the SQL SQLite receives, not in Kysely's nodes.
-  let viewerReads = 0
+  // Membership comes with the viewer row, never as a query of its own.
+  let viewerReads = 0,
+    membershipReads = 0
   const prepare = fixture.sqlite.prepare.bind(fixture.sqlite)
   fixture.sqlite.prepare = (sql: string) => {
     if (/^select [^()]*"email_verified"[^()]* from "users"/.test(sql))
       viewerReads++
+    if (/^select [^()]* from "workspace_members"/.test(sql)) membershipReads++
     return prepare(sql)
   }
   const db = fixture.db.withPlugin({
@@ -1676,4 +1679,19 @@ test('a search waits on few sequential round trips and reads the viewer once', a
   await searchSuggestions(db, () => remote, { id: 'viewer' }, input, now)
   expect(viewerReads).toBe(1)
   expect(waves).toBeLessThanOrEqual(8)
+  // A search with no matches retries with each filter relaxed; those retries
+  // run side by side.
+  waves = 0
+  viewerReads = 0
+  const none = await search(db, () => remote, 'viewer', {
+    ...input,
+    pageSize: 20,
+    filters: { ownerUserIds: ['nobody'], date: { field: 'updated' } },
+  })
+  if ('error' in none) throw new Error('unexpected search failure')
+  expect(none.items).toEqual([])
+  expect(none.relaxations.map((entry) => entry.filter)).toContain('owners')
+  expect(waves).toBeLessThanOrEqual(12)
+  expect(viewerReads).toBe(1)
+  expect(membershipReads).toBe(0)
 })

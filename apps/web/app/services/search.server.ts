@@ -163,33 +163,10 @@ async function metadata(
     }),
   )
 }
-/** The searching user's live identity and own-workspace membership. */
-type SearchActor = {
-  id: string
-  viewer?: DiscoveryViewer
-  memberStatus?: string | null
-}
-/** One read per search operation; discovery checks reuse it. */
+/** The searching user, with the live viewer row read once per operation. */
+type SearchActor = { id: string; viewer?: DiscoveryViewer }
 async function loadSearchActor(db: Db, id: string): Promise<SearchActor> {
-  const row = await db
-    .selectFrom('users as u')
-    .leftJoin('workspace_members as m', (join) =>
-      join
-        .onRef('m.workspace_id', '=', 'u.workspace_id')
-        .onRef('m.user_id', '=', 'u.id'),
-    )
-    .select([
-      'u.id',
-      'u.workspace_id',
-      'u.email',
-      'u.email_verified',
-      'm.status as member_status',
-    ])
-    .where('u.id', '=', id)
-    .executeTakeFirst()
-  if (!row) return { id }
-  const { member_status: memberStatus, ...viewer } = row
-  return { id, viewer, memberStatus }
+  return { id, viewer: await loadDiscoveryViewer(db, id) }
 }
 const asViewer = (actor: SearchActor) => ({
   viewerUserId: actor.id,
@@ -284,7 +261,7 @@ async function collect(
   includeActiveDocumentCount = false,
 ) {
   const ownWorkspace =
-    !any && actor.memberStatus === 'active'
+    !any && actor.viewer?.member_status === 'active'
       ? actor.viewer?.workspace_id
       : undefined
   const sources = ownWorkspace
@@ -741,7 +718,13 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
-  const viewer = await loadDiscoveryViewer(db, user.id)
+  // Project names do not depend on the viewer row, so read them alongside it.
+  const [viewer, projects] = await Promise.all([
+    loadDiscoveryViewer(db, user.id),
+    input.query.trim()
+      ? suggestProjects(db, user.id, input.query, input.filters.includeArchived)
+      : [],
+  ])
   const discoveryInput = {
     ...input.filters,
     viewerUserId: user.id,
@@ -760,7 +743,7 @@ export async function searchSuggestions(
       ),
     }
   const byId = new Map<string, Metadata>()
-  const [hits, projects, owners] = await Promise.all([
+  const [hits, owners] = await Promise.all([
     enumerateSuggestionIds(db, discoveryInput).then(async (sources) =>
       (
         await Promise.all(
@@ -793,7 +776,6 @@ export async function searchSuggestions(
         )
       ).flat(),
     ),
-    suggestProjects(db, user.id, input.query, input.filters.includeArchived),
     suggestionOwners(db, discoveryInput, input.query),
   ])
   const selected = mergeSearchHits(hits, input.sort === 'newest').slice(0, 6)

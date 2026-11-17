@@ -39,19 +39,52 @@ type DiscoveryQuery = SelectQueryBuilder<
   DiscoveredId
 >
 
-/** Load live identity once per operation; callers supply no session claims. */
-export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
+function viewerQuery(db: Kysely<DB>, viewerUserId: string) {
   return db
-    .selectFrom('users')
-    .select(['id', 'workspace_id', 'email', 'email_verified'])
-    .where('id', '=', viewerUserId)
-    .executeTakeFirst()
+    .selectFrom('users as u')
+    .leftJoin('workspace_members as m', (join) =>
+      join
+        .onRef('m.workspace_id', '=', 'u.workspace_id')
+        .onRef('m.user_id', '=', 'u.id'),
+    )
+    .select([
+      'u.id',
+      'u.workspace_id',
+      'u.email',
+      'u.email_verified',
+      'm.status as member_status',
+    ])
+    .where('u.id', '=', viewerUserId)
 }
-export type DiscoveryViewer = NonNullable<
-  Awaited<ReturnType<typeof loadDiscoveryViewer>>
->
+declare const liveViewer: unique symbol
+/**
+ * The viewer's live identity and own-workspace membership. Only
+ * loadDiscoveryViewer produces it, so callers cannot pass session claims.
+ */
+export type DiscoveryViewer = {
+  id: string
+  workspace_id: string
+  email: string
+  email_verified: number
+  member_status: 'active' | 'removed' | null
+} & { readonly [liveViewer]: true }
+/**
+ * Read the viewer from D1 on every call. An operation reads it once and
+ * hands it to later checks as DiscoveryInput.viewer.
+ */
+export async function loadDiscoveryViewer(
+  db: Kysely<DB>,
+  viewerUserId: string,
+): Promise<DiscoveryViewer | undefined> {
+  const row: Omit<DiscoveryViewer, typeof liveViewer> | undefined =
+    await viewerQuery(db, viewerUserId).executeTakeFirst()
+  return row as DiscoveryViewer | undefined
+}
 /** Reuse the operation's viewer row; read it only when the caller has none. */
-function inputViewer(db: Kysely<DB>, input: DiscoveryInput) {
+function inputViewer(
+  db: Kysely<DB>,
+  input: Pick<DiscoveryInput, 'viewerUserId' | 'viewer'>,
+) {
   return input.viewer?.id === input.viewerUserId
     ? input.viewer
     : loadDiscoveryViewer(db, input.viewerUserId)
@@ -345,14 +378,7 @@ export async function enumerateMemberDiscoverableIds(
   input: DiscoveryInput,
 ): Promise<DiscoveredId[]> {
   const viewer = await inputViewer(db, input)
-  if (!viewer) return []
-  const membership = await db
-    .selectFrom('workspace_members')
-    .select('status')
-    .where('workspace_id', '=', viewer.workspace_id)
-    .where('user_id', '=', viewer.id)
-    .executeTakeFirst()
-  if (membership?.status !== 'active') return []
+  if (viewer?.member_status !== 'active') return []
   return drainDiscoveryIds(
     buildMemberDiscoveryQuery(
       db,
@@ -458,10 +484,10 @@ export async function resolveSearchSelections(
   credentialScope?: DiscoveryFilters['credentialScope'],
   knownViewer?: DiscoveryViewer,
 ) {
-  const viewer =
-    knownViewer?.id === actor
-      ? knownViewer
-      : await loadDiscoveryViewer(db, actor)
+  const viewer = await inputViewer(db, {
+    viewerUserId: actor,
+    viewer: knownViewer,
+  })
   if (!viewer) return { owners: [], projects: [] }
   const eligible = discoveryQuery(
     db,
