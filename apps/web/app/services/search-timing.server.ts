@@ -123,14 +123,21 @@ export function timeIndexes(
   }
 }
 
+/** Busy time so far, including calls still in flight when a search fails. */
+function lanePart(name: string, target: Lane, unit: string, now: number) {
+  const busy = target.busyMs + (target.inflight > 0 ? now - target.since : 0)
+  const running = target.inflight > 0 ? `, ${target.inflight} running` : ''
+  return `${name};dur=${Math.round(busy)};desc="${target.count} ${unit}${running}"`
+}
+
 /** Totals only: the header is visible to the signed-in viewer. */
 export function serverTiming(timings: SearchTimings, totalMs: number) {
-  const ms = (value: number) => Math.round(value)
+  const now = performance.now()
   return [
-    `search;dur=${ms(totalMs)}`,
-    `d1;dur=${ms(timings.d1.busyMs)};desc="${timings.d1.count} queries"`,
-    `d1sql;dur=${ms(timings.d1.sqlMs)}`,
-    `index;dur=${ms(timings.index.busyMs)};desc="${timings.index.count} calls"`,
+    `search;dur=${Math.round(totalMs)}`,
+    lanePart('d1', timings.d1, 'queries', now),
+    `d1sql;dur=${Math.round(timings.d1.sqlMs)}`,
+    lanePart('index', timings.index, 'calls', now),
   ].join(', ')
 }
 
@@ -139,13 +146,15 @@ const workspaceIndexes: SearchIndexes = (workspace) =>
 
 /**
  * Run one search request with timed D1 and index access. The breakdown is
- * returned for the Server-Timing header, and logged when the search throws
- * so the slowest failures still leave a record.
+ * returned for the Server-Timing header. `expected` turns a known outcome,
+ * such as a capacity error, into a value that keeps its breakdown; any other
+ * error is logged with the breakdown so slow failures still leave a record.
  */
-export async function withSearchTiming<T>(
+export async function withSearchTiming<T, E = never>(
   route: string,
   run: (db: Db, indexes: SearchIndexes) => Promise<T>,
-): Promise<{ value: T; serverTiming: string }> {
+  expected?: (error: unknown) => E | undefined,
+): Promise<{ value: T | E; serverTiming: string }> {
   const timings = createSearchTimings(),
     started = performance.now()
   try {
@@ -158,6 +167,12 @@ export async function withSearchTiming<T>(
       serverTiming: serverTiming(timings, performance.now() - started),
     }
   } catch (error) {
+    const value = expected?.(error)
+    if (value !== undefined)
+      return {
+        value,
+        serverTiming: serverTiming(timings, performance.now() - started),
+      }
     console.warn(
       JSON.stringify({
         event: 'search_timing_failed',

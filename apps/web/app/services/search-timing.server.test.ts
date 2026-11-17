@@ -31,6 +31,7 @@ function fakeDatabase() {
   const database = {
     prepare: () => statement,
     batch,
+    dump: () => 'kept',
   } as unknown as D1Database
   return { database, statement, batch, releases }
 }
@@ -51,6 +52,8 @@ test('overlapping statements count the time any was in flight, plus D1 SQL time'
   releases[1]()
   await second
   expect(timings.d1).toMatchObject({ count: 2, busyMs: 50, sqlMs: 6 })
+  // Methods the timing does not cover still reach the binding.
+  expect((timed as unknown as { dump: () => string }).dump()).toBe('kept')
 
   // A batch is one round trip of real statements, counted per statement.
   clock = 100
@@ -85,6 +88,29 @@ test('index calls are timed even when they fail, and the header carries totals o
   expect(serverTiming(timings, 312.4)).toBe(
     'search;dur=312, d1;dur=0;desc="0 queries", d1sql;dur=0, index;dur=60;desc="1 calls"',
   )
+})
+
+test('a breakdown taken mid-flight includes calls still running', () => {
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  const timings = createSearchTimings()
+  clock = 300
+  void timeD1(fakeDatabase().database, timings)!.prepare('select 1').all()
+  clock = 1300
+  expect(serverTiming(timings, 1000)).toContain(
+    'd1;dur=1000;desc="0 queries, 1 running"',
+  )
+})
+
+test('an expected outcome keeps its breakdown without a failure log', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const outcome = await withSearchTiming(
+    'search',
+    () => Promise.reject(new RangeError('capacity')),
+    (error) => (error instanceof RangeError ? 'narrow' : undefined),
+  )
+  expect(outcome.value).toBe('narrow')
+  expect(outcome.serverTiming).toContain('search;dur=')
+  expect(warn).not.toHaveBeenCalled()
 })
 
 test('a failed search logs its breakdown and rethrows', async () => {

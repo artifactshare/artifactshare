@@ -129,19 +129,16 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   const { value: result, serverTiming } = await withSearchTiming(
     'search',
     (db, indexes) => search(db, indexes, user.id, input, 'screen'),
-  ).catch((error: unknown) => {
-    if (error instanceof SearchCapacityError)
-      return {
-        value: {
-          error: {
-            code: 'search_capacity_exceeded',
-            hint: 'Narrow the query.',
-          },
-        },
-        serverTiming: undefined,
-      }
-    throw error
-  })
+    (error) =>
+      error instanceof SearchCapacityError
+        ? {
+            error: {
+              code: 'search_capacity_exceeded',
+              hint: 'Narrow the query.',
+            },
+          }
+        : undefined,
+  )
   if (
     !('error' in result) &&
     isDevScreenStateRequest(request, 'search/capped')
@@ -166,7 +163,7 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   return data(
     { result, actor: user.id },
     {
-      headers: serverTiming ? { 'Server-Timing': serverTiming } : undefined,
+      headers: { 'Server-Timing': serverTiming },
     },
   )
 }
