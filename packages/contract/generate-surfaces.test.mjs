@@ -1208,6 +1208,10 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
       ['cursor', 'query'],
     ],
   )
+  assert.equal(
+    operation.responses['503'].description,
+    'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again. This error is not a zero-result search.',
+  )
   assert.deepEqual(Object.keys(operation.responses), [
     '200',
     '400',
@@ -1215,4 +1219,28 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
     '403',
     '503',
   ])
+})
+
+test('both agent skills explain owner IDs and automatic search fallback', () => {
+  for (const path of [
+    '../cli/skills/artifactshare/SKILL.md',
+    '../../apps/web/app/services/mcp/skills/artifact-share/SKILL.md',
+  ]) {
+    const text = readFileSync(new URL(path, import.meta.url), 'utf8').split(
+      '## Full-text search',
+    )[1]
+    assert.ok(text)
+    for (const advice of [
+      '--owner-user-ids',
+      'owner_user_ids',
+      'user IDs, not email addresses',
+      'Rephrase the query and search again before concluding that nothing exists.',
+      'fewer or different words',
+      'automatically retries',
+      'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+      'search_capacity_exceeded',
+      'narrow the query or filters and search again',
+    ])
+      assert.ok(text.includes(advice), `${path}: ${advice}`)
+  }
 })

@@ -644,7 +644,7 @@ export const REST_OPERATIONS = {
         403: { description: 'Credential scope denied.' },
         503: {
           description:
-            'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again.',
+            'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again. This error is not a zero-result search.',
         },
       },
     },

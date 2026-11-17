@@ -33,6 +33,12 @@ describe('guide-locale updates paths', () => {
     expect(pathGuideLocale('/guides/link-sharing')).toBe('en')
     expect(pathGuideLocale('/ja/guides/link-sharing')).toBe('ja')
   })
+  test('treats search guides as public locale pairs', () => {
+    expect(isPublicPagePath('/guides/search')).toBe(true)
+    expect(isPublicPagePath('/ja/guides/search')).toBe(true)
+    expect(pathGuideLocale('/guides/search')).toBe('en')
+    expect(pathGuideLocale('/ja/guides/search')).toBe('ja')
+  })
   test('treats private mobile handoff guides as public locale pairs', () => {
     expect(isPublicPagePath('/guides/private-mobile-design-handoff')).toBe(true)
     expect(isPublicPagePath('/ja/guides/private-mobile-design-handoff')).toBe(

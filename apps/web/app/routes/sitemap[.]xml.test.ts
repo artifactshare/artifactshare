@@ -80,6 +80,10 @@ describe('/sitemap.xml route', () => {
     expect(body).toContain(
       '<loc>https://artifactshare.com/ja/guides/link-sharing</loc>',
     )
+    expect(body).toContain('<loc>https://artifactshare.com/guides/search</loc>')
+    expect(body).toContain(
+      '<loc>https://artifactshare.com/ja/guides/search</loc>',
+    )
     expect(body).toContain(
       '<loc>https://artifactshare.com/guides/private-mobile-design-handoff</loc>',
     )

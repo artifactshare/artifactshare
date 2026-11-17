@@ -145,6 +145,7 @@ const EN: ShareWithAiContent = {
   nextConnectLinks: [
     { path: '/guides/cli', anchor: '', label: 'CLI reference' },
     { path: '/guides/link-sharing', anchor: '', label: 'Link sharing guide' },
+    { path: '/guides/search', anchor: '', label: 'Search guide' },
     {
       anchor: CONNECT_AI_AGENTS_ANCHOR,
       label: 'Set up the CLI for Codex, Claude Code, or Cursor Agent',
@@ -274,6 +275,7 @@ const JA: ShareWithAiContent = {
       anchor: '',
       label: 'リンク共有ガイド',
     },
+    { path: '/guides/search', anchor: '', label: '検索ガイド' },
     {
       anchor: CONNECT_AI_AGENTS_ANCHOR,
       label: 'Codex、Claude Code、Cursor Agent に CLI をセットアップ',

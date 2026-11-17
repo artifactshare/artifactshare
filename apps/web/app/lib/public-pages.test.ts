@@ -55,6 +55,8 @@ describe('public page master', () => {
     expect(getPublicPagePath('guides-link-sharing', 'ja')).toBe(
       '/ja/guides/link-sharing',
     )
+    expect(getPublicPagePath('guides-search', 'en')).toBe('/guides/search')
+    expect(getPublicPagePath('guides-search', 'ja')).toBe('/ja/guides/search')
     expect(getPublicPagePath('private-mobile-design-handoff', 'en')).toBe(
       '/guides/private-mobile-design-handoff',
     )

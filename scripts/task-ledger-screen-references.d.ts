@@ -23,6 +23,7 @@ export type TaskLedgerScreenReference =
   | 'guides-cli/default'
   | 'guides-link-sharing/default'
   | 'guides-private-mobile-design-handoff/default'
+  | 'guides-search/default'
   | 'guides-workspace-admin/default'
   | 'guides-workspace-owner/default'
   | 'home/access-request-detail'

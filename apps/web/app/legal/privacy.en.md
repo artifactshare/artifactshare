@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** 2026-09-07
+**Last updated:** 2026-11-17
 
 Artifact Share is provided by TechTalk, Inc. The service lets signed-in users
 upload HTML and Markdown files, store them in Artifact Share infrastructure, and
@@ -18,6 +18,12 @@ share them through app-managed access controls.
   the name — never the value — of an advertising click parameter.
   Artifact Share uses these additional fields to detect abuse of link sharing
   and deletes them after 30 days.
+- Search records: the query, search conditions, result count, and results you opened,
+  plus where the search came from (web, MCP or CLI), how long it took, how the
+  query was matched (for example, whether it was widened to any of the words), and
+  counts of the files and documents searched at the time.
+  Only you and the service operator can read these records. They become eligible
+  for periodic deletion after 90 days; processing failures or a backlog can delay deletion.
 - Appeal text submitted by a file owner after link sharing is paused. We store
   the submitted text with the file's event history. This event text becomes
   eligible for periodic deletion after 90 days; processing failures or a

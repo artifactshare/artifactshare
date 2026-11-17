@@ -1,3 +1,5 @@
+import searchEn from '../updates/entries/2026-11-17-full-text-search.en.md?raw'
+import searchJa from '../updates/entries/2026-11-17-full-text-search.ja.md?raw'
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -575,3 +577,53 @@ Body`,
     })
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'publishes the full-text search announcement in %s',
+  (locale) => {
+    const slug = '2026-11-17-full-text-search'
+    const source = locale === 'en' ? searchEn : searchJa
+    const parsed = parseUpdateFile(`${slug}.${locale}.md`, source)
+    expect(parsed.locale).toBe(locale)
+    expect(parsed.frontmatter).toMatchObject({
+      date: '2026-11-17',
+      products: ['web', 'mcp', 'cli'],
+      kind: 'new',
+    })
+    expect(parsed.frontmatter.notice).toBeUndefined()
+    const update = getUpdateBySlug(slug, locale)!
+    expect(update).toBeDefined()
+    for (const term of [
+      'HTML',
+      'Markdown',
+      'MCP',
+      'list_artifacts',
+      'artifacts list',
+    ])
+      expect(update.summaryHtml).toContain(term)
+    const facts =
+      locale === 'en'
+        ? [
+            'body text in HTML and Markdown files',
+            'HTML and Markdown pages in static sites',
+            'owner, project, and period',
+            'only through admin rights do not appear',
+            'archived projects',
+            'already opened while signed in',
+            'Ownership or a direct share',
+            'PDF body text and video speech are not included',
+          ]
+        : [
+            'HTML ファイルと Markdown ファイルの本文',
+            '静的サイト内の HTML・Markdown ページの本文',
+            '所有者、プロジェクト、期間',
+            '管理者権限だけで開けるファイルは出ません',
+            'アーカイブ済みプロジェクト',
+            'ログインして一度開いた',
+            '自分が所有している場合や直接共有されている場合',
+            'PDF の本文や動画の音声は含みません',
+          ]
+    for (const fact of facts)
+      expect(update.summaryHtml + update.bodyHtml).toContain(fact)
+  },
+)

@@ -526,8 +526,8 @@ test.each(['en', 'ja'] as const)(
   'keeps four recovery topics after search guidance in %s',
   (locale) => {
     const recovery = cliReferenceContent(locale).sections.recovery.body
-    expect(recovery).toHaveLength(7)
-    const paragraphs = recovery.slice(3)
+    expect(recovery).toHaveLength(8)
+    const paragraphs = recovery.slice(4)
     expect(paragraphs).toHaveLength(4)
     const starts =
       locale === 'en'
@@ -743,5 +743,35 @@ test.each(['en', 'ja'] as const)(
         ? 'Rephrase the query and search again before concluding that nothing exists.'
         : '言い換えて再検索してください',
     )
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'documents owner IDs, automatic fallback and capacity recovery in %s',
+  (locale) => {
+    const body = cliReferenceContent(locale).sections.recovery.body.join(' ')
+    for (const text of [
+      '--owner-user-ids',
+      'owner_user_ids',
+      'Rephrase the query and search again before concluding that nothing exists.',
+      'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+      '503',
+      'search_capacity_exceeded',
+    ])
+      expect(body).toContain(text)
+    for (const text of locale === 'en'
+      ? [
+          'not email addresses',
+          'fewer or different words',
+          'automatically retries',
+          'Narrow the query or filters and search again. This error is not a zero-result search.',
+        ]
+      : [
+          'メールアドレスではなくユーザー ID',
+          '語を減らすか別の語',
+          '自動で切り替わります',
+          '検索語や条件を絞って再検索してください。このエラーは検索が成功して 0 件だったことを意味しません。',
+        ])
+      expect(body).toContain(text)
   },
 )

@@ -192,6 +192,7 @@ function sanitizedPageTitle(pathname: string): string {
     '/updates': 'Updates',
     '/guides/cli': 'Guide',
     '/guides/link-sharing': 'Guide',
+    '/guides/search': 'Guide',
     '/guides/workspace-admin': 'Guide',
     '/guides/workspace-owner': 'Guide',
     '/guides/private-mobile-design-handoff': 'Guide',
