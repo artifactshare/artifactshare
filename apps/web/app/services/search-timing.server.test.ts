@@ -99,7 +99,7 @@ test('index calls are timed even when they fail, and the header carries totals o
   await expect(call).rejects.toThrow('capacity')
   expect(timings.index).toMatchObject({ count: 1, busyMs: 60 })
   expect(serverTiming(timings, 312.4)).toBe(
-    'search;dur=312, d1;dur=0;desc="0 queries", d1sql;dur=0, index;dur=60;desc="1 calls"',
+    'search;dur=312, d1;dur=0;desc="0 queries", d1sql;dur=0, index;dur=60;desc="1 calls", index-search;dur=60;desc="1 calls, fastest 60ms"',
   )
 })
 
@@ -136,4 +136,34 @@ test('a failed search logs its breakdown and rethrows', async () => {
     route: 'search',
     serverTiming: expect.stringContaining('search;dur='),
   })
+})
+
+test('each index method reports its fastest and slowest call', async () => {
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  const timings = createSearchTimings()
+  const releases: Array<() => void> = []
+  const index: SearchIndex = {
+    search: () => Promise.resolve({ items: [], nextCursor: null }),
+    groupMembers: () => Promise.resolve({ items: [], nextCursor: null }),
+    details: () => new Promise((resolve) => releases.push(() => resolve([]))),
+  }
+  const indexes = timeIndexes(() => index, timings)
+  clock = 0
+  const slow = indexes('a').details({} as never, ['a'])
+  clock = 40
+  const fast = indexes('b').details({} as never, ['b'])
+  clock = 60
+  releases[1]()
+  await fast
+  clock = 400
+  releases[0]()
+  await slow
+  expect(timings.indexCalls.details).toEqual({
+    count: 2,
+    minMs: 20,
+    maxMs: 400,
+  })
+  expect(serverTiming(timings, 400)).toContain(
+    'index-details;dur=400;desc="2 calls, fastest 20ms"',
+  )
 })

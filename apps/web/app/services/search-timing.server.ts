@@ -9,16 +9,25 @@ import type { SearchIndex, SearchIndexes } from './search.server'
  */
 type Lane = { count: number; busyMs: number; inflight: number; since: number }
 
+/**
+ * One index method's fastest and slowest single call. A fast call bounds the
+ * round trip to the index, so a slow fastest call points at its location and
+ * a fast fastest call with a slow slowest call points at the work inside it.
+ */
+type CallRange = { count: number; minMs: number; maxMs: number }
+type IndexMethod = keyof SearchIndex
+
 /** Where one search request spends its time. */
 export type SearchTimings = {
   d1: Lane & { sqlMs: number }
   index: Lane
+  indexCalls: Partial<Record<IndexMethod, CallRange>>
 }
 
 const lane = (): Lane => ({ count: 0, busyMs: 0, inflight: 0, since: 0 })
 
 export function createSearchTimings(): SearchTimings {
-  return { d1: { ...lane(), sqlMs: 0 }, index: lane() }
+  return { d1: { ...lane(), sqlMs: 0 }, index: lane(), indexCalls: {} }
 }
 
 async function track<T>(target: Lane, calls: number, run: () => Promise<T>) {
@@ -110,19 +119,39 @@ export function timeIndexes(
   timings: SearchTimings,
 ): SearchIndexes {
   const timed =
-    <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
+    <A extends unknown[], R>(
+      method: IndexMethod,
+      call: (...args: A) => Promise<R>,
+    ) =>
     (...args: A) =>
-      track(timings.index, 1, () => call(...args))
+      track(timings.index, 1, async () => {
+        const started = performance.now()
+        try {
+          return await call(...args)
+        } finally {
+          const ms = performance.now() - started
+          const range = timings.indexCalls[method]
+          timings.indexCalls[method] = range
+            ? {
+                count: range.count + 1,
+                minMs: Math.min(range.minMs, ms),
+                maxMs: Math.max(range.maxMs, ms),
+              }
+            : { count: 1, minMs: ms, maxMs: ms }
+        }
+      })
   return (workspaceId) => {
     const index = indexes(workspaceId)
     return {
-      search: timed((...args: Parameters<SearchIndex['search']>) =>
+      search: timed('search', (...args: Parameters<SearchIndex['search']>) =>
         index.search(...args),
       ),
-      groupMembers: timed((...args: Parameters<SearchIndex['groupMembers']>) =>
-        index.groupMembers(...args),
+      groupMembers: timed(
+        'groupMembers',
+        (...args: Parameters<SearchIndex['groupMembers']>) =>
+          index.groupMembers(...args),
       ),
-      details: timed((...args: Parameters<SearchIndex['details']>) =>
+      details: timed('details', (...args: Parameters<SearchIndex['details']>) =>
         index.details(...args),
       ),
     }
@@ -144,6 +173,10 @@ export function serverTiming(timings: SearchTimings, totalMs: number) {
     lanePart('d1', timings.d1, 'queries', now),
     `d1sql;dur=${Math.round(timings.d1.sqlMs)}`,
     lanePart('index', timings.index, 'calls', now),
+    ...Object.entries(timings.indexCalls).map(
+      ([method, range]) =>
+        `index-${method};dur=${Math.round(range.maxMs)};desc="${range.count} calls, fastest ${Math.round(range.minMs)}ms"`,
+    ),
   ].join(', ')
 }
 
