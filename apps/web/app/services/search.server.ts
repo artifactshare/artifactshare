@@ -375,7 +375,7 @@ async function collect(
   }
   const merged = mergeSearchHits(
     [...new Map(hits.map((row) => [row.id, row])).values()],
-    input.sort === 'newest' || !input.query.trim(),
+    input.sort === 'newest',
   )
   const rows = merged.flatMap((hit) => {
     const meta = metas.get(hit.id)

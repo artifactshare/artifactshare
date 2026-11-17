@@ -782,3 +782,53 @@ test('unresolved inherited IDs keep neutral labels without borrowing another sel
     .element(page.getByRole('button', { name: /Project: Home \(no project\)/ }))
     .toBeVisible()
 })
+
+test('phone header keeps search on the right and the empty palette says it is loading recent files', async () => {
+  await page.viewport(390, 700)
+  // Suggestions never answer, so the palette stays in its loading state.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) =>
+      String(input).includes('search-logs')
+        ? Promise.resolve(Response.json({ searches: [] }))
+        : new Promise<Response>(() => {}),
+    ),
+  )
+  const router = createMemoryRouter([
+    {
+      id: 'root',
+      path: '/',
+      loader: () => ({ locale: 'en' }),
+      element: (
+        <Topbar
+          workspaceName="Workspace"
+          user={{
+            id: 'viewer',
+            name: 'Viewer',
+            email: 'viewer@example.com',
+            image: null,
+            initial: 'V',
+          }}
+        />
+      ),
+    },
+  ])
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(
+    <TooltipProvider>
+      <RouterProvider router={router} />
+    </TooltipProvider>,
+  )
+  const trigger = page.getByRole('button', { name: /^Search(?::|$)/ })
+  await expect.element(trigger).toBeVisible()
+  await waitForBrowserLayout()
+  expect(trigger.element().getBoundingClientRect().left).toBeGreaterThan(
+    window.innerWidth / 2,
+  )
+  await trigger.click()
+  await expect
+    .element(page.getByRole('status').filter({ hasText: 'Loading…' }))
+    .toBeVisible()
+})

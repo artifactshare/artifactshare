@@ -30,6 +30,7 @@ import { FileTypeIcon } from './file-type-icon'
 import { Highlight } from './search-results'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { Button } from '~/components/ui/button'
+import { cn } from '~/lib/utils'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
@@ -117,9 +118,12 @@ export function SearchPalette({
   return (
     <div
       className={
-        mobile && !resultsPage
-          ? 'ml-auto shrink-0'
-          : 'nav:max-w-xl min-w-0 flex-1'
+        // Before hydration knows the width, CSS still keeps the phone header's
+        // search, settings and avatar on the right.
+        cn(
+          'max-nav:ml-auto',
+          mobile && !resultsPage ? 'shrink-0' : 'nav:max-w-xl min-w-0 flex-1',
+        )
       }
     >
       {mobile ? (
@@ -696,7 +700,10 @@ function PaletteCandidates({
       >
         {status === 'loading' ? (
           <span className="flex items-center gap-2">
-            <IconLoader2 className="size-4 animate-spin" aria-hidden="true" />
+            <IconLoader2
+              className="size-4 motion-safe:animate-spin motion-safe:[animation-duration:var(--anim-spin-duration)]"
+              aria-hidden="true"
+            />
             {t(query.trim() ? 'search.loading' : 'search.loadingRecent')}
           </span>
         ) : status === 'error' ? (
