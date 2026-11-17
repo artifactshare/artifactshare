@@ -5,7 +5,7 @@ import type { IncomingMessage } from 'node:http'
 import { reactRouter } from '@react-router/dev/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
-import { defineConfig, searchForWorkspaceRoot } from 'vite'
+import { defineConfig } from 'vite'
 import type { Plugin } from 'vite'
 import { APP_DEV_PORT, parseDevPort } from './app/lib/hosts.js'
 
@@ -18,11 +18,10 @@ type GitExec = (
 ) => string
 
 /**
- * Files the dev server reads and writes. `pnpm dev` sets none of these and
- * uses the checkout's own certificate, `.dev.vars` and Vite cache. The local
- * capture commands point them into their private runtime directory, so a
- * capture never rewrites what a `pnpm dev` in the same checkout reads (a
- * dependency re-optimisation in a shared cache reloads that server).
+ * Files the dev server reads. `pnpm dev` sets none of these and uses the
+ * checkout's own certificate and `.dev.vars`. The local capture commands,
+ * which run this config from an export of HEAD, name the certificate and
+ * variables they chose.
  */
 export function devServerFiles(
   env: Record<string, string | undefined> = process.env,
@@ -34,17 +33,9 @@ export function devServerFiles(
     keyPath: path.join(certs, 'key.pem'),
     varsPath:
       env.ARTIFACTSHARE_DEV_VARS_PATH || path.join(REPO_ROOT, '.dev.vars'),
-    cacheDir: env.ARTIFACTSHARE_DEV_VITE_CACHE_DIR || undefined,
-    // The local capture commands run this config from an export of HEAD
-    // (no Git metadata) whose dependencies resolve into the checkout: the
-    // revision check asks the checkout, and Vite may serve its dependencies.
+    // The local capture commands run this config from an export of HEAD,
+    // which has no Git metadata: the revision check asks the checkout.
     gitRoot: env.ARTIFACTSHARE_DEV_GIT_ROOT || REPO_ROOT,
-    fsAllow: env.ARTIFACTSHARE_DEV_FS_ALLOW
-      ? env.ARTIFACTSHARE_DEV_FS_ALLOW.split(path.delimiter)
-          .filter(Boolean)
-          // Vite compares real paths, which is where linked dependencies lead.
-          .map((dir) => (fs.existsSync(dir) ? fs.realpathSync(dir) : dir))
-      : [],
   }
 }
 
@@ -210,7 +201,6 @@ export default defineConfig(({ command, isPreview }) => {
   const topology = isDevServer ? devServerTopology() : undefined
 
   return {
-    ...(files.cacheDir ? { cacheDir: files.cacheDir } : {}),
     build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
     plugins: [
       ...(startupHead
@@ -257,16 +247,6 @@ export default defineConfig(({ command, isPreview }) => {
           ...(topology.host ? { host: topology.host } : {}),
           strictPort: true,
           https: loadDevCerts(files),
-          ...(files.fsAllow.length
-            ? {
-                fs: {
-                  allow: [
-                    searchForWorkspaceRoot(process.cwd()),
-                    ...files.fsAllow,
-                  ],
-                },
-              }
-            : {}),
         }
       : undefined,
   }

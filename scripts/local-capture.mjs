@@ -11,8 +11,8 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
+  constants,
   copyFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,28 +20,25 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
-  symlinkSync,
 } from 'node:fs'
 import { request } from 'node:https'
-import { createRequire } from 'node:module'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { parse as parseYaml } from 'yaml'
+import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
 import {
   certificateSupportsDevelopmentHosts,
   DEV_SERVICES,
-  missingStaticSiteFixtures,
   prepareDevEnvironment,
   serviceIdentityMatches,
 } from './dev-setup.mjs'
 import { assertSafeCaptureOutput } from './screen-capture-output.mjs'
 
-// The capture modules are loaded only by the lifecycle in the checkout:
-// importing them runs the React Router CLI for route discovery
-// (screen-ledger), which needs the checkout's dependencies and must not run
-// in the exported copy, where the setup steps (`prepare`, `build-cli`) load
-// this module.
+// The capture modules are loaded only by the lifecycle in the checkout, not
+// by the `prepare` setup step that loads this module in the
+// export, which do not need them.
 const screenCapture = () => import('./screen-capture.mjs')
 const walkthroughCapture = () => import('./task-walkthrough-capture.mjs')
 
@@ -93,24 +90,6 @@ export async function parseLocalCaptureArgs(mode, argv) {
   const forwarded = argv[0] === '--' ? argv.slice(1) : argv
   await spec.parse(forwarded)
   return forwarded
-}
-
-/**
- * The same rule as `parseDevPort` in apps/web/app/lib/hosts.ts, which checks
- * the ports again inside the Workers and Vite config. This copy exists
- * because this script runs as plain Node before anything is built; the unit
- * test runs both against the same examples. Ports below 1024 are refused:
- * they need privileges, and 443 would vanish from `https://localhost:443`, so
- * viewer links would fall back to the default port of another stack.
- */
-export function parsePortSetting(name, value) {
-  if (value === undefined || value === '') return undefined
-  const port = Number(value)
-  if (!/^\d+$/u.test(value) || port < 1024 || port > 65535)
-    throw new Error(
-      `${name} must be a TCP port from 1024 to 65535, got ${value}`,
-    )
-  return port
 }
 
 function listen(port, host) {
@@ -169,7 +148,7 @@ export async function selectPorts({
 } = {}) {
   const ports = {}
   for (const [name, setting] of Object.entries(PORT_SETTINGS)) {
-    const port = parsePortSetting(setting, env[setting])
+    const port = parseDevPort(setting, env[setting])
     if (port === undefined) continue
     const duplicate = Object.entries(ports).find(([, value]) => value === port)
     if (duplicate)
@@ -227,23 +206,12 @@ export function createRuntimeRoot({
       registry: join(root, 'registry'),
       persist: join(root, 'persist'),
       logs: join(root, 'logs'),
-      viteCache: join(root, 'vite-cache'),
-      miniflareCache: join(root, 'miniflare-cache'),
-      wranglerCache: join(root, 'wrangler-cache'),
       certs: join(root, 'certs'),
       vars: join(root, 'dev.vars'),
-      cli: join(root, 'cli'),
       // The export of HEAD the setup steps and services run from.
       source: join(root, 'source'),
     }
-    for (const dir of [
-      runtime.registry,
-      runtime.persist,
-      runtime.logs,
-      runtime.viteCache,
-      runtime.miniflareCache,
-      runtime.wranglerCache,
-    ])
+    for (const dir of [runtime.registry, runtime.persist, runtime.logs])
       mkdirSync(dir)
     return runtime
   } catch (error) {
@@ -253,10 +221,12 @@ export function createRuntimeRoot({
 }
 
 /**
- * Where the owned stack reads its certificate and variables. A checkout file
- * a developer's `pnpm dev` also reads is used read-only when it is usable; a
- * missing or obsolete one is generated in the runtime directory instead, so
- * the checkout copy is never created, renamed or replaced.
+ * Where the owned stack reads its certificate and variables. A usable checkout
+ * certificate a developer's `pnpm dev` also reads is used read-only; a missing
+ * or obsolete one is generated in the runtime directory instead. The
+ * checkout's `.dev.vars` is copied into the runtime directory, and every step
+ * reads and completes only that copy, so no step is ever handed a checkout
+ * path it could create or rewrite (even if the file disappears meanwhile).
  */
 export function localInputs({
   root = ROOT,
@@ -269,13 +239,19 @@ export function localInputs({
     existsSync(join(certs, 'cert.pem')) &&
     certificateValid(readFileSync(join(certs, 'cert.pem')))
   const vars = join(root, '.dev.vars')
+  let copiedFrom = null
+  try {
+    copyFileSync(vars, runtime.vars, constants.COPYFILE_EXCL)
+    copiedFrom = vars
+  } catch (error) {
+    // No checkout variables: prepare creates them in the runtime directory.
+    if (error?.code !== 'ENOENT') throw error
+  }
   return {
     certs: usableCerts
       ? { dir: certs, generate: false }
       : { dir: runtime.certs, generate: true },
-    vars: existsSync(vars)
-      ? { path: vars, create: false }
-      : { path: runtime.vars, create: true },
+    vars: { path: runtime.vars, copiedFrom },
   }
 }
 
@@ -297,11 +273,39 @@ export function ownedEnvironment(base, runtime) {
     CLOUDFLARE_DEV_REGISTRY_PATH: runtime.registry,
     WRANGLER_REGISTRY_PATH: runtime.registry,
     WRANGLER_LOG_PATH: runtime.logs,
-    // Miniflare otherwise rewrites `apps/web/node_modules/.mf/cf.json`, and
-    // Wrangler its cache under the checkout's node_modules.
-    MINIFLARE_CACHE_DIR: runtime.miniflareCache,
-    WRANGLER_CACHE_DIR: runtime.wranglerCache,
     ARTIFACTSHARE_DEV_PERSIST_PATH: runtime.persist,
+  }
+}
+
+/**
+ * The package store the checkout was installed from (recorded by pnpm in
+ * `node_modules/.modules.yaml`). The export installs from it offline.
+ */
+export function checkoutStoreDir(root = ROOT) {
+  const state = join(root, 'node_modules/.modules.yaml')
+  const storeDir = existsSync(state)
+    ? parseYaml(readFileSync(state, 'utf8'))?.storeDir
+    : undefined
+  if (!storeDir)
+    throw new Error(
+      `${state} names no package store; run pnpm install in the checkout first`,
+    )
+  return storeDir
+}
+
+/**
+ * The environment of the export's dependency install. Inherited Git variables
+ * are dropped and Git may not search above the export, so a lifecycle script
+ * that asks Git (hook installers) finds no repository: the export has no Git
+ * metadata of its own, and a temporary directory inside some other repository
+ * must not lead it there.
+ */
+export function installEnvironment(env, source) {
+  return {
+    ...Object.fromEntries(
+      Object.entries(env).filter(([name]) => !name.startsWith('GIT_')),
+    ),
+    GIT_CEILING_DIRECTORIES: dirname(source),
   }
 }
 
@@ -314,12 +318,13 @@ export function localCaptureCommands({
   env,
   inputs,
   revision,
+  storeDir,
   root = ROOT,
 }) {
   const spec = LOCAL_CAPTURE_MODES[mode]
-  // Setup steps and services run from the export of HEAD, never the
-  // checkout; only the capture itself (which writes nothing beside its
-  // sources) runs from the checkout.
+  // Setup steps and services run from the export of HEAD with its own
+  // dependency install, never the checkout; only the capture itself (which
+  // writes nothing beside its sources) runs from the checkout.
   const source = runtime.source
   const sourceScript = join(source, 'scripts/local-capture.mjs')
   const app = join(source, 'apps/web')
@@ -361,6 +366,23 @@ export function localCaptureCommands({
         cwd: root,
         env,
       },
+      // Every dependency link then resolves inside the export, and pnpm's
+      // own dependency check is satisfied there. Offline, from the store the
+      // checkout was installed from: nothing is downloaded, and nothing is
+      // written in the checkout.
+      {
+        name: 'dependency install',
+        command: 'pnpm',
+        args: [
+          'install',
+          '--frozen-lockfile',
+          '--offline',
+          '--store-dir',
+          storeDir,
+        ],
+        cwd: source,
+        env: installEnvironment(env, source),
+      },
       {
         name: 'prepare',
         command: process.execPath,
@@ -372,19 +394,17 @@ export function localCaptureCommands({
             persistTo: runtime.persist,
             certs: inputs.certs.generate ? inputs.certs.dir : null,
             vars: inputs.vars.path,
-            checkoutFixtures: join(root, 'fixtures/static-sites'),
           }),
         },
       },
-      // Built for the current HEAD on every walkthrough run, into the runtime
-      // directory: `packages/cli/dist` may be from an earlier HEAD, and
-      // rebuilding it in place would replace a shared build output.
+      // Built for the current HEAD on every walkthrough run, in the export:
+      // the checkout's `packages/cli/dist` may be from an earlier HEAD.
       ...(spec.needsCli
         ? [
             {
               name: 'cli build',
-              command: process.execPath,
-              args: [sourceScript, 'build-cli', runtime.cli],
+              command: 'pnpm',
+              args: ['--filter', '@artifactshare/cli', 'build'],
               cwd: source,
               env,
             },
@@ -430,10 +450,8 @@ export function localCaptureCommands({
         env: {
           ...env,
           ARTIFACTSHARE_INCLUDE_DEV_ROUTES: '1',
-          // Revision checks ask the checkout; Vite may serve the checkout's
-          // installed dependencies, which the export links to.
+          // Revision checks ask the checkout; the export has no Git metadata.
           ARTIFACTSHARE_DEV_GIT_ROOT: root,
-          ARTIFACTSHARE_DEV_FS_ALLOW: root,
           ARTIFACTSHARE_DEV_APP_PORT: String(ports.app),
           ARTIFACTSHARE_DEV_SANDBOX_PORT: String(ports.sandbox),
           ARTIFACTSHARE_DEV_INSPECTOR_PORT: String(ports.appInspector),
@@ -441,7 +459,6 @@ export function localCaptureCommands({
           ARTIFACTSHARE_DEV_HOST: '::1',
           ARTIFACTSHARE_DEV_CERT_DIR: certs,
           ARTIFACTSHARE_DEV_VARS_PATH: inputs.vars.path,
-          ARTIFACTSHARE_DEV_VITE_CACHE_DIR: runtime.viteCache,
         },
       },
     ],
@@ -455,7 +472,9 @@ export function localCaptureCommands({
         SCREEN_CAPTURE_BASE_URL: topology.appOrigin,
         SCREEN_CAPTURE_SANDBOX_URL: topology.sandboxOrigin,
         ...(spec.needsCli
-          ? { WALKTHROUGH_CLI_ENTRY: join(runtime.cli, 'dist/index.js') }
+          ? {
+              WALKTHROUGH_CLI_ENTRY: join(source, 'packages/cli/dist/index.js'),
+            }
           : {}),
       },
       stdio: 'inherit',
@@ -537,31 +556,6 @@ export function processesWithEnvironment(
     .map((fields) => Number(fields[0]))
 }
 
-/** Whether the environment of one process contains `entry`. */
-export function processHasEnvironment(
-  pid,
-  entry,
-  { platform = process.platform, run = execFileSync } = {},
-) {
-  try {
-    if (platform === 'linux')
-      return readFileSync(`/proc/${pid}/environ`, 'utf8')
-        .split('\0')
-        .includes(entry)
-    return run('ps', ['-E', '-ww', '-o', 'command=', '-p', String(pid)], {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-    })
-      .trim()
-      .split(/\s+/u)
-      .includes(entry)
-  } catch (error) {
-    // Gone (or no longer ours to read): not provably owned.
-    if (VANISHED.has(error?.code) || error?.status === 1) return false
-    throw error
-  }
-}
-
 function appendTail(buffer, chunk) {
   const combined = Buffer.concat([buffer, Buffer.from(chunk)])
   return combined.byteLength <= LOG_TAIL_BYTES
@@ -577,15 +571,14 @@ function appendTail(buffer, chunk) {
  * Node has not reaped yet (its number cannot be reused), a process whose
  * environment carries this invocation's tag, or a live descendant of such a
  * process. Exited PIDs and empty groups are dropped on every refresh, and
- * ownership is checked again right before each individual signal, because a
- * group signal can end an owned process whose number is then reused.
+ * ownership is read again right before each individual signal, because any
+ * earlier signal can end an owned process whose number is then reused.
  */
 export class OwnedProcesses {
   constructor({
     spawnProcess = spawn,
     table = (pids) => processTable(execFileSync, pids),
     tagged = processesWithEnvironment,
-    hasTag = processHasEnvironment,
     kill = (pid, signal) => process.kill(pid, signal),
     graceMs = STOP_GRACE_MS,
     killWaitMs = KILL_WAIT_MS,
@@ -594,7 +587,6 @@ export class OwnedProcesses {
     this.spawnProcess = spawnProcess
     this.table = table
     this.tagged = tagged
-    this.hasTag = hasTag
     // Every child, and so every descendant, inherits this ownership tag.
     this.ownerId = randomUUID()
     this.tag = `${OWNER_TAG}=${this.ownerId}`
@@ -711,22 +703,29 @@ export class OwnedProcesses {
   }
 
   /**
-   * Fresh proof for one PID right before it is signalled: an unreaped child,
-   * the ownership tag in its environment, or a live owned ancestor.
+   * Fresh proof of ownership for one PID, read right before it is signalled:
+   * one read of the process table and one of the ownership tags, then the
+   * ancestors are walked in memory. A PID is owned while it is an unreaped
+   * child, carries the tag, or has a live ancestor that does.
    */
   #ownedNow(pid) {
     const unreaped = new Set(this.#unreaped())
-    const [own] = this.table([pid])
-    if (!own || own.zombie) return { owned: false, alive: false }
+    const live = new Map(
+      this.table()
+        .filter((row) => !row.zombie)
+        .map((row) => [row.pid, row]),
+    )
+    const own = live.get(pid)
+    if (!own) return { owned: false, alive: false }
+    const tagged = new Set(this.tagged(this.tag))
     const unproven = { owned: false, alive: true }
-    let row = own
-    for (let depth = 0; depth < 64; depth++) {
+    const seen = new Set()
+    for (let row = own; row && !seen.has(row.pid); row = live.get(row.ppid)) {
+      seen.add(row.pid)
       if (unreaped.has(row.pid)) return { owned: true, row: own }
       if (row.pid === process.pid) return unproven
-      if (this.hasTag(row.pid, this.tag)) return { owned: true, row: own }
+      if (tagged.has(row.pid)) return { owned: true, row: own }
       if (row.ppid <= 1) return unproven
-      ;[row] = this.table([row.ppid])
-      if (!row || row.zombie) return unproven
     }
     return unproven
   }
@@ -742,12 +741,28 @@ export class OwnedProcesses {
   #signal(signal) {
     // A group is signalled only while its leader is unreaped: then the group
     // ID is still this invocation's. Members that left it (or whose leader
-    // was reaped) are signalled one by one, each after a fresh check.
+    // was reaped) are signalled one by one, each after a fresh ownership
+    // read: any earlier signal can end an owned process whose number is then
+    // reused.
     const groups = this.#unreaped()
     for (const pgid of groups) this.#send(-pgid, signal)
+    // One read of the tracked PIDs finds the members of the owned groups,
+    // which the group signal above already reached and which therefore need
+    // no individual signal or proof; only the rest are proved one by one.
+    const tracked = new Map(
+      this.table([...this.known])
+        .filter((row) => !row.zombie)
+        .map((row) => [row.pid, row]),
+    )
     // Deleting the current entry while iterating a Set is safe.
     for (const pid of this.known) {
       if (groups.includes(pid)) continue
+      const current = tracked.get(pid)
+      if (!current) {
+        this.known.delete(pid)
+        continue
+      }
+      if (groups.includes(current.pgid)) continue
       const { owned, alive, row } = this.#ownedNow(pid)
       if (!owned) {
         this.known.delete(pid)
@@ -816,9 +831,12 @@ export class OwnedProcesses {
  * IPv6 loopback server on the same port. TLS stays end to end.
  *
  * A workaround: Vite's dev server listens on exactly one address
- * (`server.host` is a single value), but Chromium resolves `*.localhost` to
- * [::1] while other clients use 127.0.0.1, so the app must answer on both
- * loopback families. Vite is bound to ::1 and this relay covers 127.0.0.1.
+ * (`server.host` is a single value). Clients reach the app as `localhost`,
+ * which resolves to either loopback family depending on the client (Workers
+ * runtime, Node, the browser for plain `localhost`), so the app must answer on
+ * both, and holding both keeps any other listener from answering a client
+ * that tries 127.0.0.1 first. Vite is bound to ::1 (where the captures map
+ * `*.localhost`) and this relay covers 127.0.0.1.
  * The relay does not use a wildcard bind (`::` with dual-stack, or 0.0.0.0)
  * because that would expose the private stack on every interface and would
  * accept a port whose loopback address another process already holds; an
@@ -861,7 +879,12 @@ export async function startLoopbackRelay(
   }
 }
 
-/** One HTTPS request to a loopback address, presented as `localhost:port`. */
+/**
+ * One HTTPS request to a loopback address, presented as `localhost:port`.
+ * The certificate is not verified: a mkcert certificate chains to a local
+ * root that Node does not read, and whether that root is installed depends
+ * on the machine. Each check identifies the service by its response instead.
+ */
 export function loopbackRequest(
   address,
   port,
@@ -938,7 +961,9 @@ export function readinessChecks(ports, head, send = loopbackRequest) {
     {
       name: 'og-image service binding',
       check: async (signal) => {
-        const actual = await send('::1', ports.app, '/og-image', { signal })
+        const actual = await send('::1', ports.app, '/og-image', {
+          signal,
+        })
         if (actual.status !== 200 || !actual.contentType?.startsWith('image/'))
           throw new Error(
             `/og-image answered HTTP ${actual.status} ${actual.contentType ?? ''}`,
@@ -965,17 +990,16 @@ export function readinessChecks(ports, head, send = loopbackRequest) {
 }
 
 /**
- * Polls every check until all pass. Each round runs the pending checks in
- * parallel; a round in which every check passed is success even if the
- * deadline passed while it ran, and the deadline is only evaluated after
- * that. A check still running `graceMs` after the deadline (or on
- * cancellation) is aborted through its signal and counts as not ready.
+ * Polls every check until all pass, running the pending checks of each round
+ * in parallel. The deadline is the contract: when `timeoutMs` elapses (or the
+ * wait is cancelled) the checks still running are aborted through their
+ * signal, and anything that settles after that, success included, does not
+ * count; the wait fails naming every check not yet passed.
  */
 export async function waitUntilReady({
   checks,
   timeoutMs,
   intervalMs = 1_000,
-  graceMs = REQUEST_TIMEOUT_MS,
   signal,
 }) {
   const attempt = new AbortController()
@@ -993,9 +1017,8 @@ export async function waitUntilReady({
   )
   const deadline = setTimeout(() => {
     timedOut = true
-    wake()
+    attempt.abort()
   }, timeoutMs)
-  const hardStop = setTimeout(() => attempt.abort(), timeoutMs + graceMs)
   const cancel = () => attempt.abort()
   signal?.addEventListener('abort', cancel, { once: true })
   if (signal?.aborted) cancel()
@@ -1010,19 +1033,24 @@ export async function waitUntilReady({
         .filter((item) => pending.has(item.name))
         .map((item) => {
           const state = { done: false }
+          // An outcome that arrives once the attempt is over is ignored.
           state.run = Promise.resolve()
             .then(() => item.check(attempt.signal))
             .then(
-              () => pending.delete(item.name),
-              (error) =>
+              () => {
+                if (attempt.signal.aborted) return
+                state.done = true
+                pending.delete(item.name)
+              },
+              (error) => {
+                if (attempt.signal.aborted) return
+                state.done = true
                 pending.set(
                   item.name,
                   error instanceof Error ? error.message : String(error),
-                ),
+                )
+              },
             )
-            .finally(() => {
-              state.done = true
-            })
           return { item, state }
         })
       await Promise.race([
@@ -1030,10 +1058,13 @@ export async function waitUntilReady({
         stopped,
       ])
       if (signal?.aborted) throw new Error('Readiness wait cancelled')
-      for (const { item, state } of round)
-        if (!state.done) pending.set(item.name, 'no answer before the deadline')
+      if (timedOut) {
+        for (const { item, state } of round)
+          if (!state.done)
+            pending.set(item.name, 'no answer before the deadline')
+        throw notReady()
+      }
       if (!pending.size) return
-      if (timedOut) throw notReady()
       await new Promise((done) => {
         const pause = setTimeout(done, intervalMs)
         wake = () => {
@@ -1048,7 +1079,6 @@ export async function waitUntilReady({
     }
   } finally {
     clearTimeout(deadline)
-    clearTimeout(hardStop)
     signal?.removeEventListener('abort', cancel)
     attempt.abort()
   }
@@ -1098,6 +1128,7 @@ export async function runLocalCapture({
     select = () => selectPorts({ env }),
     runtimeRoot = () => createRuntimeRoot(),
     inputs = (runtime) => localInputs({ runtime }),
+    storeDir = () => checkoutStoreDir(),
     commands = localCaptureCommands,
     owner = new OwnedProcesses(),
     relay = startLoopbackRelay,
@@ -1154,14 +1185,16 @@ export async function runLocalCapture({
     const ports = await step(select())
     const childEnv = ownedEnvironment(env, runtime)
     const topology = localTopology(ports)
+    const files = inputs(runtime)
     const plan = commands({
       mode,
       argv: forwarded,
       ports,
       runtime,
       env: childEnv,
-      inputs: inputs(runtime),
+      inputs: files,
       revision,
+      storeDir: storeDir(),
     })
     log(
       `local capture: app ${topology.appOrigin}, sandbox ${topology.sandboxOrigin}, og-image ${topology.ogImageOrigin}; runtime ${runtime.root}`,
@@ -1254,110 +1287,40 @@ export async function runLocalCapture({
   return status
 }
 
-/** The deepest directory that contains both absolute paths. */
-export function commonAncestor(a, b) {
-  const left = a.split(sep)
-  const right = b.split(sep)
-  let length = 0
-  while (length < left.length && left[length] === right[length]) length++
-  return left.slice(0, length).join(sep) || sep
-}
-
 /**
- * The `prepare` step, run from the export of HEAD (`root`): certificate (only
- * into the runtime directory), variables (an existing checkout `.dev.vars` is
- * only validated), private D1 schema, and the static-site fixtures. Complete
- * checkout fixtures are copied into the export; otherwise they are built
- * there, so neither the checkout's fixtures nor its builder outputs are
- * written. A failed build fails the step. Wrangler and the fixture build are
- * started with Node: the package manager must not run in the export.
+ * The `prepare` step, run from the export of HEAD (`root`) after its
+ * dependency install: certificate (only into the runtime directory), the
+ * runtime copy of the variables, private D1 schema, and the static-site
+ * fixtures, always built in the export from HEAD (the export never has any),
+ * so neither the checkout's fixtures nor its builder outputs are read or
+ * written. A failed build fails the step.
  */
 export function runPrepareStep(
   env = process.env,
-  { root = ROOT, prepare = prepareDevEnvironment, log = console.log } = {},
+  { prepare = prepareDevEnvironment } = {},
 ) {
-  const { persistTo, certs, vars, checkoutFixtures } = JSON.parse(
+  const { persistTo, certs, vars } = JSON.parse(
     env.LOCAL_CAPTURE_PREPARE ?? '{}',
   )
-  if (!persistTo || certs === undefined || !vars || !checkoutFixtures)
-    throw new Error(
-      'LOCAL_CAPTURE_PREPARE needs persistTo, certs, vars and checkoutFixtures',
-    )
-  const fixtures = join(root, 'fixtures/static-sites')
-  if (
-    existsSync(checkoutFixtures) &&
-    !missingStaticSiteFixtures(checkoutFixtures).length
-  ) {
-    cpSync(checkoutFixtures, fixtures, { recursive: true })
-    log('Copied the checkout static-site fixtures.')
-  }
+  if (!persistTo || certs === undefined || !vars)
+    throw new Error('LOCAL_CAPTURE_PREPARE needs persistTo, certs and vars')
+  // This step runs the export's copy of the script, so Wrangler, the D1
+  // state and the fixture build all resolve in the export.
   return prepare({
     persistTo,
     env,
     requireFixtures: true,
-    wrangler: [
-      process.execPath,
-      join(root, 'apps/web/node_modules/wrangler/bin/wrangler.js'),
-    ],
     paths: { certs, vars },
-    fixtureOptions: {
-      dir: fixtures,
-      cwd: root,
-      command: [process.execPath, 'tools/static-site-fixtures/build.mjs'],
-      // The Next.js fixture's dependencies resolve into the checkout, outside
-      // the export Turbopack would otherwise treat as its whole world.
-      env: {
-        ...env,
-        STATIC_SITE_FIXTURES_TURBOPACK_ROOT: commonAncestor(
-          realpathSync(root),
-          realpathSync(dirname(dirname(checkoutFixtures))),
-        ),
-      },
-    },
   })
 }
 
 /**
- * Mirrors one installed `node_modules` as a real directory of links to its
- * packages. Scope folders and `.bin` are mirrored the same way, and the
- * package manager's own state (`.pnpm`, `.modules.yaml`, …) is left out, so
- * no tool writing into the copy can reach the checkout's installation: a
- * replaced or removed entry only ever changes a link in the copy. Links to
- * workspace packages point at the exported package instead of the checkout.
- */
-function mirrorModules(source, target, { root, dest }) {
-  mkdirSync(target)
-  for (const entry of readdirSync(source)) {
-    const from = join(source, entry)
-    const to = join(target, entry)
-    if (entry.startsWith('@') || entry === '.bin') {
-      mirrorModules(from, to, { root, dest })
-      continue
-    }
-    if (entry.startsWith('.')) continue
-    let real
-    try {
-      real = realpathSync(from)
-    } catch {
-      continue // a dangling entry in the installation
-    }
-    const inside = relative(root, real)
-    const workspacePackage =
-      !inside.startsWith('..') &&
-      !isAbsolute(inside) &&
-      !inside.split(sep).includes('node_modules')
-    symlinkSync(workspacePackage ? join(dest, inside) : real, to)
-  }
-}
-
-/**
- * Exports `revision` of the checkout into `dest` and gives each workspace
- * package a mirror of its installed `node_modules`. The owned services run
- * from this copy, so everything they generate beside their sources (React
- * Router's `.react-router/types`, Wrangler's `.wrangler/tmp`, fixture and
- * builder outputs) lands in the runtime directory instead of the checkout a
- * developer's `pnpm dev` reads. Dependencies are only read. Nothing may run
- * the package manager in the copy; its commands are started with Node.
+ * Exports `revision` of the checkout into `dest`; the next setup step gives it
+ * its own dependency install. The owned services run from this copy, so
+ * everything they generate beside their sources (React Router's
+ * `.react-router/types`, Wrangler's `.wrangler/tmp`, fixture and builder
+ * outputs) lands in the runtime directory instead of the checkout a
+ * developer's `pnpm dev` reads.
  */
 export function exportSource({
   root = ROOT,
@@ -1375,71 +1338,7 @@ export function exportSource({
   } finally {
     rmSync(archive, { force: true })
   }
-  const packageDirs = run('git', ['ls-tree', '-r', '--name-only', revision], {
-    cwd: root,
-    encoding: 'utf8',
-  })
-    .split('\n')
-    .filter((file) => file === 'package.json' || file.endsWith('/package.json'))
-    .map((file) => dirname(file))
-  const realRoot = realpathSync(root)
-  for (const dir of packageDirs) {
-    const modules = join(realRoot, dir, 'node_modules')
-    if (existsSync(modules))
-      mirrorModules(modules, join(dest, dir, 'node_modules'), {
-        root: realRoot,
-        dest,
-      })
-  }
   return dest
-}
-
-/**
- * Builds the CLI for the current HEAD into `outRoot/dist`, reading
- * @artifactshare/contract from its sources, so neither `packages/cli/dist`
- * nor `packages/contract/dist` is written. The CLI's runtime dependencies
- * and the files it reads beside its build resolve through links to the
- * package. The committed preview messages are used as they are (HEAD is
- * clean, so they match the catalogs).
- */
-export async function buildCli(outRoot, { root = ROOT, build } = {}) {
-  const cli = join(root, 'packages/cli')
-  const tsdown =
-    build ??
-    (
-      await import(
-        pathToFileURL(
-          createRequire(join(cli, 'package.json')).resolve('tsdown'),
-        ).href
-      )
-    ).build
-  mkdirSync(outRoot, { recursive: true })
-  await tsdown({
-    config: false,
-    cwd: cli,
-    entry: ['src/index.ts', 'src/cli.ts', 'src/cursor-acp-entry.ts'],
-    outDir: join(outRoot, 'dist'),
-    alias: {
-      '@artifactshare/contract': join(root, 'packages/contract/src/index.ts'),
-    },
-    deps: {
-      alwaysBundle: [
-        /^@artifactshare\/viewer-kit\//,
-        '@artifactshare/contract',
-      ],
-    },
-    clean: true,
-    dts: false,
-    format: ['esm'],
-    outExtensions: () => ({ js: '.js' }),
-    platform: 'node',
-    logLevel: 'warn',
-  })
-  for (const file of ['package.json', 'CHANGELOG.md'])
-    copyFileSync(join(cli, file), join(outRoot, file))
-  for (const dir of ['node_modules', 'skills'])
-    symlinkSync(join(cli, dir), join(outRoot, dir), 'dir')
-  return join(outRoot, 'dist/index.js')
 }
 
 if (
@@ -1461,9 +1360,6 @@ if (
     if (!dest || !revision)
       throw new Error('export-source needs a destination and a revision')
     exportSource({ dest, revision })
-  } else if (mode === 'build-cli') {
-    if (!argv[0]) throw new Error('build-cli needs an output directory')
-    await buildCli(argv[0])
   } else {
     process.exitCode = await runLocalCapture({ mode, argv })
   }

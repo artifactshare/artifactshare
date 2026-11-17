@@ -377,16 +377,11 @@ function sqlStatementEnd(sql, start, type) {
   return -1
 }
 
-const PNPM_WRANGLER = ['pnpm', 'exec', 'wrangler']
-
 // An explicit `env` is used as given: the local capture commands pass their
 // own registry and log directories, which must not fall back to the defaults.
-// They also pass `wrangler` (Node and Wrangler's entry point), because the
-// package manager must not run in their exported copy of the checkout.
-function runWrangler(args, { env, wrangler = PNPM_WRANGLER } = {}) {
-  const [command, ...prefix] = wrangler
+function runWrangler(args, { env } = {}) {
   try {
-    return execFileSync(command, [...prefix, ...args], {
+    return execFileSync('pnpm', ['exec', 'wrangler', ...args], {
       cwd: APP,
       env: env ?? { ...process.env, WRANGLER_LOG_PATH: '../../.wrangler/logs' },
       encoding: 'utf8',
@@ -669,11 +664,6 @@ export function prepareFixtures({
   names = STATIC_SITE_FIXTURE_NAMES,
   run = spawnSync,
   cwd = ROOT,
-  // The local capture commands run the build script with Node: the package
-  // manager must not run in their exported copy of the checkout.
-  command = ['pnpm', 'fixtures:build'],
-  // Environment of the build; undefined inherits this process's.
-  env,
   required = false,
   log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
@@ -682,10 +672,8 @@ export function prepareFixtures({
   log(
     `Building static-site fixtures (${missing.join(', ')}); the first build takes about a minute.`,
   )
-  const [program, ...args] = command
-  const result = run(program, args, {
+  const result = run('pnpm', ['fixtures:build'], {
     cwd,
-    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: FIXTURES_MAX_BUFFER,
@@ -722,16 +710,13 @@ export function prepareDevEnvironment({
   // The local capture commands need the fixtures, CI or not: a failed or
   // incomplete build fails setup instead of becoming an action.
   requireFixtures = false,
-  // Environment for every Wrangler call, used as given (registry, log path),
-  // and the command that starts Wrangler (default `pnpm exec wrangler`).
+  // Environment for every Wrangler call, used as given (registry, log path).
   env,
-  wrangler,
   // Test and isolation seams; each defaults to the checkout's own file.
   // `certs: null` skips certificate preparation: the local capture commands
   // use an existing checkout certificate read-only and generate a missing one
   // only in their own runtime directory.
   paths = {},
-  fixtureOptions = {},
 } = {}) {
   let actions = []
   try {
@@ -748,16 +733,13 @@ export function prepareDevEnvironment({
     // so a snapshot taken before app applies the schema would tell sandbox the
     // tables are still missing and it would apply schema.sql a second time.
     for (const item of targets)
-      actions.push(
-        ...prepareDatabase(item, reset, persistTo, { env, wrangler }),
-      )
-    if (requireFixtures)
-      actions.push(...prepareFixtures({ ...fixtureOptions, required: true }))
+      actions.push(...prepareDatabase(item, reset, persistTo, { env }))
+    if (requireFixtures) actions.push(...prepareFixtures({ required: true }))
     // Last: slow and optional relative to the schema checks above. A throw
     // here is a fixtures problem, not a reason to reset the database.
     else if (fixtures) {
       try {
-        actions.push(...prepareFixtures(fixtureOptions))
+        actions.push(...prepareFixtures())
       } catch (error) {
         actions.push(
           `Static-site fixtures not built: ${error instanceof Error ? error.message : String(error)}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,

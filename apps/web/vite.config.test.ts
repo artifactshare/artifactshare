@@ -80,14 +80,12 @@ describe('dev server topology', () => {
 describe('dev server files', () => {
   const root = path.resolve(import.meta.dirname, '../..')
 
-  test('pnpm dev reads the checkout certificate and variables, default cache', () => {
+  test('pnpm dev reads the checkout certificate and variables', () => {
     expect(devServerFiles({})).toEqual({
       certPath: path.join(root, '.dev-certs/cert.pem'),
       keyPath: path.join(root, '.dev-certs/key.pem'),
       varsPath: path.join(root, '.dev.vars'),
-      cacheDir: undefined,
       gitRoot: root,
-      fsAllow: [],
     })
   })
 
@@ -96,17 +94,13 @@ describe('dev server files', () => {
       devServerFiles({
         ARTIFACTSHARE_DEV_CERT_DIR: '/run/certs',
         ARTIFACTSHARE_DEV_VARS_PATH: '/run/dev.vars',
-        ARTIFACTSHARE_DEV_VITE_CACHE_DIR: '/run/vite-cache',
         ARTIFACTSHARE_DEV_GIT_ROOT: '/checkout',
-        ARTIFACTSHARE_DEV_FS_ALLOW: `/checkout${path.delimiter}/store`,
       }),
     ).toEqual({
       certPath: '/run/certs/cert.pem',
       keyPath: '/run/certs/key.pem',
       varsPath: '/run/dev.vars',
-      cacheDir: '/run/vite-cache',
       gitRoot: '/checkout',
-      fsAllow: ['/checkout', '/store'],
     })
   })
 

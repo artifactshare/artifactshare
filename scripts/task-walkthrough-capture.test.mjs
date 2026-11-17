@@ -18,6 +18,7 @@ import {
   recordCaptureRevision,
   requestOriginPhase,
   shouldWaitForViewerReady,
+  missingCliRecovery,
   walkthroughCliEntry,
   walkthroughSandboxOrigin,
 } from './task-walkthrough-capture.mjs'
@@ -102,6 +103,20 @@ test('runs the CLI build the local capture names, or the checkout build', () => 
   assert.equal(
     walkthroughCliEntry({}),
     resolvePath('packages/cli/dist/index.js'),
+  )
+})
+
+test('a missing CLI build names the step that builds it', () => {
+  const runtime = missingCliRecovery({
+    WALKTHROUGH_CLI_ENTRY: '/run/cli/dist/index.js',
+  })
+  assert.match(runtime, /\/run\/cli\/dist\/index\.js is missing/)
+  assert.match(runtime, /local capture's CLI build/)
+  assert.match(runtime, /pnpm walkthroughs:capture:local/)
+  assert.doesNotMatch(runtime, /--filter @artifactshare\/cli build/)
+  assert.match(
+    missingCliRecovery({}),
+    /dist\/index\.js is missing; run pnpm --filter @artifactshare\/cli build/,
   )
 })
 

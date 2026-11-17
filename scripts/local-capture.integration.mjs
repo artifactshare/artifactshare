@@ -5,7 +5,7 @@
 //
 // Every case runs in one disposable checkout outside this tree: a clone of
 // HEAD with the current working tree committed on top (so an uncommitted
-// implementation is what runs), dependencies copied in, and none of the
+// implementation is what runs), dependencies installed offline, and none of the
 // git-ignored inputs (.dev.vars, certificates, schema, fixtures, CLI build).
 // The reviewed tree and its developer inputs are never touched. Sentinels
 // stand in for what a developer's `pnpm dev` in the same checkout reads
@@ -26,26 +26,16 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { get } from 'node:https'
-import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import test from 'node:test'
 import { DEV_SERVICES, serviceIdentityMatches } from './dev-setup.mjs'
-import { processTable } from './local-capture.mjs'
+import { checkoutStoreDir, processTable } from './local-capture.mjs'
 import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 
 const SOURCE = resolve(import.meta.dirname, '..')
 const RUN_TIMEOUT_MS = 20 * 60_000
-const NODE_MODULES = [
-  'node_modules',
-  'apps/web/node_modules',
-  'packages/cli/node_modules',
-  'packages/contract/node_modules',
-  'packages/qm-bridge/node_modules',
-  'packages/viewer-kit/node_modules',
-  'tools/static-site-fixtures/node_modules',
-]
 const IDENTITY = [
   '-c',
   'user.name=local-capture-test',
@@ -86,21 +76,19 @@ function makeCheckout(base) {
     '-m',
     'working tree under test',
   ])
-  // Real directories (copy-on-write where the filesystem allows), so Vite
-  // serves dependencies from inside its workspace, as in a normal install.
-  for (const dir of NODE_MODULES) {
-    if (!existsSync(join(SOURCE, dir))) continue
-    execFileSync('cp', [
-      process.platform === 'darwin' ? '-cR' : '-R',
-      join(SOURCE, dir),
-      join(checkout, dir),
-    ])
-  }
-  for (const cache of [
-    'apps/web/node_modules/.vite',
-    'apps/web/node_modules/.mf',
-  ])
-    rmSync(join(checkout, cache), { recursive: true, force: true })
+  // Installed offline from the store this tree was installed from, as a
+  // developer's checkout is, so pnpm's own dependency check is satisfied.
+  execFileSync(
+    'pnpm',
+    [
+      'install',
+      '--frozen-lockfile',
+      '--offline',
+      '--store-dir',
+      checkoutStoreDir(SOURCE),
+    ],
+    { cwd: checkout, stdio: 'ignore' },
+  )
   return checkout
 }
 
@@ -142,6 +130,13 @@ function sentinelHome(base) {
               process.env.XDG_DATA_HOME ?? join(realHome, '.local/share'),
               'pnpm',
             )),
+      // pnpm's package metadata cache, which the export's offline install
+      // reads for its supply-chain check, as the checkout's install left it.
+      XDG_CACHE_HOME:
+        process.env.XDG_CACHE_HOME ??
+        (process.platform === 'darwin'
+          ? join(realHome, 'Library/Caches')
+          : join(realHome, '.cache')),
       PLAYWRIGHT_BROWSERS_PATH:
         process.env.PLAYWRIGHT_BROWSERS_PATH ??
         (process.platform === 'darwin'
@@ -322,14 +317,14 @@ function topologyFrom(output) {
   }
 }
 
-async function assertStopped(result) {
-  const deadline = Date.now() + 10_000
-  let left = result.descendants.filter(alive)
-  while (left.length && Date.now() < deadline) {
-    await new Promise((done) => setTimeout(done, 200))
-    left = left.filter(alive)
-  }
-  assert.deepEqual(left, [], 'owned processes outlived the command')
+// The command resolves only after every owned process is gone, so none may
+// be running (zombies aside) at the moment it exits.
+function assertStopped(result) {
+  assert.deepEqual(
+    result.descendants.filter(alive),
+    [],
+    'owned processes outlived the command',
+  )
   assert.ok(result.descendants.length > 0, 'the command started no processes')
   assert.equal(
     existsSync(topologyFrom(result.output).runtime),
@@ -338,16 +333,21 @@ async function assertStopped(result) {
   )
 }
 
-function loopbackGet(address, port, path, headers = {}) {
+function loopbackGet(
+  address,
+  port,
+  path,
+  { headers = {}, name = 'localhost' } = {},
+) {
   return new Promise((done, fail) => {
     get(
       {
         host: address,
         port,
         path,
-        servername: 'localhost',
+        servername: name,
         rejectUnauthorized: false,
-        headers: { host: `localhost:${port}`, ...headers },
+        headers: { host: `${name}:${port}`, ...headers },
         timeout: 30_000,
       },
       (response) => {
@@ -393,12 +393,9 @@ async function inspectRunningStack(checkout, topology, descendants) {
       'og-image': topology.ogImage,
     }[service.name]
     for (const address of ['127.0.0.1', '::1']) {
-      const actual = await loopbackGet(
-        address,
-        port,
-        service.path,
-        service.headers,
-      )
+      const actual = await loopbackGet(address, port, service.path, {
+        headers: service.headers,
+      })
       assert.ok(
         serviceIdentityMatches(service.expected, actual),
         `${service.name} on ${address}:${port} answered ${actual.status}`,
@@ -485,58 +482,34 @@ async function inspectRunningStack(checkout, topology, descendants) {
     assert.ok(env.includes(`ARTIFACTSHARE_DEV_APP_PORT=${topology.app}`))
     assert.ok(
       env.includes(
-        `ARTIFACTSHARE_DEV_VITE_CACHE_DIR=${join(topology.runtime, 'vite-cache')}`,
-      ),
-      'the app does not use a private Vite cache',
-    )
-    assert.ok(
-      env.includes(
-        `MINIFLARE_CACHE_DIR=${join(topology.runtime, 'miniflare-cache')}`,
-      ),
-      'the app does not use a private Miniflare cache',
-    )
-    assert.ok(
-      env.includes(
         `ARTIFACTSHARE_DEV_PERSIST_PATH=${join(topology.runtime, 'persist')}`,
       ),
     )
   }
 
-  // Chromium resolves wildcard *.localhost hosts to [::1], as the captures do.
-  const { chromium } = createRequire(join(checkout, 'apps/web/package.json'))(
-    'playwright',
-  )
-  const browser = await chromium.launch({
-    ...(process.env.PLAYWRIGHT_CHANNEL
-      ? { channel: process.env.PLAYWRIGHT_CHANNEL }
-      : {}),
-    args: ['--host-resolver-rules=MAP *.localhost [::1]'],
+  // Wildcard *.localhost hosts reach the services on [::1], where Chromium
+  // resolves them during a capture. Plain HTTPS requests check the routing
+  // and the recovery link; the capture running at the same time loads the
+  // pages with their modules in a browser.
+  const viewer = await loopbackGet('::1', topology.app, '/', {
+    name: 'abc123def4.localhost',
   })
-  try {
-    const page = await browser.newPage({ ignoreHTTPSErrors: true })
-    const viewer = await page.goto(
-      `https://abc123def4.localhost:${topology.app}/`,
-    )
-    assert.ok(
-      viewer && viewer.status() < 500,
-      `per-ID viewer host answered ${viewer?.status()}`,
-    )
-    assert.match(viewer.headers()['content-type'] ?? '', /text\/html/)
-    const sandbox = await page.goto(
-      `https://a-probe00000--v-70726f6265.usercontent.localhost:${topology.sandbox}/`,
-    )
-    // A document without a token gets the sandbox's recovery page, which
-    // links back to the viewer on the selected app port.
-    assert.equal(sandbox?.status(), 401)
-    assert.ok(
-      (await sandbox.text()).includes(
-        `href="https://localhost:${topology.app}/a/probe00000?version=probe"`,
-      ),
-      'the sandbox recovery link does not follow the selected app port',
-    )
-  } finally {
-    await browser.close()
-  }
+  assert.ok(viewer.status < 500, `per-ID viewer host answered ${viewer.status}`)
+  assert.match(viewer.contentType ?? '', /text\/html/)
+  // A document without a token gets the sandbox's recovery page, which
+  // links back to the viewer on the selected app port.
+  const sandbox = await loopbackGet('::1', topology.sandbox, '/', {
+    // A browser navigation, which is what gets the recovery page.
+    headers: { 'sec-fetch-dest': 'document' },
+    name: 'a-probe00000--v-70726f6265.usercontent.localhost',
+  })
+  assert.equal(sandbox.status, 401)
+  assert.ok(
+    sandbox.body.includes(
+      `href="https://localhost:${topology.app}/a/probe00000?version=probe"`,
+    ),
+    'the sandbox recovery link does not follow the selected app port',
+  )
 }
 
 test(
@@ -641,10 +614,11 @@ test(
           result.output,
           /Created \.dev\.vars from \.dev\.vars\.example/,
         )
-        // The checkout fixtures are incomplete (a sentinel only), so they
-        // were built in the export; the checkout copy stays as it was.
+        // The export got its own offline install, and the fixtures were
+        // built there from HEAD; the checkout copy stays as it was.
+        assert.match(result.output, /local capture: dependency install/)
         assert.match(result.output, /Built static-site fixtures/)
-        await assertStopped(result)
+        assertStopped(result)
         await assertIsolated()
       },
     )
@@ -673,7 +647,7 @@ test(
           )
           assert.match(result.output, /capture failed: about\/default\//)
           assert.match(result.output, /data-local-capture-missing/)
-          await assertStopped(result)
+          assertStopped(result)
           await assertIsolated()
         } finally {
           restore()
@@ -707,7 +681,7 @@ test(
           )
           assert.equal(result.code, status, result.output.slice(-4000))
           assert.doesNotMatch(result.output, /services ready/)
-          await assertStopped(result)
+          assertStopped(result)
           await assertIsolated()
         },
       )
@@ -734,7 +708,7 @@ test(
           },
         )
         assert.equal(result.code, 143, result.output.slice(-4000))
-        await assertStopped(result)
+        assertStopped(result)
         assert.ok(
           existsSync(join(outputRoot, 'latest/manifest.json')),
           'earlier evidence was removed',
@@ -797,7 +771,7 @@ test(
             ['mobile', 'success'],
           ],
         )
-        await assertStopped(result)
+        assertStopped(result)
         await assertIsolated()
       },
     )
@@ -825,7 +799,7 @@ test(
             /local capture: services ready; starting the capture/,
           )
           assert.match(result.output, /data-local-capture-missing-step/)
-          await assertStopped(result)
+          assertStopped(result)
           await assertIsolated()
         } finally {
           restore()

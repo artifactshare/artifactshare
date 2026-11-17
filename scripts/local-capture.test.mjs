@@ -20,6 +20,7 @@ import { delimiter, dirname, join } from 'node:path'
 import test from 'node:test'
 import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
 import {
+  checkoutStoreDir,
   createRuntimeRoot,
   exportSource,
   localCaptureCommands,
@@ -27,7 +28,6 @@ import {
   localTopology,
   OwnedProcesses,
   ownedEnvironment,
-  parsePortSetting,
   portIsFree,
   runLocalCapture,
   runPrepareStep,
@@ -101,7 +101,8 @@ function fakeRun(t, plan, overrides = {}) {
       head: () => 'a'.repeat(40),
       select: () => Promise.resolve(PORTS),
       runtimeRoot: () => (runtime = createRuntimeRoot({ tmp: base })),
-      inputs: () => ({}),
+      inputs: (root) => ({ certs: { dir: root.certs } }),
+      storeDir: () => '/store',
       commands: () => plan,
       owner: new OwnedProcesses({ graceMs: 300, killWaitMs: 2_000 }),
       relay: () => Promise.resolve({ close: () => Promise.resolve() }),
@@ -201,11 +202,7 @@ test('the port rule matches the one the Workers and Vite config apply', () => {
       return 'rejected'
     }
   }
-  assert.deepEqual(
-    examples.map(outcome(parsePortSetting)),
-    examples.map(outcome(parseDevPort)),
-  )
-  assert.deepEqual(examples.map(outcome(parsePortSetting)), [
+  assert.deepEqual(examples.map(outcome(parseDevPort)), [
     1024,
     5173,
     65535,
@@ -237,13 +234,14 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       WRANGLER_CACHE_DIR: '/developer/wrangler-cache',
       CLOUDFLARE_CF_FETCH_PATH: '/developer/cf.json',
       WALKTHROUGH_CLI_ENTRY: '/developer/cli/dist/index.js',
+      GIT_DIR: '/repo/.git',
     },
     runtime,
   )
   assert.equal(env.CLOUDFLARE_CF_FETCH_PATH, undefined)
   const inputs = {
     certs: { dir: runtime.certs, generate: true },
-    vars: { path: '/repo/.dev.vars', create: false },
+    vars: { path: runtime.vars, copiedFrom: '/repo/.dev.vars' },
   }
   for (const mode of ['screens', 'walkthroughs']) {
     const plan = localCaptureCommands({
@@ -257,6 +255,7 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       env,
       inputs,
       revision: 'a'.repeat(40),
+      storeDir: '/store/v11',
       root: '/repo',
     })
     const children = [...plan.setup, ...plan.services, plan.capture]
@@ -264,19 +263,27 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     // export and every service runs from the export of HEAD.
     for (const child of [...plan.setup.slice(1), ...plan.services])
       assert.ok(child.cwd.startsWith(runtime.source), child.name)
-    assert.ok(
-      [...plan.setup, ...plan.services].every(
-        (child) => child.command === process.execPath,
-      ),
-      'a setup step or service starts the package manager',
+    // The export gets its own install, offline from the checkout's store,
+    // without the Git variables that could lead a script to the checkout.
+    const install = plan.setup.find(
+      (child) => child.name === 'dependency install',
     )
+    assert.equal(install.command, 'pnpm')
+    assert.deepEqual(install.args, [
+      'install',
+      '--frozen-lockfile',
+      '--offline',
+      '--store-dir',
+      '/store/v11',
+    ])
+    assert.equal(install.cwd, runtime.source)
+    assert.equal(install.env.GIT_DIR, undefined)
+    assert.equal(install.env.GIT_CEILING_DIRECTORIES, runtime.root)
     for (const child of children) {
-      assert.equal(
-        child.env.MINIFLARE_CACHE_DIR,
-        runtime.miniflareCache,
-        child.name,
-      )
-      assert.equal(child.env.WRANGLER_CACHE_DIR, runtime.wranglerCache)
+      // Inherited cache locations are dropped: the services' caches stay in
+      // the export's own node_modules.
+      assert.equal(child.env.MINIFLARE_CACHE_DIR, undefined, child.name)
+      assert.equal(child.env.WRANGLER_CACHE_DIR, undefined, child.name)
       assert.equal(
         child.env.CLOUDFLARE_DEV_REGISTRY_PATH,
         runtime.registry,
@@ -298,15 +305,14 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     assert.deepEqual(JSON.parse(prepare.env.LOCAL_CAPTURE_PREPARE), {
       persistTo: runtime.persist,
       certs: runtime.certs,
-      vars: '/repo/.dev.vars',
-      checkoutFixtures: '/repo/fixtures/static-sites',
+      vars: runtime.vars,
     })
     // No setup step writes a shared build output (contract or CLI dist).
     assert.deepEqual(
       plan.setup.map((child) => child.name),
       mode === 'walkthroughs'
-        ? ['source export', 'prepare', 'cli build']
-        : ['source export', 'prepare'],
+        ? ['source export', 'dependency install', 'prepare', 'cli build']
+        : ['source export', 'dependency install', 'prepare'],
     )
     assert.deepEqual(plan.setup[0].args.slice(1), [
       'export-source',
@@ -324,7 +330,7 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       assert.equal(flag(byName[name], '--port'), String(port))
       assert.equal(flag(byName[name], '--inspector-port'), String(inspector))
       assert.equal(flag(byName[name], '--persist-to'), runtime.persist)
-      assert.equal(flag(byName[name], '--env-file'), '/repo/.dev.vars')
+      assert.equal(flag(byName[name], '--env-file'), runtime.vars)
       assert.equal(
         flag(byName[name], '--https-cert-path'),
         join(runtime.certs, 'cert.pem'),
@@ -332,11 +338,8 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     }
     assert.equal(byName.app.env.ARTIFACTSHARE_DEV_GIT_ROOT, '/repo')
     assert.equal(byName.app.env.ARTIFACTSHARE_DEV_CERT_DIR, runtime.certs)
-    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_VARS_PATH, '/repo/.dev.vars')
-    assert.equal(
-      byName.app.env.ARTIFACTSHARE_DEV_VITE_CACHE_DIR,
-      runtime.viteCache,
-    )
+    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_VARS_PATH, runtime.vars)
+    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_VITE_CACHE_DIR, undefined)
     const vars = byName.sandbox.args.filter(
       (_, index) => byName.sandbox.args[index - 1] === '--var',
     )
@@ -359,7 +362,9 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     )
     assert.equal(
       plan.capture.env.WALKTHROUGH_CLI_ENTRY,
-      mode === 'walkthroughs' ? join(runtime.cli, 'dist/index.js') : undefined,
+      mode === 'walkthroughs'
+        ? join(runtime.source, 'packages/cli/dist/index.js')
+        : undefined,
     )
     assert.deepEqual(
       plan.capture.args.slice(1),
@@ -375,8 +380,8 @@ test('every child gets this invocation registry, storage, logs and ports, never 
   })
 })
 
-test('checkout certificates and variables are used read-only; missing or obsolete ones go to the runtime directory', (t) => {
-  const runtime = createRuntimeRoot({ tmp: tempDir(t) })
+test('a usable checkout certificate is used read-only, a missing or obsolete one goes to the runtime directory, and variables are always a runtime copy', (t) => {
+  const runtimeRoot = () => createRuntimeRoot({ tmp: tempDir(t) })
   const checkout = (files) => {
     const root = tempDir(t)
     for (const [file, content] of Object.entries(files)) {
@@ -391,27 +396,33 @@ test('checkout certificates and variables are used read-only; missing or obsolet
     '.dev-certs/key.pem': 'key',
     '.dev.vars': 'BETTER_AUTH_SECRET=kept\n',
   })
+  const runtime = runtimeRoot()
   assert.deepEqual(
     localInputs({ root: usable, runtime, certificateValid: valid }),
     {
       certs: { dir: join(usable, '.dev-certs'), generate: false },
-      vars: { path: join(usable, '.dev.vars'), create: false },
+      vars: { path: runtime.vars, copiedFrom: join(usable, '.dev.vars') },
     },
   )
+  assert.equal(readFileSync(runtime.vars, 'utf8'), 'BETTER_AUTH_SECRET=kept\n')
   for (const files of [
     { '.dev-certs/cert.pem': 'obsolete', '.dev-certs/key.pem': 'key' },
     { '.dev-certs/cert.pem': 'valid' },
     {},
   ]) {
     const root = checkout(files)
+    const fresh = runtimeRoot()
     assert.deepEqual(
-      localInputs({ root, runtime, certificateValid: valid }),
+      localInputs({ root, runtime: fresh, certificateValid: valid }),
       {
-        certs: { dir: runtime.certs, generate: true },
-        vars: { path: runtime.vars, create: true },
+        certs: { dir: fresh.certs, generate: true },
+        // Prepare creates the variables in the runtime directory; the
+        // checkout path is never handed to it.
+        vars: { path: fresh.vars, copiedFrom: null },
       },
       JSON.stringify(files),
     )
+    assert.equal(existsSync(join(root, '.dev.vars')), false)
   }
 })
 
@@ -428,25 +439,25 @@ test('a walkthrough builds the CLI for HEAD into the runtime directory, even bes
     env: ownedEnvironment({}, runtime),
     inputs: {
       certs: { dir: runtime.certs, generate: true },
-      vars: { path: runtime.vars, create: true },
+      vars: { path: runtime.vars, copiedFrom: null },
     },
     revision: 'a'.repeat(40),
+    storeDir: '/store/v11',
     root,
   })
   const build = plan.setup.find((child) => child.name === 'cli build')
   assert.ok(build, 'no CLI build planned')
-  assert.deepEqual(build.args, [
-    join(runtime.source, 'scripts/local-capture.mjs'),
-    'build-cli',
-    runtime.cli,
-  ])
+  // The package's own build, run in the export.
+  assert.equal(build.command, 'pnpm')
+  assert.deepEqual(build.args, ['--filter', '@artifactshare/cli', 'build'])
+  assert.equal(build.cwd, runtime.source)
   assert.equal(
     plan.capture.env.WALKTHROUGH_CLI_ENTRY,
-    join(runtime.cli, 'dist/index.js'),
+    join(runtime.source, 'packages/cli/dist/index.js'),
   )
 })
 
-test('the export holds HEAD and dependency links that cannot write into the checkout installation', (t) => {
+test('the export holds HEAD only; its dependencies come from its own install', (t) => {
   const root = realpathSync(tempDir(t))
   const write = (file, content) => {
     mkdirSync(dirname(join(root, file)), { recursive: true })
@@ -455,7 +466,6 @@ test('the export holds HEAD and dependency links that cannot write into the chec
   const git = (...args) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
   write('package.json', '{}')
-  write('packages/kit/package.json', '{}')
   write('apps/web/package.json', '{}')
   git('init', '--quiet')
   git('add', '-A')
@@ -470,125 +480,58 @@ test('the export holds HEAD and dependency links that cannot write into the chec
   )
   const head = git('rev-parse', 'HEAD')
   write('apps/web/uncommitted.txt', 'not in HEAD')
-  // An installed layout: a store, its state file, a scope, a shim, and a
-  // workspace package linked from the app.
-  write('node_modules/.pnpm/dep@1/node_modules/dep/index.js', '')
-  write('node_modules/.modules.yaml', 'state')
-  symlinkSync('.pnpm/dep@1/node_modules/dep', join(root, 'node_modules/dep'))
-  write('apps/web/node_modules/.bin/dep', '#!/bin/sh\n')
-  mkdirSync(join(root, 'apps/web/node_modules/@scope'))
-  symlinkSync(
-    '../../../../packages/kit',
-    join(root, 'apps/web/node_modules/@scope/kit'),
+  // An installed checkout: nothing of it may reach the export.
+  write('node_modules/dep/index.js', '')
+  write('apps/web/node_modules/dep/index.js', '')
+  write(
+    'node_modules/.modules.yaml',
+    JSON.stringify({ storeDir: '/store/v11', nodeLinker: 'isolated' }),
   )
   const dest = join(realpathSync(tempDir(t)), 'source')
   exportSource({ root, dest, revision: head })
 
   assert.ok(existsSync(join(dest, 'apps/web/package.json')))
   assert.equal(existsSync(join(dest, 'apps/web/uncommitted.txt')), false)
-  for (const dir of [
-    'node_modules',
-    'apps/web/node_modules',
-    'apps/web/node_modules/@scope',
-    'apps/web/node_modules/.bin',
-  ])
-    assert.ok(!lstatSync(join(dest, dir)).isSymbolicLink(), `${dir} is a link`)
-  assert.deepEqual(readdirSync(join(dest, 'node_modules')), ['dep'])
-  assert.equal(
-    realpathSync(join(dest, 'node_modules/dep')),
-    join(root, 'node_modules/.pnpm/dep@1/node_modules/dep'),
-  )
-  assert.equal(
-    realpathSync(join(dest, 'apps/web/node_modules/@scope/kit')),
-    join(dest, 'packages/kit'),
-  )
-  // Replacing an entry in the copy leaves the checkout installation alone.
-  rmSync(join(dest, 'node_modules/dep'))
-  rmSync(join(dest, 'apps/web/node_modules/@scope'), { recursive: true })
-  assert.ok(existsSync(join(root, 'node_modules/dep/index.js')))
-  assert.ok(lstatSync(join(root, 'apps/web/node_modules/@scope/kit')))
+  assert.equal(existsSync(join(dest, 'node_modules')), false)
+  assert.equal(existsSync(join(dest, 'apps/web/node_modules')), false)
+  // The install step reads the store the checkout was installed from.
+  assert.equal(checkoutStoreDir(root), '/store/v11')
+  rmSync(join(root, 'node_modules'), { recursive: true })
+  assert.throws(() => checkoutStoreDir(root), /run pnpm install/)
 })
 
-test('the setup steps run in the export never start the package manager', (t) => {
-  // A pnpm on PATH that records any call. `prepare` loads this module in the
-  // export; loading the capture modules there would run `pnpm exec` (route
-  // discovery), and pnpm then reinstalls into the copy.
-  const dir = tempDir(t)
-  const calls = join(dir, 'calls')
-  writeFileSync(
-    join(dir, 'pnpm'),
-    `#!/bin/sh\necho "$*" >> "${calls}"\nexit 1\n`,
-  )
-  chmodSync(join(dir, 'pnpm'), 0o755)
-  const result = spawnSync(
-    process.execPath,
-    [join(import.meta.dirname, 'local-capture.mjs'), 'prepare'],
-    {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}` },
-    },
-  )
-  // It stops at its missing configuration, before any preparation.
-  assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /LOCAL_CAPTURE_PREPARE needs persistTo/)
-  assert.equal(existsSync(calls), false, 'pnpm was started')
-})
-
-test('prepare copies complete checkout fixtures into the export, or requires them to be built there', (t) => {
-  const source = tempDir(t)
-  const checkout = tempDir(t)
+test('prepare runs with the export defaults and the chosen inputs', () => {
   const calls = []
   const prepare = (options) => {
     calls.push(options)
     return { ok: true, actions: [] }
   }
-  const env = (checkoutFixtures) => ({
-    LOCAL_CAPTURE_PREPARE: JSON.stringify({
-      persistTo: '/persist',
-      certs: null,
-      vars: '/vars',
-      checkoutFixtures,
-    }),
-  })
-  const fixtures = join(checkout, 'fixtures/static-sites')
-  mkdirSync(join(fixtures, 'react-spa'), { recursive: true })
-  writeFileSync(join(fixtures, 'react-spa/index.html'), 'spa')
-  // Incomplete in the checkout: nothing is copied, and the checkout is left
-  // as it was.
-  runPrepareStep(env(fixtures), { root: source, prepare, log: () => {} })
-  assert.equal(existsSync(join(source, 'fixtures/static-sites')), false)
-  for (const name of ['react-router-prerender', 'next-export']) {
-    mkdirSync(join(fixtures, name))
-    writeFileSync(join(fixtures, name, 'index.html'), name)
-  }
-  runPrepareStep(env(fixtures), { root: source, prepare, log: () => {} })
-  assert.equal(
-    readFileSync(
-      join(source, 'fixtures/static-sites/react-spa/index.html'),
-      'utf8',
-    ),
-    'spa',
+  runPrepareStep(
+    {
+      LOCAL_CAPTURE_PREPARE: JSON.stringify({
+        persistTo: '/persist',
+        certs: null,
+        vars: '/run/dev.vars',
+      }),
+    },
+    { prepare },
   )
-  for (const options of calls) {
-    assert.equal(options.requireFixtures, true)
-    assert.equal(
-      options.fixtureOptions.dir,
-      join(source, 'fixtures/static-sites'),
-    )
-    assert.deepEqual(options.fixtureOptions.command, [
-      process.execPath,
-      'tools/static-site-fixtures/build.mjs',
-    ])
-    // Turbopack's root must contain the export and the checkout it links to.
-    assert.equal(
-      options.fixtureOptions.env.STATIC_SITE_FIXTURES_TURBOPACK_ROOT,
-      realpathSync(tmpdir()),
-    )
-    assert.deepEqual(options.wrangler, [
-      process.execPath,
-      join(source, 'apps/web/node_modules/wrangler/bin/wrangler.js'),
-    ])
-  }
+  const [options] = calls
+  assert.equal(options.requireFixtures, true)
+  assert.equal(options.persistTo, '/persist')
+  assert.deepEqual(options.paths, { certs: null, vars: '/run/dev.vars' })
+  // No command or directory overrides: Wrangler, D1 and the fixture build
+  // resolve in the export this step runs from.
+  assert.deepEqual(Object.keys(options).sort(), [
+    'env',
+    'paths',
+    'persistTo',
+    'requireFixtures',
+  ])
+  assert.throws(
+    () => runPrepareStep({}, { prepare }),
+    /LOCAL_CAPTURE_PREPARE needs persistTo, certs and vars/,
+  )
 })
 
 test('the runtime root is removed when it would overlap a checkout', (t) => {
@@ -651,7 +594,7 @@ test('readiness fails at its deadline with each pending check', async () => {
   )
 })
 
-test('a check still running after the deadline grace is aborted and not ready', async () => {
+test('a check still running at the deadline is aborted then and not ready', async () => {
   let stalledSignal
   const started = Date.now()
   await assert.rejects(
@@ -667,55 +610,60 @@ test('a check still running after the deadline grace is aborted and not ready', 
         },
       ],
       timeoutMs: 50,
-      graceMs: 50,
     }),
     /app on 127\.0\.0\.1: no answer before the deadline/,
   )
   assert.ok(Date.now() - started < 1_000, 'the deadline did not bound the wait')
   assert.equal(stalledSignal.aborted, true)
-
-  const late = (ms) => () => new Promise((done) => setTimeout(done, ms))
-  await assert.rejects(
-    waitUntilReady({
-      checks: [{ name: 'sandbox on ::1', check: late(200) }],
-      timeoutMs: 5,
-      graceMs: 20,
-    }),
-    /sandbox on ::1: no answer before the deadline/,
-  )
-  await waitUntilReady({
-    checks: [{ name: 'sandbox on ::1', check: late(5) }],
-    timeoutMs: 1_000,
-  })
 })
 
-test('a round whose parallel checks all pass is ready even if the deadline passed during it', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+// Checks that each wait until both have started (checks run one after another
+// would never get there) and then until the test releases them.
+function heldChecks(names) {
   const started = []
   let release
   const released = new Promise((done) => {
     release = done
   })
-  // Each check waits until every check has started: checks run one after
-  // another would never get there.
-  const check = (name) => ({
+  const checks = names.map((name) => ({
     name,
     check: async () => {
       started.push(name)
       await released
     },
-  })
-  const ready = waitUntilReady({
-    checks: [check('app on ::1'), check('sandbox on ::1')],
-    timeoutMs: 1_000,
-    graceMs: 30_000,
-  })
+  }))
+  return { checks, started, release }
+}
+
+test('a round whose parallel checks all pass before the deadline is ready', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const held = heldChecks(['app on ::1', 'sandbox on ::1'])
+  const ready = waitUntilReady({ checks: held.checks, timeoutMs: 1_000 })
   await Promise.resolve()
   await Promise.resolve()
-  assert.deepEqual(started, ['app on ::1', 'sandbox on ::1'])
-  t.mock.timers.tick(1_500)
-  release()
+  assert.deepEqual(held.started, ['app on ::1', 'sandbox on ::1'])
+  t.mock.timers.tick(999)
+  held.release()
   await ready
+})
+
+test('checks that pass only after the deadline are not ready', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const held = heldChecks(['app on ::1', 'sandbox on ::1'])
+  const ready = waitUntilReady({ checks: held.checks, timeoutMs: 1_000 })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(held.started, ['app on ::1', 'sandbox on ::1'])
+  // LOCAL_CAPTURE_READY_TIMEOUT_MS=1000 with answers arriving at 1500 ms.
+  t.mock.timers.tick(1_500)
+  held.release()
+  await assert.rejects(
+    ready,
+    (error) =>
+      /not ready within 1s/.test(error.message) &&
+      /app on ::1: no answer before the deadline/.test(error.message) &&
+      /sandbox on ::1: no answer before the deadline/.test(error.message),
+  )
 })
 
 test('an invalid selection fails before any input or service is prepared', async () => {
@@ -863,9 +811,11 @@ test('a detached grandchild is stopped after the child that started it has exite
 })
 
 // A process table the test edits: `procs` maps a PID to its parent, group and
-// whether its environment carries the invocation's ownership tag.
+// whether its environment carries the invocation's ownership tag. `events`
+// records every read of the table or the tags and every signal, in order.
 function fakeProcesses(procs) {
   const kills = []
+  const events = []
   const children = new Map()
   const owner = new OwnedProcesses({
     spawnProcess: (_command, _args, options) => {
@@ -874,13 +824,19 @@ function fakeProcesses(procs) {
       children.set(child.pid, child)
       return child
     },
-    table: (pids) =>
-      [...procs.values()].filter((row) => !pids || pids.includes(row.pid)),
-    tagged: () =>
-      [...procs.values()].filter((row) => row.tag).map((row) => row.pid),
-    hasTag: (pid) => procs.get(pid)?.tag === true,
+    table: (pids) => {
+      events.push(pids ? `table ${pids.join(',')}` : 'table')
+      return [...procs.values()].filter(
+        (row) => !pids || pids.includes(row.pid),
+      )
+    },
+    tagged: () => {
+      events.push('tagged')
+      return [...procs.values()].filter((row) => row.tag).map((row) => row.pid)
+    },
     kill: (target, signal) => {
       kills.push([target, signal])
+      events.push(`kill ${target} ${signal}`)
       procs.onKill?.(target, signal)
     },
     graceMs: 30,
@@ -892,7 +848,7 @@ function fakeProcesses(procs) {
     procs.delete(pid)
     children.get(pid).emit('exit', 0, null)
   }
-  return { owner, kills, start, exit }
+  return { owner, kills, events, start, exit }
 }
 
 test('a reaped child whose PID is reused by an unowned process is not signalled', async () => {
@@ -981,6 +937,82 @@ test('an owned descendant outside the group is signalled by PID after a fresh ch
     [-4300, 'SIGTERM'],
     [4301, 'SIGTERM'],
     [-4300, 'SIGKILL'],
+  ])
+})
+
+test('ownership is read again before every individual signal, so a PID reused between them is refused', async () => {
+  const procs = new Map([
+    [4500, { pid: 4500, ppid: process.pid, pgid: 4500, tag: true }],
+  ])
+  // Owned descendants that left the group, each stopped by its own signal.
+  const outside = [4501, 4502, 4503, 4504]
+  for (const pid of outside)
+    procs.set(pid, { pid, ppid: 1, pgid: pid, tag: true })
+  const run = fakeProcesses(procs)
+  run.start(4500)
+  procs.onKill = (target, signal) => {
+    if (target === 4501)
+      // Signalling one ends another; its number is reused at once by a
+      // process that is not ours.
+      procs.set(4502, { pid: 4502, ppid: 1, pgid: 4502, tag: false })
+    if (target === -4500 && signal === 'SIGKILL') run.exit(4500)
+    if (target > 0) procs.delete(target)
+  }
+  await assert.rejects(
+    run.owner.stopAll(),
+    /could no longer be proved its own, so they were not signalled: 4502$/,
+  )
+  assert.ok(!run.kills.some(([target]) => target === 4502))
+  // Each individual signal follows its own read of the table and the tags.
+  const step = run.events.slice(
+    run.events.indexOf('kill -4500 SIGTERM') + 1,
+    run.events.indexOf('kill 4504 SIGTERM') + 1,
+  )
+  assert.deepEqual(step, [
+    // One read of the tracked PIDs, then a fresh proof per individual signal.
+    'table 4500,4501,4502,4503,4504',
+    'table',
+    'tagged',
+    'kill 4501 SIGTERM',
+    // 4502 is refused from this read.
+    'table',
+    'tagged',
+    'table',
+    'tagged',
+    'kill 4503 SIGTERM',
+    'table',
+    'tagged',
+    'kill 4504 SIGTERM',
+  ])
+})
+
+test('members of an owned group are reached by the group signal without a proof read each', async () => {
+  const procs = new Map([
+    // A leader that ignores SIGTERM and owned members of its group.
+    [4600, { pid: 4600, ppid: process.pid, pgid: 4600, tag: true }],
+    [4601, { pid: 4601, ppid: 4600, pgid: 4600, tag: true }],
+    [4602, { pid: 4602, ppid: 4600, pgid: 4600, tag: true }],
+    [4603, { pid: 4603, ppid: 4601, pgid: 4600, tag: true }],
+  ])
+  const run = fakeProcesses(procs)
+  run.start(4600)
+  procs.onKill = (target, signal) => {
+    if (target === -4600 && signal === 'SIGKILL') {
+      for (const pid of [4601, 4602, 4603]) procs.delete(pid)
+      run.exit(4600)
+    }
+  }
+  await run.owner.stopAll()
+  assert.deepEqual(run.kills, [
+    [-4600, 'SIGTERM'],
+    [-4600, 'SIGKILL'],
+  ])
+  // After the group signal: one read of the tracked PIDs, no ownership-tag
+  // read for the members, then the grace-period poll.
+  const after = run.events.indexOf('kill -4600 SIGTERM')
+  assert.deepEqual(run.events.slice(after + 1, after + 3), [
+    'table 4600,4601,4602,4603',
+    'table 4600,4601,4602,4603',
   ])
 })
 

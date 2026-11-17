@@ -282,11 +282,9 @@ test.each([
       'v1',
       'https://a-abc123def4--v-7631.usercontent.localhost:41102/',
     )
-    if (accepted)
-      expect(new URL(result!).host).toBe(
-        'a-abc123def4--v-7632.usercontent.localhost:41102',
-      )
-    else expect(result).toBeNull()
+    expect(result === null ? null : new URL(result).host).toBe(
+      accepted ? 'a-abc123def4--v-7632.usercontent.localhost:41102' : null,
+    )
   },
 )
 

@@ -486,20 +486,6 @@ test('local setup leaves certificates alone when the caller supplies its own', (
   assert.equal(existsSync(setup.options.paths.certs), false)
 })
 
-test('local setup starts Wrangler with the command it is given', (t) => {
-  const setup = isolatedSetupFixture(t)
-  const fake = join(setup.directory, 'fake-wrangler.mjs')
-  const result = prepareDevEnvironment({
-    ...setup.options,
-    wrangler: [process.execPath, fake],
-  })
-  assert.equal(result.ok, true, result.reason)
-  const calls = setup.calls()
-  assert.ok(calls.length > 0)
-  // Through the pnpm shim the fake would see `exec wrangler d1 …`.
-  assert.ok(calls.every((call) => call.args[0] === 'd1'))
-})
-
 test('required fixtures fail setup when the build fails or leaves a fixture missing', (t) => {
   const setup = isolatedSetupFixture(t)
   const dir = join(setup.directory, 'fixtures')
@@ -534,23 +520,26 @@ test('required fixtures fail setup when the build fails or leaves a fixture miss
   }
   for (const [name, run] of Object.entries(builds)) {
     rmSync(dir, { recursive: true, force: true })
-    const result = prepareDevEnvironment({
-      ...setup.options,
-      fixtures: false,
-      requireFixtures: true,
-      fixtureOptions: { dir, names: ['one', 'two'], run, log: () => {} },
-    })
+    const build = () =>
+      prepareFixtures({
+        dir,
+        names: ['one', 'two'],
+        run,
+        required: true,
+        log: () => {},
+      })
     if (name === 'healthy') {
-      assert.equal(result.ok, true, result.reason)
+      assert.doesNotThrow(build)
       continue
     }
-    assert.equal(result.ok, false, name)
-    assert.match(
-      result.reason,
-      reasons[name] ?? /Static-site fixtures not built/,
+    assert.throws(
+      build,
+      (error) =>
+        (reasons[name] ?? /Static-site fixtures not built/).test(
+          error.message,
+        ) && error.recovery === 'fixtures',
       name,
     )
-    assert.equal(result.recoveryCommand, 'pnpm fixtures:build', name)
   }
 })
 

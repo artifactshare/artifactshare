@@ -131,31 +131,36 @@ loopback. The checkout must be clean, as for the external-server commands.
 Each run:
 
 1. Exports the current HEAD into its runtime directory (`git archive`) and
-   gives each workspace package links to the checkout's installed
-   dependencies. Setup and the services run from that copy, so everything
-   they generate beside their sources — `apps/web/.react-router/types`,
-   Wrangler's `.wrangler` bundles, fixture and builder outputs — stays out of
-   the checkout. The copy is never handed to the package manager.
+   gives that copy its own dependency install
+   (`pnpm install --frozen-lockfile --offline`, from the package store the
+   checkout was installed from, so nothing is downloaded). The install's
+   supply-chain check also reads pnpm's package metadata cache, which the
+   checkout's own `pnpm install` fills; without it the step fails with
+   `ERR_PNPM_NO_OFFLINE_META` and the run stops. Setup and the
+   services run from that copy, so everything they generate beside their
+   sources — `apps/web/.react-router/types`, Wrangler's `.wrangler` bundles,
+   fixture and builder outputs — stays out of the checkout.
 2. Prepares its inputs without changing anything a `pnpm dev` in the same
    checkout reads. An existing `.dev-certs` certificate covering the dev hosts
-   and an existing `.dev.vars` are used read-only (a `.dev.vars` without a
-   `BETTER_AUTH_SECRET` value stops the run with the fix to make); a missing
-   or obsolete certificate and a missing `.dev.vars` (from
-   `.dev.vars.example`) are created in the runtime directory instead. It
-   applies the D1 schema to its own empty store. Walkthroughs build the CLI
-   for the current HEAD into the runtime directory on every run, so neither a
-   stale nor a missing `packages/cli/dist` matters and that directory is
-   never written; `packages/contract/dist` is not needed or written either.
-   Complete static-site fixtures in the checkout are copied into the export;
-   otherwise they are built there (also in CI), and a failed build stops the
-   run. It does not install Git hooks.
+   is used read-only; a missing or obsolete one is created in the runtime
+   directory instead. An existing `.dev.vars` is copied into the runtime
+   directory and only that copy is used (one without a `BETTER_AUTH_SECRET`
+   value stops the run with the fix to make); without one, the runtime copy
+   is created from `.dev.vars.example`. It applies the D1 schema to its own
+   empty store. Walkthroughs build the CLI for the current HEAD into the
+   runtime directory on every run, so neither a stale nor a missing
+   `packages/cli/dist` matters and that directory is never written;
+   `packages/contract/dist` is not needed or written either. The static-site
+   fixtures are always built in the copy from HEAD (also in CI), never taken
+   from the checkout, and a failed build stops the run. It does not install
+   Git hooks.
 3. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
    current HEAD, with the TLS certificate, and waits until each answers as
    itself on `127.0.0.1` and `[::1]`, the app reaches og-image through its
    service binding (`/og-image`), and the app reports the clean HEAD. Wrangler
-   listens on both loopback families; Vite listens on `[::1]`, where Chromium
-   resolves `*.localhost`, and the command relays `127.0.0.1` on the same port
-   to it. Nothing listens on other interfaces. The wait ends after
+   listens on both loopback families; Vite listens on `[::1]`, where the
+   captures map `*.localhost`, and the command relays `127.0.0.1` on the same
+   port to it, since clients resolve `localhost` to either family. Nothing listens on other interfaces. The wait ends after
    `LOCAL_CAPTURE_READY_TIMEOUT_MS` (default 300000), or as soon as a service
    exits.
 4. Runs the capture against those services. The app URL, the per-ID link viewer

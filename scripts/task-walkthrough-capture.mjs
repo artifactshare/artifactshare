@@ -117,6 +117,14 @@ export function walkthroughCliEntry(env = process.env) {
   return resolve(env.WALKTHROUGH_CLI_ENTRY || 'packages/cli/dist/index.js')
 }
 
+/** What to do when the CLI build the walkthrough runs is missing. */
+export function missingCliRecovery(env = process.env) {
+  const entry = walkthroughCliEntry(env)
+  return env.WALKTHROUGH_CLI_ENTRY
+    ? `cli: ${entry} is missing; the local capture's CLI build for this run did not produce it. Rerun pnpm walkthroughs:capture:local and check the cli build output`
+    : `cli: ${entry} is missing; run pnpm --filter @artifactshare/cli build`
+}
+
 async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
@@ -141,9 +149,7 @@ async function preflight(baseUrl, head) {
   try {
     await stat(walkthroughCliEntry())
   } catch {
-    failures.push(
-      `cli: ${walkthroughCliEntry()} is missing; run pnpm --filter @artifactshare/cli build`,
-    )
+    failures.push(missingCliRecovery())
   }
   // A second app request catches the dependency-optimization reload window
   // before any browser or scenario state is created.
