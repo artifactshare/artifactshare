@@ -37,16 +37,42 @@ type DiscoveryQuery = SelectQueryBuilder<
   DiscoveredId
 >
 
-/** Load live identity once per operation; callers supply no session claims. */
-export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
+function readDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
   return db
     .selectFrom('users')
     .select(['id', 'workspace_id', 'email', 'email_verified'])
     .where('id', '=', viewerUserId)
     .executeTakeFirst()
 }
+const operationViewers = new WeakMap<
+  Kysely<DB>,
+  Map<string, ReturnType<typeof readDiscoveryViewer>>
+>()
+/**
+ * A database handle for one search operation. Discovery checks made through
+ * it read each viewer's live identity once instead of once per check.
+ */
+export function discoveryOperation(db: Kysely<DB>): Kysely<DB> {
+  const scoped = db.withPlugin({
+    transformQuery: ({ node }) => node,
+    transformResult: ({ result }) => Promise.resolve(result),
+  })
+  operationViewers.set(scoped, new Map())
+  return scoped
+}
+/** Load live identity once per operation; callers supply no session claims. */
+export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
+  const viewers = operationViewers.get(db)
+  if (!viewers) return readDiscoveryViewer(db, viewerUserId)
+  let viewer = viewers.get(viewerUserId)
+  if (!viewer) {
+    viewer = readDiscoveryViewer(db, viewerUserId)
+    viewers.set(viewerUserId, viewer)
+  }
+  return viewer
+}
 type DiscoveryViewer = NonNullable<
-  Awaited<ReturnType<typeof loadDiscoveryViewer>>
+  Awaited<ReturnType<typeof readDiscoveryViewer>>
 >
 
 /** Fixed aliases are owned by this module, never supplied by the caller. */

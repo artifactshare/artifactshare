@@ -1625,3 +1625,57 @@ test('list adapter labels any-term fallback and distinguishes capacity from empt
     await searchCliArtifacts(fixture.db, () => stub, { id: 'viewer' }, args),
   ).toEqual({ kind: 'capacity-exceeded' })
 })
+
+test('a search waits on few sequential round trips and reads the viewer once', async () => {
+  // Calls started before the previous wave settles share that wave, so the
+  // wave count is the number of round trips a remote D1 and index would add
+  // one after another.
+  let waves = 0,
+    open: Promise<void> | undefined
+  const roundTrip = () =>
+    (open ??= new Promise<void>((resolve) => {
+      waves++
+      setTimeout(() => {
+        open = undefined
+        resolve()
+      }, 0)
+    }))
+  const tables: string[] = []
+  const db = fixture.db.withPlugin({
+    transformQuery: ({ node }) => {
+      const text = JSON.stringify(node)
+      // The viewer read selects email_verified from the users table alone.
+      tables.push(
+        text.includes('"email_verified"') && text.includes('"name":"users"}}}]')
+          ? 'viewer'
+          : (text.match(/"table".*?"name":"([a-z_]+)"/)?.[1] ?? node.kind),
+      )
+      return node
+    },
+    transformResult: async ({ result }) => {
+      await roundTrip()
+      return result
+    },
+  })
+  const stub = index()
+  const remote: SearchIndex = {
+    search: async (...args) => (await roundTrip(), stub.search(...args)),
+    groupMembers: async (...args) => (
+      await roundTrip(),
+      stub.groupMembers(...args)
+    ),
+    details: async (...args) => (await roundTrip(), stub.details(...args)),
+  }
+  const result = await search(db, () => remote, 'viewer', {
+    ...input,
+    pageSize: 20,
+  })
+  expect(result).not.toHaveProperty('error')
+  expect(tables.filter((table) => table === 'viewer')).toHaveLength(1)
+  expect(waves).toBeLessThanOrEqual(8)
+  waves = 0
+  tables.length = 0
+  await searchSuggestions(db, () => remote, { id: 'viewer' }, input, now)
+  expect(tables.filter((table) => table === 'viewer')).toHaveLength(1)
+  expect(waves).toBeLessThanOrEqual(8)
+})

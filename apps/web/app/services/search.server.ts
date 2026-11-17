@@ -12,6 +12,7 @@ import {
   enumerateDiscoverableIds,
   enumerateMemberDiscoverableIds,
   loadDiscoveryViewer,
+  discoveryOperation,
   suggestionOwners,
   resolveSearchSelections,
   discoverSuggestionCandidates,
@@ -251,24 +252,32 @@ async function collect(
   includeActiveDocumentCount = false,
 ) {
   const viewer = await loadDiscoveryViewer(db, actor)
-  const member = viewer
-    ? await db
-        .selectFrom('workspace_members')
-        .select('status')
-        .where('workspace_id', '=', viewer.workspace_id)
-        .where('user_id', '=', actor)
-        .executeTakeFirst()
-    : undefined
+  // Active members are the common case, so list the other workspaces' files
+  // while checking membership instead of after it.
+  const [member, external] = await Promise.all([
+    viewer
+      ? db
+          .selectFrom('workspace_members')
+          .select('status')
+          .where('workspace_id', '=', viewer.workspace_id)
+          .where('user_id', '=', actor)
+          .executeTakeFirst()
+      : undefined,
+    viewer && !any
+      ? enumerateDiscoverableIds(db, {
+          ...input.filters,
+          viewerUserId: actor,
+          now,
+          excludeWorkspaceId: viewer.workspace_id,
+        })
+      : undefined,
+  ])
   const ownWorkspace =
     !any && member?.status === 'active' ? viewer?.workspace_id : undefined
-  const sources = ownWorkspace
-    ? await enumerateDiscoverableIds(db, {
-        ...input.filters,
-        viewerUserId: actor,
-        now,
-        excludeWorkspaceId: ownWorkspace,
-      })
-    : await universe(db, actor, input.filters, now)
+  const sources =
+    ownWorkspace && external
+      ? external
+      : await universe(db, actor, input.filters, now)
   const hits: Hit[] = []
   const metas = new Map<string, Metadata>()
   let incomplete = false,
@@ -279,14 +288,21 @@ async function collect(
     (sum, source) => sum + source.ids.length,
     0,
   )
+  // Metadata is read alongside the live discovery check and kept only for
+  // the rows that check accepts.
   const remember = async (rows: Hit[]) => {
-    hits.push(...rows)
-    for (const row of await metadata(
-      db,
-      rows.map((hit) => hit.id),
-      actor,
-    ))
-      metas.set(row.id, row)
+    const [visible, rowsMetadata] = await Promise.all([
+      accepted(db, actor, input.filters, now, rows),
+      metadata(
+        db,
+        rows.map((hit) => hit.id),
+        actor,
+      ),
+    ])
+    hits.push(...visible)
+    const ids = new Set(visible.map((row) => row.id))
+    for (const row of rowsMetadata) if (ids.has(row.id)) metas.set(row.id, row)
+    return visible
   }
   if (ownWorkspace) {
     const stub = indexes(ownWorkspace)
@@ -294,15 +310,10 @@ async function collect(
     const keys = new Set<string>()
     const rememberPage = async (page: IndexPage) => {
       activeDocumentCount ??= page.activeDocumentCount ?? null
-      const visible = await accepted(
-        db,
-        actor,
-        input.filters,
-        now,
+      const visible = await remember(
         page.items.map((row) => ({ ...row, workspaceId: ownWorkspace })),
       )
       passedCount += visible.length
-      await remember(visible)
       for (const row of visible) {
         const meta = metas.get(row.id)
         if (meta) keys.add(groupKey(meta.title))
@@ -359,16 +370,10 @@ async function collect(
         cursor,
       })
       await remember(
-        await accepted(
-          db,
-          actor,
-          input.filters,
-          now,
-          page.items.map((row) => ({
-            ...row,
-            workspaceId: source.workspaceId,
-          })),
-        ),
+        page.items.map((row) => ({
+          ...row,
+          workspaceId: source.workspaceId,
+        })),
       )
       cursor = page.nextCursor ?? undefined
     } while (cursor !== undefined)
@@ -479,6 +484,7 @@ export async function search(
   source: 'screen' | 'mcp' | 'cli' = 'screen',
   clock = () => new Date(),
 ) {
+  db = discoveryOperation(db)
   const started = performance.now(),
     now = clock().toISOString(),
     canonical = canonicalSearch(input)
@@ -557,8 +563,9 @@ export async function search(
     position,
     Math.min(1000, position + input.pageSize),
   )
-  const sizes = selected.length
-    ? await completePageGroups(
+  // Group sizes and the page's details do not depend on each other.
+  const sizesPending = selected.length
+    ? completePageGroups(
         db,
         indexes,
         actor,
@@ -570,7 +577,7 @@ export async function search(
         result.allowedSources,
         result.knownHits,
       )
-    : new Map<string, ReturnType<typeof cappedTotal>>()
+    : Promise.resolve(new Map<string, ReturnType<typeof cappedTotal>>())
   const items: Array<
     Metadata & {
       path: string
@@ -587,31 +594,33 @@ export async function search(
   const displayedRanks = new Map(
     selected.map((row, index) => [row.id, position + index + 1]),
   )
-  for (const workspace of new Set(selected.map((row) => row.workspaceId))) {
-    const visible = await accepted(
-      db,
-      actor,
-      input.filters,
-      now,
-      selected.filter((row) => row.workspaceId === workspace),
-    )
-    const details = new Map(
-      (
-        await indexes(workspace).details(
-          await indexInput(db, input, workspace, any),
-          visible.map((row) => row.id),
-        )
-      ).map((row) => [row.id, row]),
-    )
-    const current = new Map(
-      (
-        await metadata(
+  const pagesPending = Promise.all(
+    [...new Set(selected.map((row) => row.workspaceId))].map(
+      async (workspace) => {
+        const visible = await accepted(
           db,
-          visible.map((row) => row.id),
           actor,
+          input.filters,
+          now,
+          selected.filter((row) => row.workspaceId === workspace),
         )
-      ).map((row) => [row.id, row]),
-    )
+        const ids = visible.map((row) => row.id)
+        const [details, current] = await Promise.all([
+          indexInput(db, input, workspace, any).then((request) =>
+            indexes(workspace).details(request, ids),
+          ),
+          metadata(db, ids, actor),
+        ])
+        return {
+          visible,
+          details: new Map(details.map((row) => [row.id, row])),
+          current: new Map(current.map((row) => [row.id, row])),
+        }
+      },
+    ),
+  )
+  const [sizes, pages] = await Promise.all([sizesPending, pagesPending])
+  for (const { visible, details, current } of pages) {
     for (const row of visible) {
       const detail = details.get(row.id),
         meta = current.get(row.id)
@@ -631,9 +640,11 @@ export async function search(
     }
   }
   items.sort((a, b) => a.rank - b.rank)
+  // The log row and the selected names are independent reads and writes.
+  let logged: Promise<unknown> = Promise.resolve()
   if (!searchLogId) {
     searchLogId = crypto.randomUUID()
-    await db
+    logged = db
       .insertInto('search_logs')
       .values({
         id: searchLogId,
@@ -670,17 +681,20 @@ export async function search(
   const facets = input.cursor
     ? undefined
     : searchFacets(result.knownHits, actor, total.relation === 'eq')
-  const selectedScope = input.cursor
-    ? undefined
-    : await resolveSearchSelections(
-        db,
-        actor,
-        [...(input.filters.ownerUserIds ?? [])],
-        input.filters.location?.kind === 'project'
-          ? [input.filters.location.id]
-          : [],
-        input.filters.credentialScope,
-      )
+  const [, selectedScope] = await Promise.all([
+    logged,
+    input.cursor
+      ? undefined
+      : resolveSearchSelections(
+          db,
+          actor,
+          [...(input.filters.ownerUserIds ?? [])],
+          input.filters.location?.kind === 'project'
+            ? [input.filters.location.id]
+            : [],
+          input.filters.credentialScope,
+        ),
+  ])
   return {
     items,
     total,
@@ -699,6 +713,7 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
+  db = discoveryOperation(db)
   const discoveryInput = { ...input.filters, viewerUserId: user.id, now }
   // An empty query shows only recently opened files, so skip the index and
   // name lookups whose results the palette would discard.
@@ -711,6 +726,7 @@ export async function searchSuggestions(
         ownedBy(user.id),
       ),
     }
+  const byId = new Map<string, Metadata>()
   const [hits, projects, owners] = await Promise.all([
     enumerateSuggestionIds(db, discoveryInput).then(async (sources) =>
       (
@@ -723,15 +739,20 @@ export async function searchSuggestions(
               limit: 6,
               maxResults: 7,
             })
-            const allowed = new Set(
-              (
-                await discoverSuggestionCandidates(db, {
-                  ...discoveryInput,
-                  workspaceId,
-                  candidateIds: page.items.map((row) => row.id),
-                })
-              ).map((row) => row.id),
-            )
+            const candidateIds = page.items.map((row) => row.id)
+            // Metadata is read alongside the live check and used only for the
+            // rows that check allows.
+            const [discovered, rowsMetadata] = await Promise.all([
+              discoverSuggestionCandidates(db, {
+                ...discoveryInput,
+                workspaceId,
+                candidateIds,
+              }),
+              metadata(db, candidateIds, user.id),
+            ])
+            const allowed = new Set(discovered.map((row) => row.id))
+            for (const row of rowsMetadata)
+              if (allowed.has(row.id)) byId.set(row.id, row)
             return page.items
               .filter((row) => allowed.has(row.id))
               .map((row) => ({ ...row, workspaceId }))
@@ -743,15 +764,6 @@ export async function searchSuggestions(
     suggestionOwners(db, discoveryInput, input.query),
   ])
   const selected = mergeSearchHits(hits, input.sort === 'newest').slice(0, 6)
-  const byId = new Map(
-    (
-      await metadata(
-        db,
-        selected.map((row) => row.id),
-        user.id,
-      )
-    ).map((row) => [row.id, row]),
-  )
   const details = new Map(
     (
       await Promise.all(
