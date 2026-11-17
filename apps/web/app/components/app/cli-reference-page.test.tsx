@@ -147,7 +147,7 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
       )![1]
       const paragraphs = [...sectionHtml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
       const texts = Array.isArray(section.body) ? section.body : [section.body]
-      if (id === 'recovery') expect(paragraphs).toHaveLength(7)
+      if (id === 'recovery') expect(paragraphs).toHaveLength(8)
       for (const [index, text] of texts.entries()) {
         const body = paragraphs[index][1]
         expect(body.replace(/<[^>]+>/g, '')).toBe(

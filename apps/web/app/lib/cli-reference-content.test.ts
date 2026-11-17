@@ -526,8 +526,8 @@ test.each(['en', 'ja'] as const)(
   'keeps four recovery topics after search guidance in %s',
   (locale) => {
     const recovery = cliReferenceContent(locale).sections.recovery.body
-    expect(recovery).toHaveLength(7)
-    const paragraphs = recovery.slice(3)
+    expect(recovery).toHaveLength(8)
+    const paragraphs = recovery.slice(4)
     expect(paragraphs).toHaveLength(4)
     const starts =
       locale === 'en'
