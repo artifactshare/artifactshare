@@ -1640,18 +1640,16 @@ test('a search waits on few sequential round trips and reads the viewer once', a
         resolve()
       }, 0)
     }))
-  const tables: string[] = []
+  // Count viewer reads in the SQL SQLite receives, not in Kysely's nodes.
+  let viewerReads = 0
+  const prepare = fixture.sqlite.prepare.bind(fixture.sqlite)
+  fixture.sqlite.prepare = (sql: string) => {
+    if (/^select [^()]*"email_verified"[^()]* from "users"/.test(sql))
+      viewerReads++
+    return prepare(sql)
+  }
   const db = fixture.db.withPlugin({
-    transformQuery: ({ node }) => {
-      const text = JSON.stringify(node)
-      // The viewer read selects email_verified from the users table alone.
-      tables.push(
-        text.includes('"email_verified"') && text.includes('"name":"users"}}}]')
-          ? 'viewer'
-          : (text.match(/"table".*?"name":"([a-z_]+)"/)?.[1] ?? node.kind),
-      )
-      return node
-    },
+    transformQuery: ({ node }) => node,
     transformResult: async ({ result }) => {
       await roundTrip()
       return result
@@ -1671,11 +1669,11 @@ test('a search waits on few sequential round trips and reads the viewer once', a
     pageSize: 20,
   })
   expect(result).not.toHaveProperty('error')
-  expect(tables.filter((table) => table === 'viewer')).toHaveLength(1)
+  expect(viewerReads).toBe(1)
   expect(waves).toBeLessThanOrEqual(8)
   waves = 0
-  tables.length = 0
+  viewerReads = 0
   await searchSuggestions(db, () => remote, { id: 'viewer' }, input, now)
-  expect(tables.filter((table) => table === 'viewer')).toHaveLength(1)
+  expect(viewerReads).toBe(1)
   expect(waves).toBeLessThanOrEqual(8)
 })

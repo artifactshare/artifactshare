@@ -23,6 +23,8 @@ export type DiscoveryFilters = {
 }
 export type DiscoveryInput = DiscoveryFilters & {
   viewerUserId: string
+  /** The viewer row the operation already read for viewerUserId. */
+  viewer?: DiscoveryViewer
   now?: string
   excludeWorkspaceId?: string
 }
@@ -37,43 +39,23 @@ type DiscoveryQuery = SelectQueryBuilder<
   DiscoveredId
 >
 
-function readDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
+/** Load live identity once per operation; callers supply no session claims. */
+export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
   return db
     .selectFrom('users')
     .select(['id', 'workspace_id', 'email', 'email_verified'])
     .where('id', '=', viewerUserId)
     .executeTakeFirst()
 }
-const operationViewers = new WeakMap<
-  Kysely<DB>,
-  Map<string, ReturnType<typeof readDiscoveryViewer>>
->()
-/**
- * A database handle for one search operation. Discovery checks made through
- * it read each viewer's live identity once instead of once per check.
- */
-export function discoveryOperation(db: Kysely<DB>): Kysely<DB> {
-  const scoped = db.withPlugin({
-    transformQuery: ({ node }) => node,
-    transformResult: ({ result }) => Promise.resolve(result),
-  })
-  operationViewers.set(scoped, new Map())
-  return scoped
-}
-/** Load live identity once per operation; callers supply no session claims. */
-export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
-  const viewers = operationViewers.get(db)
-  if (!viewers) return readDiscoveryViewer(db, viewerUserId)
-  let viewer = viewers.get(viewerUserId)
-  if (!viewer) {
-    viewer = readDiscoveryViewer(db, viewerUserId)
-    viewers.set(viewerUserId, viewer)
-  }
-  return viewer
-}
-type DiscoveryViewer = NonNullable<
-  Awaited<ReturnType<typeof readDiscoveryViewer>>
+export type DiscoveryViewer = NonNullable<
+  Awaited<ReturnType<typeof loadDiscoveryViewer>>
 >
+/** Reuse the operation's viewer row; read it only when the caller has none. */
+function inputViewer(db: Kysely<DB>, input: DiscoveryInput) {
+  return input.viewer?.id === input.viewerUserId
+    ? input.viewer
+    : loadDiscoveryViewer(db, input.viewerUserId)
+}
 
 /** Fixed aliases are owned by this module, never supplied by the caller. */
 function discoveryEligibility(viewer: DiscoveryViewer, now: string) {
@@ -185,7 +167,7 @@ export async function discoverCandidates(
 ): Promise<DiscoveredId[]> {
   const now = input.now ?? new Date().toISOString()
   if (!input.candidateIds.length) return []
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer) return []
   return buildCandidateDiscoveryQuery(db, viewer, input, now).execute()
 }
@@ -216,7 +198,7 @@ export async function enumerateDiscoverableIds(
   input: DiscoveryInput,
 ): Promise<Array<{ workspaceId: string; ids: string[] }>> {
   const now = input.now ?? new Date().toISOString()
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer) return []
   const rows = await drainDiscoveryIds(
     buildSparseDiscoveryQuery(db, viewer, input, now),
@@ -299,7 +281,7 @@ export async function enumerateSuggestionIds(
   db: Kysely<DB>,
   input: DiscoveryInput,
 ) {
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer) return []
   const sources = await Promise.all(
     buildSuggestionSourceQueries(db, viewer, input, input.now).map((query) =>
@@ -362,7 +344,7 @@ export async function enumerateMemberDiscoverableIds(
   db: Kysely<DB>,
   input: DiscoveryInput,
 ): Promise<DiscoveredId[]> {
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer) return []
   const membership = await db
     .selectFrom('workspace_members')
@@ -404,7 +386,7 @@ export async function discoverSuggestionCandidates(
   db: Kysely<DB>,
   input: CandidateDiscoveryInput,
 ): Promise<DiscoveredId[]> {
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer || !input.candidateIds.length) return []
   return buildCandidateDiscoveryQuery(
     db,
@@ -433,7 +415,7 @@ export async function suggestionOwners(
   input: DiscoveryInput,
   query: string,
 ): Promise<Array<{ id: string; name: string }>> {
-  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  const viewer = await inputViewer(db, input)
   if (!viewer) return []
   return buildSuggestionOwnersQuery(db, viewer, input, query).execute()
 }
@@ -474,8 +456,12 @@ export async function resolveSearchSelections(
   ownerIds: string[],
   projectIds: string[],
   credentialScope?: DiscoveryFilters['credentialScope'],
+  knownViewer?: DiscoveryViewer,
 ) {
-  const viewer = await loadDiscoveryViewer(db, actor)
+  const viewer =
+    knownViewer?.id === actor
+      ? knownViewer
+      : await loadDiscoveryViewer(db, actor)
   if (!viewer) return { owners: [], projects: [] }
   const eligible = discoveryQuery(
     db,

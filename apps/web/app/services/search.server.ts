@@ -12,12 +12,12 @@ import {
   enumerateDiscoverableIds,
   enumerateMemberDiscoverableIds,
   loadDiscoveryViewer,
-  discoveryOperation,
   suggestionOwners,
   resolveSearchSelections,
   discoverSuggestionCandidates,
   enumerateSuggestionIds,
   type DiscoveryFilters,
+  type DiscoveryViewer,
 } from './search-discovery.server'
 import {
   groupKey,
@@ -163,17 +163,49 @@ async function metadata(
     }),
   )
 }
+/** The searching user's live identity and own-workspace membership. */
+type SearchActor = {
+  id: string
+  viewer?: DiscoveryViewer
+  memberStatus?: string | null
+}
+/** One read per search operation; discovery checks reuse it. */
+async function loadSearchActor(db: Db, id: string): Promise<SearchActor> {
+  const row = await db
+    .selectFrom('users as u')
+    .leftJoin('workspace_members as m', (join) =>
+      join
+        .onRef('m.workspace_id', '=', 'u.workspace_id')
+        .onRef('m.user_id', '=', 'u.id'),
+    )
+    .select([
+      'u.id',
+      'u.workspace_id',
+      'u.email',
+      'u.email_verified',
+      'm.status as member_status',
+    ])
+    .where('u.id', '=', id)
+    .executeTakeFirst()
+  if (!row) return { id }
+  const { member_status: memberStatus, ...viewer } = row
+  return { id, viewer, memberStatus }
+}
+const asViewer = (actor: SearchActor) => ({
+  viewerUserId: actor.id,
+  viewer: actor.viewer,
+})
 async function universe(
   db: Db,
-  actor: string,
+  actor: SearchActor,
   filters: DiscoveryFilters,
   now: string,
 ) {
   const [sparse, member] = await Promise.all([
-    enumerateDiscoverableIds(db, { ...filters, viewerUserId: actor, now }),
+    enumerateDiscoverableIds(db, { ...filters, ...asViewer(actor), now }),
     enumerateMemberDiscoverableIds(db, {
       ...filters,
-      viewerUserId: actor,
+      ...asViewer(actor),
       now,
     }),
   ])
@@ -226,7 +258,7 @@ async function indexInput(
 }
 async function accepted<T extends Hit>(
   db: Db,
-  actor: string,
+  actor: SearchActor,
   filters: DiscoveryFilters,
   now: string,
   hits: T[],
@@ -234,7 +266,7 @@ async function accepted<T extends Hit>(
   if (!hits.length) return []
   const rows = await discoverCandidates(db, {
     ...filters,
-    viewerUserId: actor,
+    ...asViewer(actor),
     workspaceId: hits[0].workspaceId,
     candidateIds: hits.map((row) => row.id),
     now,
@@ -245,39 +277,24 @@ async function accepted<T extends Hit>(
 async function collect(
   db: Db,
   indexes: SearchIndexes,
-  actor: string,
+  actor: SearchActor,
   input: SearchInput,
   now: string,
   any = false,
   includeActiveDocumentCount = false,
 ) {
-  const viewer = await loadDiscoveryViewer(db, actor)
-  // Active members are the common case, so list the other workspaces' files
-  // while checking membership instead of after it.
-  const [member, external] = await Promise.all([
-    viewer
-      ? db
-          .selectFrom('workspace_members')
-          .select('status')
-          .where('workspace_id', '=', viewer.workspace_id)
-          .where('user_id', '=', actor)
-          .executeTakeFirst()
-      : undefined,
-    viewer && !any
-      ? enumerateDiscoverableIds(db, {
-          ...input.filters,
-          viewerUserId: actor,
-          now,
-          excludeWorkspaceId: viewer.workspace_id,
-        })
-      : undefined,
-  ])
   const ownWorkspace =
-    !any && member?.status === 'active' ? viewer?.workspace_id : undefined
-  const sources =
-    ownWorkspace && external
-      ? external
-      : await universe(db, actor, input.filters, now)
+    !any && actor.memberStatus === 'active'
+      ? actor.viewer?.workspace_id
+      : undefined
+  const sources = ownWorkspace
+    ? await enumerateDiscoverableIds(db, {
+        ...input.filters,
+        ...asViewer(actor),
+        now,
+        excludeWorkspaceId: ownWorkspace,
+      })
+    : await universe(db, actor, input.filters, now)
   const hits: Hit[] = []
   const metas = new Map<string, Metadata>()
   let incomplete = false,
@@ -296,7 +313,7 @@ async function collect(
       metadata(
         db,
         rows.map((hit) => hit.id),
-        actor,
+        actor.id,
       ),
     ])
     hits.push(...visible)
@@ -341,7 +358,7 @@ async function collect(
         const ids = (
           await enumerateMemberDiscoverableIds(db, {
             ...input.filters,
-            viewerUserId: actor,
+            ...asViewer(actor),
             now,
           })
         ).map((row) => row.id)
@@ -409,7 +426,7 @@ async function collect(
 async function completePageGroups(
   db: Db,
   indexes: SearchIndexes,
-  actor: string,
+  actor: SearchActor,
   input: SearchInput,
   now: string,
   any: boolean,
@@ -437,21 +454,21 @@ async function completePageGroups(
       )
       if ('error' in page) throw new SearchCapacityError()
       for (let offset = 0; offset < page.items.length; offset += 2000) {
-        const visible = await accepted(
-          db,
-          actor,
-          input.filters,
-          now,
-          page.items
-            .slice(offset, offset + 2000)
-            .map((row) => ({ ...row, workspaceId: workspace })),
-        )
-        for (const row of await metadata(
-          db,
-          visible.map((hit) => hit.id),
-          actor,
-        ))
-          members.get(groupKey(row.title))?.add(row.id)
+        const rows = page.items
+          .slice(offset, offset + 2000)
+          .map((row) => ({ ...row, workspaceId: workspace }))
+        // Metadata is read alongside the live check; only accepted rows count.
+        const [visible, rowsMetadata] = await Promise.all([
+          accepted(db, actor, input.filters, now, rows),
+          metadata(
+            db,
+            rows.map((row) => row.id),
+            actor.id,
+          ),
+        ])
+        const ids = new Set(visible.map((row) => row.id))
+        for (const row of rowsMetadata)
+          if (ids.has(row.id)) members.get(groupKey(row.title))?.add(row.id)
       }
       const remaining = new Set(page.incompleteGroupKeys ?? [])
       pending = pending.filter((key) => {
@@ -484,7 +501,6 @@ export async function search(
   source: 'screen' | 'mcp' | 'cli' = 'screen',
   clock = () => new Date(),
 ) {
-  db = discoveryOperation(db)
   const started = performance.now(),
     now = clock().toISOString(),
     canonical = canonicalSearch(input)
@@ -492,8 +508,13 @@ export async function search(
   let anchor = new Date(now)
   let position = 0,
     searchLogId: string | undefined
+  const [searchActor, cursor] = await Promise.all([
+    loadSearchActor(db, actor),
+    input.cursor
+      ? readSearchToken(db, actor, input.cursor, 'cursor', now)
+      : undefined,
+  ])
   if (input.cursor) {
-    const cursor = await readSearchToken(db, actor, input.cursor, 'cursor', now)
     if (
       !cursor ||
       cursor.log.filters_json !== canonical ||
@@ -518,7 +539,7 @@ export async function search(
       },
     }
   }
-  let result = await collect(db, indexes, actor, input, now, false, true)
+  let result = await collect(db, indexes, searchActor, input, now, false, true)
   let any = false
   const relaxations: Array<{
     filter: string
@@ -527,7 +548,7 @@ export async function search(
   if (!result.incomplete && !result.groups.length) {
     if (prepareQuery(input.query).terms.length >= 2) {
       any = true
-      result = await collect(db, indexes, actor, input, now, true)
+      result = await collect(db, indexes, searchActor, input, now, true)
     }
     const filters = input.filters
     const dimensions = [
@@ -536,26 +557,32 @@ export async function search(
       !filters.includeArchived ? 'archive' : '',
       filters.date ? 'date' : '',
     ].filter((dimension) => Boolean(dimension) && !input.cursor)
-    for (const dimension of dimensions) {
-      const relaxed = { ...filters }
-      if (dimension === 'owners') delete relaxed.ownerUserIds
-      if (dimension === 'location') delete relaxed.location
-      if (dimension === 'archive') relaxed.includeArchived = true
-      if (dimension === 'date') delete relaxed.date
-      const found = await collect(
-        db,
-        indexes,
-        actor,
-        { ...input, filters: relaxed },
-        now,
-        false,
-      )
+    // Each relaxed search is independent of the others.
+    const relaxedResults = await Promise.all(
+      dimensions.map((dimension) => {
+        const relaxed = { ...filters }
+        if (dimension === 'owners') delete relaxed.ownerUserIds
+        if (dimension === 'location') delete relaxed.location
+        if (dimension === 'archive') relaxed.includeArchived = true
+        if (dimension === 'date') delete relaxed.date
+        return collect(
+          db,
+          indexes,
+          searchActor,
+          { ...input, filters: relaxed },
+          now,
+          false,
+        )
+      }),
+    )
+    dimensions.forEach((dimension, index) => {
+      const found = relaxedResults[index]
       if (found.groups.length)
         relaxations.push({
           filter: dimension,
           total: cappedTotal(found.groups.length, found.incomplete),
         })
-    }
+    })
   }
   const total = cappedTotal(result.groups.length, result.incomplete)
   const tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
@@ -568,7 +595,7 @@ export async function search(
     ? completePageGroups(
         db,
         indexes,
-        actor,
+        searchActor,
         input,
         now,
         any,
@@ -599,7 +626,7 @@ export async function search(
       async (workspace) => {
         const visible = await accepted(
           db,
-          actor,
+          searchActor,
           input.filters,
           now,
           selected.filter((row) => row.workspaceId === workspace),
@@ -693,6 +720,7 @@ export async function search(
             ? [input.filters.location.id]
             : [],
           input.filters.credentialScope,
+          searchActor.viewer,
         ),
   ])
   return {
@@ -713,8 +741,13 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
-  db = discoveryOperation(db)
-  const discoveryInput = { ...input.filters, viewerUserId: user.id, now }
+  const viewer = await loadDiscoveryViewer(db, user.id)
+  const discoveryInput = {
+    ...input.filters,
+    viewerUserId: user.id,
+    viewer,
+    now,
+  }
   // An empty query shows only recently opened files, so skip the index and
   // name lookups whose results the palette would discard.
   if (!input.query.trim())
@@ -915,7 +948,10 @@ export async function searchGroup(
   cursor?: string,
   now = new Date().toISOString(),
 ) {
-  const handle = await readSearchToken(db, actor, receipt, 'open', now)
+  const [searchActor, handle] = await Promise.all([
+    loadSearchActor(db, actor),
+    readSearchToken(db, actor, receipt, 'open', now),
+  ])
   if (!handle?.payload.file) return invalidCursor
   const continuation = cursor
     ? await readSearchToken(db, actor, cursor, 'group-cursor', now)
@@ -940,7 +976,7 @@ export async function searchGroup(
   if (!representative) return invalidCursor
   const visible = await discoverCandidates(db, {
     ...input.filters,
-    viewerUserId: actor,
+    ...asViewer(searchActor),
     now,
     workspaceId: representative.workspace_id,
     candidateIds: [representative.id],
@@ -952,8 +988,8 @@ export async function searchGroup(
   if (continuation && continuation.payload.group !== digest)
     return invalidCursor
   const [sources, collected] = await Promise.all([
-    universe(db, actor, input.filters, now),
-    collect(db, indexes, actor, input, now, handle.log.tier === 'any'),
+    universe(db, searchActor, input.filters, now),
+    collect(db, indexes, searchActor, input, now, handle.log.tier === 'any'),
   ])
   const members = new Map<string, Metadata>(
     collected.knownHits
@@ -976,7 +1012,7 @@ export async function searchGroup(
       if ('error' in page) throw new SearchCapacityError()
       const acceptedRows = await accepted(
         db,
-        actor,
+        searchActor,
         input.filters,
         now,
         page.items.map((row) => ({ ...row, workspaceId: source.workspaceId })),
