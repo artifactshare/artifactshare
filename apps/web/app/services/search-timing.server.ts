@@ -81,8 +81,14 @@ export function timeD1(
   return new Proxy(database, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
-      if (property === 'prepare')
-        return (sql: string) => timeStatement(target.prepare(sql), timings)
+      if (property === 'prepare' && typeof value === 'function')
+        // Forwards the caller's SQL unchanged; the D1 compatibility checks
+        // apply where that SQL is written (Kysely or a literal prepare call).
+        return (sql: string) =>
+          timeStatement(
+            Reflect.apply(value, target, [sql]) as D1PreparedStatement,
+            timings,
+          )
       if (property === 'batch')
         // A batch is one round trip, counted by its statements.
         return (statements: D1PreparedStatement[]) =>

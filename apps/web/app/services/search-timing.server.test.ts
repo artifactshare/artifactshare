@@ -8,38 +8,51 @@ import {
   withSearchTiming,
 } from './search-timing.server'
 import type { SearchIndex } from './search.server'
+import { d1Database, d1Statement } from '~/test/typed-fakes/d1'
 
 let clock = 0
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function d1Result(duration: number) {
+  return {
+    results: [],
+    success: true as const,
+    meta: {
+      duration,
+      size_after: 0,
+      rows_read: 0,
+      rows_written: 0,
+      last_row_id: 0,
+      changed_db: false,
+      changes: 0,
+    },
+  }
+}
+
 function fakeDatabase() {
   const releases: Array<() => void> = []
-  const statement = {
-    bind() {
-      return statement
-    },
+  const statement = d1Statement({
     all: () =>
-      new Promise((resolve) =>
-        releases.push(() => resolve({ results: [], meta: { duration: 3 } })),
-      ),
-  }
-  const batch = vi.fn((statements: unknown[]) =>
-    Promise.resolve(statements.map(() => ({ meta: { duration: 1 } }))),
+      new Promise((resolve) => releases.push(() => resolve(d1Result(3)))),
+  })
+  const batch = vi.fn((statements: D1PreparedStatement[]) =>
+    Promise.resolve(statements.map(() => d1Result(1))),
   )
-  const database = {
+  const dumped = new ArrayBuffer(1)
+  const database = d1Database({
     prepare: () => statement,
     batch,
-    dump: () => 'kept',
-  } as unknown as D1Database
-  return { database, statement, batch, releases }
+    dump: () => Promise.resolve(dumped),
+  })
+  return { database, statement, batch, releases, dumped }
 }
 
 test('overlapping statements count the time any was in flight, plus D1 SQL time', async () => {
   vi.spyOn(performance, 'now').mockImplementation(() => clock)
   const timings = createSearchTimings()
-  const { database, statement, batch, releases } = fakeDatabase()
+  const { database, statement, batch, releases, dumped } = fakeDatabase()
   const timed = timeD1(database, timings)!
   clock = 0
   const first = timed.prepare('select 1').all()
@@ -53,7 +66,7 @@ test('overlapping statements count the time any was in flight, plus D1 SQL time'
   await second
   expect(timings.d1).toMatchObject({ count: 2, busyMs: 50, sqlMs: 6 })
   // Methods the timing does not cover still reach the binding.
-  expect((timed as unknown as { dump: () => string }).dump()).toBe('kept')
+  expect(await timed.dump()).toBe(dumped)
 
   // A batch is one round trip of real statements, counted per statement.
   clock = 100
@@ -71,14 +84,14 @@ test('index calls are timed even when they fail, and the header carries totals o
   vi.spyOn(performance, 'now').mockImplementation(() => clock)
   const timings = createSearchTimings()
   let fail: (error: Error) => void = () => {}
-  const index = {
+  const index: SearchIndex = {
     search: () =>
       new Promise((_, reject) => {
         fail = reject
       }),
-    groupMembers: () => Promise.resolve({ items: [] }),
+    groupMembers: () => Promise.resolve({ items: [], nextCursor: null }),
     details: () => Promise.resolve([]),
-  } as unknown as SearchIndex
+  }
   clock = 200
   const call = timeIndexes(() => index, timings)('ws').search({} as never)
   clock = 260
