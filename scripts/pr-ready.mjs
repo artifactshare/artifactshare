@@ -735,6 +735,7 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
   const codexState = readRounds(roundsPathIn(commonDir, branch, 'codex'))
   const claudeState = readRounds(roundsPathIn(commonDir, branch, 'claude'))
   const profile = implementationReviewProfile
+  let staleConsultation
   if (consultation?.head === head) {
     if (consultation.decision !== 'PROCEED')
       throw new Error(
@@ -748,17 +749,19 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
       isAncestorOrSelf(consultation.pairHead, head, run)
     )
       return
-    throw new Error(
-      [
-        `The round-cap consultation for HEAD ${head} covered the change after pair HEAD ${consultation.pairHead}, which is no longer the last completed implementation pair (${lastPair?.head ?? 'none'}) on this line. Ready was not changed.`,
-        'Run the round-cap consultation again on this HEAD:',
-        '  pnpm review:implementation -- --dispositions-file <path>',
-      ].join('\n'),
-    )
+    staleConsultation = [
+      `The round-cap consultation for HEAD ${head} covered the change after pair HEAD ${consultation.pairHead}, which is no longer the last completed implementation pair (${lastPair?.head ?? 'none'}) on this line, and no completed pair for this HEAD stands in for it. Ready was not changed.`,
+      'Run the round-cap consultation again on this HEAD:',
+      '  pnpm review:implementation -- --dispositions-file <path>',
+    ].join('\n')
+  }
+  // A stale consultation is no evidence, but a valid pair on this HEAD is.
+  const refuse = (message) => {
+    throw new Error(staleConsultation ?? message)
   }
   const pair = matchingPairHistory({ codexState, claudeState, profile })
   if (pair?.head !== head)
-    throw new Error(
+    refuse(
       [
         `No completed implementation review pair is recorded for HEAD ${head} under the current review profile. Ready was not changed.`,
         'A pair recorded for an earlier commit does not count. Run the implementation gate on this HEAD, classify its findings, then rerun pr:ready:',
@@ -767,7 +770,7 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
       ].join('\n'),
     )
   if (pair.blockers !== 0)
-    throw new Error(
+    refuse(
       [
         pair.blockers === undefined
           ? `The implementation review pair for HEAD ${head} has no recorded blocker count. Ready was not changed.`
@@ -787,7 +790,7 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
       run,
     })
   )
-    throw new Error(
+    refuse(
       [
         `The implementation review pair for HEAD ${head} reviewed only ${pair.base}...${head}, which does not reach the merge base ${mergeBase} with origin/${base} through earlier completed pairs. Ready was not changed.`,
         // A bare rerun on the same HEAD would reuse the rejected base.

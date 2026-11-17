@@ -19,6 +19,7 @@ import {
   coordinatedBase,
   main,
   completedPairRounds,
+  lastCompletedPairHead,
   implementationReviewProfile,
   parseArgs,
   recordCompletedRounds,
@@ -1233,26 +1234,39 @@ test('a spent round cap refuses the consultation off the last pair or with --bas
     })
 })
 
-test('the round cap counts only completed pairs under the current profile', () => {
+test('the round cap and the last pair come from the same completed pairs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'gate-rounds-'))
   const run = (_file, args) =>
     args[0] === 'branch' ? 'feat/x' : args[0] === 'rev-parse' ? directory : ''
   assert.equal(completedPairRounds({ run }), 0)
-  const path = roundsPath('feat/x', 'claude', run)
-  let state = readRounds(path)
-  for (const profile of [
-    implementationReviewProfile,
-    { ...implementationReviewProfile, method: 'controlled-review' },
-    implementationReviewProfile,
+  assert.equal(lastCompletedPairHead({ run }), undefined)
+  const record = (reviewer, rounds) => {
+    const path = roundsPath('feat/x', reviewer, run)
+    let state = readRounds(path)
+    for (const [pairHead, profile] of rounds)
+      state = recordRound(state, {
+        head: pairHead,
+        reviewer,
+        base: 'b',
+        profile,
+      })
+    writeRounds(path, state)
+  }
+  const other = { ...implementationReviewProfile, method: 'controlled-review' }
+  record('codex', [
+    ['h1', implementationReviewProfile],
+    ['h2', other],
+    ['h3', implementationReviewProfile],
   ])
-    state = recordRound(state, {
-      head: 'h',
-      reviewer: 'claude',
-      base: 'b',
-      profile,
-    })
-  writeRounds(path, state)
+  // h4 has a Claude record only (legacy, or one side recorded): not a pair.
+  record('claude', [
+    ['h1', implementationReviewProfile],
+    ['h2', other],
+    ['h3', implementationReviewProfile],
+    ['h4', implementationReviewProfile],
+  ])
   assert.equal(completedPairRounds({ run }), 2)
+  assert.equal(lastCompletedPairHead({ run }), 'h3')
   rmSync(directory, { recursive: true, force: true })
 })
 

@@ -1614,6 +1614,17 @@ test('a round-cap consultation for HEAD decides Ready', async (t) => {
     ['PROCEED after the pair on P', head, 'PROCEED', true, pairHead, true],
     ['P is not an ancestor of HEAD', head, 'PROCEED', stale, pairHead, false],
     ['a later pair replaced P', head, 'PROCEED', stale, pairHead, true, head],
+    // A stale consultation is no evidence, but a clean pair on HEAD is.
+    [
+      'a later clean pair on HEAD replaced P',
+      head,
+      'PROCEED',
+      true,
+      pairHead,
+      true,
+      head,
+      0,
+    ],
   ]
   for (const [
     name,
@@ -1623,6 +1634,7 @@ test('a round-cap consultation for HEAD decides Ready', async (t) => {
     lastPair = head,
     onLine = false,
     laterPair,
+    laterBlockers = 1,
   ] of cases)
     await t.test(name, () => {
       // The cap is spent and the last pair still reported a blocker.
@@ -1644,7 +1656,7 @@ test('a round-cap consultation for HEAD decides Ready', async (t) => {
       if (laterPair)
         recordEvidence(h.commonDir, laterPair, {
           critique: false,
-          blockers: { codex: 1, claude: 0 },
+          blockers: { codex: laterBlockers, claude: 0 },
         })
       const ledger = tempLedger()
       const attempt = () =>

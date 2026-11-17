@@ -26,7 +26,7 @@ import {
 } from './claude-review.mjs'
 import {
   isAncestorOrSelf,
-  lastCompletedPair,
+  completedPairs,
   readRounds,
   recordRound,
   rangeIsEmpty,
@@ -185,27 +185,29 @@ function coordinatedBase({ base, head, run = commandOutput } = {}) {
   }
 }
 
-/** HEAD of the branch's most recently completed pair under the current
- * profile, or undefined when none is recorded. */
-function lastCompletedPairHead({ run = commandOutput } = {}) {
+/**
+ * The branch's completed pairs under the current profile, oldest first: the
+ * rounds both reviewer files recorded. The cap counts these and the
+ * round-cap consultation builds on the last of them, so a branch at the cap
+ * always has a last pair.
+ */
+function branchCompletedPairs({ run = commandOutput } = {}) {
   const branch = run('git', ['branch', '--show-current'])
-  if (!branch) return undefined
-  return lastCompletedPair({
+  if (!branch) return []
+  return completedPairs({
     codexState: readRounds(roundsPath(branch, 'codex', run)),
     claudeState: readRounds(roundsPath(branch, 'claude', run)),
     profile: implementationReviewProfile,
-  })?.head
+  })
 }
 
 function completedPairRounds({ run = commandOutput } = {}) {
-  const branch = run('git', ['branch', '--show-current'])
-  if (!branch) return 0
-  const state = readRounds(roundsPath(branch, 'claude', run))
-  return state.rounds.filter(
-    (round) =>
-      JSON.stringify(round.profile) ===
-      JSON.stringify(implementationReviewProfile),
-  ).length
+  return branchCompletedPairs({ run }).length
+}
+
+/** HEAD of the branch's most recently completed pair, if any. */
+function lastCompletedPairHead({ run = commandOutput } = {}) {
+  return branchCompletedPairs({ run }).at(-1)?.head
 }
 
 function localInstructionsPresent(run = commandOutput) {

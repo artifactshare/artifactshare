@@ -132,7 +132,7 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
 }
 
 /** Every pair both reviewer files recorded under `profile`, oldest first. */
-function completedPairs({ codexState, claudeState, profile }) {
+export function completedPairs({ codexState, claudeState, profile }) {
   const rounds = (state) =>
     state?.schema_version === 1 && Array.isArray(state.rounds)
       ? state.rounds.filter(
