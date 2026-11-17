@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finalReviews } from './agent-role-settings.mjs'
@@ -443,5 +443,63 @@ test('refusals survive both consultation kinds and legacy clean pairs remain usa
       first,
     ),
     false,
+  )
+})
+
+test('unreadable or malformed consultation history cannot discard refusals', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'consultation-integrity-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const path = join(directory, 'consultation.json')
+  const decision = {
+    head: first,
+    pairHead: first,
+    kind: 'workarounds',
+    pairId: 'p1',
+    decision: 'FIX HERE',
+    profile: finalReviews,
+  }
+  assert.equal(refusedHead(path, first), false)
+  writeConsultation(path, decision)
+  assert.equal(refusedHead(path, first), true)
+  for (const broken of [
+    '{',
+    JSON.stringify({ schema_version: 2, fixHereHeads: [first] }),
+    JSON.stringify({ schema_version: 1, fixHereHeads: 'invalid' }),
+  ]) {
+    writeFileSync(path, broken)
+    assert.throws(() => refusedHead(path, first))
+    assert.throws(() =>
+      writeConsultation(path, {
+        ...decision,
+        head: second,
+        decision: 'PROCEED',
+      }),
+    )
+    assert.equal(readFileSync(path, 'utf8'), broken)
+  }
+  assert.throws(() => refusedHead(directory, first))
+  assert.throws(() => writeConsultation(directory, decision))
+})
+
+test('an interrupted replacement append preserves the last completed pair', () => {
+  const history = pair(first)
+  for (const reviewerState of [history.codexState, history.claudeState])
+    reviewerState.rounds[0].pairId = 'p1'
+  const completed = matchingPairHistory({ ...history, profile: finalReviews })
+  history.codexState.rounds.push({
+    ...history.codexState.rounds[0],
+    pairId: 'p2',
+  })
+  assert.deepEqual(
+    matchingPairHistory({ ...history, profile: finalReviews }),
+    completed,
+  )
+  history.claudeState.rounds.push({
+    ...history.claudeState.rounds[0],
+    pairId: 'p2',
+  })
+  assert.equal(
+    matchingPairHistory({ ...history, profile: finalReviews }).pairId,
+    'p2',
   )
 })

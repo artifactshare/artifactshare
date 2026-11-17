@@ -576,6 +576,9 @@ test('an unresolved dispositioned workaround reaches verification and final mark
     { workaround: 'true' },
     { severity: 'follow_up' },
     { root_cause: '' },
+    { file: '' },
+    { line: 0 },
+    { line: '42' },
   ]) {
     const malformed = structuredClone(result.verifier)
     Object.assign(malformed.findings[0], changes)

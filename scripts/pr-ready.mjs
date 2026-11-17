@@ -12,7 +12,7 @@ import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
 import { landed, renderLandedResult } from './pr-landed.mjs'
 import { implementationReviewProfile } from './implementation-review-gate.mjs'
-import { acquireTaskScopeLock, currentTaskBranch } from './task-scope.mjs'
+import { acquireTaskScopeLock } from './task-scope.mjs'
 import { roundCapConsultation } from './agent-role-settings.mjs'
 import {
   gitCommonDir,
@@ -1150,7 +1150,10 @@ export async function runReady({
     let releaseScope
     try {
       const run = (file, args) => output(exec, file, args)
-      releaseScope = await acquireScopeLock(currentTaskBranch(run), { run })
+      const branch = run('git', ['branch', '--show-current'])
+      if (!branch || branch === 'main')
+        throw new Error('A topic branch is required.')
+      releaseScope = await acquireScopeLock(branch, { run, wait: true })
       result = ready({ parsed, ledger, exec, readFile })
     } catch (error) {
       operationError = error

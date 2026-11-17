@@ -248,6 +248,8 @@ test('marked blockers retain cause and correction while malformed marks fail clo
     { severity: 'follow_up' },
     { root_cause: '' },
     { removing_change: '' },
+    { line: 0 },
+    { line: '42' },
   ]) {
     assert.throws(
       () => parse({ ...finding, ...changes }),

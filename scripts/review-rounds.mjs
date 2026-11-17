@@ -102,8 +102,30 @@ function latestRound(state) {
  * have no profile or base and therefore remain intermediate/legacy evidence.
  */
 export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
-  const codex = latestRound(codexState)
-  const claude = latestRound(claudeState)
+  let codex = latestRound(codexState)
+  let claude = latestRound(claudeState)
+  // An interrupted two-file append is not a completed replacement pair.
+  if (
+    codex?.pairId &&
+    claude?.pairId &&
+    codex.pairId !== claude.pairId &&
+    sameJson(codex.profile, profile) &&
+    sameJson(claude.profile, profile)
+  ) {
+    const completed = completedPairs({ codexState, claudeState, profile }).at(
+      -1,
+    )
+    if (completed) {
+      claude = completed
+      codex = codexState.rounds.findLast(
+        (round) =>
+          round.pairId === completed.pairId &&
+          round.head === completed.head &&
+          round.base === completed.base &&
+          sameJson(round.profile, profile),
+      )
+    }
+  }
   if (
     !codex ||
     !claude ||
@@ -214,17 +236,30 @@ export function allWorkaroundPair(pair, head) {
   )
 }
 
-export function refusedHead(path, head) {
+function readConsultationState(path) {
+  let state
   try {
-    const state = JSON.parse(readFileSync(path, 'utf8'))
-    return (
-      state.schema_version === 1 &&
-      Array.isArray(state.fixHereHeads) &&
-      state.fixHereHeads.includes(head)
-    )
-  } catch {
-    return false
+    state = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    if (error.code === 'ENOENT') return { schema_version: 1 }
+    throw error
   }
+  if (
+    state?.schema_version !== 1 ||
+    (state.fixHereHeads !== undefined &&
+      (!Array.isArray(state.fixHereHeads) ||
+        !state.fixHereHeads.every(
+          (head) => typeof head === 'string' && /^[0-9a-f]{40}$/u.test(head),
+        )))
+  )
+    throw new Error(
+      'Invalid consultation state; refusal history cannot be verified.',
+    )
+  return state
+}
+
+export function refusedHead(path, head) {
+  return readConsultationState(path).fixHereHeads?.includes(head) ?? false
 }
 
 /** Every pair both reviewer files recorded under `profile`, oldest first. */
@@ -348,12 +383,7 @@ export function writeConsultation(
   path,
   { head, pairHead, decision, profile, kind = 'round-cap', pairId },
 ) {
-  let previous
-  try {
-    previous = JSON.parse(readFileSync(path, 'utf8'))
-  } catch {
-    previous = {}
-  }
+  const previous = readConsultationState(path)
   const fixHereHeads = new Set(
     Array.isArray(previous.fixHereHeads) ? previous.fixHereHeads : [],
   )

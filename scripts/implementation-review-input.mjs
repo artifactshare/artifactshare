@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs'
 
 export const workaroundRule =
-  'A workaround introduced by the change (including an existing workaround copied to a new site), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is always a blocker, even when recorded or approved by an owner. No author record or owner decision is an exemption. This rule takes precedence over scope and disposition instructions for unresolved introduced workarounds. Mark each such finding with workaround: true, severity: blocker, and a nonempty file location, and nonempty root_cause and removing_change strings stating the cause and the change that removes it; minimal_fix must not contradict removing_change. Ordinary findings may omit workaround or use false. Check the Commit messages section for the required record of the workaround, the root cause it leaves in place, and why the cause cannot be removed in this repository (repeated in the PR description). This record is consultation evidence, not an exemption: only a workaround consultation may authorize early Ready for causes outside repository control. Legitimate timeouts and supported capability differences remain subject to test-change guidance, not automatic workaround classification.'
+  'A workaround introduced by the change (including an existing workaround copied to a new site), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is always a blocker, even when recorded or approved by an owner. No author record or owner decision is an exemption. This rule takes precedence over scope and disposition instructions for unresolved introduced workarounds. Mark each such finding with workaround: true, severity: blocker, and nonempty id and file strings (line, when supplied, must be a positive integer; summary, when supplied, must be a nonempty string), and nonempty root_cause and removing_change strings stating the cause and the change that removes it; minimal_fix must not contradict removing_change. Ordinary findings may omit workaround or use false. Check the Commit messages section for the required record of the workaround, the root cause it leaves in place, and why the cause cannot be removed in this repository (repeated in the PR description). This record is consultation evidence, not an exemption: only a workaround consultation may authorize early Ready for causes outside repository control. Legitimate timeouts and supported capability differences remain subject to test-change guidance, not automatic workaround classification.'
 
 export function validWorkaroundFinding(finding) {
   return (
     finding?.workaround === true &&
     finding.severity === 'blocker' &&
-    ['root_cause', 'removing_change'].every(
+    (finding.line === undefined ||
+      (Number.isInteger(finding.line) && finding.line > 0)) &&
+    (finding.summary === undefined ||
+      (typeof finding.summary === 'string' && !!finding.summary.trim())) &&
+    ['id', 'file', 'root_cause', 'removing_change'].every(
       (key) => typeof finding[key] === 'string' && finding[key].trim(),
     )
   )
@@ -20,7 +24,7 @@ export function assertWorkaroundFinding(finding) {
     (finding.workaround === true && !validWorkaroundFinding(finding))
   )
     throw new Error(
-      'Invalid workaround mark: requires blocker severity, root_cause and removing_change.',
+      'Invalid workaround mark: requires blocker severity, id, file, root_cause and removing_change, plus valid optional line and summary.',
     )
 }
 

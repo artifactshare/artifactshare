@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   MAX_SCOPE_BYTES,
+  acquireTaskScopeLock,
   admitTaskCandidate,
   currentTaskBranch,
   initializeTaskScope,
@@ -210,5 +211,21 @@ test('status reads atomic state without waiting for the review lock', async () =
     assert.equal(JSON.parse(output[0]).objective, scope.objective)
   } finally {
     rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('scope lock forwards the Ready waiting policy to the OS lock', async (t) => {
+  const { directory, run } = fixture()
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  for (const wait of [false, true]) {
+    await acquireTaskScopeLock('topic', {
+      run,
+      wait,
+      acquire: (path, options) => {
+        assert.equal(path, taskScopePaths('topic', run).lock)
+        assert.equal(options.wait, wait)
+        return Promise.resolve(() => {})
+      },
+    })
   }
 })

@@ -2813,7 +2813,8 @@ test('Ready waits for the gate scope lock and reads a refusal written before acq
     ledger,
     exec: h.exec,
     acquireLock: () => () => {},
-    acquireScopeLock: (branch) => {
+    acquireScopeLock: (branch, options) => {
+      assert.equal(options.wait, true)
       assert.equal(branch, 'topic')
       waiting.resolve()
       return acquired.promise

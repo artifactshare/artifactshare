@@ -107,7 +107,7 @@ test('documents proportional specification review and the exact-HEAD Ready prere
     const instructions = fs.readFileSync(path.join(root, name), 'utf8')
     assert.match(
       instructions,
-      /Every pull request branch initializes its objective scope before its implementation gate, and `pr:ready` requires a completed implementation pair for the exact HEAD \(and, for a UI diff, a completed critique record for that HEAD\)/u,
+      /Every pull request branch initializes its objective scope before its implementation gate, and `pr:ready` requires a completed implementation pair for the exact HEAD with no blockers or an eligible early workaround `PROCEED` \(and, for a UI diff, a completed critique record for that HEAD\)/u,
     )
     assert.doesNotMatch(
       instructions,
@@ -377,6 +377,14 @@ test('the PR Change section requests the public workaround record', () => {
 })
 
 test('all policy surfaces require marked evidence and persistent FIX HERE refusal', () => {
+  for (const required of [
+    'exact-HEAD latest pair',
+    'all blockers marked',
+    'pair identity',
+    'new commit',
+    'RETURN TO OWNER',
+  ])
+    assert.ok(workflow.includes(required), required)
   for (const name of [
     'docs/development-workflow.md',
     '.github/PULL_REQUEST_TEMPLATE.md',
@@ -384,16 +392,16 @@ test('all policy surfaces require marked evidence and persistent FIX HERE refusa
     'CLAUDE.md',
   ]) {
     const text = fs.readFileSync(path.join(root, name), 'utf8')
+    if (name !== 'docs/development-workflow.md')
+      assert.match(
+        text,
+        /\[workaround consultation and Ready policy\]\([^)]*docs\/development-workflow\.md\)/u,
+      )
     for (const required of [
       'Introduced workarounds are always blockers',
       'neither an author record nor an owner decision is an exemption',
       '--consult-workarounds',
-      'exact-HEAD latest pair',
-      'all blockers marked',
-      'pair identity',
       'FIX HERE',
-      'new commit',
-      'RETURN TO OWNER',
     ])
       assert.ok(text.includes(required), name + ': ' + required)
   }

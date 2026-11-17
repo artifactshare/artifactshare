@@ -310,19 +310,22 @@ function consultationPrompt({ head, pairHead, mergeBase, evidencePath }) {
   ].join('\n\n')
 }
 
-function consultationDecision(text) {
+function consultationDecision(
+  text,
+  decisions = ['PROCEED', 'RETURN TO OWNER'],
+) {
   const last = String(text ?? '')
     .trimEnd()
     .split('\n')
     .at(-1)
     ?.replace(/[`*]/gu, '')
     .trim()
-  const match = /^DECISION: (PROCEED|RETURN TO OWNER)$/u.exec(last ?? '')
-  if (!match)
+  const decision = last?.replace(/^DECISION: /u, '')
+  if (!last?.startsWith('DECISION: ') || !decisions.includes(decision))
     throw new Error(
-      'The round-cap consultation did not end with DECISION: PROCEED or DECISION: RETURN TO OWNER; nothing was recorded.',
+      `The consultation did not end with ${decisions.map((value) => `DECISION: ${value}`).join(' or ')}; nothing was recorded.`,
     )
-  return match[1]
+  return decision
 }
 
 /** Runs the round-cap consultation with the configured Claude profile and
@@ -608,7 +611,7 @@ async function main({
 
 # Marked findings
 
-${JSON.stringify(pair.workaroundFindings, null, 2)}
+${quoteCommitMessages(JSON.stringify(pair.workaroundFindings, null, 2))}
 
 ## Commit messages
 
@@ -630,19 +633,12 @@ ${run('git', ['diff', '--no-color', range])}`,
         ].join('\n\n'),
         { evidenceDirectory: snapshotDirectory, signal },
       )
-      const match = /^DECISION: (PROCEED|FIX HERE)$/u.exec(
-        text.trim().split('\n').at(-1),
-      )
-      if (!match)
-        throw new Error(
-          'Workaround consultation did not end with DECISION: PROCEED or DECISION: FIX HERE; nothing was recorded.',
-        )
+      const decision = consultationDecision(text, ['PROCEED', 'FIX HERE'])
       if (readCleanHead() !== head)
         throw new Error(
           'HEAD or worktree changed during workaround consultation; nothing was recorded.',
         )
       assertNotRefused()
-      const decision = match[1]
       recordConsultation({
         branch,
         head,

@@ -153,7 +153,7 @@ function parseCodeReviewFindings(text) {
     for (const field of ['file', 'summary'])
       if (typeof entry[field] !== 'string' || !entry[field].trim())
         throw new Error(`Code review finding ${index + 1} has no ${field}.`)
-    assertWorkaroundFinding(entry)
+    assertWorkaroundFinding({ ...entry, id: `code-review-${index + 1}` })
     const severity = severities.includes(entry.severity)
       ? entry.severity
       : 'blocker'

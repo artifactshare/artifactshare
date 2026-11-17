@@ -250,9 +250,9 @@ export function taskScopeContext(state, dispositions) {
 
 export function acquireTaskScopeLock(
   branch,
-  { run = commandOutput, acquire = acquireFileLock } = {},
+  { run = commandOutput, acquire = acquireFileLock, wait = false } = {},
 ) {
-  return acquire(taskScopePaths(branch, run).lock)
+  return acquire(taskScopePaths(branch, run).lock, { wait })
 }
 
 function parseArgs(argv) {
