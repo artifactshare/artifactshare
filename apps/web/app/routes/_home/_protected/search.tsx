@@ -129,8 +129,19 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
       actor: user.id,
     }
-  // Temporary: measured alongside the search, never failing it.
-  const probes = probeIndexLocations().catch(() => [])
+  // Temporary placement check, only when asked for: measured before the
+  // search so its round trips do not wait on search work.
+  const probes = url.searchParams.has('probe-index-location')
+    ? await probeIndexLocations().catch((error: unknown) => {
+        console.warn(
+          JSON.stringify({
+            event: 'search_index_probe_failed',
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        )
+        return []
+      })
+    : []
   const { value: result, serverTiming } = await withSearchTiming(
     'search',
     (db, indexes) => search(db, indexes, user.id, input, 'screen'),
@@ -169,7 +180,7 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
     { result, actor: user.id },
     {
       headers: {
-        'Server-Timing': [serverTiming, ...(await probes)].join(', '),
+        'Server-Timing': [serverTiming, ...probes].join(', '),
       },
     },
   )
