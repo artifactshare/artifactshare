@@ -30,6 +30,7 @@ import { FileTypeIcon } from './file-type-icon'
 import { Highlight } from './search-results'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { Button } from '~/components/ui/button'
+import { cn } from '~/lib/utils'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
@@ -116,10 +117,12 @@ export function SearchPalette({
   )
   return (
     <div
+      // Breakpoint classes, not the `mobile` state, so the first paint on a
+      // phone already shows the icon button on the right.
       className={
-        mobile && !resultsPage
-          ? 'ml-auto shrink-0'
-          : 'nav:max-w-xl min-w-0 flex-1'
+        resultsPage
+          ? 'nav:max-w-xl min-w-0 flex-1'
+          : 'max-nav:ml-auto max-nav:shrink-0 nav:max-w-xl nav:min-w-0 nav:flex-1'
       }
     >
       {mobile ? (
@@ -169,27 +172,24 @@ function SearchTrigger({
           : `${t('pal.search')}: ${currentQuery || t('pal.placeholder')}${mobile ? '' : ' ⌘K'}`
       }
       className={
-        mobile
-          ? resultsPage
-            ? 'text-muted-foreground min-w-0 flex-1 justify-start gap-2'
-            : 'gap-2'
-          : 'text-muted-foreground w-full justify-start gap-2'
+        resultsPage
+          ? 'text-muted-foreground max-nav:min-w-0 max-nav:flex-1 nav:w-full justify-start gap-2'
+          : 'nav:text-muted-foreground nav:w-full nav:justify-start gap-2'
       }
       onClick={onOpen}
     >
       <IconSearch aria-hidden="true" />
-      {(!mobile || resultsPage) && (
-        <>
-          <span className="min-w-0 flex-1 truncate text-left">
-            {currentQuery || t('pal.placeholder')}
-          </span>
-          {!mobile && (
-            <kbd aria-hidden="true" className="text-xs">
-              ⌘K
-            </kbd>
-          )}
-        </>
-      )}
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-left',
+          !resultsPage && 'max-nav:hidden',
+        )}
+      >
+        {currentQuery || t('pal.placeholder')}
+      </span>
+      <kbd aria-hidden="true" className="max-nav:hidden text-xs">
+        ⌘K
+      </kbd>
     </Button>
   )
 }
@@ -540,7 +540,7 @@ function PaletteBody({
         )}
         <Input
           ref={input}
-          className="min-w-16 flex-1 border-0 px-0 shadow-none focus-visible:ring-0"
+          className="min-w-16 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
           placeholder={t('pal.placeholder')}
           role="combobox"
           aria-label={t('search.keyword')}

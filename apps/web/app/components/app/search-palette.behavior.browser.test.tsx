@@ -785,6 +785,14 @@ test('unresolved inherited IDs keep neutral labels without borrowing another sel
 
 test('phone header keeps search on the right and the empty palette says it is loading recent files', async () => {
   await page.viewport(390, 700)
+  // Report a wide screen so only the CSS breakpoints decide the phone layout.
+  const matchMedia = window.matchMedia.bind(window)
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    ...matchMedia(query),
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
   // Suggestions never answer, so the palette stays in its loading state.
   vi.stubGlobal(
     'fetch',
@@ -827,6 +835,9 @@ test('phone header keeps search on the right and the empty palette says it is lo
   expect(trigger.element().getBoundingClientRect().left).toBeGreaterThan(
     window.innerWidth / 2,
   )
+  // CSS alone places it there, before the width check in JavaScript runs.
+  // An icon button, not the desktop field with its placeholder and ⌘K.
+  expect(trigger.element().getBoundingClientRect().width).toBeLessThan(60)
   await trigger.click()
   await expect
     .element(page.getByRole('status').filter({ hasText: 'Loading…' }))
