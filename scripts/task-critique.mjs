@@ -14,6 +14,9 @@ import {
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
+import { critiqueRecord, writeCritiqueRecord } from './task-critique-state.mjs'
+import { gitCommonDir } from './review-rounds.mjs'
+import { writeText } from './implementation-review-gate.mjs'
 
 const timeoutMs = 1_800_000
 const claudeLayers = [
@@ -315,6 +318,7 @@ function validateInputs(
       acceptedBehavior.push(`${taskId}: ${choice}`)
   }
   const screenImages = []
+  const screenRoots = []
   let hasSections = false
   for (const item of options.screenRoots ?? []) {
     const screenRootCandidate = resolve(canonicalRepo, item)
@@ -331,6 +335,7 @@ function validateInputs(
       throw new Error(
         'Screen capture root must be an existing directory inside the repository or screen capture output root.',
       )
+    screenRoots.push(screenRoot)
     const screenManifestPath = validatedFilePath(
       screenRoot,
       resolve(screenRoot, 'manifest.json'),
@@ -395,6 +400,7 @@ function validateInputs(
     imagePaths: options.copyOnly && hasSections ? [] : imagePaths,
     screenImagePaths: screenImages.map((entry) => entry.path),
     screenImages,
+    screenRoots,
   }
 }
 
@@ -417,6 +423,20 @@ function readDispositions(path, repo) {
   }
   if (!text) throw new Error('Critique dispositions file is empty.')
   return text
+}
+
+const critiqueStatusComplete = 'CRITIQUE_STATUS: COMPLETE'
+const critiqueStatusNeedsInput = 'CRITIQUE_STATUS: NEEDS_INPUT'
+
+// Only the final non-empty line of a layer's reply decides completion; no
+// other reviewer text is parsed. Surrounding Markdown code or emphasis marks
+// are ignored as in the implementation gate's decision line. Returns the
+// status line, or undefined when it is missing or malformed.
+function layerStatus(text) {
+  const last = text.trimEnd().split('\n').at(-1)?.replace(/[`*]/gu, '').trim()
+  return [critiqueStatusComplete, critiqueStatusNeedsInput].includes(last)
+    ? last
+    : undefined
 }
 
 function commonPrompt(input) {
@@ -465,6 +485,7 @@ function commonPrompt(input) {
         ]
       : []),
     `Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes ${input.screenOnly ? 'screen, state, viewport' : 'task, viewport, phase'}, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.`,
+    `End the reply with exactly one final line, ${critiqueStatusComplete} or ${critiqueStatusNeedsInput}; use ${critiqueStatusNeedsInput} when the evidence was not enough to judge a required ${input.screenOnly ? 'screen' : 'screen or task'}.`,
   ].join('\n')
 }
 
@@ -618,6 +639,15 @@ async function main({
   run = spawnSync,
   exec = execFileSync,
   stdout = process.stdout,
+  stderr = process.stderr,
+  recordCompletion = (record, branch) =>
+    writeCritiqueRecord(record, {
+      commonDir: gitCommonDir(
+        (_file, args) => gitOutput(exec, repo, args),
+        repo,
+      ),
+      branch,
+    }),
 } = {}) {
   const options = parseArgs(argv)
   if (options.help) {
@@ -625,6 +655,8 @@ async function main({
     return 0
   }
   const head = cleanHead(exec, repo)
+  // The record is keyed by the branch the critique started on.
+  const branch = gitOutput(exec, repo, ['branch', '--show-current'])
   const input = {
     ...validateInputs(options, { repo, head }),
     dispositions: readDispositions(options.dispositionsFile, repo),
@@ -650,14 +682,46 @@ async function main({
       throw new Error('HEAD or worktree changed during task critique.')
     return 0
   }
+  const incomplete = []
   for (const layer of selectedLayers) {
-    stdout.write(
-      `## ${layer.id} critique\n\n${await runLayer(layer, input, { run, repo })}\n\n`,
-    )
+    const text = await runLayer(layer, input, { run, repo })
+    const status = layerStatus(text)
+    if (status !== critiqueStatusComplete)
+      incomplete.push(
+        `${layer.id}: ${status ? `ended with ${status}` : `did not end with ${critiqueStatusComplete} or ${critiqueStatusNeedsInput}`}`,
+      )
+    // A pipe failure is reported asynchronously; the outcome is recorded only
+    // after the stream has accepted every layer's output.
+    await writeText(stdout, `## ${layer.id} critique\n\n${text}\n`)
     if (cleanHead(exec, repo) !== head)
       throw new Error('HEAD or worktree changed during task critique.')
   }
-  return 0
+  if (gitOutput(exec, repo, ['branch', '--show-current']) !== branch)
+    throw new Error('The branch changed during task critique.')
+  const completed = incomplete.length === 0
+  if (!branch) {
+    stderr.write(
+      'No branch is checked out; the critique finished but recorded no Ready evidence.\n',
+    )
+  } else {
+    // Ready accepts only a completed record for the exact HEAD. It is written
+    // after every selected layer was delivered on the unchanged clean
+    // checkout.
+    await recordCompletion(
+      critiqueRecord({
+        head,
+        completed,
+        walkthroughRoot: input.root,
+        screenRoots: input.screenRoots,
+      }),
+      branch,
+    )
+  }
+  if (completed) return 0
+  stderr.write(
+    `The critique is not complete:\n${incomplete.map((line) => `- ${line}`).join('\n')}\n${branch ? 'This HEAD is recorded as not critiqued, so Ready refuses. ' : ''}Supply the requested evidence and run the critique again.\n`,
+  )
+  return 2
 }
 
 if (

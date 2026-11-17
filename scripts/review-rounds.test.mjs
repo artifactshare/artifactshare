@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finalReviews } from './agent-role-settings.mjs'
@@ -8,6 +9,7 @@ import {
   baseIsReachable,
   isStrictAncestor,
   matchingPairHistory,
+  pairCoversBranch,
   rangeIsEmpty,
   readRounds,
   recordRound,
@@ -306,4 +308,95 @@ test('original message base propagates only from agreeing reused pairs', () => {
     })
     assert.equal(divergent.commitBase, undefined)
   }
+})
+
+test('a pair covers the branch only from the merge base or through earlier pairs', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'review-range-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const run = (file, args) =>
+    execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim()
+  const git = (...args) => run('git', args)
+  git('init', '--quiet', '-b', 'main')
+  git('config', 'user.name', 'Test')
+  git('config', 'user.email', 'test@example.test')
+  git('commit', '--quiet', '--allow-empty', '-m', 'base')
+  const mergeBase = git('rev-parse', 'HEAD')
+  git('switch', '--quiet', '-c', 'topic')
+  const commits = []
+  for (let index = 1; index <= 10; index += 1) {
+    git('commit', '--quiet', '--allow-empty', '-m', `change ${index}`)
+    commits.push(git('rev-parse', 'HEAD'))
+  }
+  const head = commits.at(-1)
+  const parent = commits.at(-2)
+  const rounds = (pairs) => {
+    const of = (reviewer) => ({
+      schema_version: 1,
+      rounds: pairs.map(([pairHead, base]) => ({
+        head: pairHead,
+        reviewer,
+        base,
+        profile: finalReviews,
+      })),
+    })
+    return { codexState: of('codex'), claudeState: of('claude') }
+  }
+  const covers = (history, base) =>
+    pairCoversBranch({
+      ...history,
+      profile: finalReviews,
+      pair: { head, base },
+      mergeBase,
+      run,
+    })
+
+  // A default pair reads origin/main...HEAD, which starts at the merge base.
+  assert.equal(covers(rounds([[head, mergeBase]]), mergeBase), true)
+  // `--base HEAD~1` leaves nine of the ten commits unreviewed.
+  assert.equal(covers(rounds([[head, parent]]), parent), false)
+  // Narrowed from an earlier pair on HEAD~1 that reviewed from the merge base.
+  const chained = [
+    [parent, mergeBase],
+    [head, parent],
+  ]
+  assert.equal(covers(rounds(chained), parent), true)
+  // An earlier pair that was itself narrow does not extend the chain.
+  const narrowEarlier = [
+    [parent, commits[0]],
+    [head, parent],
+  ]
+  assert.equal(covers(rounds(narrowEarlier), parent), false)
+  // A single reviewer's earlier round is not a completed pair.
+  const partial = rounds(chained)
+  partial.codexState.rounds.shift()
+  assert.equal(covers(partial, parent), false)
+  // A later narrow rerun on HEAD~1 does not hide the earlier full pair there.
+  const rerun = [
+    [parent, mergeBase],
+    [parent, commits.at(-3)],
+    [head, parent],
+  ]
+  assert.equal(covers(rounds(rerun), parent), true)
+
+  // Merging main after the pair on HEAD moves the merge base; the commits it
+  // brings in are not branch work, so the old chain still reaches it.
+  git('switch', '--quiet', 'main')
+  git('commit', '--quiet', '--allow-empty', '-m', 'main moves')
+  const newMergeBase = git('rev-parse', 'HEAD')
+  git('switch', '--quiet', 'topic')
+  git('merge', '--quiet', '--no-ff', '-m', 'merge main', 'main')
+  const merged = git('rev-parse', 'HEAD')
+  assert.equal(
+    pairCoversBranch({
+      ...rounds([
+        [head, mergeBase],
+        [merged, head],
+      ]),
+      profile: finalReviews,
+      pair: { head: merged, base: head },
+      mergeBase: newMergeBase,
+      run,
+    }),
+    true,
+  )
 })

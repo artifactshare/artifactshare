@@ -25,11 +25,14 @@ import {
   parseArgs as parseClaudeArgs,
 } from './claude-review.mjs'
 import {
+  isAncestorOrSelf,
+  completedPairs,
   readRounds,
   recordRound,
   rangeIsEmpty,
   resolvePairReviewBase,
   roundsPath,
+  writeConsultation,
   writeRounds,
 } from './review-rounds.mjs'
 import {
@@ -45,6 +48,7 @@ import {
 } from './task-scope.mjs'
 
 import { CONTEXT_DELIMITERS } from './implementation-review-input.mjs'
+import { runProvider } from './provider-process.mjs'
 
 const defaultBase = 'origin/main'
 const implementationReviewProfile = Object.freeze({
@@ -55,6 +59,7 @@ const implementationReviewProfile = Object.freeze({
 // refused so the orchestrator settles what remains instead of looping.
 const implementationRoundCap = 3
 const maxCapturedBytes = 8 * 1024
+const consultationTimeoutMs = 1_800_000
 
 function usage() {
   return 'Usage: pnpm review:implementation -- [--base <ref>] [--dispositions-file <path>]'
@@ -180,15 +185,29 @@ function coordinatedBase({ base, head, run = commandOutput } = {}) {
   }
 }
 
-function completedPairRounds({ run = commandOutput } = {}) {
+/**
+ * The branch's completed pairs under the current profile, oldest first: the
+ * rounds both reviewer files recorded. The cap counts these and the
+ * round-cap consultation builds on the last of them, so a branch at the cap
+ * always has a last pair.
+ */
+function branchCompletedPairs({ run = commandOutput } = {}) {
   const branch = run('git', ['branch', '--show-current'])
-  if (!branch) return 0
-  const state = readRounds(roundsPath(branch, 'claude', run))
-  return state.rounds.filter(
-    (round) =>
-      JSON.stringify(round.profile) ===
-      JSON.stringify(implementationReviewProfile),
-  ).length
+  if (!branch) return []
+  return completedPairs({
+    codexState: readRounds(roundsPath(branch, 'codex', run)),
+    claudeState: readRounds(roundsPath(branch, 'claude', run)),
+    profile: implementationReviewProfile,
+  })
+}
+
+function completedPairRounds({ run = commandOutput } = {}) {
+  return branchCompletedPairs({ run }).length
+}
+
+/** HEAD of the branch's most recently completed pair, if any. */
+function lastCompletedPairHead({ run = commandOutput } = {}) {
+  return branchCompletedPairs({ run }).at(-1)?.head
 }
 
 function localInstructionsPresent(run = commandOutput) {
@@ -203,11 +222,117 @@ function roundCapResult(rounds) {
       verdict: 'ROUND_CAP',
       target_unreviewed: true,
       rounds,
-      note: `The implementation review-round cap of ${implementationRoundCap} is spent (${rounds} completed pairs on this branch). If blockers remain, consult ${roundCapConsultation.claude.model} at ${roundCapConsultation.claude.effort} effort with the remaining blockers and their dispositions. Return to the owner when that consultation, or the orchestrator, finds that the issue or its premise should be reconsidered; otherwise record the remaining findings as deferred for Ready and continue. Do not treat the cap as a passed gate.`,
+      note: `The implementation review-round cap of ${implementationRoundCap} is spent (${rounds} completed pairs on this branch). Write the remaining blockers and their dispositions to a file and rerun with --dispositions-file <path>: the gate then consults ${roundCapConsultation.claude.model} at ${roundCapConsultation.claude.effort} effort on this HEAD and records its decision for Ready. Return to the owner when that consultation, or the orchestrator, finds that the issue or its premise should be reconsidered; otherwise record the remaining findings as deferred for Ready and continue. Do not treat the cap as a passed gate.`,
     },
     null,
     2,
   )
+}
+
+/** Blocker count of a delivered review result, or undefined when the result
+ * is not the reviewers' JSON. An unknown severity counts as a blocker. Only
+ * this number is recorded; the findings' text never enters gate state. */
+function blockerCount(output) {
+  let parsed
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(parsed?.findings)) return undefined
+  return parsed.findings.filter(
+    (finding) =>
+      finding?.severity !== 'follow_up' &&
+      finding?.severity !== 'non_actionable',
+  ).length
+}
+
+function consultationPrompt({ head, pairHead, mergeBase, evidencePath }) {
+  return [
+    'Round-cap consultation for the implementation review gate. Read only: do not edit files, run commands, or write to remote services.',
+    `The branch has spent its ${implementationRoundCap} implementation review pairs. The target is HEAD ${head}, reviewed against merge base ${mergeBase} (git diff ${mergeBase}...${head}). The last completed pair read HEAD ${pairHead}; no pair has read the change ${pairHead}..${head}.`,
+    `Read ${evidencePath} first. It holds the branch's immutable objective scope, the remaining blockers and their dispositions (under Dispositions), the changed files and diff of the unreviewed change ${pairHead}..${head}, and the changed files and full diff of the fixed range. Read checkout files the blockers concern for further context, and judge each disposition against the objective scope and the diff.`,
+    'Decide PROCEED when no remaining blocker breaks what the issue sets out to do and the unreviewed change introduces no new blocker, so the remaining findings can be recorded as deferred for Ready. Decide RETURN TO OWNER when a remaining blocker is unresolved, when the unreviewed change introduces one, or when the issue or its premise should be reconsidered.',
+    'Explain the decision briefly, then end with exactly one final line: DECISION: PROCEED or DECISION: RETURN TO OWNER.',
+  ].join('\n\n')
+}
+
+function consultationDecision(text) {
+  const last = String(text ?? '')
+    .trimEnd()
+    .split('\n')
+    .at(-1)
+    ?.replace(/[`*]/gu, '')
+    .trim()
+  const match = /^DECISION: (PROCEED|RETURN TO OWNER)$/u.exec(last ?? '')
+  if (!match)
+    throw new Error(
+      'The round-cap consultation did not end with DECISION: PROCEED or DECISION: RETURN TO OWNER; nothing was recorded.',
+    )
+  return match[1]
+}
+
+/** Runs the round-cap consultation with the configured Claude profile and
+ * returns its text. The provider runs as an asynchronous child process group
+ * that is stopped on SIGINT/SIGTERM, an aborted `signal`, or the timeout. */
+async function runRoundCapConsultation(
+  prompt,
+  { evidenceDirectory, signal, provider = runProvider } = {},
+) {
+  const { model, effort } = roundCapConsultation.claude
+  const result = await provider(
+    'claude',
+    [
+      '--safe-mode',
+      '--model',
+      model,
+      '--effort',
+      effort,
+      '--tools',
+      'Read,Grep,Glob',
+      '--allowedTools',
+      'Read',
+      'Grep',
+      'Glob',
+      '--add-dir',
+      evidenceDirectory,
+      '--permission-mode',
+      'dontAsk',
+      '--append-system-prompt',
+      'Consultation only. Do not edit, execute commands, browse, or write to remote services.',
+      '-p',
+      prompt,
+      '--output-format',
+      'json',
+    ],
+    { signal, timeoutMs: consultationTimeoutMs },
+  )
+  let envelope
+  try {
+    envelope = JSON.parse(result.stdout ?? '')
+  } catch {
+    envelope = undefined
+  }
+  if (
+    result.code !== 0 ||
+    envelope?.is_error !== false ||
+    envelope?.subtype !== 'success' ||
+    typeof envelope?.result !== 'string' ||
+    !envelope.result.trim() ||
+    !Array.isArray(envelope?.permission_denials) ||
+    envelope.permission_denials.length > 0
+  )
+    throw new Error('The round-cap consultation failed; nothing was recorded.')
+  return envelope.result.trim()
+}
+
+function recordConsultationDecision({ branch, head, pairHead, decision, run }) {
+  writeConsultation(roundsPath(branch, 'consultation', run), {
+    head,
+    pairHead,
+    decision,
+    profile: roundCapConsultation,
+  })
 }
 
 function appendTail(capture, chunk, limit = maxCapturedBytes) {
@@ -267,6 +392,7 @@ function recordCompletedRounds(head, optionsOrRun = {}, maybeRun) {
         base: options.base,
         commitBase: options.commitBase,
         profile: options.profile ?? implementationReviewProfile,
+        blockers: options.blockers?.[reviewer],
       }),
     )
   }
@@ -306,6 +432,9 @@ async function main({
     collectTestChanges({ base, head, run }),
   recordRounds = recordCompletedRounds,
   countRounds = () => completedPairRounds({ run }),
+  readLastPairHead = () => lastCompletedPairHead({ run }),
+  consult = runRoundCapConsultation,
+  recordConsultation = recordConsultationDecision,
   localInstructionsPresent: hasLocalInstructions = () =>
     localInstructionsPresent(run),
   acquireLock = acquireActivityLock,
@@ -331,18 +460,73 @@ async function main({
     const head = readCleanHead()
     const branch = getBranch(run)
     releaseScope = await acquireScopeLock(branch, { run })
-    // Counted under the branch lock so two gates cannot both pass the cap.
-    const rounds = countRounds()
-    if (rounds >= implementationRoundCap) {
-      await log(roundCapResult(rounds))
-      return 2
-    }
     // An owner's CLAUDE.local.md would stop the Claude side only after the
-    // Codex side had run; refuse before either starts.
+    // Codex side had run, and would reach the round-cap consultation's Claude
+    // session too; refuse before any provider starts.
     if (hasLocalInstructions())
       throw new Error(
         `${localInstructionsFile} already exists at the repository root; move it aside before the implementation gate.`,
       )
+    // Counted under the branch lock so two gates cannot both pass the cap.
+    const rounds = countRounds()
+    if (rounds >= implementationRoundCap) {
+      // The consultation always reads the fixed branch range; a narrower
+      // base would be silently ignored, so refuse it instead.
+      if (options.base !== undefined)
+        throw new Error(
+          `The implementation review-round cap is spent; the round-cap consultation accepts only --dispositions-file, not --base. Rerun without --base:\n  pnpm review:implementation -- --dispositions-file <path>`,
+        )
+      const dispositions = readDispositionsBody(options.dispositionsFile)
+      if (!dispositions?.trim()) {
+        await log(roundCapResult(rounds))
+        return 2
+      }
+      // The consultation stands in for a pair only on top of the last one:
+      // it must read what no pair has read, which exists only when that
+      // pair's HEAD is on this line.
+      const pairHead = readLastPairHead()
+      if (!pairHead || !isAncestorOrSelf(pairHead, head, run))
+        throw new Error(
+          `The last completed implementation pair's HEAD ${pairHead ?? '(none)'} is not HEAD ${head} or one of its ancestors; the round-cap consultation cannot cover this HEAD and nothing was recorded. Return to the owner.`,
+        )
+      // The consultation judges the dispositions against the branch's
+      // immutable objective scope and the fixed change, which it reads from
+      // one immutable snapshot because it cannot run Git itself.
+      const scopeContext = taskScopeContext(
+        admitCandidate(branch, head, run),
+        dispositions,
+      )
+      const mergeBase = run('git', ['merge-base', defaultBase, head]).trim()
+      const range = `${mergeBase}...${head}`
+      const unreviewed = `${pairHead}..${head}`
+      const unreviewedSection =
+        pairHead === head
+          ? `# Unreviewed change ${unreviewed}\n\n(none: the last completed pair read this HEAD)`
+          : `# Unreviewed change ${unreviewed}\n\n## Changed files\n\n${run('git', ['diff', '--name-status', unreviewed]) || '(none)'}\n\n## Diff\n\n${run('git', ['diff', '--no-color', unreviewed])}`
+      snapshotDirectory = mkdtempSync(
+        join(tmpdir(), `artifactshare-round-cap-${process.pid}-`),
+      )
+      const evidencePath = createContextSnapshot(
+        `${scopeContext}\n\n${unreviewedSection}\n\n# Fixed change ${range}\n\n## Changed files\n\n${run('git', ['diff', '--name-status', range]) || '(none)'}\n\n## Diff\n\n${run('git', ['diff', '--no-color', range])}\n`,
+        snapshotDirectory,
+      )
+      const text = await consult(
+        consultationPrompt({ head, pairHead, mergeBase, evidencePath }),
+        { evidenceDirectory: snapshotDirectory, signal },
+      )
+      const decision = consultationDecision(text)
+      if (readCleanHead() !== head)
+        throw new Error(
+          'HEAD or worktree changed during the round-cap consultation; nothing was recorded.',
+        )
+      // Ready reads only the decision for this exact HEAD, on top of the
+      // pair HEAD it covered.
+      recordConsultation({ branch, head, pairHead, decision, run })
+      await log(
+        `## Round-cap consultation (${roundCapConsultation.claude.model}, ${roundCapConsultation.claude.effort})\n\n${text}\n\nRecorded DECISION: ${decision} for HEAD ${head}.${decision === 'PROCEED' ? ' Record the remaining findings as deferred for Ready.' : ' Return to the owner; Ready refuses this HEAD.'}`,
+      )
+      return decision === 'PROCEED' ? 0 : 2
+    }
     const scopeState = admitCandidate(branch, head, run)
     const scopeContext = taskScopeContext(
       scopeState,
@@ -449,6 +633,12 @@ async function main({
       base: target.base,
       commitBase,
       profile: implementationReviewProfile,
+      blockers: Object.fromEntries(
+        results.map((result) => [
+          result.name,
+          blockerCount(withoutReminder(result.stdout).trim()),
+        ]),
+      ),
       run,
     })
     return 0
@@ -478,20 +668,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 
 export {
   appendTail,
+  blockerCount,
   cleanHead,
   completedPairRounds,
+  consultationDecision,
   coordinatedBase,
   createContextSnapshot,
   defaultBase,
   formatCapture,
   implementationReviewProfile,
   implementationRoundCap,
+  lastCompletedPairHead,
   main,
   parseArgs,
   recordCompletedRounds,
   resolveBaseSha,
   roundCapResult,
   runReviewer,
+  runRoundCapConsultation,
   usage,
   waitForBoth,
   withoutReminder,

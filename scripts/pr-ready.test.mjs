@@ -1,9 +1,27 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
-import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import test, { afterEach } from 'node:test'
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import {
+  implementationReviewProfile,
+  recordCompletedRounds,
+} from './implementation-review-gate.mjs'
+import { roundCapConsultation } from './agent-role-settings.mjs'
+import {
+  readRounds,
+  roundsPath,
+  writeConsultation,
+  writeRounds,
+} from './review-rounds.mjs'
 import {
   isUiFile,
   parseArgs,
@@ -73,25 +91,99 @@ function tempUsageReport() {
   report.markdown = renderCanonicalWorkflowUsageMarkdown(report)
   const path = join(tmpdir(), `pr-ready-usage-${randomUUID()}.json`)
   writeFileSync(path, JSON.stringify(report))
+  harnessPaths.add(path)
   return path
 }
 
+/** The branch's merge base with origin/main in the harness. The harness's
+ * history is linear, so a pair's `base...head` range starts at its base. */
+const mergeBase = 'b'.repeat(40)
+
+/** The serialized critique record for the `topic` branch, written as a fixture
+ * so these Ready tests depend only on Ready's reader. */
+const critiqueRecordPath = (commonDir) =>
+  join(
+    commonDir,
+    'artifactshare',
+    'task-critique',
+    `${createHash('sha256').update('topic').digest('hex').slice(0, 32)}.json`,
+  )
+
+/** Records Ready evidence for the `topic` branch: a completed implementation
+ * pair through the gate's recorder and, unless omitted, a completed critique. */
+function recordEvidence(
+  commonDir,
+  target,
+  {
+    pair = true,
+    critique = true,
+    base = mergeBase,
+    blockers = { codex: 0, claude: 0 },
+  },
+) {
+  const run = (_file, args) => (args[0] === 'branch' ? 'topic' : commonDir)
+  if (pair)
+    recordCompletedRounds(target, { run, base, commitBase: base, blockers })
+  if (critique) {
+    const path = critiqueRecordPath(commonDir)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schema_version: 1,
+        head: target,
+        completed: true,
+        walkthroughRoot: 'c'.repeat(64),
+        screenRoots: ['d'.repeat(64)],
+      }),
+    )
+  }
+}
+
+/** Paths each harness creates, removed after every test so no Ready evidence
+ * or usage fixture outlives the test that made it. */
+const harnessPaths = new Set()
+afterEach(() => {
+  for (const path of harnessPaths)
+    rmSync(path, { recursive: true, force: true })
+  harnessPaths.clear()
+})
+
 function harness({
-  remoteHead = head,
+  localHead = head,
+  remoteHead = localHead,
   draft = true,
   base = 'main',
   dirty = false,
   changedFiles = [],
   body = undefined,
   otherPrs = [],
+  evidence = { pair: true, critique: true },
+  // [ancestor, descendant] pairs `git merge-base --is-ancestor` accepts.
+  ancestry = [],
 } = {}) {
   const calls = []
   const usageReport = tempUsageReport()
+  const commonDir = mkdtempSync(join(tmpdir(), 'pr-ready-git-common-'))
+  harnessPaths.add(commonDir)
+  recordEvidence(commonDir, localHead, evidence)
   let currentDraft = draft
   const exec = (file, args) => {
     calls.push([file, args])
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
-    if (file === 'git' && args[0] === 'rev-parse') return `${head}\n`
+    if (file === 'git' && args[0] === 'rev-parse')
+      return `${args[1] === '--git-common-dir' ? commonDir : localHead}\n`
+    if (
+      file === 'git' &&
+      args[0] === 'merge-base' &&
+      args[1] === '--is-ancestor'
+    ) {
+      if (ancestry.some(([from, to]) => from === args[2] && to === args[3]))
+        return ''
+      throw new Error('not an ancestor')
+    }
+    if (file === 'git' && args[0] === 'merge-base')
+      return `${args[1].startsWith('origin/') ? mergeBase : args[1]}\n`
     if (file === 'git' && args[0] === 'status') return dirty ? ' M file' : ''
     if (file === 'git' && args[0] === 'diff') return changedFiles.join('\n')
     if (file === 'gh' && args[1] === 'list')
@@ -115,7 +207,7 @@ function harness({
     }
     return ''
   }
-  return { calls, exec, usageReport }
+  return { calls, exec, usageReport, commonDir }
 }
 
 test('needs no reviewer SHA arguments', () => {
@@ -125,30 +217,30 @@ test('needs no reviewer SHA arguments', () => {
     taskUsageReport: undefined,
     queue: false,
     dryRun: false,
-    uiGateComplete: false,
     noDeferred: false,
   })
-  assert.deepEqual(
-    parseArgs(['--', '--dry-run', '--ui-gate-complete', '--no-deferred']),
-    {
-      deferred: [],
-      deferredFile: undefined,
-      taskUsageReport: undefined,
-      queue: false,
-      dryRun: true,
-      uiGateComplete: true,
-      noDeferred: true,
-    },
-  )
+  assert.deepEqual(parseArgs(['--', '--dry-run', '--no-deferred']), {
+    deferred: [],
+    deferredFile: undefined,
+    taskUsageReport: undefined,
+    queue: false,
+    dryRun: true,
+    noDeferred: true,
+  })
   assert.deepEqual(parseArgs(['--deferred', 'aria label on the select']), {
     deferred: ['aria label on the select'],
     deferredFile: undefined,
     taskUsageReport: undefined,
     queue: false,
     dryRun: false,
-    uiGateComplete: false,
     noDeferred: false,
   })
+  assert.throws(
+    () => parseArgs(['--ui-gate-complete', '--no-deferred']),
+    (error) =>
+      /^Usage/u.test(error.message) &&
+      !error.message.includes('--ui-gate-complete'),
+  )
   assert.equal(
     parseArgs(['--task-usage-report', '/tmp/report.json']).taskUsageReport,
     '/tmp/report.json',
@@ -1274,64 +1366,357 @@ test('classifies user-visible web files without treating tests or API routes as 
     assert.equal(isUiFile(file), false, file)
 })
 
-test('blocks UI changes until capture and source-based critique are confirmed', () => {
-  const h = harness({ changedFiles: ['apps/web/app/routes/pricing.tsx'] })
+const evidenceParsed = (dryRun = false) => ({
+  dryRun,
+  deferred: [],
+  noDeferred: true,
+})
+const markedReady = (h) =>
+  h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready')
+
+test('a commit after the reviewed pair blocks Ready until the gate reviews it', () => {
+  const reviewed = 'c'.repeat(40)
+  const added = 'd'.repeat(40)
+  const h = harness({
+    localHead: added,
+    body: 'Public body',
+    evidence: { pair: false, critique: false },
+  })
+  recordEvidence(h.commonDir, reviewed, { critique: false })
+  const ledger = tempLedger()
   assert.throws(
-    () =>
-      ready({
-        exec: h.exec,
-        parsed: {
-          dryRun: false,
-          uiGateComplete: false,
-          taskUsageReport: h.usageReport,
-        },
-        ledger: tempLedger(),
-      }),
+    () => ready({ exec: h.exec, parsed: evidenceParsed(), ledger }),
     (error) => {
       assert.match(
         error.message,
-        /Every affected screen state and registered task has been captured at desktop and mobile/u,
+        new RegExp(`No completed implementation review pair .*HEAD ${added}`),
       )
-      assert.match(error.message, /relevant source/u)
-      assert.match(error.message, /walkthrough evidence/u)
-      assert.match(error.message, /task\/persona context/u)
-      assert.match(error.message, /captures alone are not sufficient/u)
-      assert.match(error.message, /recapture and repeat the critique/u)
-      assert.match(
-        error.message,
-        /pnpm pr:ready -- --ui-gate-complete --no-deferred/u,
-      )
+      assert.match(error.message, /^ {2}pnpm review:implementation$/mu)
       return true
     },
   )
-  assert.equal(
-    h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-    false,
-  )
+  assert.equal(markedReady(h), false)
+  assert.equal(existsSync(ledger), false)
+
+  recordEvidence(h.commonDir, added, { critique: false })
+  assert.deepEqual(ready({ exec: h.exec, parsed: evidenceParsed(), ledger }), {
+    number: 56,
+    head: added,
+    dryRun: false,
+    deferred: 0,
+  })
+  assert.equal(markedReady(h), true)
 })
 
-test('allows confirmed UI changes and does not gate non-UI changes', () => {
-  for (const [changedFiles, uiGateComplete] of [
-    [['apps/web/app/components/button.tsx'], true],
-    [['packages/cli/src/index.ts'], false],
-  ]) {
-    const h = harness({ changedFiles })
-    ready({
-      exec: h.exec,
-      parsed: {
-        dryRun: false,
-        uiGateComplete,
-        deferred: [],
-        noDeferred: true,
-        taskUsageReport: h.usageReport,
-      },
-      ledger: tempLedger(),
-    })
-    assert.equal(
-      h.calls.some(([file, args]) => file === 'gh' && args[1] === 'ready'),
-      true,
-    )
+test('only a current-profile pair on HEAD authorizes Ready, including dry runs', async (t) => {
+  const paths = (h) => {
+    const run = (_file, args) => (args[0] === 'branch' ? 'topic' : h.commonDir)
+    return {
+      codex: roundsPath('topic', 'codex', run),
+      claude: roundsPath('topic', 'claude', run),
+    }
   }
+  const cases = [
+    ['healthy same-HEAD pair', () => {}, true],
+    [
+      'absent history',
+      (h) => {
+        for (const path of Object.values(paths(h))) rmSync(path)
+      },
+      false,
+    ],
+    [
+      'corrupt history',
+      (h) => writeFileSync(paths(h).claude, '{ truncated'),
+      false,
+    ],
+    [
+      'legacy rounds without profile or base',
+      (h) => {
+        for (const [reviewer, path] of Object.entries(paths(h)))
+          writeFileSync(
+            path,
+            JSON.stringify({
+              schema_version: 1,
+              rounds: [{ head, reviewer, at: '2026-01-01T00:00:00.000Z' }],
+            }),
+          )
+      },
+      false,
+    ],
+    [
+      'single reviewer',
+      (h) =>
+        writeFileSync(
+          paths(h).codex,
+          JSON.stringify({ schema_version: 1, rounds: [] }),
+        ),
+      false,
+    ],
+    [
+      'mismatched profile',
+      (h) => {
+        for (const path of Object.values(paths(h))) {
+          const state = readRounds(path)
+          state.rounds.at(-1).profile = {
+            ...implementationReviewProfile,
+            method: { codex: 'other', claude: 'other' },
+          }
+          writeRounds(path, state)
+        }
+      },
+      false,
+    ],
+  ]
+  for (const [name, mutate, passes] of cases)
+    await t.test(name, () => {
+      for (const dryRun of [false, true]) {
+        const h = harness({ body: 'Public body' })
+        mutate(h)
+        const ledger = tempLedger()
+        const attempt = () =>
+          ready({ exec: h.exec, parsed: evidenceParsed(dryRun), ledger })
+        if (passes) attempt()
+        else
+          assert.throws(
+            attempt,
+            new RegExp(
+              `No completed implementation review pair .*HEAD ${head}`,
+            ),
+          )
+        assert.equal(markedReady(h), passes && !dryRun)
+        assert.equal(existsSync(ledger), passes && !dryRun)
+      }
+    })
+})
+
+test('a UI diff needs a completed critique record for HEAD; a non-UI diff does not', async (t) => {
+  const ui = ['apps/web/app/routes/pricing.tsx']
+  const rewrite = (change) => (h) => {
+    const path = critiqueRecordPath(h.commonDir)
+    const record = JSON.parse(readFileSync(path, 'utf8'))
+    writeFileSync(path, JSON.stringify(change(record)))
+  }
+  const cases = [
+    ['matching record', ui, {}, () => {}, true],
+    ['absent record', ui, { pair: true, critique: false }, () => {}, false],
+    [
+      'record for an earlier commit',
+      ui,
+      { pair: true, critique: false },
+      (h) =>
+        recordEvidence(h.commonDir, 'e'.repeat(40), {
+          pair: false,
+          critique: true,
+        }),
+      false,
+    ],
+    [
+      'incomplete record',
+      ui,
+      {},
+      rewrite((record) => ({ ...record, completed: false })),
+      false,
+    ],
+    [
+      'malformed record',
+      ui,
+      {},
+      rewrite((record) => ({ ...record, screenRoots: ['/private/screens'] })),
+      false,
+    ],
+    [
+      'non-UI diff without a record',
+      ['packages/cli/src/index.ts'],
+      { pair: true, critique: false },
+      () => {},
+      true,
+    ],
+  ]
+  for (const [name, changedFiles, evidence, mutate, passes] of cases)
+    await t.test(name, () => {
+      for (const dryRun of [false, true]) {
+        const h = harness({
+          body: 'Public body',
+          changedFiles,
+          evidence: { pair: true, critique: true, ...evidence },
+        })
+        mutate(h)
+        const ledger = tempLedger()
+        const attempt = () =>
+          ready({ exec: h.exec, parsed: evidenceParsed(dryRun), ledger })
+        if (passes) attempt()
+        else
+          assert.throws(attempt, (error) => {
+            assert.match(
+              error.message,
+              new RegExp(
+                `no completed UI critique is recorded for HEAD ${head}`,
+              ),
+            )
+            assert.match(error.message, /pnpm critique:tasks/u)
+            assert.match(error.message, /desktop and mobile/u)
+            return true
+          })
+        assert.equal(markedReady(h), passes && !dryRun)
+        assert.equal(existsSync(ledger), passes && !dryRun)
+      }
+    })
+})
+
+test('a pair on HEAD that reported a blocker does not authorize Ready', () => {
+  const h = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(h.commonDir, head, {
+    critique: false,
+    blockers: { codex: 0, claude: 1 },
+  })
+  const ledger = tempLedger()
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(), ledger }),
+    (error) => {
+      assert.match(
+        error.message,
+        new RegExp(`pair for HEAD ${head} reported 1 blocker`),
+      )
+      assert.match(error.message, /--dispositions-file <path>/u)
+      return true
+    },
+  )
+  assert.equal(markedReady(h), false)
+  assert.equal(existsSync(ledger), false)
+  // A result the gate could not count is not a clean pair either.
+  recordEvidence(h.commonDir, head, { critique: false, blockers: {} })
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(true), ledger }),
+    /has no recorded blocker count/u,
+  )
+  // A new pair without blockers restores eligibility.
+  recordEvidence(h.commonDir, head, { critique: false })
+  ready({ exec: h.exec, parsed: evidenceParsed(), ledger })
+  assert.equal(markedReady(h), true)
+})
+
+test('a round-cap consultation for HEAD decides Ready', async (t) => {
+  const consultationPath = (h) =>
+    roundsPath('topic', 'consultation', () => h.commonDir)
+  // The last completed pair read P; commit C (HEAD) came after it.
+  const pairHead = 'f'.repeat(40)
+  const stale = /no longer the last completed implementation pair/u
+  const cases = [
+    ['PROCEED on HEAD', head, 'PROCEED', true],
+    ['RETURN TO OWNER on HEAD', head, 'RETURN TO OWNER', /RETURN TO OWNER/u],
+    [
+      'PROCEED on an earlier commit',
+      'e'.repeat(40),
+      'PROCEED',
+      new RegExp(`pair for HEAD ${head} reported 1 blocker`),
+    ],
+    ['PROCEED after the pair on P', head, 'PROCEED', true, pairHead, true],
+    ['P is not an ancestor of HEAD', head, 'PROCEED', stale, pairHead, false],
+    ['a later pair replaced P', head, 'PROCEED', stale, pairHead, true, head],
+    // A stale consultation is no evidence, but a clean pair on HEAD is.
+    [
+      'a later clean pair on HEAD replaced P',
+      head,
+      'PROCEED',
+      true,
+      pairHead,
+      true,
+      head,
+      0,
+    ],
+  ]
+  for (const [
+    name,
+    target,
+    decision,
+    expected,
+    lastPair = head,
+    onLine = false,
+    laterPair,
+    laterBlockers = 1,
+  ] of cases)
+    await t.test(name, () => {
+      // The cap is spent and the last pair still reported a blocker.
+      const h = harness({
+        body: 'Public body',
+        evidence: { pair: false },
+        ancestry: onLine ? [[pairHead, head]] : [],
+      })
+      recordEvidence(h.commonDir, lastPair, {
+        critique: false,
+        blockers: { codex: 1, claude: 0 },
+      })
+      writeConsultation(consultationPath(h), {
+        head: target,
+        pairHead: lastPair,
+        decision,
+        profile: roundCapConsultation,
+      })
+      if (laterPair)
+        recordEvidence(h.commonDir, laterPair, {
+          critique: false,
+          blockers: { codex: laterBlockers, claude: 0 },
+        })
+      const ledger = tempLedger()
+      const attempt = () =>
+        ready({ exec: h.exec, parsed: evidenceParsed(), ledger })
+      if (expected === true) attempt()
+      else assert.throws(attempt, expected)
+      assert.equal(markedReady(h), expected === true)
+    })
+})
+
+test('a pair narrowed below the merge base counts only through earlier pairs', () => {
+  // Ten commits after the merge base were never reviewed; the pair on HEAD
+  // read only HEAD~1...HEAD.
+  const parent = 'f'.repeat(40)
+  const h = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(h.commonDir, head, { critique: false, base: parent })
+  const ledger = tempLedger()
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(), ledger }),
+    (error) => {
+      assert.match(
+        error.message,
+        new RegExp(
+          `reviewed only ${parent}\\.\\.\\.${head}.*merge base ${mergeBase}`,
+        ),
+      )
+      // A bare rerun would reuse the rejected base; recovery names the merge
+      // base instead.
+      assert.match(
+        error.message,
+        new RegExp(`pnpm review:implementation -- --base ${mergeBase}\\n?$`),
+      )
+      assert.doesNotMatch(error.message, new RegExp(`--base ${parent}`))
+      return true
+    },
+  )
+  assert.equal(markedReady(h), false)
+
+  // An earlier completed pair on the parent reviewed from the merge base.
+  const fresh = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(fresh.commonDir, parent, { critique: false })
+  recordEvidence(fresh.commonDir, head, { critique: false, base: parent })
+  ready({ exec: fresh.exec, parsed: evidenceParsed(), ledger })
+  assert.equal(markedReady(fresh), true)
+})
+
+test('resolves the Git common directory once for all Ready evidence', () => {
+  const h = harness({
+    body: 'Public body',
+    changedFiles: ['apps/web/app/routes/pricing.tsx'],
+  })
+  ready({ exec: h.exec, parsed: evidenceParsed(), ledger: tempLedger() })
+  assert.equal(
+    h.calls.filter(
+      ([file, args]) =>
+        file === 'git' && args.join(' ') === 'rev-parse --git-common-dir',
+    ).length,
+    1,
+  )
+  assert.equal(markedReady(h), true)
 })
 
 test('checks required status then makes the pushed Draft ready', () => {

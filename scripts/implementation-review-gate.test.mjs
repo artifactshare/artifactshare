@@ -19,21 +19,24 @@ import {
   coordinatedBase,
   main,
   completedPairRounds,
+  lastCompletedPairHead,
   implementationReviewProfile,
   parseArgs,
   recordCompletedRounds,
   runReviewer,
+  runRoundCapConsultation,
   waitForBoth,
   withoutReminder,
   writeText,
 } from './implementation-review-gate.mjs'
-import { finalReviews } from './agent-role-settings.mjs'
+import { finalReviews, roundCapConsultation } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
 import {
   CONTEXT_DELIMITERS,
   assertImplementationContext,
 } from './implementation-review-input.mjs'
 import {
+  readConsultation,
   readRounds,
   recordRound,
   roundsPath,
@@ -997,6 +1000,7 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   const code = await main({
     argv: [],
     countRounds: () => 3,
+    localInstructionsPresent: () => false,
     getBranch: () => 'feat/x',
     acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
     run: () => '',
@@ -1017,49 +1021,328 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   assert.match(result.note, /Return to the owner/u)
 })
 
-test('the round cap counts only completed pairs under the current profile', () => {
+test('records only the blocker count of each delivered reviewer result', async () => {
+  const fixture = contextFixture()
+  const recorded = []
+  const results = {
+    codex: {
+      verdict: 'FINDINGS',
+      findings: [
+        { id: 'c1', severity: 'blocker', summary: 'private reviewer prose' },
+        { id: 'c2', severity: 'follow_up', summary: 'later' },
+      ],
+    },
+    claude: { verdict: 'GO', findings: [] },
+  }
+  try {
+    await main({
+      countRounds: () => 0,
+      localInstructionsPresent: () => false,
+      ...scopeHarness(),
+      acquireLock: () => Promise.resolve(() => Promise.resolve()),
+      argv: ['--base', 'release'],
+      run: explicitBaseRun,
+      readCleanHead: () => head,
+      review: (name) =>
+        Promise.resolve({
+          name,
+          stdout: `${JSON.stringify(results[name], null, 2)}\n${reviewReminder}`,
+          stderr: '',
+        }),
+      log: () => {},
+      timingLog: () => {},
+      recordRounds: (_head, options) => recorded.push(options.blockers),
+    })
+    assert.deepEqual(recorded, [{ codex: 1, claude: 0 }])
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
+test('a spent round cap runs the consultation on HEAD and records its decision', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-consultation-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dispositions = join(directory, 'dispositions.md')
+  writeFileSync(
+    dispositions,
+    '- deferred: I1 blocker, because the scope lock excludes it.\n',
+  )
+  const mergeBase = 'c'.repeat(40)
+  // The third pair read P; commit C (HEAD) came after it.
+  const pairHead = 'e'.repeat(40)
+  const run = (_file, args) => {
+    if (args.join(' ') === `merge-base --is-ancestor ${pairHead} ${head}`)
+      return ''
+    if (args[0] === 'merge-base') return mergeBase
+    if (args.join(' ') === `diff --name-status ${pairHead}..${head}`)
+      return 'M\tscripts/after-pair.mjs'
+    if (args.join(' ') === `diff --no-color ${pairHead}..${head}`)
+      return '+export const addedAfterPair = true'
+    if (args.join(' ') === `diff --name-status ${mergeBase}...${head}`)
+      return 'D\tscripts/removed.mjs'
+    if (args.join(' ') === `diff --no-color ${mergeBase}...${head}`)
+      return '-export const removedGuard = true'
+    throw new Error(`Unexpected git call: ${args.join(' ')}`)
+  }
+  const cases = [
+    ['PROCEED', 'Dispositions hold.\n\nDECISION: PROCEED', 0],
+    [
+      'RETURN TO OWNER',
+      'The premise is wrong.\n\nDECISION: RETURN TO OWNER',
+      2,
+    ],
+    ['no decision line', 'Looks fine to me.', /did not end with DECISION/u],
+    ['HEAD changed', 'DECISION: PROCEED', /HEAD or worktree changed/u, 'b'],
+  ]
+  for (const [name, text, expected, laterHead] of cases)
+    await t.test(name, async () => {
+      const prompts = []
+      const evidence = []
+      const records = []
+      const logs = []
+      let headReads = 0
+      const result = main({
+        argv: ['--dispositions-file', dispositions],
+        countRounds: () => 3,
+        readLastPairHead: () => pairHead,
+        localInstructionsPresent: () => false,
+        ...scopeHarness({ getBranch: () => 'feat/x' }),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        run,
+        readCleanHead: () =>
+          laterHead && ++headReads > 1 ? laterHead.repeat(40) : head,
+        review: () => assert.fail('a reviewer launched after the cap'),
+        consult: (prompt, { evidenceDirectory }) => {
+          prompts.push(prompt)
+          const path = /Read (\S+) first/u.exec(prompt)[1]
+          assert.equal(path.startsWith(`${evidenceDirectory}/`), true)
+          evidence.push(readFileSync(path, 'utf8'))
+          return Promise.resolve(text)
+        },
+        recordConsultation: (value) => records.push(value),
+        log: (value) => Promise.resolve(logs.push(value)),
+      })
+      if (typeof expected === 'number') {
+        assert.equal(await result, expected)
+        assert.deepEqual(records, [
+          { branch: 'feat/x', head, pairHead, decision: name, run },
+        ])
+        assert.match(
+          logs.at(-1),
+          new RegExp(`DECISION: ${name} for HEAD ${head}`),
+        )
+      } else {
+        await assert.rejects(result, expected)
+        assert.deepEqual(records, [])
+      }
+      assert.equal(prompts.length, 1)
+      assert.match(prompts[0], new RegExp(`HEAD ${head}`))
+      assert.match(prompts[0], new RegExp(`merge base ${mergeBase}`))
+      assert.match(prompts[0], new RegExp(`${pairHead}\\.\\.${head}`))
+      // The objective scope, dispositions, the change no pair read, and the
+      // fixed diff reach it as one file.
+      assert.match(evidence[0], new RegExp(`Objective: ${scope.objective}`))
+      assert.match(evidence[0], /- I1: Both reviewers inspect/u)
+      assert.match(evidence[0], /deferred: I1 blocker/u)
+      assert.match(
+        evidence[0],
+        new RegExp(`# Unreviewed change ${pairHead}\\.\\.${head}`),
+      )
+      assert.match(evidence[0], /M\tscripts\/after-pair\.mjs/u)
+      assert.match(evidence[0], /\+export const addedAfterPair = true/u)
+      assert.match(evidence[0], /D\tscripts\/removed\.mjs/u)
+      assert.match(evidence[0], /-export const removedGuard = true/u)
+    })
+})
+
+test('the consultation decision is stored for HEAD without its prose', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-consultation-state-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dispositions = join(directory, 'dispositions.md')
+  writeFileSync(dispositions, '- deferred: I1 blocker.\n')
+  const run = (_file, args) => {
+    if (args[0] === 'rev-parse') return directory
+    if (args[0] === 'merge-base') return base
+    return ''
+  }
+  await main({
+    argv: ['--dispositions-file', dispositions],
+    countRounds: () => 3,
+    readLastPairHead: () => head,
+    localInstructionsPresent: () => false,
+    ...scopeHarness({ getBranch: () => 'feat/x' }),
+    acquireLock: () => Promise.resolve(() => Promise.resolve()),
+    run,
+    readCleanHead: () => head,
+    consult: () => Promise.resolve('Secret reasoning.\nDECISION: PROCEED'),
+    log: () => Promise.resolve(),
+  })
+  const path = roundsPath('feat/x', 'consultation', run)
+  assert.deepEqual(readConsultation(path, roundCapConsultation), {
+    head,
+    pairHead: head,
+    decision: 'PROCEED',
+    profile: roundCapConsultation,
+    at: readConsultation(path, roundCapConsultation).at,
+  })
+  assert.doesNotMatch(readFileSync(path, 'utf8'), /Secret|I1/u)
+})
+
+test('a spent round cap refuses the consultation off the last pair or with --base', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-consultation-refusal-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dispositions = join(directory, 'dispositions.md')
+  writeFileSync(dispositions, '- deferred: I1 blocker.\n')
+  const divergent = 'e'.repeat(40)
+  const cases = [
+    [
+      'last pair HEAD is not an ancestor',
+      ['--dispositions-file', dispositions],
+      new RegExp(
+        `HEAD ${divergent} is not HEAD ${head} or one of its ancestors`,
+      ),
+    ],
+    [
+      '--base with dispositions',
+      ['--base', 'release', '--dispositions-file', dispositions],
+      /accepts only --dispositions-file, not --base/u,
+    ],
+    ['--base alone', ['--base', 'release'], /not --base/u],
+  ]
+  for (const [name, argv, expected] of cases)
+    await t.test(name, async () => {
+      await assert.rejects(
+        main({
+          argv,
+          countRounds: () => 3,
+          readLastPairHead: () => divergent,
+          localInstructionsPresent: () => false,
+          ...scopeHarness({ getBranch: () => 'feat/x' }),
+          acquireLock: () => Promise.resolve(() => Promise.resolve()),
+          run: (_file, args) => {
+            if (args[1] === '--is-ancestor') throw new Error('not an ancestor')
+            return ''
+          },
+          readCleanHead: () => head,
+          review: () => assert.fail('a reviewer launched after the cap'),
+          consult: () => assert.fail('the consultation ran'),
+          recordConsultation: () => assert.fail('a consultation was recorded'),
+          log: () => assert.fail('the cap result was printed'),
+        }),
+        expected,
+      )
+    })
+})
+
+test('the round cap and the last pair come from the same completed pairs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'gate-rounds-'))
   const run = (_file, args) =>
     args[0] === 'branch' ? 'feat/x' : args[0] === 'rev-parse' ? directory : ''
   assert.equal(completedPairRounds({ run }), 0)
-  const path = roundsPath('feat/x', 'claude', run)
-  let state = readRounds(path)
-  for (const profile of [
-    implementationReviewProfile,
-    { ...implementationReviewProfile, method: 'controlled-review' },
-    implementationReviewProfile,
+  assert.equal(lastCompletedPairHead({ run }), undefined)
+  const record = (reviewer, rounds) => {
+    const path = roundsPath('feat/x', reviewer, run)
+    let state = readRounds(path)
+    for (const [pairHead, profile] of rounds)
+      state = recordRound(state, {
+        head: pairHead,
+        reviewer,
+        base: 'b',
+        profile,
+      })
+    writeRounds(path, state)
+  }
+  const other = { ...implementationReviewProfile, method: 'controlled-review' }
+  record('codex', [
+    ['h1', implementationReviewProfile],
+    ['h2', other],
+    ['h3', implementationReviewProfile],
   ])
-    state = recordRound(state, {
-      head: 'h',
-      reviewer: 'claude',
-      base: 'b',
-      profile,
-    })
-  writeRounds(path, state)
+  // h4 has a Claude record only (legacy, or one side recorded): not a pair.
+  record('claude', [
+    ['h1', implementationReviewProfile],
+    ['h2', other],
+    ['h3', implementationReviewProfile],
+    ['h4', implementationReviewProfile],
+  ])
   assert.equal(completedPairRounds({ run }), 2)
+  assert.equal(lastCompletedPairHead({ run }), 'h3')
   rmSync(directory, { recursive: true, force: true })
 })
 
-test("an owner's CLAUDE.local.md stops the gate before either reviewer starts", async () => {
-  let launched = false
+test("an owner's CLAUDE.local.md stops the gate before any provider starts", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'gate-local-instructions-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dispositions = join(directory, 'dispositions.md')
+  writeFileSync(dispositions, '- deferred: I1 blocker.\n')
+  // The round-cap consultation path runs the same precheck as a pair.
+  for (const [rounds, argv] of [
+    [0, []],
+    [3, ['--dispositions-file', dispositions]],
+  ]) {
+    let launched = false
+    await assert.rejects(
+      main({
+        argv,
+        countRounds: () => rounds,
+        localInstructionsPresent: () => true,
+        getBranch: () => 'feat/x',
+        acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
+        run: () => '',
+        readCleanHead: () => 'a'.repeat(40),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        review: () => {
+          launched = true
+          return Promise.resolve()
+        },
+        consult: () => {
+          launched = true
+          return Promise.resolve('DECISION: PROCEED')
+        },
+        recordConsultation: () => assert.fail('a consultation was recorded'),
+      }),
+      /CLAUDE\.local\.md already exists/u,
+    )
+    assert.equal(launched, false)
+  }
+})
+
+test('the round-cap consultation runs as an interruptible asynchronous provider', async () => {
+  const controller = new AbortController()
+  const calls = []
+  const text = await runRoundCapConsultation('prompt', {
+    evidenceDirectory: '/evidence',
+    signal: controller.signal,
+    provider: (command, args, options) => {
+      calls.push({ command, args, options })
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({
+          is_error: false,
+          subtype: 'success',
+          result: 'Reason.\nDECISION: PROCEED',
+          permission_denials: [],
+        }),
+        stderr: '',
+      })
+    },
+  })
+  assert.equal(text, 'Reason.\nDECISION: PROCEED')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].command, 'claude')
+  // The gate's signal and the 30-minute bound reach the provider runner, which
+  // also stops the child process group on SIGINT/SIGTERM.
+  assert.equal(calls[0].options.signal, controller.signal)
+  assert.equal(calls[0].options.timeoutMs, 1_800_000)
+  // A stopped provider rejects, and nothing is returned for recording.
   await assert.rejects(
-    main({
-      argv: [],
-      countRounds: () => 0,
-      localInstructionsPresent: () => true,
-      getBranch: () => 'feat/x',
-      acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
-      run: () => '',
-      readCleanHead: () => 'a'.repeat(40),
-      acquireLock: () => Promise.resolve(() => Promise.resolve()),
-      review: () => {
-        launched = true
-        return Promise.resolve()
-      },
+    runRoundCapConsultation('prompt', {
+      evidenceDirectory: '/evidence',
+      provider: () =>
+        Promise.reject(new Error('claude interrupted by a process signal.')),
     }),
-    /CLAUDE\.local\.md already exists/u,
+    /interrupted by a process signal/u,
   )
-  assert.equal(launched, false)
 })
 
 test('fixed test change evidence reaches both reviewers and inspection failures launch neither', async () => {

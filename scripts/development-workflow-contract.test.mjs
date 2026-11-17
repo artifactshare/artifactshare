@@ -14,15 +14,71 @@ const pullRequestTemplate = fs.readFileSync(
   'utf8',
 )
 
-test('documents proportional review and validation', () => {
+test('documents proportional specification review and the exact-HEAD Ready prerequisite', () => {
   assert.match(
     workflow,
-    /Codex\/Claude deep-review pair is required only when a change affects schema, authorization, billing, delivery, or the public\/private boundary/u,
+    /For a specification, the Codex\/Claude deep-review pair is required only when a change affects schema, authorization, billing, delivery, or the public\/private boundary/u,
   )
   assert.match(
     workflow,
-    /Ordinary code, workflow, and normative documentation changes still receive an appropriate self-review and targeted validation/u,
+    /Ordinary specifications receive an appropriate self-review and targeted validation instead/u,
   )
+  assert.match(
+    workflow,
+    /Every implementation, whether ordinary code, workflow, normative documentation, or boundary-sensitive, reaches Ready only after the implementation gate \(`pnpm review:implementation`\) has recorded a completed Codex\/Claude pair for its exact committed HEAD under the current review profile; `pr:ready` enforces this\./u,
+  )
+  // The pair requirement states the same round-cap exception pr:ready enforces.
+  assert.match(
+    workflow,
+    /`pr:ready` enforces this\. The one exception is the round cap: once the branch's three pairs are spent, a `PROCEED` round-cap consultation recorded for that exact HEAD takes the pair's place/u,
+  )
+  assert.match(
+    pullRequestTemplate,
+    /or a round-cap consultation for that HEAD that decided PROCEED/u,
+  )
+  assert.match(
+    workflow,
+    /A pair recorded for an earlier commit, a single reviewer, a different profile, or legacy or unreadable history does not count; the refusal names HEAD, and `pnpm review:implementation` on that HEAD is the retry\./u,
+  )
+  assert.match(
+    workflow,
+    /When the diff contains UI changes, it also requires a completed `pnpm critique:tasks` record for that exact HEAD/u,
+  )
+  assert.match(
+    workflow,
+    /SHA-256 identities of the validated walkthrough and screen capture roots, whose recorded capture HEAD equals that HEAD\. It stores no plaintext paths, prompts, sources, scope judgments, dispositions, or reviewer output/u,
+  )
+  assert.match(
+    workflow,
+    /A later commit makes the record obsolete for Ready\./u,
+  )
+  for (const text of [workflow, pullRequestTemplate]) {
+    assert.doesNotMatch(text, /--ui-gate-complete/u)
+    assert.doesNotMatch(text, /ordinary change, summarize the self-review/iu)
+  }
+  assert.doesNotMatch(
+    workflow,
+    /Ordinary code, workflow, and normative documentation changes still receive an appropriate self-review and targeted validation, but do not require this pair/u,
+  )
+  assert.match(
+    workflow,
+    /Every pull request branch initializes a scope before its implementation gate, because Ready requires a completed pair on the exact HEAD/u,
+  )
+  assert.doesNotMatch(
+    workflow,
+    /For a boundary-sensitive implementation gate, create a strict JSON scope/u,
+  )
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    const instructions = fs.readFileSync(path.join(root, name), 'utf8')
+    assert.match(
+      instructions,
+      /Every pull request branch initializes its objective scope before its implementation gate, and `pr:ready` requires a completed implementation pair for the exact HEAD \(and, for a UI diff, a completed critique record for that HEAD\)/u,
+    )
+    assert.doesNotMatch(
+      instructions,
+      /scope when the boundary-sensitive implementation review applies/u,
+    )
+  }
   assert.match(
     workflow,
     /A change to this workflow policy itself must receive the Codex\/Claude deep-review pair before landing/u,
@@ -125,7 +181,21 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   )
   assert.match(
     workflow,
-    /at most three completed review pairs under the current review profile; `review:implementation` refuses a fourth with `ROUND_CAP`/u,
+    /at most three completed review pairs under the current review profile; `review:implementation` never runs a fourth pair/u,
+  )
+  // The cap ends in a recorded consultation for the exact HEAD, not a dead
+  // end, and it reads the change no pair has read.
+  assert.match(
+    workflow,
+    /run `pnpm review:implementation -- --dispositions-file <path>` on the current clean HEAD: the gate consults the round-cap profile .*?\(Fable at medium\) with one read-only snapshot of the branch's objective scope, those dispositions, the changed files and diff from the last completed pair's HEAD to HEAD \(the change no pair has read\), and the changed files and full diff from the merge base to HEAD, prints its decision, `PROCEED` or `RETURN TO OWNER`, and records that decision for this exact HEAD, with the last completed pair's HEAD it covered/u,
+  )
+  assert.match(
+    workflow,
+    /refuses when that pair reported a blocker[^.]*, and when the pair's reviewed range does not reach the merge base/u,
+  )
+  assert.match(
+    workflow,
+    /a narrower explicit `--base` that breaks the chain does not count/u,
   )
   assert.doesNotMatch(
     workflow,
