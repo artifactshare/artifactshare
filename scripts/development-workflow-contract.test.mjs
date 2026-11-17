@@ -21,6 +21,21 @@ const nextOrdinal = [
 const cap = capWords[implementationRoundCap]
 const pastCap = nextOrdinal[implementationRoundCap]
 
+test('the workflow can spell the gate cap', () => {
+  // A cap outside the tables would put "undefined" into every cap pattern
+  // below; name the real cause instead. Extend the tables when the cap grows.
+  assert.equal(
+    typeof cap,
+    'string',
+    `no word for cap ${implementationRoundCap}`,
+  )
+  assert.equal(
+    typeof pastCap,
+    'string',
+    `no ordinal for pair ${implementationRoundCap + 1}`,
+  )
+})
+
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const workflow = fs.readFileSync(
   path.join(root, 'docs/development-workflow.md'),

@@ -1091,7 +1091,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
     '- deferred: I1 blocker, because the scope lock excludes it.\n',
   )
   const mergeBase = 'c'.repeat(40)
-  // The third pair read P; commit C (HEAD) came after it.
+  // The last pair under the cap read P; commit C (HEAD) came after it.
   const pairHead = 'e'.repeat(40)
   const run = (_file, args) => {
     if (args.join(' ') === `merge-base --is-ancestor ${pairHead} ${head}`)
