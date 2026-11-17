@@ -1,7 +1,7 @@
 ---
 title: ファイル内のテキストを検索
 date: 2026-11-17
-products: [web, cli]
+products: [web, mcp, cli]
 kind: new
 details: guides-search
 ---

@@ -587,7 +587,7 @@ test.each(['en', 'ja'] as const)(
     expect(parsed.locale).toBe(locale)
     expect(parsed.frontmatter).toMatchObject({
       date: '2026-11-17',
-      products: ['web', 'cli'],
+      products: ['web', 'mcp', 'cli'],
       kind: 'new',
     })
     expect(parsed.frontmatter.notice).toBeUndefined()
