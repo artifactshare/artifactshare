@@ -2697,6 +2697,7 @@ describe('headless publish wiring', () => {
           {
             id: artifact.id,
             excerpt: 'body needle',
+            owner_user_id: 'owner-1',
             group_size: 1,
             group_size_relation: 'eq',
           },
@@ -2707,6 +2708,13 @@ describe('headless publish wiring', () => {
     expect(searchIndexMock.search).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'needle' }),
     )
+    const numericPeriod = await callTool(db, 'list_artifacts', {
+      q: 'needle',
+      date_field: 'updated',
+      days: 7,
+    })
+    expect(numericPeriod.result?.isError).not.toBe(true)
+    expect(numericPeriod.result?.structuredContent).toHaveProperty('total')
     const logs = await db.selectFrom('search_logs').select('source').execute()
     expect(logs).toContainEqual({ source: 'mcp' })
     searchIndexMock.search.mockResolvedValue({
@@ -2724,6 +2732,17 @@ describe('headless publish wiring', () => {
     })
     expect(JSON.stringify(empty.result?.content)).toContain(
       'Rephrase the query',
+    )
+    searchIndexMock.search.mockResolvedValue({
+      error: { code: 'search_capacity_exceeded' },
+    })
+    const capacity = await callTool(db, 'list_artifacts', { q: 'broad' })
+    expect(capacity.result?.isError).toBe(true)
+    expect(JSON.stringify(capacity.result?.content)).toContain(
+      'search_capacity_exceeded',
+    )
+    expect(JSON.stringify(capacity.result?.content)).toContain(
+      'Narrow the query',
     )
   })
 

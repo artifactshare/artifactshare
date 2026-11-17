@@ -336,3 +336,66 @@ test('empty search guidance remains visible in human and JSON output', () => {
     write.mockRestore()
   }
 })
+
+test('human search continuation preserves the original query and filters', async () => {
+  const original = [
+    'artifacts',
+    'list',
+    '--q',
+    'body needle',
+    '--owner-user-ids',
+    'owner-a',
+    '--home',
+  ]
+  let pages = 0
+  await withServer(
+    (request, response) => {
+      const params = new URL(request.url!, 'http://localhost').searchParams
+      assert.equal(params.get('q'), 'body needle')
+      assert.deepEqual(params.getAll('owner_user_ids'), ['owner-a'])
+      assert.equal(params.get('project_id'), '')
+      assert.equal(params.get('cursor'), pages === 0 ? null : 'next-page')
+      pages++
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifacts: [],
+          limit: 50,
+          total: { value: 2, relation: 'eq' },
+          has_more: pages === 1,
+          next_cursor: pages === 1 ? 'next-page' : null,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const args = [...original, '--base-url', baseUrl]
+      const first = await runAsync(args, { ARTIFACTSHARE_TOKEN: 'test-token' })
+      assert.equal(first.status, 0)
+      const write = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true)
+      let humanOutput: string
+      try {
+        writeSuccess('artifacts list', JSON.parse(first.stdout).data, {
+          json: false,
+        })
+        humanOutput = String(write.mock.calls.at(-1)?.[0])
+      } finally {
+        write.mockRestore()
+      }
+      assert.match(
+        humanOutput,
+        /Repeat the original command with all query and filter options/,
+      )
+      const cursor = humanOutput.match(
+        /adding or replacing --cursor (\S+)/,
+      )?.[1]
+      assert.equal(cursor, 'next-page')
+      const next = await runAsync([...args, '--cursor', cursor!], {
+        ARTIFACTSHARE_TOKEN: 'test-token',
+      })
+      assert.equal(next.status, 0)
+      assert.equal(pages, 2)
+    },
+  )
+})

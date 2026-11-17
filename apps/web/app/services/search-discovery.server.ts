@@ -89,11 +89,10 @@ function discoveryQuery(
     .select(['s.id', 's.workspace_id as workspaceId'])
     .where(discoveryEligibility(viewer, now))
   if (filters.credentialScope)
-    query = query.where(sql<boolean>`s.id IN (
-      SELECT shareables.id FROM shareables
-      CROSS JOIN users AS search_viewer
+    query = query.where(sql<boolean>`EXISTS (
+      SELECT 1 FROM users AS search_viewer
       WHERE search_viewer.id = ${viewer.id}
-        AND ${agentReadableShareableSql('search_viewer', filters.credentialScope)}
+        AND ${agentReadableShareableSql('search_viewer', filters.credentialScope, 's')}
     )`)
   // All other non-administrative opening grounds already occur above as
   // independent discovery grounds. Thus creator + live membership is the only

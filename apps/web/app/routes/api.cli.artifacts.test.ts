@@ -110,6 +110,25 @@ describe('/api/cli/artifacts', () => {
     expect(createDbMock).not.toHaveBeenCalled()
   })
 
+  test('returns recoverable capacity errors instead of empty success', async () => {
+    searchCliArtifactsMock.mockResolvedValue({ kind: 'capacity-exceeded' })
+    const response = await loader({
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/api/cli/artifacts'),
+      pattern: '/api/cli/artifacts',
+      params: {},
+      request: new Request('https://example.test/api/cli/artifacts?q=body'),
+    })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'search_capacity_exceeded',
+        message:
+          'Search capacity exceeded. Narrow the query or filters and search again.',
+      },
+    })
+  })
+
   test('dispatches full-text filters and preserves successful empty guidance', async () => {
     const data = {
       artifacts: [],

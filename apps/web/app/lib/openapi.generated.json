@@ -852,6 +852,9 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "owner_user_id": {
+                  "type": "string"
+                },
                 "excerpt": {
                   "type": "string"
                 },

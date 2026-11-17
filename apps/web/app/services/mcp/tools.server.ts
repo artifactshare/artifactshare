@@ -236,6 +236,7 @@ const LIST_OUTPUT_SCHEMA = {
         z.string().nullable(),
         ArtifactsListEntrySchema.shape.project_id,
       ),
+      owner_user_id: ArtifactsListEntrySchema.shape.owner_user_id,
       owner_email: ArtifactsListEntrySchema.shape.owner_email,
       artifact_kind: z.string(),
       excerpt: ArtifactsListEntrySchema.shape.excerpt,
@@ -1120,9 +1121,17 @@ export function registerArtifactTools(
         date_field: ArtifactsListQuerySchema.shape.date_field.describe(
           'Period field: updated activity or last viewed by you. Requires days or from/to.',
         ),
-        days: ArtifactsListQuerySchema.shape.days.describe(
-          'Last 7, 30 or 90 days; requires date_field and excludes from/to.',
-        ),
+        days: z
+          .union([
+            z.enum(['7', '30', '90']),
+            z.literal(7),
+            z.literal(30),
+            z.literal(90),
+          ])
+          .optional()
+          .describe(
+            'Last 7, 30 or 90 days; requires date_field and excludes from/to.',
+          ),
         from: ArtifactsListQuerySchema.shape.from.describe(
           'Inclusive ISO date/time; requires date_field.',
         ),
@@ -1145,7 +1154,10 @@ export function registerArtifactTools(
       if (limited) return limited
       const user = await getUser()
       if (!user) return unresolvedUserError()
-      const parsed = ArtifactsListQuerySchema.safeParse(args)
+      const parsed = ArtifactsListQuerySchema.safeParse({
+        ...args,
+        days: args.days === undefined ? undefined : String(args.days),
+      })
       if (!parsed.success)
         return toolError({
           code: 'validation_failed',
@@ -1167,6 +1179,13 @@ export function registerArtifactTools(
             query: args.query,
             cursor: args.cursor,
           })
+      if (result.kind === 'capacity-exceeded')
+        return toolError({
+          code: 'search_capacity_exceeded',
+          message: 'Search capacity exceeded.',
+          recoverable_by: 'agent',
+          hint: 'Narrow the query or filters and search again.',
+        })
       if (result.kind === 'invalid-input')
         return toolError({
           code: 'validation_failed',

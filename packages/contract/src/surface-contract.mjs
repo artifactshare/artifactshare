@@ -258,6 +258,7 @@ export const REST_SCHEMAS = {
         items: objectSchema(
           {
             ...versionSummary,
+            owner_user_id: { type: 'string' },
             excerpt: { type: 'string' },
             group_size: { type: 'integer', minimum: 1 },
             group_size_relation: { enum: ['eq', 'gte'] },

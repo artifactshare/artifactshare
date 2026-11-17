@@ -68,6 +68,12 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           includeVersionSummaries: true,
         },
       )
+      if (result.kind === 'capacity-exceeded')
+        return errorResponse(
+          'search_capacity_exceeded',
+          'Search capacity exceeded. Narrow the query or filters and search again.',
+          503,
+        )
       if (result.kind !== 'ok')
         return errorResponse(
           'validation_failed',

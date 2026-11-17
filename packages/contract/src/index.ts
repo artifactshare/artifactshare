@@ -874,6 +874,7 @@ export const ArtifactsListEntrySchema = z.object({
   link_expires_at: nullableTimestamp.optional(),
   updated_at: timestamp,
   project_id: stringId.nullable(),
+  owner_user_id: z.string().optional(),
   owner_email: z.string().optional(),
   artifact_kind: ArtifactKindSchema.optional(),
   excerpt: z.string().optional(),

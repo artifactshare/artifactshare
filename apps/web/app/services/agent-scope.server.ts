@@ -19,21 +19,23 @@ type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 export function agentReadableShareableSql(
   viewerAlias: string,
   authority: AgentAuthority,
+  shareableAlias = 'shareables',
 ) {
+  const shareable = (column: string) => sql.ref(`${shareableAlias}.${column}`)
   const viewer = (column: string) => sql.ref(`${viewerAlias}.${column}`)
   return sql<boolean>`(
     ${viewer('id')} IS NOT NULL
     AND ${viewer('workspace_id')} = ${authority.workspaceId}
-    AND shareables.workspace_id = ${authority.workspaceId}
+    AND ${shareable('workspace_id')} = ${authority.workspaceId}
     AND EXISTS (
       SELECT 1 FROM artifact_containers agent_ac
-      WHERE agent_ac.id = shareables.container_id
+      WHERE agent_ac.id = ${shareable('container_id')}
         AND agent_ac.kind = 'project'
         AND agent_ac.archived_at IS NULL
         AND (
-          shareables.visibility = 'workspace'
+          ${shareable('visibility')} = 'workspace'
           OR (
-            shareables.visibility = 'project'
+            ${shareable('visibility')} = 'project'
             AND (
               agent_ac.base_visibility = 'workspace'
               OR (

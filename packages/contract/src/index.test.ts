@@ -1707,6 +1707,7 @@ it('artifact search filters normalize owners and reject conflicting modes and pe
         visibility: 'private',
         updated_at: '2026-09-15T00:00:00.000Z',
         project_id: null,
+        owner_user_id: 'owner-a',
         excerpt: 'Body match',
         group_size: 2,
         group_size_relation: 'eq',

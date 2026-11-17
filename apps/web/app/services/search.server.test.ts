@@ -1321,6 +1321,7 @@ test('credential discovery intersection excludes home and forbidden siblings bef
       VALUES('project','ws','project','Project','viewer','${now}','${now}');
     UPDATE shareables SET name='Same title' WHERE id IN ('a','b');
     UPDATE shareables SET container_id='project', visibility='workspace' WHERE id='b';
+    UPDATE shareables SET updated_at='2026-09-01T00:00:00.000Z' WHERE id='a';
   `)
   const authority = {
     kind: 'agent' as const,
@@ -1470,6 +1471,7 @@ test('list adapter combines owner, home/project and updated/viewed periods witho
     INSERT INTO artifact_containers(id,workspace_id,kind,name,created_by_id,created_at,updated_at)
       VALUES('project','ws','project','Project','viewer','${now}','${now}');
     UPDATE shareables SET container_id='project', visibility='workspace' WHERE id='b';
+    UPDATE shareables SET updated_at='2026-09-01T00:00:00.000Z' WHERE id='a';
     INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES('b','viewer','2026-09-16T12:00:00.000Z','2026-09-16T12:00:00.000Z');
   `)
   const args = {
@@ -1488,6 +1490,8 @@ test('list adapter combines owner, home/project and updated/viewed periods witho
   expect(human.data.artifacts).toHaveLength(2)
   expect(human.data.artifacts[0]).toMatchObject({
     excerpt: 'Healthy excerpt',
+    owner_user_id: 'viewer',
+    updated_at: '2026-09-01T00:00:00.000Z',
     retain_versions: null,
     version_count: 0,
     total_size_bytes: 0,
@@ -1562,4 +1566,40 @@ test('list adapter combines owner, home/project and updated/viewed periods witho
   expect(restricted.data.artifacts.map((row) => row.id)).toEqual(['b'])
   for (const key of ['retain_versions', 'version_count', 'total_size_bytes'])
     expect(JSON.stringify(restricted.data)).not.toContain(key)
+})
+
+test('list adapter labels any-term fallback and distinguishes capacity from empty success', async () => {
+  const { searchCliArtifacts } = await import('./cli-artifacts.server')
+  const stub = index()
+  const healthySearch = stub.search
+  stub.search = vi.fn(async (request) =>
+    request.any
+      ? healthySearch(request)
+      : { items: [], nextCursor: null, activeDocumentCount: 4 },
+  )
+  const args = {
+    baseUrl: 'https://example.test',
+    source: 'cli' as const,
+    q: 'quarterly revenue forecast',
+  }
+  const fallback = await searchCliArtifacts(
+    fixture.db,
+    () => stub,
+    { id: 'viewer' },
+    args,
+  )
+  expect(fallback).toMatchObject({
+    kind: 'ok',
+    data: {
+      total: { value: 2, relation: 'eq' },
+      search_hint:
+        'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+    },
+  })
+  stub.search = vi.fn<SearchIndex['search']>(async () => ({
+    error: { code: 'search_capacity_exceeded' },
+  }))
+  expect(
+    await searchCliArtifacts(fixture.db, () => stub, { id: 'viewer' }, args),
+  ).toEqual({ kind: 'capacity-exceeded' })
 })
