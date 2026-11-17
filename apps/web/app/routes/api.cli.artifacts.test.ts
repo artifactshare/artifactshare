@@ -214,24 +214,6 @@ describe('/api/cli/artifacts', () => {
     },
   )
 
-  test.each(['bridge', 'bootstrap'])(
-    'keeps the plain list for %s credentials',
-    async (kind) => {
-      getCliAuthorityMock.mockReturnValue({ kind })
-      listCliArtifactsMock.mockResolvedValue({
-        kind: 'ok',
-        data: { artifacts: [], limit: 50, has_more: false, next_cursor: null },
-      })
-      const response = await loader({
-        context: new Map(),
-        request: new Request('https://example.test/api/cli/artifacts'),
-      } as never)
-      expect(response.status).toBe(200)
-      expect(listCliArtifactsMock).toHaveBeenCalledTimes(1)
-      expect(searchCliArtifactsMock).not.toHaveBeenCalled()
-    },
-  )
-
   test('returns artifacts for the authenticated user', async () => {
     listCliArtifactsMock.mockResolvedValue({
       kind: 'ok',

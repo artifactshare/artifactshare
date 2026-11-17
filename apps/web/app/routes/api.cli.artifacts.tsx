@@ -49,16 +49,13 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   }
   const { project_id: projectId, query, cursor } = queryParams.data
   const resolved = getCliAuthority(context)
+  if (resolved?.kind === 'bridge' || resolved?.kind === 'bootstrap')
+    return cliScopeDeniedResponse()
   const authority = cliReadAuthority(resolved)
   if (authority === 'denied') return cliScopeDeniedResponse()
-  const search = isArtifactsSearch(queryParams.data)
-  // Bridge and bootstrap credentials keep the plain list they had; search is
-  // refused to them because their range is not capped like an agent's.
-  if (search && (resolved?.kind === 'bridge' || resolved?.kind === 'bootstrap'))
-    return cliScopeDeniedResponse()
 
   return await withDb(async (db) => {
-    if (search) {
+    if (isArtifactsSearch(queryParams.data)) {
       const result = await searchCliArtifacts(
         db,
         (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
