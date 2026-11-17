@@ -843,3 +843,27 @@ test('phone header keeps search on the right and the empty palette says it is lo
     .element(page.getByRole('status').filter({ hasText: 'Loading…' }))
     .toBeVisible()
 })
+
+test('choosing a suggested person clears the partial name and keeps a row that runs the search', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('search-logs')) return Response.json({ searches: [] })
+      return Response.json(
+        new URL(url, location.origin).searchParams.get('q')
+          ? { ...empty, owners: [{ id: 'alex', name: 'Alex Kim' }] }
+          : empty,
+      )
+    }),
+  )
+  const router = mountPalette()
+  await page.getByRole('button', { name: /^Search(?::|$)/ }).click()
+  const field = page.getByRole('combobox', { name: /^(Keywords|キーワード)$/ })
+  await field.fill('Ale')
+  await page.getByRole('option', { name: /Alex Kim/ }).click()
+  await expect.element(field).toHaveValue('')
+  await page.getByRole('option', { name: /^View all matching files/ }).click()
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  expect(router.state.location.search).toContain('owner=alex')
+})

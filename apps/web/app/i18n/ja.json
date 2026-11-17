@@ -1750,6 +1750,7 @@
   "search.people": "人とプロジェクト",
   "search.files": "ファイル",
   "search.all": "『{q}』のすべての結果を表示",
+  "search.allFiltered": "条件に合うファイルをすべて表示",
   "search.ownerPlaceholder": "所有者を名前で探す",
   "search.projectPlaceholder": "プロジェクトを名前で探す",
   "search.owner": "所有者",

@@ -474,6 +474,7 @@ function PaletteBody({
   )
   const options = paletteOptions({
     query,
+    filtered: owners.length > 0 || Boolean(scope),
     results,
     history,
     choose,
@@ -800,6 +801,7 @@ function PaletteCandidates({
 
 function paletteOptions({
   query,
+  filtered,
   results,
   history,
   choose,
@@ -809,6 +811,8 @@ function paletteOptions({
   formatDate,
 }: {
   query: string
+  /** An owner or project chip is set, so Enter searches even without words. */
+  filtered: boolean
   results: Suggestions
   history: Array<{
     id: string
@@ -891,10 +895,12 @@ function paletteOptions({
           ),
       })
   }
-  if (query.trim())
+  if (query.trim() || filtered)
     options.push({
       key: 'all',
-      label: t('search.all', { q: query }),
+      label: query.trim()
+        ? t('search.all', { q: query })
+        : t('search.allFiltered'),
       activate: submit,
     })
   return options

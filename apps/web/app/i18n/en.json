@@ -1750,6 +1750,7 @@
   "search.people": "People and projects",
   "search.files": "Files",
   "search.all": "View all results for \"{q}\"",
+  "search.allFiltered": "View all matching files",
   "search.ownerPlaceholder": "Find owners by name",
   "search.projectPlaceholder": "Find projects by name",
   "search.owner": "Owner",
