@@ -1314,3 +1314,252 @@ test.each(['project', 'owners'] as const)(
     ])
   },
 )
+
+test('credential discovery intersection excludes home and forbidden siblings before grouping and details', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,created_by_id,created_at,updated_at)
+      VALUES('project','ws','project','Project','viewer','${now}','${now}');
+    UPDATE shareables SET name='Same title' WHERE id IN ('a','b');
+    UPDATE shareables SET container_id='project', visibility='workspace' WHERE id='b';
+  `)
+  const authority = {
+    kind: 'agent' as const,
+    familyId: 'family',
+    workspaceId: 'ws',
+    projectId: 'project',
+    projectNameSnapshot: 'Project',
+    agentProfileId: 'profile',
+  }
+  const human = await search(
+    fixture.db,
+    () => index(),
+    'viewer',
+    { ...input, pageSize: 50 },
+    'cli',
+  )
+  if ('error' in human) throw new Error('healthy search failed')
+  expect(human.items.find((row) => row.title === 'Same title')?.groupSize).toBe(
+    2,
+  )
+  expect(human.total.value).toBe(2)
+  for (const ordinaryBot of [false, true]) {
+    if (ordinaryBot) {
+      fixture.sqlite.exec(`
+      INSERT INTO users(id,email,email_verified,name,workspace_id,kind,created_at,updated_at) VALUES('bot','bot@example.com',1,'Bot','ws','bot','${now}','${now}');
+      INSERT INTO workspace_members(workspace_id,user_id,role,status,created_at,updated_at) VALUES('ws','bot','member','active','${now}','${now}');
+      UPDATE shareables SET owner_user_id='bot' WHERE id IN ('a','denied');
+    `)
+      // Both the same-title sibling and a separate private group are discoverable
+      // by this bot, but neither is within its credential's project read range.
+      const botDiscovery = await search(
+        fixture.db,
+        () => index(),
+        'bot',
+        { ...input, pageSize: 50 },
+        'cli',
+      )
+      if ('error' in botDiscovery)
+        throw new Error('bot discovery control failed')
+      expect(botDiscovery.items).toEqual([
+        expect.objectContaining({ id: 'a', groupSize: 2 }),
+        expect.objectContaining({ id: 'denied', excerpt: 'Secret Snippet' }),
+      ])
+      expect(botDiscovery.total).toEqual({ value: 2, relation: 'eq' })
+    }
+    const scopedIndex = index()
+    const scoped = await search(
+      fixture.db,
+      () => scopedIndex,
+      ordinaryBot ? 'bot' : 'viewer',
+      {
+        ...input,
+        pageSize: 50,
+        filters: { credentialScope: { ...authority, ordinaryBot } },
+      },
+      'cli',
+    )
+    if ('error' in scoped) throw new Error('scoped search failed')
+    expect(scoped.items.map((row) => row.id)).toEqual(['b'])
+    expect(scoped.items[0].groupSize).toBe(1)
+    expect(scoped.total).toEqual({ value: 1, relation: 'eq' })
+    expect(JSON.stringify(scoped)).not.toContain('Secret')
+    expect(scopedIndex.details).toHaveBeenCalledWith(expect.anything(), ['b'])
+    const log = await fixture.db
+      .selectFrom('search_logs')
+      .selectAll()
+      .where('id', '=', scoped.searchLogId)
+      .executeTakeFirstOrThrow()
+    expect(log.source).toBe('cli')
+    expect(log.result_count).toBe(1)
+  }
+})
+
+test('continuations bind source, credential family and live access', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,created_by_id,created_at,updated_at)
+      VALUES('project','ws','project','Project','viewer','${now}','${now}');
+    UPDATE shareables SET container_id='project', visibility='workspace' WHERE id IN ('a','b','c');
+  `)
+  const authority = {
+    kind: 'agent' as const,
+    familyId: 'family',
+    workspaceId: 'ws',
+    projectId: 'project',
+    projectNameSnapshot: 'Project',
+    agentProfileId: 'profile',
+  }
+  const criteria = { ...input, filters: { credentialScope: authority } }
+  const first = await search(
+    fixture.db,
+    () => index(),
+    'viewer',
+    criteria,
+    'cli',
+  )
+  if ('error' in first || !first.nextCursor)
+    throw new Error('missing continuation')
+  const continuation = { ...criteria, cursor: first.nextCursor }
+  expect(
+    await search(fixture.db, () => index(), 'viewer', continuation, 'mcp'),
+  ).toHaveProperty('error.code', 'invalid_cursor')
+  expect(
+    await search(
+      fixture.db,
+      () => index(),
+      'viewer',
+      {
+        ...continuation,
+        filters: { credentialScope: { ...authority, familyId: 'other' } },
+      },
+      'cli',
+    ),
+  ).toHaveProperty('error.code', 'invalid_cursor')
+  const next = await search(
+    fixture.db,
+    () => index(),
+    'viewer',
+    {
+      ...continuation,
+      filters: {
+        credentialScope: { ...authority, projectNameSnapshot: 'Renamed label' },
+      },
+    },
+    'cli',
+  )
+  if ('error' in next) throw new Error('healthy continuation failed')
+  expect(next.items[0].id).not.toBe(first.items[0].id)
+  fixture.sqlite.exec(
+    `UPDATE artifact_containers SET archived_at='${now}' WHERE id='project'`,
+  )
+  const revoked = await search(
+    fixture.db,
+    () => index(),
+    'viewer',
+    continuation,
+    'cli',
+  )
+  expect(revoked).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'eq' },
+  })
+})
+
+test('list adapter combines owner, home/project and updated/viewed periods without exposing restricted summaries', async () => {
+  const { searchCliArtifacts } = await import('./cli-artifacts.server')
+  fixture.sqlite.exec(`
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,created_by_id,created_at,updated_at)
+      VALUES('project','ws','project','Project','viewer','${now}','${now}');
+    UPDATE shareables SET container_id='project', visibility='workspace' WHERE id='b';
+    INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES('b','viewer','2026-09-16T12:00:00.000Z','2026-09-16T12:00:00.000Z');
+  `)
+  const args = {
+    baseUrl: 'https://example.test',
+    source: 'cli' as const,
+    q: 'body',
+    includeVersionSummaries: true,
+  }
+  const human = await searchCliArtifacts(
+    fixture.db,
+    () => index(),
+    { id: 'viewer' },
+    args,
+  )
+  if (human.kind !== 'ok') throw new Error('healthy adapter search failed')
+  expect(human.data.artifacts).toHaveLength(2)
+  expect(human.data.artifacts[0]).toMatchObject({
+    excerpt: 'Healthy excerpt',
+    retain_versions: null,
+    version_count: 0,
+    total_size_bytes: 0,
+  })
+  const combined = await searchCliArtifacts(
+    fixture.db,
+    () => index(),
+    { id: 'viewer' },
+    {
+      ...args,
+      owner_user_ids: ['viewer'],
+      project_id: 'project',
+      date_field: 'viewed',
+      from: '2026-09-16',
+      to: '2026-09-16',
+    },
+  )
+  expect(combined).toMatchObject({
+    kind: 'ok',
+    data: {
+      artifacts: [{ id: 'b', owner_email: 'viewer@example.com' }],
+      total: { value: 1, relation: 'eq' },
+    },
+  })
+  for (const filter of [
+    { owner_user_ids: ['owner'] },
+    { date_field: 'updated' as const, from: '2026-09-16' },
+    { date_field: 'viewed' as const, to: '2026-09-15' },
+  ]) {
+    const empty = await searchCliArtifacts(
+      fixture.db,
+      () => index(),
+      { id: 'viewer' },
+      { ...args, ...filter },
+    )
+    expect(empty).toMatchObject({
+      kind: 'ok',
+      data: {
+        artifacts: [],
+        total: { value: 0, relation: 'eq' },
+        search_hint:
+          'Rephrase the query and search again before concluding that nothing exists.',
+      },
+    })
+  }
+  const home = await searchCliArtifacts(
+    fixture.db,
+    () => index(),
+    { id: 'viewer' },
+    { ...args, project_id: '' },
+  )
+  if (home.kind !== 'ok') throw new Error('home search failed')
+  expect(home.data.artifacts.map((row) => row.id)).toEqual(['a'])
+  expect(home.data.artifacts[0].group_size).toBe(2)
+  const restricted = await searchCliArtifacts(
+    fixture.db,
+    () => index(),
+    { id: 'viewer' },
+    {
+      ...args,
+      authority: {
+        kind: 'agent',
+        familyId: 'family',
+        workspaceId: 'ws',
+        projectId: 'project',
+        projectNameSnapshot: 'Project',
+        agentProfileId: 'profile',
+      },
+    },
+  )
+  if (restricted.kind !== 'ok') throw new Error('restricted search failed')
+  expect(restricted.data.artifacts.map((row) => row.id)).toEqual(['b'])
+  for (const key of ['retain_versions', 'version_count', 'total_size_bytes'])
+    expect(JSON.stringify(restricted.data)).not.toContain(key)
+})

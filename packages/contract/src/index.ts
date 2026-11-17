@@ -595,12 +595,68 @@ export type ArtifactVersionLookupResponse = z.infer<
 
 /* Artifacts -------------------------------------------------------------- */
 
-export const ArtifactsListQuerySchema = z.object({
-  /** Empty string selects the unfiled home list. */
-  project_id: z.string().optional(),
-  query: z.string().optional(),
-  cursor: z.string().optional(),
-})
+export const ArtifactsListQuerySchema = z
+  .object({
+    q: z.string().max(500).optional(),
+    owner_user_ids: z
+      .array(z.string().min(1).max(200))
+      .max(100)
+      .transform((ids) => [...new Set(ids)].sort())
+      .optional(),
+    date_field: z.enum(['updated', 'viewed']).optional(),
+    days: z.enum(['7', '30', '90']).optional(),
+    from: z.string().min(1).optional(),
+    to: z.string().min(1).optional(),
+    /** Empty string selects the unfiled home list. */
+    project_id: z.string().optional(),
+    query: z.string().optional(),
+    cursor: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const searchMode = [
+      value.q,
+      value.owner_user_ids,
+      value.date_field,
+      value.days,
+      value.from,
+      value.to,
+    ].some((v) => v !== undefined)
+    const invalid = (path: string) =>
+      ctx.addIssue({
+        code: 'custom',
+        path: [path],
+        message: 'Invalid search filters (validation_failed).',
+      })
+    if (searchMode && value.query !== undefined) invalid('query')
+    if (value.days || value.from || value.to || value.date_field) {
+      if (!value.date_field) invalid('date_field')
+      if (value.days && (value.from !== undefined || value.to !== undefined))
+        invalid('days')
+      if (!value.days && !value.from && !value.to) invalid('date_field')
+    }
+    const bound = (text: string | undefined, end: boolean) => {
+      if (text === undefined) return undefined
+      const day = text.slice(0, 10)
+      const date = new Date(text)
+      if (
+        !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?$/.test(
+          text,
+        ) ||
+        (text.length > 10 &&
+          (Number(text.slice(11, 13)) > 23 ||
+            Number(text.slice(14, 16)) > 59)) ||
+        !Number.isFinite(date.getTime()) ||
+        new Date(day).toISOString().slice(0, 10) !== day
+      ) {
+        invalid(end ? 'to' : 'from')
+        return undefined
+      }
+      return date.getTime() + (end && text.length === 10 ? 86400000 : 0)
+    }
+    const from = bound(value.from, false),
+      to = bound(value.to, true)
+    if (from !== undefined && to !== undefined && from >= to) invalid('to')
+  })
 export type ArtifactsListQuery = z.infer<typeof ArtifactsListQuerySchema>
 
 export const ArtifactIncludeSchema = z.enum(['versions', 'comments'])
@@ -820,10 +876,20 @@ export const ArtifactsListEntrySchema = z.object({
   project_id: stringId.nullable(),
   owner_email: z.string().optional(),
   artifact_kind: ArtifactKindSchema.optional(),
+  excerpt: z.string().optional(),
+  group_size: z.number().int().positive().optional(),
+  group_size_relation: z.enum(['eq', 'gte']).optional(),
 })
 export type ArtifactsListEntry = z.infer<typeof ArtifactsListEntrySchema>
 
 export const ArtifactsListResponseSchema = z.object({
+  total: z
+    .object({
+      value: z.number().int().nonnegative(),
+      relation: z.enum(['eq', 'gte']),
+    })
+    .optional(),
+  search_hint: z.string().optional(),
   artifacts: z.array(ArtifactsListEntrySchema),
   limit: z.number().int().nonnegative(),
   has_more: z.boolean(),

@@ -488,7 +488,12 @@ export async function search(
     searchLogId: string | undefined
   if (input.cursor) {
     const cursor = await readSearchToken(db, actor, input.cursor, 'cursor', now)
-    if (!cursor || cursor.log.filters_json !== canonical) return invalidCursor
+    if (
+      !cursor ||
+      cursor.log.filters_json !== canonical ||
+      cursor.log.source !== source
+    )
+      return invalidCursor
     anchor = new Date(cursor.log.created_at)
     position = cursor.payload.rank
     searchLogId = cursor.log.id
@@ -674,6 +679,7 @@ export async function search(
         input.filters.location?.kind === 'project'
           ? [input.filters.location.id]
           : [],
+        input.filters.credentialScope,
       )
   return {
     items,

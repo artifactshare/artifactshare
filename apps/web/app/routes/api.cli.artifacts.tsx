@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
@@ -9,6 +10,8 @@ import { artifactsListForClient } from '~/lib/cli-artifact-kinds'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import {
+  isArtifactsSearch,
+  searchCliArtifacts,
   listAgentReadableArtifacts,
   listCliArtifacts,
 } from '~/services/cli-artifacts.server'
@@ -21,22 +24,63 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
   const queryParams = ArtifactsListQuerySchema.safeParse({
+    ...Object.fromEntries(
+      ['q', 'date_field', 'days', 'from', 'to'].map((key) => [
+        key,
+        url.searchParams.get(key) ?? undefined,
+      ]),
+    ),
+    owner_user_ids: url.searchParams.has('owner_user_ids')
+      ? url.searchParams.getAll('owner_user_ids')
+      : undefined,
     project_id: url.searchParams.get('project_id') ?? undefined,
     query: url.searchParams.get('query')?.trim() || undefined,
     cursor: url.searchParams.get('cursor') ?? undefined,
   })
-  if (!queryParams.success) {
+  if (
+    !queryParams.success ||
+    (url.searchParams.has('query') && isArtifactsSearch(queryParams.data))
+  ) {
     return errorResponse(
-      'validation-failed',
-      'Invalid artifact list query.',
+      'validation_failed',
+      'Invalid artifact list query. Use q for body search or query for titles, not both; check owner and period filters.',
       400,
     )
   }
   const { project_id: projectId, query, cursor } = queryParams.data
-  const authority = cliReadAuthority(getCliAuthority(context))
+  const resolved = getCliAuthority(context)
+  if (resolved?.kind === 'bridge' || resolved?.kind === 'bootstrap')
+    return cliScopeDeniedResponse()
+  const authority = cliReadAuthority(resolved)
   if (authority === 'denied') return cliScopeDeniedResponse()
 
   return await withDb(async (db) => {
+    if (isArtifactsSearch(queryParams.data)) {
+      const result = await searchCliArtifacts(
+        db,
+        (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+        user,
+        {
+          ...queryParams.data,
+          baseUrl: url.origin,
+          source: 'cli',
+          authority: authority ?? undefined,
+          includeVersionSummaries: true,
+        },
+      )
+      if (result.kind !== 'ok')
+        return errorResponse(
+          'validation_failed',
+          'Invalid search filters or cursor. Restart the search without cursor.',
+          400,
+        )
+      return Response.json(
+        artifactsListForClient(
+          ArtifactsListResponseSchema.parse(result.data),
+          request,
+        ),
+      )
+    }
     if (authority !== null) {
       const result = await listAgentReadableArtifacts(db, user, authority, {
         baseUrl: url.origin,

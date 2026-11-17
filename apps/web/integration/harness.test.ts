@@ -427,6 +427,60 @@ afterAll(async () => {
 })
 
 describe('Worker integration harness', () => {
+  test('CLI search adapter uses the production body index and excludes forbidden matching siblings', async () => {
+    await seedRuntimeUser({
+      workspaceId: 'ws-search-list',
+      userId: 'search-reader',
+      email: 'reader@example.test',
+      name: 'Reader',
+      sessionToken: 'search-session',
+    })
+    const env = await worker.getEnv()
+    const now = new Date().toISOString()
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_containers(id,workspace_id,kind,name,created_by_id,created_at,updated_at) VALUES('search-project','ws-search-list','project','Project','search-reader',?,?)",
+      ).bind(now, now),
+      ...['search0001', 'search0002', 'search0003'].map((id, index) =>
+        env.DB.prepare(
+          "INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES(?,'ws-search-list','search-reader','Report','html_page',?,'search-project',?,?,?)",
+        ).bind(id, index === 2 ? 'private' : 'workspace', now, now, now),
+      ),
+    ])
+    await searchProbe('ws-search-list').seedDocuments(
+      ['search0001', 'search0002', 'search0003'].map((id) => ({
+        id,
+        title: 'Report',
+        chunks: [{ body: 'bodyneedle appears only in the document body' }],
+        activityAt: now,
+      })),
+    )
+    const response = await worker.fetch('/__test/search-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'listSearch',
+        workspace: 'ws-search-list',
+      }),
+    })
+    expect(response.status).toBe(200)
+    const result = await response.json()
+    expect(result).toMatchObject({
+      kind: 'ok',
+      data: {
+        artifacts: [
+          {
+            excerpt: expect.stringContaining('bodyneedle'),
+            group_size: 2,
+            group_size_relation: 'eq',
+          },
+        ],
+        total: { value: 1, relation: 'eq' },
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain('search0003')
+  })
+
   test('workspace search indexes external posting in the project workspace within one minute', async () => {
     const poster = {
       workspaceId: 'ws-poster',

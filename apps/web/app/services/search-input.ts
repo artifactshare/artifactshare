@@ -121,14 +121,28 @@ export function parseSearchInput(
   }
 }
 export function canonicalSearch(input: SearchInput) {
+  const scope = input.filters.credentialScope
+  const filters = scope
+    ? {
+        ...input.filters,
+        credentialScope: {
+          kind: scope.kind,
+          familyId: scope.familyId,
+          workspaceId: scope.workspaceId,
+          projectId: scope.projectId,
+          agentProfileId: scope.agentProfileId,
+          ordinaryBot: Boolean(scope.ordinaryBot),
+        },
+      }
+    : input.filters
   return JSON.stringify({
     query: input.query,
     filters: input.relativeDays
       ? {
-          ...input.filters,
+          ...filters,
           date: { field: input.filters.date?.field, days: input.relativeDays },
         }
-      : input.filters,
+      : filters,
     sort: input.sort,
     pageSize: input.pageSize,
   })

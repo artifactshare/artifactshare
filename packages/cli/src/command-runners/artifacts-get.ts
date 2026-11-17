@@ -1,4 +1,7 @@
-import { CLI_STATIC_METADATA_HEADER } from '@artifactshare/contract'
+import {
+  ArtifactsListQuerySchema,
+  CLI_STATIC_METADATA_HEADER,
+} from '@artifactshare/contract'
 import type {
   ArtifactGetResponse,
   ArtifactReadResponse,
@@ -238,6 +241,32 @@ export async function runArtifactsList(
     )
   }
 
+  const searchFields = {
+    q: parsed.options.q?.trim(),
+    owner_user_ids: parsed.options.ownerUserIds?.map((id) => id.trim()),
+    date_field: parsed.options.dateField?.trim(),
+    days: parsed.options.days?.trim(),
+    from: parsed.options.from?.trim(),
+    to: parsed.options.to?.trim(),
+  }
+  const validated = ArtifactsListQuerySchema.safeParse({
+    ...searchFields,
+    query,
+  })
+  if (
+    !validated.success ||
+    Object.values(searchFields).some((value) => value === '')
+  )
+    return writeFailure(
+      command,
+      validationError(
+        'Invalid search filters.',
+        'Use --q for body search or --query for titles, not both; supply nonblank values and a valid period.',
+      ),
+      mode,
+      1,
+    )
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -250,6 +279,11 @@ export async function runArtifactsList(
   if (home) url.searchParams.set('project_id', '')
   else if (projectId) url.searchParams.set('project_id', projectId)
   if (query) url.searchParams.set('query', query)
+  for (const [key, value] of Object.entries(searchFields)) {
+    if (Array.isArray(value))
+      for (const id of value) url.searchParams.append(key, id)
+    else if (value !== undefined) url.searchParams.set(key, value)
+  }
   if (parsed.options.cursor?.trim()) {
     url.searchParams.set('cursor', parsed.options.cursor.trim())
   }

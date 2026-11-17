@@ -36,6 +36,12 @@ export type CliOptions = {
   project?: string
   projectId?: string
   cursor?: string
+  q?: string
+  ownerUserIds?: string[]
+  dateField?: string
+  days?: string
+  from?: string
+  to?: string
   query?: string
   quote?: string
   quoteAfter?: string

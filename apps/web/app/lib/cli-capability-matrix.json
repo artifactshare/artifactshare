@@ -274,10 +274,26 @@
           "contract_identifiers": {
             "mcp_name": ["'list_artifacts'"],
             "mcp_description": [
-              "List artifacts (id, title, link, visibility, project, updated time), newest first. Without project_id, list only artifacts you own. With project_id, list artifacts visible to you under that project"
+              "Without search inputs, list artifacts (id, title, link, visibility, project, updated time), newest first. Without project_id, list only artifacts you own. With project_id, list artifacts visible to you under that project"
             ],
-            "mcp_input": ["project_id", "query", "cursor"],
-            "mcp_output": ["artifacts", "has_more", "next_cursor"],
+            "mcp_input": [
+              "q",
+              "owner_user_ids",
+              "date_field",
+              "days",
+              "from",
+              "to",
+              "project_id",
+              "query",
+              "cursor"
+            ],
+            "mcp_output": [
+              "total",
+              "search_hint",
+              "artifacts",
+              "has_more",
+              "next_cursor"
+            ],
             "mcp_recovery": ["If has_more is true"]
           }
         }
@@ -306,7 +322,13 @@
           "--insecure-localhost",
           "--project-id",
           "--home",
+          "--q",
           "--query",
+          "--owner-user-ids",
+          "--date-field",
+          "--days",
+          "--from",
+          "--to",
           "--cursor"
         ]
       }

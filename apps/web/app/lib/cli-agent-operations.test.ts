@@ -140,3 +140,16 @@ test.each([
 ])('publisher denies %s %s', (method, path) =>
   expect(allowsCliOperation(publisher, method, path)).toBe(false),
 )
+
+test('search query parameters preserve the existing list credential allowlist', () => {
+  const pathname = new URL(
+    'https://example.test/api/cli/artifacts?q=body&owner_user_ids=owner&date_field=updated&days=7',
+  ).pathname
+  expect(allowsCliOperation(agent, 'GET', pathname)).toBe(true)
+  for (const authority of [
+    cliAuthority.publisher(),
+    cliAuthority.bootstrap(),
+    bridge,
+  ])
+    expect(allowsCliOperation(authority, 'GET', pathname)).toBe(false)
+})

@@ -108,7 +108,11 @@ import {
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
 import { securityAuditInsertQuery } from '~/services/security-audit.server'
-import { listCliArtifacts } from '~/services/cli-artifacts.server'
+import {
+  isArtifactsSearch,
+  searchCliArtifacts,
+  listCliArtifacts,
+} from '~/services/cli-artifacts.server'
 import { slackReauthorizationWarnings } from '~/services/slack-notifications.server'
 import {
   buildUpgradeRequest,
@@ -199,6 +203,16 @@ const UPDATE_OUTPUT_SCHEMA = {
 }
 
 const LIST_OUTPUT_SCHEMA = {
+  total: z
+    .object({
+      value: mcpOutputField(
+        z.number(),
+        ARTIFACTS_LIST_RESPONSE_SCHEMA.shape.total.unwrap().shape.value,
+      ),
+      relation: z.enum(['eq', 'gte']),
+    })
+    .optional(),
+  search_hint: ARTIFACTS_LIST_RESPONSE_SCHEMA.shape.search_hint,
   artifacts: z.array(
     z.object({
       id: mcpOutputField(z.string(), ArtifactsListEntrySchema.shape.id),
@@ -224,6 +238,12 @@ const LIST_OUTPUT_SCHEMA = {
       ),
       owner_email: ArtifactsListEntrySchema.shape.owner_email,
       artifact_kind: z.string(),
+      excerpt: ArtifactsListEntrySchema.shape.excerpt,
+      group_size: mcpOutputField(
+        z.number(),
+        ArtifactsListEntrySchema.shape.group_size.unwrap(),
+      ).optional(),
+      group_size_relation: ArtifactsListEntrySchema.shape.group_size_relation,
     }),
   ),
   has_more: ARTIFACTS_LIST_RESPONSE_SCHEMA.shape.has_more,
@@ -1086,11 +1106,29 @@ export function registerArtifactTools(
     {
       title: 'List artifacts',
       description: toolDescription(
-        'List artifacts (id, title, link, visibility, project, updated time), newest first. Without project_id, list only artifacts you own. With project_id, list artifacts visible to you under that project, including owner_email. Filter with project_id (a project id from list_projects, or "" for the unfiled inbox) and/or query (a title search). If has_more is true, pass next_cursor as cursor to retrieve the next page.',
+        'Use q for full-text search including body text; query matches titles only. Combining query with q, owners or periods returns validation_failed. Search returns grouped representatives, excerpts, group sizes and bounded group totals (eq exact, gte lower bound). Repeat filters with cursor. Rephrase the query and search again before concluding that nothing exists. Without search inputs, list artifacts (id, title, link, visibility, project, updated time), newest first. Without project_id, list only artifacts you own. With project_id, list artifacts visible to you under that project, including owner_email. Filter with project_id (a project id from list_projects, or "" for the unfiled inbox) and/or query (a title search). If has_more is true, pass next_cursor as cursor to retrieve the next page.',
       ),
       outputSchema: LIST_OUTPUT_SCHEMA,
       annotations: READ_ONLY_ANNOTATIONS,
       inputSchema: {
+        q: ArtifactsListQuerySchema.shape.q.describe(
+          'Full-text body and title search; empty string browses discoverable files. Do not combine with query.',
+        ),
+        owner_user_ids: ArtifactsListQuerySchema.shape.owner_user_ids.describe(
+          'Owner user IDs, not email addresses.',
+        ),
+        date_field: ArtifactsListQuerySchema.shape.date_field.describe(
+          'Period field: updated activity or last viewed by you. Requires days or from/to.',
+        ),
+        days: ArtifactsListQuerySchema.shape.days.describe(
+          'Last 7, 30 or 90 days; requires date_field and excludes from/to.',
+        ),
+        from: ArtifactsListQuerySchema.shape.from.describe(
+          'Inclusive ISO date/time; requires date_field.',
+        ),
+        to: ArtifactsListQuerySchema.shape.to.describe(
+          'Exclusive ISO timestamp or inclusive UTC calendar date; requires date_field.',
+        ),
         project_id: ArtifactsListQuerySchema.shape.project_id.describe(
           'Only artifacts in this project (a project id from list_projects), or "" for the unfiled inbox. Omit for all.',
         ),
@@ -1107,16 +1145,35 @@ export function registerArtifactTools(
       if (limited) return limited
       const user = await getUser()
       if (!user) return unresolvedUserError()
-      const result = await listCliArtifacts(
-        ctx.db,
-        mcpUserAsSessionUser(user),
-        {
-          baseUrl: ctx.baseUrl,
-          projectId: args.project_id,
-          query: args.query,
-          cursor: args.cursor,
-        },
-      )
+      const parsed = ArtifactsListQuerySchema.safeParse(args)
+      if (!parsed.success)
+        return toolError({
+          code: 'validation_failed',
+          message: 'Invalid search filters.',
+          recoverable_by: 'agent',
+          hint: 'Use q for body search or query for titles, not both; check the period.',
+        })
+      const result = isArtifactsSearch(parsed.data)
+        ? await searchCliArtifacts(
+            ctx.db,
+            (workspace) =>
+              env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+            mcpUserAsSessionUser(user),
+            { ...parsed.data, baseUrl: ctx.baseUrl, source: 'mcp' },
+          )
+        : await listCliArtifacts(ctx.db, mcpUserAsSessionUser(user), {
+            baseUrl: ctx.baseUrl,
+            projectId: args.project_id,
+            query: args.query,
+            cursor: args.cursor,
+          })
+      if (result.kind === 'invalid-input')
+        return toolError({
+          code: 'validation_failed',
+          message: 'Invalid search filters.',
+          recoverable_by: 'agent',
+          hint: 'Check the search period and retry.',
+        })
       if (result.kind === 'invalid-project') {
         return toolError({
           code: 'not-found',

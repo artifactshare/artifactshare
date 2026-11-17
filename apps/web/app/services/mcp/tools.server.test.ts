@@ -8,6 +8,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 
+const searchIndexMock = vi.hoisted(() => ({
+  search: vi.fn(),
+  groupMembers: vi.fn(),
+  details: vi.fn(),
+}))
+
 const storageMock = vi.hoisted(() => ({
   putArtifact: vi.fn(),
   getArtifact: vi.fn(),
@@ -31,6 +37,7 @@ const publishBoundarySpy = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({
   env: {
+    WORKSPACE_SEARCH_INDEX: { getByName: () => searchIndexMock },
     BUCKET: {},
     APP_ENV: 'development',
     BETTER_AUTH_SECRET: 'test-secret',
@@ -2650,6 +2657,74 @@ describe('headless publish wiring', () => {
     expect(posts).toEqual([
       { shareable_id: published.id, action: 'update', client_id: 'client-1' },
     ])
+  })
+
+  test('list_artifacts full-text search keeps grouped excerpts and empty guidance through the SDK', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const artifact = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('<p>body needle</p>', 'html'),
+      'workspace',
+      [],
+      null,
+    )
+    if (!('id' in artifact)) throw new Error('fixture upload failed')
+    searchIndexMock.search.mockResolvedValue({
+      items: [
+        {
+          id: artifact.id,
+          tier: 'all',
+          rank: 1,
+          activityAt: '2026-09-15T00:00:00.000Z',
+        },
+      ],
+      nextCursor: null,
+      activeDocumentCount: 1,
+    })
+    searchIndexMock.groupMembers.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    })
+    searchIndexMock.details.mockResolvedValue([
+      { id: artifact.id, path: 'index.html', excerpt: 'body needle' },
+    ])
+    const found = await callTool(db, 'list_artifacts', { q: 'needle' })
+    expect(found.result).toMatchObject({
+      structuredContent: {
+        artifacts: [
+          {
+            id: artifact.id,
+            excerpt: 'body needle',
+            group_size: 1,
+            group_size_relation: 'eq',
+          },
+        ],
+        total: { value: 1, relation: 'eq' },
+      },
+    })
+    expect(searchIndexMock.search).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'needle' }),
+    )
+    const logs = await db.selectFrom('search_logs').select('source').execute()
+    expect(logs).toContainEqual({ source: 'mcp' })
+    searchIndexMock.search.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      activeDocumentCount: 1,
+    })
+    const empty = await callTool(db, 'list_artifacts', { q: 'absent' })
+    expect(empty.result).toMatchObject({
+      structuredContent: {
+        artifacts: [],
+        search_hint:
+          'Rephrase the query and search again before concluding that nothing exists.',
+      },
+    })
+    expect(JSON.stringify(empty.result?.content)).toContain(
+      'Rephrase the query',
+    )
   })
 
   test('list_artifacts runs through the SDK on normal data', async () => {
