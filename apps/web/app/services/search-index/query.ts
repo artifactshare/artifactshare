@@ -172,9 +172,31 @@ export function searchMatchSpans(
   return spans
 }
 
+const EXCERPT_WINDOW = 4096
+const EXCERPT_OVERLAP = 512
+
+/** The first match position, scanning forward so long bodies stop early. */
+function firstMatch(body: string, query: string): number | undefined {
+  // Segmenting a whole body costs time in proportion to its length, and only
+  // the first match is needed. Each window keeps matches that start in its
+  // own core; the overlap gives segmentation the same context on both sides.
+  // A match must fit inside the overlap, so long queries widen it.
+  const overlap = EXCERPT_OVERLAP + query.length * 4
+  for (let core = 0; core < body.length; core += EXCERPT_WINDOW) {
+    const from = Math.max(0, core - overlap)
+    const coreEnd = Math.min(body.length, core + EXCERPT_WINDOW)
+    const window = body.slice(from, coreEnd + overlap)
+    const starts = searchMatchSpans(window, query)
+      .map(([start]) => from + start)
+      .filter((start) => start >= core && start < coreEnd)
+    if (starts.length) return Math.min(...starts)
+  }
+  return undefined
+}
+
 export function excerpt(body: string, query: string): string {
-  const positions = searchMatchSpans(body, query).map(([start]) => start)
-  if (!positions.length) return ''
-  const start = Math.max(0, Math.min(...positions) - 80)
+  const first = firstMatch(body, query)
+  if (first === undefined) return ''
+  const start = Math.max(0, first - 80)
   return `${start ? '…' : ''}${body.slice(start, start + 240)}${body.length > start + 240 ? '…' : ''}`
 }
