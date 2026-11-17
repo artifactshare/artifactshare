@@ -1,16 +1,9 @@
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
-import { env } from 'cloudflare:workers'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
-import { withDb } from '~/services/db.server'
 import { parseSearchInput } from '~/services/search-input'
 import { searchSuggestions } from '~/services/search.server'
-import {
-  createSearchTimings,
-  serverTiming,
-  timeD1,
-  timeIndexes,
-} from '~/services/search-timing.server'
+import { withSearchTiming } from '~/services/search-timing.server'
 import type { Route } from './+types/api.search-suggestions'
 export const middleware = [searchNoStoreMiddleware, requireUserApiMiddleware]
 export async function loader({ url, context }: Route.LoaderArgs) {
@@ -18,26 +11,12 @@ export async function loader({ url, context }: Route.LoaderArgs) {
   const input = parseSearchInput(url.searchParams)
   const headers = { 'Cache-Control': 'private, no-store' }
   if ('error' in input) return Response.json(input, { status: 400, headers })
-  const timings = createSearchTimings(),
-    started = performance.now()
-  const result = await withDb(
-    (db) =>
-      searchSuggestions(
-        db,
-        timeIndexes(
-          (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
-          timings,
-        ),
-        user,
-        input,
-      ),
-    timeD1(env.DB, timings),
+  const { value: result, serverTiming } = await withSearchTiming(
+    'suggestions',
+    (db, indexes) => searchSuggestions(db, indexes, user, input),
   )
   return Response.json(result, {
     status: 'error' in result ? 400 : 200,
-    headers: {
-      ...headers,
-      'Server-Timing': serverTiming(timings, performance.now() - started),
-    },
+    headers: { ...headers, 'Server-Timing': serverTiming },
   })
 }

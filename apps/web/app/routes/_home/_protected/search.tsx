@@ -1,18 +1,11 @@
 import { useT } from '~/hooks/use-t'
 import { Button } from '~/components/ui/button'
 import { SearchCapacityError } from '~/services/search-index/query'
-import { env } from 'cloudflare:workers'
 import { requireUser } from '~/middleware/context'
-import { withDb } from '~/services/db.server'
 import { parseSearchQuery } from '~/lib/search-query'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { search } from '~/services/search.server'
-import {
-  createSearchTimings,
-  serverTiming,
-  timeD1,
-  timeIndexes,
-} from '~/services/search-timing.server'
+import { withSearchTiming } from '~/services/search-timing.server'
 import { data, type HeadersFunction } from 'react-router'
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
 import { SearchResults } from '~/components/app/search-results'
@@ -133,25 +126,19 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
       actor: user.id,
     }
-  const timings = createSearchTimings(),
-    started = performance.now()
-  const result = await withDb(
-    (db) =>
-      search(
-        db,
-        timeIndexes(
-          (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
-          timings,
-        ),
-        user.id,
-        input,
-        'screen',
-      ),
-    timeD1(env.DB, timings),
+  const { value: result, serverTiming } = await withSearchTiming(
+    'search',
+    (db, indexes) => search(db, indexes, user.id, input, 'screen'),
   ).catch((error: unknown) => {
     if (error instanceof SearchCapacityError)
       return {
-        error: { code: 'search_capacity_exceeded', hint: 'Narrow the query.' },
+        value: {
+          error: {
+            code: 'search_capacity_exceeded',
+            hint: 'Narrow the query.',
+          },
+        },
+        serverTiming: undefined,
       }
     throw error
   })
@@ -179,9 +166,7 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   return data(
     { result, actor: user.id },
     {
-      headers: {
-        'Server-Timing': serverTiming(timings, performance.now() - started),
-      },
+      headers: serverTiming ? { 'Server-Timing': serverTiming } : undefined,
     },
   )
 }

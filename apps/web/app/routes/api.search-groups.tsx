@@ -1,9 +1,8 @@
-import { env } from 'cloudflare:workers'
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
-import { withDb } from '~/services/db.server'
 import { searchGroup } from '~/services/search.server'
+import { withSearchTiming } from '~/services/search-timing.server'
 import type { Route } from './+types/api.search-groups'
 export const middleware = [searchNoStoreMiddleware, requireUserApiMiddleware]
 export async function loader({ url, context }: Route.LoaderArgs) {
@@ -21,17 +20,22 @@ export async function loader({ url, context }: Route.LoaderArgs) {
       { error: { code: 'validation_error', fields } },
       { status: 400, headers: { 'Cache-Control': 'private, no-store' } },
     )
-  const result = await withDb((db) =>
-    searchGroup(
-      db,
-      (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
-      user.id,
-      url.searchParams.get('receipt') ?? '',
-      url.searchParams.get('cursor') ?? undefined,
-    ),
+  const { value: result, serverTiming } = await withSearchTiming(
+    'search-groups',
+    (db, indexes) =>
+      searchGroup(
+        db,
+        indexes,
+        user.id,
+        url.searchParams.get('receipt') ?? '',
+        url.searchParams.get('cursor') ?? undefined,
+      ),
   )
   return Response.json(result, {
     status: 'error' in result ? 400 : 200,
-    headers: { 'Cache-Control': 'private, no-store' },
+    headers: {
+      'Cache-Control': 'private, no-store',
+      'Server-Timing': serverTiming,
+    },
   })
 }
