@@ -17,6 +17,7 @@ import {
   discoverSuggestionCandidates,
   enumerateSuggestionIds,
   type DiscoveryFilters,
+  type DiscoveryViewer,
 } from './search-discovery.server'
 import {
   groupKey,
@@ -162,17 +163,26 @@ async function metadata(
     }),
   )
 }
+/** The searching user, with the live viewer row read once per operation. */
+type SearchActor = { id: string; viewer?: DiscoveryViewer }
+async function loadSearchActor(db: Db, id: string): Promise<SearchActor> {
+  return { id, viewer: await loadDiscoveryViewer(db, id) }
+}
+const asViewer = (actor: SearchActor) => ({
+  viewerUserId: actor.id,
+  viewer: actor.viewer,
+})
 async function universe(
   db: Db,
-  actor: string,
+  actor: SearchActor,
   filters: DiscoveryFilters,
   now: string,
 ) {
   const [sparse, member] = await Promise.all([
-    enumerateDiscoverableIds(db, { ...filters, viewerUserId: actor, now }),
+    enumerateDiscoverableIds(db, { ...filters, ...asViewer(actor), now }),
     enumerateMemberDiscoverableIds(db, {
       ...filters,
-      viewerUserId: actor,
+      ...asViewer(actor),
       now,
     }),
   ])
@@ -225,7 +235,7 @@ async function indexInput(
 }
 async function accepted<T extends Hit>(
   db: Db,
-  actor: string,
+  actor: SearchActor,
   filters: DiscoveryFilters,
   now: string,
   hits: T[],
@@ -233,7 +243,7 @@ async function accepted<T extends Hit>(
   if (!hits.length) return []
   const rows = await discoverCandidates(db, {
     ...filters,
-    viewerUserId: actor,
+    ...asViewer(actor),
     workspaceId: hits[0].workspaceId,
     candidateIds: hits.map((row) => row.id),
     now,
@@ -244,27 +254,20 @@ async function accepted<T extends Hit>(
 async function collect(
   db: Db,
   indexes: SearchIndexes,
-  actor: string,
+  actor: SearchActor,
   input: SearchInput,
   now: string,
   any = false,
   includeActiveDocumentCount = false,
 ) {
-  const viewer = await loadDiscoveryViewer(db, actor)
-  const member = viewer
-    ? await db
-        .selectFrom('workspace_members')
-        .select('status')
-        .where('workspace_id', '=', viewer.workspace_id)
-        .where('user_id', '=', actor)
-        .executeTakeFirst()
-    : undefined
   const ownWorkspace =
-    !any && member?.status === 'active' ? viewer?.workspace_id : undefined
+    !any && actor.viewer?.member_status === 'active'
+      ? actor.viewer?.workspace_id
+      : undefined
   const sources = ownWorkspace
     ? await enumerateDiscoverableIds(db, {
         ...input.filters,
-        viewerUserId: actor,
+        ...asViewer(actor),
         now,
         excludeWorkspaceId: ownWorkspace,
       })
@@ -279,14 +282,21 @@ async function collect(
     (sum, source) => sum + source.ids.length,
     0,
   )
+  // Metadata is read alongside the live discovery check and kept only for
+  // the rows that check accepts.
   const remember = async (rows: Hit[]) => {
-    hits.push(...rows)
-    for (const row of await metadata(
-      db,
-      rows.map((hit) => hit.id),
-      actor,
-    ))
-      metas.set(row.id, row)
+    const [visible, rowsMetadata] = await Promise.all([
+      accepted(db, actor, input.filters, now, rows),
+      metadata(
+        db,
+        rows.map((hit) => hit.id),
+        actor.id,
+      ),
+    ])
+    hits.push(...visible)
+    const ids = new Set(visible.map((row) => row.id))
+    for (const row of rowsMetadata) if (ids.has(row.id)) metas.set(row.id, row)
+    return visible
   }
   if (ownWorkspace) {
     const stub = indexes(ownWorkspace)
@@ -294,15 +304,10 @@ async function collect(
     const keys = new Set<string>()
     const rememberPage = async (page: IndexPage) => {
       activeDocumentCount ??= page.activeDocumentCount ?? null
-      const visible = await accepted(
-        db,
-        actor,
-        input.filters,
-        now,
+      const visible = await remember(
         page.items.map((row) => ({ ...row, workspaceId: ownWorkspace })),
       )
       passedCount += visible.length
-      await remember(visible)
       for (const row of visible) {
         const meta = metas.get(row.id)
         if (meta) keys.add(groupKey(meta.title))
@@ -330,7 +335,7 @@ async function collect(
         const ids = (
           await enumerateMemberDiscoverableIds(db, {
             ...input.filters,
-            viewerUserId: actor,
+            ...asViewer(actor),
             now,
           })
         ).map((row) => row.id)
@@ -359,16 +364,10 @@ async function collect(
         cursor,
       })
       await remember(
-        await accepted(
-          db,
-          actor,
-          input.filters,
-          now,
-          page.items.map((row) => ({
-            ...row,
-            workspaceId: source.workspaceId,
-          })),
-        ),
+        page.items.map((row) => ({
+          ...row,
+          workspaceId: source.workspaceId,
+        })),
       )
       cursor = page.nextCursor ?? undefined
     } while (cursor !== undefined)
@@ -404,7 +403,7 @@ async function collect(
 async function completePageGroups(
   db: Db,
   indexes: SearchIndexes,
-  actor: string,
+  actor: SearchActor,
   input: SearchInput,
   now: string,
   any: boolean,
@@ -432,21 +431,21 @@ async function completePageGroups(
       )
       if ('error' in page) throw new SearchCapacityError()
       for (let offset = 0; offset < page.items.length; offset += 2000) {
-        const visible = await accepted(
-          db,
-          actor,
-          input.filters,
-          now,
-          page.items
-            .slice(offset, offset + 2000)
-            .map((row) => ({ ...row, workspaceId: workspace })),
-        )
-        for (const row of await metadata(
-          db,
-          visible.map((hit) => hit.id),
-          actor,
-        ))
-          members.get(groupKey(row.title))?.add(row.id)
+        const rows = page.items
+          .slice(offset, offset + 2000)
+          .map((row) => ({ ...row, workspaceId: workspace }))
+        // Metadata is read alongside the live check; only accepted rows count.
+        const [visible, rowsMetadata] = await Promise.all([
+          accepted(db, actor, input.filters, now, rows),
+          metadata(
+            db,
+            rows.map((row) => row.id),
+            actor.id,
+          ),
+        ])
+        const ids = new Set(visible.map((row) => row.id))
+        for (const row of rowsMetadata)
+          if (ids.has(row.id)) members.get(groupKey(row.title))?.add(row.id)
       }
       const remaining = new Set(page.incompleteGroupKeys ?? [])
       pending = pending.filter((key) => {
@@ -486,8 +485,13 @@ export async function search(
   let anchor = new Date(now)
   let position = 0,
     searchLogId: string | undefined
+  const [searchActor, cursor] = await Promise.all([
+    loadSearchActor(db, actor),
+    input.cursor
+      ? readSearchToken(db, actor, input.cursor, 'cursor', now)
+      : undefined,
+  ])
   if (input.cursor) {
-    const cursor = await readSearchToken(db, actor, input.cursor, 'cursor', now)
     if (
       !cursor ||
       cursor.log.filters_json !== canonical ||
@@ -512,7 +516,7 @@ export async function search(
       },
     }
   }
-  let result = await collect(db, indexes, actor, input, now, false, true)
+  let result = await collect(db, indexes, searchActor, input, now, false, true)
   let any = false
   const relaxations: Array<{
     filter: string
@@ -521,7 +525,7 @@ export async function search(
   if (!result.incomplete && !result.groups.length) {
     if (prepareQuery(input.query).terms.length >= 2) {
       any = true
-      result = await collect(db, indexes, actor, input, now, true)
+      result = await collect(db, indexes, searchActor, input, now, true)
     }
     const filters = input.filters
     const dimensions = [
@@ -530,26 +534,32 @@ export async function search(
       !filters.includeArchived ? 'archive' : '',
       filters.date ? 'date' : '',
     ].filter((dimension) => Boolean(dimension) && !input.cursor)
-    for (const dimension of dimensions) {
-      const relaxed = { ...filters }
-      if (dimension === 'owners') delete relaxed.ownerUserIds
-      if (dimension === 'location') delete relaxed.location
-      if (dimension === 'archive') relaxed.includeArchived = true
-      if (dimension === 'date') delete relaxed.date
-      const found = await collect(
-        db,
-        indexes,
-        actor,
-        { ...input, filters: relaxed },
-        now,
-        false,
-      )
+    // Each relaxed search is independent of the others.
+    const relaxedResults = await Promise.all(
+      dimensions.map((dimension) => {
+        const relaxed = { ...filters }
+        if (dimension === 'owners') delete relaxed.ownerUserIds
+        if (dimension === 'location') delete relaxed.location
+        if (dimension === 'archive') relaxed.includeArchived = true
+        if (dimension === 'date') delete relaxed.date
+        return collect(
+          db,
+          indexes,
+          searchActor,
+          { ...input, filters: relaxed },
+          now,
+          false,
+        )
+      }),
+    )
+    dimensions.forEach((dimension, index) => {
+      const found = relaxedResults[index]
       if (found.groups.length)
         relaxations.push({
           filter: dimension,
           total: cappedTotal(found.groups.length, found.incomplete),
         })
-    }
+    })
   }
   const total = cappedTotal(result.groups.length, result.incomplete)
   const tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
@@ -557,11 +567,12 @@ export async function search(
     position,
     Math.min(1000, position + input.pageSize),
   )
-  const sizes = selected.length
-    ? await completePageGroups(
+  // Group sizes and the page's details do not depend on each other.
+  const sizesPending = selected.length
+    ? completePageGroups(
         db,
         indexes,
-        actor,
+        searchActor,
         input,
         now,
         any,
@@ -570,7 +581,7 @@ export async function search(
         result.allowedSources,
         result.knownHits,
       )
-    : new Map<string, ReturnType<typeof cappedTotal>>()
+    : Promise.resolve(new Map<string, ReturnType<typeof cappedTotal>>())
   const items: Array<
     Metadata & {
       path: string
@@ -587,31 +598,33 @@ export async function search(
   const displayedRanks = new Map(
     selected.map((row, index) => [row.id, position + index + 1]),
   )
-  for (const workspace of new Set(selected.map((row) => row.workspaceId))) {
-    const visible = await accepted(
-      db,
-      actor,
-      input.filters,
-      now,
-      selected.filter((row) => row.workspaceId === workspace),
-    )
-    const details = new Map(
-      (
-        await indexes(workspace).details(
-          await indexInput(db, input, workspace, any),
-          visible.map((row) => row.id),
-        )
-      ).map((row) => [row.id, row]),
-    )
-    const current = new Map(
-      (
-        await metadata(
+  const pagesPending = Promise.all(
+    [...new Set(selected.map((row) => row.workspaceId))].map(
+      async (workspace) => {
+        const visible = await accepted(
           db,
-          visible.map((row) => row.id),
-          actor,
+          searchActor,
+          input.filters,
+          now,
+          selected.filter((row) => row.workspaceId === workspace),
         )
-      ).map((row) => [row.id, row]),
-    )
+        const ids = visible.map((row) => row.id)
+        const [details, current] = await Promise.all([
+          indexInput(db, input, workspace, any).then((request) =>
+            indexes(workspace).details(request, ids),
+          ),
+          metadata(db, ids, actor),
+        ])
+        return {
+          visible,
+          details: new Map(details.map((row) => [row.id, row])),
+          current: new Map(current.map((row) => [row.id, row])),
+        }
+      },
+    ),
+  )
+  const [sizes, pages] = await Promise.all([sizesPending, pagesPending])
+  for (const { visible, details, current } of pages) {
     for (const row of visible) {
       const detail = details.get(row.id),
         meta = current.get(row.id)
@@ -631,9 +644,11 @@ export async function search(
     }
   }
   items.sort((a, b) => a.rank - b.rank)
+  // The log row and the selected names are independent reads and writes.
+  let logged: Promise<unknown> = Promise.resolve()
   if (!searchLogId) {
     searchLogId = crypto.randomUUID()
-    await db
+    logged = db
       .insertInto('search_logs')
       .values({
         id: searchLogId,
@@ -670,17 +685,21 @@ export async function search(
   const facets = input.cursor
     ? undefined
     : searchFacets(result.knownHits, actor, total.relation === 'eq')
-  const selectedScope = input.cursor
-    ? undefined
-    : await resolveSearchSelections(
-        db,
-        actor,
-        [...(input.filters.ownerUserIds ?? [])],
-        input.filters.location?.kind === 'project'
-          ? [input.filters.location.id]
-          : [],
-        input.filters.credentialScope,
-      )
+  const [, selectedScope] = await Promise.all([
+    logged,
+    input.cursor
+      ? undefined
+      : resolveSearchSelections(
+          db,
+          actor,
+          [...(input.filters.ownerUserIds ?? [])],
+          input.filters.location?.kind === 'project'
+            ? [input.filters.location.id]
+            : [],
+          input.filters.credentialScope,
+          searchActor.viewer,
+        ),
+  ])
   return {
     items,
     total,
@@ -699,7 +718,19 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
-  const discoveryInput = { ...input.filters, viewerUserId: user.id, now }
+  // Project names do not depend on the viewer row, so read them alongside it.
+  const [viewer, projects] = await Promise.all([
+    loadDiscoveryViewer(db, user.id),
+    input.query.trim()
+      ? suggestProjects(db, user.id, input.query, input.filters.includeArchived)
+      : [],
+  ])
+  const discoveryInput = {
+    ...input.filters,
+    viewerUserId: user.id,
+    viewer,
+    now,
+  }
   // An empty query shows only recently opened files, so skip the index and
   // name lookups whose results the palette would discard.
   if (!input.query.trim())
@@ -711,7 +742,8 @@ export async function searchSuggestions(
         ownedBy(user.id),
       ),
     }
-  const [hits, projects, owners] = await Promise.all([
+  const byId = new Map<string, Metadata>()
+  const [hits, owners] = await Promise.all([
     enumerateSuggestionIds(db, discoveryInput).then(async (sources) =>
       (
         await Promise.all(
@@ -723,15 +755,20 @@ export async function searchSuggestions(
               limit: 6,
               maxResults: 7,
             })
-            const allowed = new Set(
-              (
-                await discoverSuggestionCandidates(db, {
-                  ...discoveryInput,
-                  workspaceId,
-                  candidateIds: page.items.map((row) => row.id),
-                })
-              ).map((row) => row.id),
-            )
+            const candidateIds = page.items.map((row) => row.id)
+            // Metadata is read alongside the live check and used only for the
+            // rows that check allows.
+            const [discovered, rowsMetadata] = await Promise.all([
+              discoverSuggestionCandidates(db, {
+                ...discoveryInput,
+                workspaceId,
+                candidateIds,
+              }),
+              metadata(db, candidateIds, user.id),
+            ])
+            const allowed = new Set(discovered.map((row) => row.id))
+            for (const row of rowsMetadata)
+              if (allowed.has(row.id)) byId.set(row.id, row)
             return page.items
               .filter((row) => allowed.has(row.id))
               .map((row) => ({ ...row, workspaceId }))
@@ -739,19 +776,9 @@ export async function searchSuggestions(
         )
       ).flat(),
     ),
-    suggestProjects(db, user.id, input.query, input.filters.includeArchived),
     suggestionOwners(db, discoveryInput, input.query),
   ])
   const selected = mergeSearchHits(hits, input.sort === 'newest').slice(0, 6)
-  const byId = new Map(
-    (
-      await metadata(
-        db,
-        selected.map((row) => row.id),
-        user.id,
-      )
-    ).map((row) => [row.id, row]),
-  )
   const details = new Map(
     (
       await Promise.all(
@@ -903,7 +930,10 @@ export async function searchGroup(
   cursor?: string,
   now = new Date().toISOString(),
 ) {
-  const handle = await readSearchToken(db, actor, receipt, 'open', now)
+  const [searchActor, handle] = await Promise.all([
+    loadSearchActor(db, actor),
+    readSearchToken(db, actor, receipt, 'open', now),
+  ])
   if (!handle?.payload.file) return invalidCursor
   const continuation = cursor
     ? await readSearchToken(db, actor, cursor, 'group-cursor', now)
@@ -928,7 +958,7 @@ export async function searchGroup(
   if (!representative) return invalidCursor
   const visible = await discoverCandidates(db, {
     ...input.filters,
-    viewerUserId: actor,
+    ...asViewer(searchActor),
     now,
     workspaceId: representative.workspace_id,
     candidateIds: [representative.id],
@@ -940,8 +970,8 @@ export async function searchGroup(
   if (continuation && continuation.payload.group !== digest)
     return invalidCursor
   const [sources, collected] = await Promise.all([
-    universe(db, actor, input.filters, now),
-    collect(db, indexes, actor, input, now, handle.log.tier === 'any'),
+    universe(db, searchActor, input.filters, now),
+    collect(db, indexes, searchActor, input, now, handle.log.tier === 'any'),
   ])
   const members = new Map<string, Metadata>(
     collected.knownHits
@@ -964,7 +994,7 @@ export async function searchGroup(
       if ('error' in page) throw new SearchCapacityError()
       const acceptedRows = await accepted(
         db,
-        actor,
+        searchActor,
         input.filters,
         now,
         page.items.map((row) => ({ ...row, workspaceId: source.workspaceId })),

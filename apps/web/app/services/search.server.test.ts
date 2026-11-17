@@ -1625,3 +1625,73 @@ test('list adapter labels any-term fallback and distinguishes capacity from empt
     await searchCliArtifacts(fixture.db, () => stub, { id: 'viewer' }, args),
   ).toEqual({ kind: 'capacity-exceeded' })
 })
+
+test('a search waits on few sequential round trips and reads the viewer once', async () => {
+  // Calls started before the previous wave settles share that wave, so the
+  // wave count is the number of round trips a remote D1 and index would add
+  // one after another.
+  let waves = 0,
+    open: Promise<void> | undefined
+  const roundTrip = () =>
+    (open ??= new Promise<void>((resolve) => {
+      waves++
+      setTimeout(() => {
+        open = undefined
+        resolve()
+      }, 0)
+    }))
+  // Count viewer reads in the SQL SQLite receives, not in Kysely's nodes.
+  // Membership comes with the viewer row, never as a query of its own.
+  let viewerReads = 0,
+    membershipReads = 0
+  const prepare = fixture.sqlite.prepare.bind(fixture.sqlite)
+  fixture.sqlite.prepare = (sql: string) => {
+    if (/^select [^()]*"email_verified"[^()]* from "users"/.test(sql))
+      viewerReads++
+    if (/^select [^()]* from "workspace_members"/.test(sql)) membershipReads++
+    return prepare(sql)
+  }
+  const db = fixture.db.withPlugin({
+    transformQuery: ({ node }) => node,
+    transformResult: async ({ result }) => {
+      await roundTrip()
+      return result
+    },
+  })
+  const stub = index()
+  const remote: SearchIndex = {
+    search: async (...args) => (await roundTrip(), stub.search(...args)),
+    groupMembers: async (...args) => (
+      await roundTrip(),
+      stub.groupMembers(...args)
+    ),
+    details: async (...args) => (await roundTrip(), stub.details(...args)),
+  }
+  const result = await search(db, () => remote, 'viewer', {
+    ...input,
+    pageSize: 20,
+  })
+  expect(result).not.toHaveProperty('error')
+  expect(viewerReads).toBe(1)
+  expect(waves).toBeLessThanOrEqual(8)
+  waves = 0
+  viewerReads = 0
+  await searchSuggestions(db, () => remote, { id: 'viewer' }, input, now)
+  expect(viewerReads).toBe(1)
+  expect(waves).toBeLessThanOrEqual(8)
+  // A search with no matches retries with each filter relaxed; those retries
+  // run side by side.
+  waves = 0
+  viewerReads = 0
+  const none = await search(db, () => remote, 'viewer', {
+    ...input,
+    pageSize: 20,
+    filters: { ownerUserIds: ['nobody'], date: { field: 'updated' } },
+  })
+  if ('error' in none) throw new Error('unexpected search failure')
+  expect(none.items).toEqual([])
+  expect(none.relaxations.map((entry) => entry.filter)).toContain('owners')
+  expect(waves).toBeLessThanOrEqual(12)
+  expect(viewerReads).toBe(1)
+  expect(membershipReads).toBe(0)
+})
