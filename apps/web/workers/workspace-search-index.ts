@@ -338,16 +338,22 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .toArray()
     const matchedById = new Map(ids.map((id) => [id, new Set<string>()]))
+    const sameAsPages = (other: typeof query) =>
+      other.statement === query.statement &&
+      JSON.stringify(other.bindings) === JSON.stringify(query.bindings)
     for (const term of prepareQuery(input.query).terms) {
       const evidence = this.#matchingPages(
         { ...input, query: term, any: false, allowedIds: ids },
         true,
       )
-      for (const match of this.ctx.storage.sql.exec<{ id: string }>(
-        evidence.statement,
-        ...evidence.bindings,
-      ))
-        matchedById.get(match.id)?.add(term)
+      // A single-term search builds this same query again; its rows are the
+      // page rows already read, so the index is not searched twice.
+      const matches = sameAsPages(evidence)
+        ? rows
+        : this.ctx.storage.sql
+            .exec<{ id: string }>(evidence.statement, ...evidence.bindings)
+            .toArray()
+      for (const match of matches) matchedById.get(match.id)?.add(term)
     }
     return rows.map((row) => {
       const body = this.ctx.storage.sql
