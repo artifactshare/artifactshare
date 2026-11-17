@@ -21,6 +21,7 @@ import {
   completedPairRounds,
   lastCompletedPairHead,
   implementationReviewProfile,
+  implementationRoundCap,
   parseArgs,
   recordCompletedRounds,
   runReviewer,
@@ -994,12 +995,34 @@ test('reserves the candidate before reviewer launch and keeps it after failure',
   assert.deepEqual(events, ['admitted', 'launched:codex', 'launched:claude'])
 })
 
-test('the fourth implementation pair is refused with the round-cap handling', async () => {
+test('the last pair under the cap still runs', async () => {
+  const launched = []
+  await assert.rejects(
+    () =>
+      main({
+        countRounds: () => implementationRoundCap - 1,
+        localInstructionsPresent: () => false,
+        ...scopeHarness(),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        argv: ['--base', 'release'],
+        run: explicitBaseRun,
+        readCleanHead: () => head,
+        review: (name) => {
+          launched.push(name)
+          return Promise.reject(new Error(`${name} failed`))
+        },
+      }),
+    /failed/u,
+  )
+  assert.deepEqual(launched.sort(), ['claude', 'codex'])
+})
+
+test('a pair past the cap is refused with the round-cap handling', async () => {
   const logs = []
   let launched = false
   const code = await main({
     argv: [],
-    countRounds: () => 3,
+    countRounds: () => implementationRoundCap,
     localInstructionsPresent: () => false,
     getBranch: () => 'feat/x',
     acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
@@ -1016,7 +1039,7 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   assert.equal(launched, false)
   const result = JSON.parse(logs[0])
   assert.equal(result.verdict, 'ROUND_CAP')
-  assert.equal(result.rounds, 3)
+  assert.equal(result.rounds, implementationRoundCap)
   assert.match(result.note, /claude-fable-5-1 at medium/u)
   assert.match(result.note, /Return to the owner/u)
 })
@@ -1068,7 +1091,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
     '- deferred: I1 blocker, because the scope lock excludes it.\n',
   )
   const mergeBase = 'c'.repeat(40)
-  // The third pair read P; commit C (HEAD) came after it.
+  // The last pair under the cap read P; commit C (HEAD) came after it.
   const pairHead = 'e'.repeat(40)
   const run = (_file, args) => {
     if (args.join(' ') === `merge-base --is-ancestor ${pairHead} ${head}`)
@@ -1103,7 +1126,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
       let headReads = 0
       const result = main({
         argv: ['--dispositions-file', dispositions],
-        countRounds: () => 3,
+        countRounds: () => implementationRoundCap,
         readLastPairHead: () => pairHead,
         localInstructionsPresent: () => false,
         ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1167,7 +1190,7 @@ test('the consultation decision is stored for HEAD without its prose', async (t)
   }
   await main({
     argv: ['--dispositions-file', dispositions],
-    countRounds: () => 3,
+    countRounds: () => implementationRoundCap,
     readLastPairHead: () => head,
     localInstructionsPresent: () => false,
     ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1214,7 +1237,7 @@ test('a spent round cap refuses the consultation off the last pair or with --bas
       await assert.rejects(
         main({
           argv,
-          countRounds: () => 3,
+          countRounds: () => implementationRoundCap,
           readLastPairHead: () => divergent,
           localInstructionsPresent: () => false,
           ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1278,7 +1301,7 @@ test("an owner's CLAUDE.local.md stops the gate before any provider starts", asy
   // The round-cap consultation path runs the same precheck as a pair.
   for (const [rounds, argv] of [
     [0, []],
-    [3, ['--dispositions-file', dispositions]],
+    [implementationRoundCap, ['--dispositions-file', dispositions]],
   ]) {
     let launched = false
     await assert.rejects(
