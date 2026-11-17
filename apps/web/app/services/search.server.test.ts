@@ -1194,21 +1194,24 @@ test('suggestions batch authorized detail IDs and fill recent history after disc
   // and the name lookups.
   const enumerate = vi.spyOn(discovery, 'enumerateSuggestionIds')
   const owners = vi.spyOn(discovery, 'suggestionOwners')
-  const withoutIndex = await searchSuggestions(
-    fixture.db,
-    () => {
-      throw new Error('index read for an empty query')
-    },
-    { id: 'viewer' },
-    { ...input, query: '' },
-    now,
-  )
-  expect(withoutIndex).toMatchObject({ files: [], owners: [], projects: [] })
-  expect(withoutIndex.recent).toHaveLength(6)
-  expect(enumerate).not.toHaveBeenCalled()
-  expect(owners).not.toHaveBeenCalled()
-  enumerate.mockRestore()
-  owners.mockRestore()
+  try {
+    const withoutIndex = await searchSuggestions(
+      fixture.db,
+      () => {
+        throw new Error('index read for an empty query')
+      },
+      { id: 'viewer' },
+      { ...input, query: '' },
+      now,
+    )
+    expect(withoutIndex).toMatchObject({ files: [], owners: [], projects: [] })
+    expect(withoutIndex.recent).toHaveLength(6)
+    expect(enumerate).not.toHaveBeenCalled()
+    expect(owners).not.toHaveBeenCalled()
+  } finally {
+    enumerate.mockRestore()
+    owners.mockRestore()
+  }
   fixture.sqlite.exec(
     "UPDATE shareables SET owner_user_id='owner' WHERE id='recent-8'",
   )

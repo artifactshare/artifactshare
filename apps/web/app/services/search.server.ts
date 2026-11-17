@@ -375,7 +375,7 @@ async function collect(
   }
   const merged = mergeSearchHits(
     [...new Map(hits.map((row) => [row.id, row])).values()],
-    input.sort === 'newest',
+    input.sort === 'newest' || !input.query.trim(),
   )
   const rows = merged.flatMap((hit) => {
     const meta = metas.get(hit.id)
@@ -742,10 +742,7 @@ export async function searchSuggestions(
     suggestProjects(db, user.id, input.query, input.filters.includeArchived),
     suggestionOwners(db, discoveryInput, input.query),
   ])
-  const selected = mergeSearchHits(
-    hits,
-    input.sort === 'newest' || !input.query.trim(),
-  ).slice(0, 6)
+  const selected = mergeSearchHits(hits, input.sort === 'newest').slice(0, 6)
   const byId = new Map(
     (
       await metadata(

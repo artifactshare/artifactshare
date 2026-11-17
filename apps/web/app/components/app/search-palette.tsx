@@ -30,7 +30,6 @@ import { FileTypeIcon } from './file-type-icon'
 import { Highlight } from './search-results'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { Button } from '~/components/ui/button'
-import { cn } from '~/lib/utils'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
@@ -118,12 +117,9 @@ export function SearchPalette({
   return (
     <div
       className={
-        // Before hydration knows the width, CSS still keeps the phone header's
-        // search, settings and avatar on the right.
-        cn(
-          'max-nav:ml-auto',
-          mobile && !resultsPage ? 'shrink-0' : 'nav:max-w-xl min-w-0 flex-1',
-        )
+        mobile && !resultsPage
+          ? 'ml-auto shrink-0'
+          : 'nav:max-w-xl min-w-0 flex-1'
       }
     >
       {mobile ? (
