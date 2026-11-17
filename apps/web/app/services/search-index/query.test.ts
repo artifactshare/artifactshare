@@ -17,9 +17,9 @@ const filler = (length: number) =>
 test.each([
   ['at the start', 0],
   ['inside the first window', 1200],
-  ['just before a window boundary', 4090],
-  ['across a window boundary', 4094],
-  ['just after a window boundary', 4097],
+  ['just before a window boundary', 16_378],
+  ['across a window boundary', 16_380],
+  ['just after a window boundary', 16_386],
   ['deep in a long body', 150_000],
 ])(
   'a long body excerpts its first match %s like a whole-body scan',
@@ -32,9 +32,20 @@ test.each([
 )
 
 test('Japanese and katakana matches across a boundary match a whole-body scan', () => {
-  const body = `${'共有の設定を確認します。'.repeat(340)}フロントエンドエンジニアの募集${'あ'.repeat(9000)}`
+  const body = `${'共有の設定を確認します。'.repeat(1365)}フロントエンドエンジニアの募集${'あ'.repeat(9000)}`
   for (const query of ['フロントエンドエンジニア', 'エンジニア', '募集'])
     expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
+})
+
+test('a segmented match with a long gap before a window boundary matches a whole-body scan', () => {
+  for (const gap of [' '.repeat(700), '-'.repeat(2000), '　'.repeat(20_000)]) {
+    const body = `${filler(16_000)} フロント${gap}エンド エンジニア ${filler(40_000)}`
+    for (const query of [
+      'フロントエンドエンジニア',
+      'フロント エンド エンジニア',
+    ])
+      expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
+  }
 })
 
 test('a body without a match has no excerpt', () => {

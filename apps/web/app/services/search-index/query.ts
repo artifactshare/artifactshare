@@ -116,7 +116,13 @@ export function searchMatchSpans(
   body: string,
   query: string,
 ): Array<[number, number]> {
-  const prepared = prepareQuery(query)
+  return matchSpans(body, prepareQuery(query))
+}
+
+function matchSpans(
+  body: string,
+  prepared: ReturnType<typeof prepareQuery>,
+): Array<[number, number]> {
   const starts: number[] = [],
     ends: number[] = [],
     pieces: string[] = []
@@ -172,21 +178,47 @@ export function searchMatchSpans(
   return spans
 }
 
-const EXCERPT_WINDOW = 4096
+const EXCERPT_WINDOW = 16_384
 const EXCERPT_OVERLAP = 512
+const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu
+
+/**
+ * Where a window must end so every match starting before coreEnd fits in it.
+ * A segmented match skips separators of any length between its tokens, so
+ * the window reaches past as many word runs as the longest term has tokens.
+ */
+function windowEnd(
+  body: string,
+  coreEnd: number,
+  overlap: number,
+  tokens: number,
+) {
+  let end = coreEnd
+  WORD_RUN.lastIndex = coreEnd
+  for (let run = 0; run < tokens; run++) {
+    const found = WORD_RUN.exec(body)
+    if (!found) break
+    end = found.index + found[0].length
+  }
+  return Math.min(body.length, end + overlap)
+}
 
 /** The first match position, scanning forward so long bodies stop early. */
 function firstMatch(body: string, query: string): number | undefined {
   // Segmenting a whole body costs time in proportion to its length, and only
   // the first match is needed. Each window keeps matches that start in its
-  // own core; the overlap gives segmentation the same context on both sides.
-  // A match must fit inside the overlap, so long queries widen it.
+  // own core; the overlap before the core gives segmentation context.
+  const prepared = prepareQuery(query)
+  const tokens = Math.max(
+    1,
+    ...prepared.terms.map((term) => term.split(' ').length),
+  )
   const overlap = EXCERPT_OVERLAP + query.length * 4
   for (let core = 0; core < body.length; core += EXCERPT_WINDOW) {
     const from = Math.max(0, core - overlap)
     const coreEnd = Math.min(body.length, core + EXCERPT_WINDOW)
-    const window = body.slice(from, coreEnd + overlap)
-    const starts = searchMatchSpans(window, query)
+    const window = body.slice(from, windowEnd(body, coreEnd, overlap, tokens))
+    const starts = matchSpans(window, prepared)
       .map(([start]) => from + start)
       .filter((start) => start >= core && start < coreEnd)
     if (starts.length) return Math.min(...starts)
