@@ -386,6 +386,10 @@ function isolatedSetupFixture(t) {
 import { appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
+if (args[0] === 'fixtures:build') {
+  console.error('Error: build broke')
+  process.exit(Number(process.env.FAKE_FIXTURES_EXIT ?? 1))
+}
 const value = (flag) => args[args.indexOf(flag) + 1]
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ args, registry: process.env.CLOUDFLARE_DEV_REGISTRY_PATH, wranglerRegistry: process.env.WRANGLER_REGISTRY_PATH, logs: process.env.WRANGLER_LOG_PATH }) + '\\n')
 const db = new DatabaseSync(join(value('--persist-to'), 'shared.sqlite'))
@@ -486,60 +490,26 @@ test('local setup leaves certificates alone when the caller supplies its own', (
   assert.equal(existsSync(setup.options.paths.certs), false)
 })
 
-test('required fixtures fail setup when the build fails or leaves a fixture missing', (t) => {
+test('required fixtures fail setup with the fixtures recovery when the build fails or leaves one missing', (t) => {
   const setup = isolatedSetupFixture(t)
-  const dir = join(setup.directory, 'fixtures')
-  const writeAll = () => {
-    for (const name of ['one', 'two']) {
-      mkdirSync(join(dir, name), { recursive: true })
-      writeFileSync(join(dir, name, 'index.html'), '')
-    }
-  }
-  const builds = {
-    healthy: () => {
-      writeAll()
-      return { status: 0, stdout: '', stderr: '' }
-    },
-    'nonzero exit': () => {
-      writeAll()
-      return { status: 1, stdout: '', stderr: 'Error: build broke' }
-    },
-    'spawn error': () => {
-      writeAll()
-      return { status: null, error: new Error('spawn node ENOENT') }
-    },
-    'exit 0 with a fixture missing': () => {
-      mkdirSync(join(dir, 'one'), { recursive: true })
-      writeFileSync(join(dir, 'one', 'index.html'), '')
-      return { status: 0, stdout: '', stderr: '' }
-    },
-  }
-  const reasons = {
-    'exit 0 with a fixture missing':
-      /Static-site fixtures still missing after the build \(two\)/,
-  }
-  for (const [name, run] of Object.entries(builds)) {
-    rmSync(dir, { recursive: true, force: true })
-    const build = () =>
-      prepareFixtures({
-        dir,
-        names: ['one', 'two'],
-        run,
-        required: true,
-        log: () => {},
-      })
-    if (name === 'healthy') {
-      assert.doesNotThrow(build)
-      continue
-    }
-    assert.throws(
-      build,
-      (error) =>
-        (reasons[name] ?? /Static-site fixtures not built/).test(
-          error.message,
-        ) && error.recovery === 'fixtures',
-      name,
-    )
+  for (const [exit, reason] of [
+    ['1', /Static-site fixtures not built/],
+    // Exits 0 but writes nothing: every fixture is still missing.
+    ['0', /Static-site fixtures still missing after the build/],
+  ]) {
+    process.env.FAKE_FIXTURES_EXIT = exit
+    t.after(() => delete process.env.FAKE_FIXTURES_EXIT)
+    const result = prepareDevEnvironment({
+      ...setup.options,
+      requireFixtures: true,
+      paths: {
+        ...setup.options.paths,
+        fixtures: join(setup.directory, `fixtures-${exit}`),
+      },
+    })
+    assert.equal(result.ok, false, exit)
+    assert.match(result.reason, reason)
+    assert.equal(result.recoveryCommand, 'pnpm fixtures:build')
   }
 })
 

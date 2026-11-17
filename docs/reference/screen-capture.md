@@ -147,10 +147,11 @@ Each run:
    directory and only that copy is used (one without a `BETTER_AUTH_SECRET`
    value stops the run with the fix to make); without one, the runtime copy
    is created from `.dev.vars.example`. It applies the D1 schema to its own
-   empty store. Walkthroughs build the CLI for the current HEAD into the
-   runtime directory on every run, so neither a stale nor a missing
-   `packages/cli/dist` matters and that directory is never written;
-   `packages/contract/dist` is not needed or written either. The static-site
+   empty store. Walkthroughs build the CLI for the current HEAD in the copy
+   on every run with the package's own build (which builds the contract
+   first), so neither a stale nor a missing `packages/cli/dist` in the
+   checkout matters and the checkout's build outputs are never written. The
+   static-site
    fixtures are always built in the copy from HEAD (also in CI), never taken
    from the checkout, and a failed build stops the run. It does not install
    Git hooks.

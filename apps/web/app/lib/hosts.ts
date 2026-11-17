@@ -84,8 +84,8 @@ export type DevTopologyEnv = {
  * Reads an explicit development port; unset or empty means "use the default".
  * Ports below 1024 are rejected: they need privileges, and a default port
  * such as 443 disappears from `https://localhost:443`, so links would silently
- * point at another stack. `scripts/local-capture.mjs` (`parsePortSetting`)
- * applies the same rule before anything is built.
+ * point at another stack. `scripts/local-capture.mjs` imports this function
+ * to check the ports it is given before anything is built.
  */
 export function parseDevPort(
   name: string,

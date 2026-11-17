@@ -261,13 +261,23 @@ export function localInputs({
 const INHERITED_TOPOLOGY =
   /^(?:SCREEN_CAPTURE_BASE_URL|SCREEN_CAPTURE_SANDBOX_URL|WALKTHROUGH_CLI_ENTRY|CLOUDFLARE_DEV_REGISTRY_PATH|WRANGLER_REGISTRY_PATH|WRANGLER_LOG_PATH|WRANGLER_CONFIG_PATH|WRANGLER_CACHE_DIR|MINIFLARE_CACHE_DIR|CLOUDFLARE_CF_FETCH_[A-Z0-9_]+|ARTIFACTSHARE_DEV_[A-Z0-9_]+|LOCAL_CAPTURE_[A-Z0-9_]+)$/u
 
-/** The environment every child of this invocation starts from. */
+/**
+ * The environment every child of this invocation starts from. Inherited Git
+ * variables (`GIT_DIR` from a hook, say) are dropped and Git may not search
+ * above the runtime directory: the export has no Git metadata of its own, so
+ * a step or service there that asks Git (hook installers, builds) finds no
+ * repository instead of the checkout or another one around the temporary
+ * directory. The app's revision check names the checkout explicitly.
+ */
 export function ownedEnvironment(base, runtime) {
   const env = Object.fromEntries(
-    Object.entries(base).filter(([name]) => !INHERITED_TOPOLOGY.test(name)),
+    Object.entries(base).filter(
+      ([name]) => !INHERITED_TOPOLOGY.test(name) && !name.startsWith('GIT_'),
+    ),
   )
   return {
     ...env,
+    GIT_CEILING_DIRECTORIES: runtime.root,
     // Miniflare (Vite plugin and Wrangler) and Wrangler's own lookup each
     // read a different variable; both name this invocation's registry.
     CLOUDFLARE_DEV_REGISTRY_PATH: runtime.registry,
@@ -291,22 +301,6 @@ export function checkoutStoreDir(root = ROOT) {
       `${state} names no package store; run pnpm install in the checkout first`,
     )
   return storeDir
-}
-
-/**
- * The environment of the export's dependency install. Inherited Git variables
- * are dropped and Git may not search above the export, so a lifecycle script
- * that asks Git (hook installers) finds no repository: the export has no Git
- * metadata of its own, and a temporary directory inside some other repository
- * must not lead it there.
- */
-export function installEnvironment(env, source) {
-  return {
-    ...Object.fromEntries(
-      Object.entries(env).filter(([name]) => !name.startsWith('GIT_')),
-    ),
-    GIT_CEILING_DIRECTORIES: dirname(source),
-  }
 }
 
 /** Every process this invocation starts, with its arguments and environment. */
@@ -357,7 +351,7 @@ export function localCaptureCommands({
     ])
   return {
     // The services read @artifactshare/contract from its sources (Vite alias
-    // and tsconfig paths), so no `packages/contract/dist` is built.
+    // and tsconfig paths); only the walkthroughs' CLI build compiles it.
     setup: [
       {
         name: 'source export',
@@ -381,7 +375,7 @@ export function localCaptureCommands({
           storeDir,
         ],
         cwd: source,
-        env: installEnvironment(env, source),
+        env,
       },
       {
         name: 'prepare',
@@ -556,6 +550,31 @@ export function processesWithEnvironment(
     .map((fields) => Number(fields[0]))
 }
 
+/** Whether one process's environment contains `entry` (`NAME=value`). */
+export function processHasEnvironment(
+  pid,
+  entry,
+  { platform = process.platform, run = execFileSync } = {},
+) {
+  try {
+    if (platform === 'linux')
+      return readFileSync(`/proc/${pid}/environ`, 'utf8')
+        .split('\0')
+        .includes(entry)
+    return run('ps', ['-E', '-ww', '-o', 'command=', '-p', String(pid)], {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    })
+      .trim()
+      .split(/\s+/u)
+      .includes(entry)
+  } catch (error) {
+    // Gone (or no longer ours to read): not provably owned.
+    if (VANISHED.has(error?.code) || error?.status === 1) return false
+    throw error
+  }
+}
+
 function appendTail(buffer, chunk) {
   const combined = Buffer.concat([buffer, Buffer.from(chunk)])
   return combined.byteLength <= LOG_TAIL_BYTES
@@ -579,6 +598,7 @@ export class OwnedProcesses {
     spawnProcess = spawn,
     table = (pids) => processTable(execFileSync, pids),
     tagged = processesWithEnvironment,
+    hasTag = processHasEnvironment,
     kill = (pid, signal) => process.kill(pid, signal),
     graceMs = STOP_GRACE_MS,
     killWaitMs = KILL_WAIT_MS,
@@ -587,6 +607,7 @@ export class OwnedProcesses {
     this.spawnProcess = spawnProcess
     this.table = table
     this.tagged = tagged
+    this.hasTag = hasTag
     // Every child, and so every descendant, inherits this ownership tag.
     this.ownerId = randomUUID()
     this.tag = `${OWNER_TAG}=${this.ownerId}`
@@ -704,9 +725,9 @@ export class OwnedProcesses {
 
   /**
    * Fresh proof of ownership for one PID, read right before it is signalled:
-   * one read of the process table and one of the ownership tags, then the
-   * ancestors are walked in memory. A PID is owned while it is an unreaped
-   * child, carries the tag, or has a live ancestor that does.
+   * one read of the process table for its ancestors, then the ownership tag
+   * of each process on that chain only. A PID is owned while it is an
+   * unreaped child, carries the tag, or has a live ancestor that does.
    */
   #ownedNow(pid) {
     const unreaped = new Set(this.#unreaped())
@@ -717,14 +738,13 @@ export class OwnedProcesses {
     )
     const own = live.get(pid)
     if (!own) return { owned: false, alive: false }
-    const tagged = new Set(this.tagged(this.tag))
     const unproven = { owned: false, alive: true }
     const seen = new Set()
     for (let row = own; row && !seen.has(row.pid); row = live.get(row.ppid)) {
       seen.add(row.pid)
       if (unreaped.has(row.pid)) return { owned: true, row: own }
       if (row.pid === process.pid) return unproven
-      if (tagged.has(row.pid)) return { owned: true, row: own }
+      if (this.hasTag(row.pid, this.tag)) return { owned: true, row: own }
       if (row.ppid <= 1) return unproven
     }
     return unproven
@@ -1306,12 +1326,21 @@ export function runPrepareStep(
     throw new Error('LOCAL_CAPTURE_PREPARE needs persistTo, certs and vars')
   // This step runs the export's copy of the script, so Wrangler, the D1
   // state and the fixture build all resolve in the export.
-  return prepare({
+  const result = prepare({
     persistTo,
     env,
     requireFixtures: true,
     paths: { certs, vars },
   })
+  if (result.ok) return result
+  // `pnpm dev:setup`'s recovery commands act on the checkout, which this
+  // setup never reads (fixtures, D1 state) or on a runtime directory that is
+  // removed when the command ends, so none of them would fix the next run.
+  return {
+    ...result,
+    recoveryCommand: undefined,
+    reason: `${result.reason}\nThis setup ran in the capture's own copy of HEAD: fix the cause reported above, then rerun the capture command.`,
+  }
 }
 
 /**

@@ -734,12 +734,13 @@ export function prepareDevEnvironment({
     // tables are still missing and it would apply schema.sql a second time.
     for (const item of targets)
       actions.push(...prepareDatabase(item, reset, persistTo, { env }))
-    if (requireFixtures) actions.push(...prepareFixtures({ required: true }))
+    if (requireFixtures)
+      actions.push(...prepareFixtures({ dir: paths.fixtures, required: true }))
     // Last: slow and optional relative to the schema checks above. A throw
     // here is a fixtures problem, not a reason to reset the database.
     else if (fixtures) {
       try {
-        actions.push(...prepareFixtures())
+        actions.push(...prepareFixtures({ dir: paths.fixtures }))
       } catch (error) {
         actions.push(
           `Static-site fixtures not built: ${error instanceof Error ? error.message : String(error)}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,

@@ -13,7 +13,7 @@
 // contract build); the commands must leave them byte-for-byte unchanged and
 // create none of the missing inputs in the checkout.
 import assert from 'node:assert/strict'
-import { execFile, execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   cpSync,
@@ -78,7 +78,7 @@ function makeCheckout(base) {
   ])
   // Installed offline from the store this tree was installed from, as a
   // developer's checkout is, so pnpm's own dependency check is satisfied.
-  execFileSync(
+  const install = spawnSync(
     'pnpm',
     [
       'install',
@@ -87,8 +87,15 @@ function makeCheckout(base) {
       '--store-dir',
       checkoutStoreDir(SOURCE),
     ],
-    { cwd: checkout, stdio: 'ignore' },
+    { cwd: checkout, encoding: 'utf8' },
   )
+  // pnpm reports its errors (ERR_PNPM_NO_OFFLINE_META, a package missing
+  // from the store) on stdout, so both streams go into the failure.
+  if (install.error || install.status !== 0)
+    throw new Error(
+      `pnpm install --offline failed in the test checkout:\n${install.stdout}${install.stderr}`,
+      { cause: install.error },
+    )
   return checkout
 }
 

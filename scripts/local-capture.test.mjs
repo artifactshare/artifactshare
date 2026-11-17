@@ -1,22 +1,19 @@
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import {
-  chmodSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
 import {
@@ -532,6 +529,29 @@ test('prepare runs with the export defaults and the chosen inputs', () => {
     () => runPrepareStep({}, { prepare }),
     /LOCAL_CAPTURE_PREPARE needs persistTo, certs and vars/,
   )
+  // A failed setup keeps its reason but not a `pnpm dev:setup` recovery
+  // command, which would act on the checkout or a removed runtime directory.
+  const failed = runPrepareStep(
+    {
+      LOCAL_CAPTURE_PREPARE: JSON.stringify({
+        persistTo: '/persist',
+        certs: null,
+        vars: '/run/dev.vars',
+      }),
+    },
+    {
+      prepare: () => ({
+        ok: false,
+        actions: [],
+        reason: 'Static-site fixtures not built (next-export): exit code 1.',
+        recoveryCommand: 'pnpm fixtures:build',
+      }),
+    },
+  )
+  assert.equal(failed.ok, false)
+  assert.equal(failed.recoveryCommand, undefined)
+  assert.match(failed.reason, /^Static-site fixtures not built/)
+  assert.match(failed.reason, /rerun the capture command/)
 })
 
 test('the runtime root is removed when it would overlap a checkout', (t) => {
@@ -834,6 +854,10 @@ function fakeProcesses(procs) {
       events.push('tagged')
       return [...procs.values()].filter((row) => row.tag).map((row) => row.pid)
     },
+    hasTag: (pid) => {
+      events.push(`tag ${pid}`)
+      return procs.get(pid)?.tag === true
+    },
     kill: (target, signal) => {
       kills.push([target, signal])
       events.push(`kill ${target} ${signal}`)
@@ -969,19 +993,20 @@ test('ownership is read again before every individual signal, so a PID reused be
     run.events.indexOf('kill 4504 SIGTERM') + 1,
   )
   assert.deepEqual(step, [
-    // One read of the tracked PIDs, then a fresh proof per individual signal.
+    // One read of the tracked PIDs, then a fresh proof per individual
+    // signal: the table, and the tag of each process on the ancestor chain.
     'table 4500,4501,4502,4503,4504',
     'table',
-    'tagged',
+    'tag 4501',
     'kill 4501 SIGTERM',
     // 4502 is refused from this read.
     'table',
-    'tagged',
+    'tag 4502',
     'table',
-    'tagged',
+    'tag 4503',
     'kill 4503 SIGTERM',
     'table',
-    'tagged',
+    'tag 4504',
     'kill 4504 SIGTERM',
   ])
 })
