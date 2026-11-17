@@ -1,4 +1,10 @@
-import { IconSearch, IconX, IconFolder, IconHistory } from '@tabler/icons-react'
+import {
+  IconSearch,
+  IconX,
+  IconFolder,
+  IconHistory,
+  IconLoader2,
+} from '@tabler/icons-react'
 import {
   useEffect,
   useMemo,
@@ -111,7 +117,9 @@ export function SearchPalette({
   return (
     <div
       className={
-        mobile && !resultsPage ? 'shrink-0' : 'nav:max-w-xl min-w-0 flex-1'
+        mobile && !resultsPage
+          ? 'ml-auto shrink-0'
+          : 'nav:max-w-xl min-w-0 flex-1'
       }
     >
       {mobile ? (
@@ -381,7 +389,9 @@ function PaletteBody({
     [retry, setRetry] = useState(0)
   const { history, historyError } = useSearchHistory(retry)
   const sequence = useRef(0),
-    composition = useRef(false)
+    composition = useRef(false),
+    // Opening the palette fetches at once; only typing waits for a pause.
+    fetched = useRef(false)
   const params = new URLSearchParams(initialParams)
   params.set('q', query)
   params.delete('owner')
@@ -393,31 +403,35 @@ function PaletteBody({
     const generation = ++sequence.current
     if (composing) return
     const controller = new AbortController()
-    const timer = setTimeout(() => {
-      setStatus('loading')
-      void fetch(
-        `/api/search-suggestions?${searchApiParams(new URLSearchParams(signature))}`,
-        { signal: controller.signal },
-      )
-        .then((response) => {
-          if (!response.ok) {
-            void response.body?.cancel()
-            throw new Error('suggestions')
-          }
-          return response.json<Suggestions>()
-        })
-        .then((data: Suggestions) => {
-          if (sequence.current === generation) {
-            setResults(data)
-            setSelected(-1)
-            setStatus('ready')
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted && sequence.current === generation)
-            setStatus('error')
-        })
-    }, 150)
+    const timer = setTimeout(
+      () => {
+        fetched.current = true
+        setStatus('loading')
+        void fetch(
+          `/api/search-suggestions?${searchApiParams(new URLSearchParams(signature))}`,
+          { signal: controller.signal },
+        )
+          .then((response) => {
+            if (!response.ok) {
+              void response.body?.cancel()
+              throw new Error('suggestions')
+            }
+            return response.json<Suggestions>()
+          })
+          .then((data: Suggestions) => {
+            if (sequence.current === generation) {
+              setResults(data)
+              setSelected(-1)
+              setStatus('ready')
+            }
+          })
+          .catch(() => {
+            if (!controller.signal.aborted && sequence.current === generation)
+              setStatus('error')
+          })
+      },
+      fetched.current ? 150 : 0,
+    )
     return () => {
       clearTimeout(timer)
       controller.abort()
@@ -680,13 +694,18 @@ function PaletteCandidates({
             : 'text-muted-foreground px-3 py-1 text-sm'
         }
       >
-        {status === 'loading'
-          ? t('search.loading')
-          : status === 'error'
-            ? t('search.failure')
-            : t('search.suggestionCount', {
-                n: options.filter((option) => option.key !== 'all').length,
-              })}
+        {status === 'loading' ? (
+          <span className="flex items-center gap-2">
+            <IconLoader2 className="size-4 animate-spin" aria-hidden="true" />
+            {t(query.trim() ? 'search.loading' : 'search.loadingRecent')}
+          </span>
+        ) : status === 'error' ? (
+          t('search.failure')
+        ) : (
+          t('search.suggestionCount', {
+            n: options.filter((option) => option.key !== 'all').length,
+          })
+        )}
       </div>
       {(status === 'error' || historyError) && (
         <Button onClick={retry}>{t('search.retry')}</Button>

@@ -1190,6 +1190,18 @@ test('suggestions batch authorized detail IDs and fill recent history after disc
     'recent-4',
     'recent-3',
   ])
+  // An empty palette needs only recent views, so it skips the search index.
+  const withoutIndex = await searchSuggestions(
+    fixture.db,
+    () => {
+      throw new Error('index read for an empty query')
+    },
+    { id: 'viewer' },
+    { ...input, query: '' },
+    now,
+  )
+  expect(withoutIndex).toMatchObject({ files: [], owners: [], projects: [] })
+  expect(withoutIndex.recent).toHaveLength(6)
   fixture.sqlite.exec(
     "UPDATE shareables SET owner_user_id='owner' WHERE id='recent-8'",
   )

@@ -1744,6 +1744,7 @@
   "projectPicker.noAdditionalProjects": "All listed projects have been added.",
   "search.keyword": "Keywords",
   "search.loading": "Searching…",
+  "search.loadingRecent": "Loading…",
   "search.recent": "Recently viewed",
   "search.history": "Recent searches",
   "search.people": "People and projects",
