@@ -523,9 +523,11 @@ test('download recovery describes boundary refusals and retained originals in bo
 })
 
 test.each(['en', 'ja'] as const)(
-  'splits recovery into four ordered topics with error remedies in %s',
+  'keeps four recovery topics after search guidance in %s',
   (locale) => {
-    const paragraphs = cliReferenceContent(locale).sections.recovery.body
+    const recovery = cliReferenceContent(locale).sections.recovery.body
+    expect(recovery).toHaveLength(7)
+    const paragraphs = recovery.slice(3)
     expect(paragraphs).toHaveLength(4)
     const starts =
       locale === 'en'
@@ -707,3 +709,39 @@ for (const locale of ['en', 'ja'] as const)
         )
     }
   })
+
+test.each(['en', 'ja'] as const)(
+  'explains full-text filters, scope, grouping and retry in %s',
+  (locale) => {
+    const paragraphs = cliReferenceContent(locale).sections.recovery.body.slice(
+      0,
+      3,
+    )
+    for (const flag of [
+      '--q',
+      '--query',
+      '--owner-user-ids',
+      '--project-id',
+      '--home',
+      '--date-field',
+      '--days',
+      '--from/--to',
+    ])
+      expect(paragraphs[0]).toContain(flag)
+    expect(paragraphs[0]).toContain('validation_failed')
+    for (const field of [
+      'group_size',
+      'total',
+      'eq',
+      'gte',
+      '1000',
+      '--cursor',
+    ])
+      expect(paragraphs[1]).toContain(field)
+    expect(paragraphs[2]).toContain(
+      locale === 'en'
+        ? 'Rephrase the query and search again before concluding that nothing exists.'
+        : '言い換えて再検索してください',
+    )
+  },
+)

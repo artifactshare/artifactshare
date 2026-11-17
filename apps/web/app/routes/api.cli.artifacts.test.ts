@@ -1,3 +1,4 @@
+import { RouterContextProvider } from 'react-router'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -5,6 +6,10 @@ const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+vi.mock('cloudflare:workers', () => ({
+  env: { WORKSPACE_SEARCH_INDEX: { getByName: vi.fn() } },
+}))
+const searchCliArtifactsMock = vi.hoisted(() => vi.fn())
 const listCliArtifactsMock = vi.hoisted(() => vi.fn())
 const listAgentReadableArtifactsMock = vi.hoisted(() => vi.fn())
 
@@ -19,7 +24,9 @@ vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
   withDb: (fn: (db: unknown) => unknown) => fn(createDbMock()),
 }))
-vi.mock('~/services/cli-artifacts.server', () => ({
+vi.mock('~/services/cli-artifacts.server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/services/cli-artifacts.server')>()),
+  searchCliArtifacts: searchCliArtifactsMock,
   listCliArtifacts: listCliArtifactsMock,
   listAgentReadableArtifacts: listAgentReadableArtifactsMock,
 }))
@@ -33,6 +40,7 @@ describe('/api/cli/artifacts', () => {
     getCliAuthorityMock.mockReset()
     getCliAuthorityMock.mockReturnValue(null)
     createDbMock.mockReset()
+    searchCliArtifactsMock.mockReset()
     listCliArtifactsMock.mockReset()
     listAgentReadableArtifactsMock.mockReset()
     createDbMock.mockReturnValue({
@@ -65,6 +73,146 @@ describe('/api/cli/artifacts', () => {
     expect(listCliArtifactsMock).not.toHaveBeenCalled()
     expect(listAgentReadableArtifactsMock).not.toHaveBeenCalled()
   })
+
+  test.each(['publisher', 'bridge', 'bootstrap'])(
+    'denies %s search before data access',
+    async (kind) => {
+      getCliAuthorityMock.mockReturnValue({ kind })
+      const response = await loader({
+        context: new RouterContextProvider(),
+        url: new URL('https://example.test/api/cli/artifacts'),
+        pattern: '/api/cli/artifacts',
+        params: {},
+        request: new Request('https://example.test/api/cli/artifacts?q=body'),
+      })
+      expect(response.status).toBe(403)
+      expect(createDbMock).not.toHaveBeenCalled()
+      expect(searchCliArtifactsMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test.each([
+    'q=body&query=',
+    'q=body&query=title',
+    'owner_user_ids=u1&query=title',
+  ])('rejects mixed search and legacy mode: %s', async (query) => {
+    const response = await loader({
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/api/cli/artifacts'),
+      pattern: '/api/cli/artifacts',
+      params: {},
+      request: new Request(`https://example.test/api/cli/artifacts?${query}`),
+    })
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed' },
+    })
+    expect(createDbMock).not.toHaveBeenCalled()
+  })
+
+  test('returns recoverable capacity errors instead of empty success', async () => {
+    searchCliArtifactsMock.mockResolvedValue({ kind: 'capacity-exceeded' })
+    const response = await loader({
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/api/cli/artifacts'),
+      pattern: '/api/cli/artifacts',
+      params: {},
+      request: new Request('https://example.test/api/cli/artifacts?q=body'),
+    })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'search_capacity_exceeded',
+        message:
+          'Search capacity exceeded. Narrow the query or filters and search again.',
+      },
+    })
+  })
+
+  test('dispatches full-text filters and preserves successful empty guidance', async () => {
+    const data = {
+      artifacts: [],
+      limit: 50,
+      has_more: false,
+      next_cursor: null,
+      total: { value: 0, relation: 'eq' },
+      search_hint:
+        'Rephrase the query and search again before concluding that nothing exists.',
+    }
+    searchCliArtifactsMock.mockResolvedValue({ kind: 'ok', data })
+    const response = await loader({
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/api/cli/artifacts'),
+      pattern: '/api/cli/artifacts',
+      params: {},
+      request: new Request(
+        'https://example.test/api/cli/artifacts?q=body&owner_user_ids=u2&owner_user_ids=u1&date_field=updated&days=7',
+      ),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(data)
+    expect(searchCliArtifactsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Function),
+      expect.anything(),
+      expect.objectContaining({
+        q: 'body',
+        owner_user_ids: ['u1', 'u2'],
+        date_field: 'updated',
+        days: '7',
+        source: 'cli',
+      }),
+    )
+    expect(listCliArtifactsMock).not.toHaveBeenCalled()
+  })
+
+  test.each([false, true])(
+    'passes resolved agent authority to search (ordinaryBot: %s)',
+    async (ordinaryBot) => {
+      const authority: CliAuthority = {
+        kind: 'agent',
+        familyId: 'family-1',
+        workspaceId: 'ws1',
+        projectId: 'project-1',
+        projectNameSnapshot: 'Approved project',
+        agentProfileId: 'agent-1',
+        ordinaryBot,
+      }
+      getCliAuthorityMock.mockReturnValue(authority)
+      const user = {
+        id: ordinaryBot ? 'bot-1' : 'u1',
+        email: ordinaryBot ? 'bot@example.com' : 'owner@example.com',
+        workspaceId: 'ws1',
+      }
+      requireUserMock.mockReturnValue(user)
+      searchCliArtifactsMock.mockResolvedValue({
+        kind: 'ok',
+        data: {
+          artifacts: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+          total: { value: 0, relation: 'eq' },
+        },
+      })
+      const response = await loader({
+        context: new RouterContextProvider(),
+        url: new URL('https://example.test/api/cli/artifacts?q=body'),
+        pattern: '/api/cli/artifacts',
+        params: {},
+        request: new Request('https://example.test/api/cli/artifacts?q=body'),
+      })
+      expect(response.status).toBe(200)
+      expect(searchCliArtifactsMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Function),
+        user,
+        expect.objectContaining({ q: 'body', source: 'cli', authority }),
+      )
+      expect(listCliArtifactsMock).not.toHaveBeenCalled()
+      expect(listAgentReadableArtifactsMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('returns artifacts for the authenticated user', async () => {
     listCliArtifactsMock.mockResolvedValue({

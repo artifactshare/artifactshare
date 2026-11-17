@@ -879,7 +879,7 @@ const artifactsGetDefinition = define({
 Use resolve first when a user gives a title or project name, then pass the id here.
 Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
 Static sites return metadata only, without content or format; --include, --version and --offset are unsupported for sites. Updated get explicitly requests metadata; released source-only clients retain unsupported-kind and open still suggests download.
-For human and agent credentials, get and list include retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list, independent of --version or history pagination. For static sites, only published versions that have a publication timestamp appear in history and totals. This applies to owners too. Publisher credentials do not receive version_count or total_size_bytes. Managed artifacts can exceed their retention policy.
+For human and agent credentials, get and legacy list (without search filters) include retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list, independent of --version or history pagination. Search includes these summaries for normal human credentials only. With a restricted agent or bot credential, search omits retention, version count and byte totals. For static sites, only published versions that have a publication timestamp appear in history and totals. This applies to owners too. Publisher credentials do not receive version_count or total_size_bytes. Managed artifacts can exceed their retention policy.
 The response includes data.title and data.visibility for the current artifact, even for historical or continuation reads.
 The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with the same --version selection and --offset set to data.next_offset and concatenate data.content until data.truncated is false.
 
@@ -920,7 +920,7 @@ Publisher-managed artifacts may exceed retain_versions because human and current
 
 const artifactsListDefinition = define({
   name: 'list',
-  description: 'List artifacts you shared, newest first.',
+  description: 'List your artifacts or search discoverable document text.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -933,6 +933,34 @@ const artifactsListDefinition = define({
       type: 'boolean',
       toKebab: true,
       description: 'Only artifacts in the unfiled home area',
+    },
+    q: {
+      type: 'string',
+      description:
+        'Full-text body and title search; cannot combine with --query',
+    },
+    ownerUserIds: {
+      type: 'string',
+      multiple: true,
+      toKebab: true,
+      description: 'Filter by owner user ID; repeat for multiple owners',
+    },
+    dateField: {
+      type: 'string',
+      toKebab: true,
+      description: 'Period field: updated or viewed',
+    },
+    days: {
+      type: 'string',
+      description: 'Relative period: 7, 30 or 90 days; requires --date-field',
+    },
+    from: {
+      type: 'string',
+      description: 'Inclusive ISO date/time; requires --date-field',
+    },
+    to: {
+      type: 'string',
+      description: 'ISO upper bound; date-only includes that UTC day',
     },
     query: {
       type: 'string',
@@ -951,7 +979,9 @@ const artifactsListDefinition = define({
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --home --query report --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --project-id <id> --cursor <token> --json
 
-Compare total_size_bytes across pages client-side to find the largest artifacts. Each row includes retain_versions, version_count and total_size_bytes (logical bytes across versions the caller can list; for static sites, only published versions that have a publication timestamp count, even for owners).
+Search with --q <text> and optional owner/project/period filters. Search groups matching documents by title and returns excerpts, group_size and total matching groups, capped at 1000 (eq exact, gte lower bound). Repeat the same filters with --cursor. Restricted credentials only search their readable project range and omit version summaries. Combining --query with search filters returns validation_failed. Rephrase the query and search again before concluding that nothing exists.
+
+Compare total_size_bytes across pages client-side to find the largest artifacts. Human rows include retain_versions, version_count and total_size_bytes (logical bytes across versions the caller can list; for static sites, only published versions that have a publication timestamp count, even for owners).
 Use an id from this list with update, edit, move, delete, artifacts get, or comments list.
 
 Common failures:

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Search artifact body text with `artifacts list --q`, owner/project/period filters, grouped counts and excerpts. Restricted credentials retain their read scope; empty searches suggest rephrasing.
+
 - Let local Preview comments rewrite the wording. Clicking a heading or paragraph made only of text edits it right on the page (Enter adds, Esc cancels, Tab moves to an optional comment); keys typed there never reach the document's own handlers, and the page returns to its original text when editing ends. Other elements and selected text show the current wording in the editor, ready to change. `preview next` returns `rewrite: {original, proposed}` for the agent to apply, `preview history` keeps it, and the comment list shows before and after. The browser never writes the file. Update the bundled skill to version 68.
 
 - Let local Preview comment on interactive documents: in comment mode Alt/Option+click operates the page while a plain click comments, with a hint beside the mode switch. Comments record the URL screen they were made on (`screen` on element and text anchors; `#/` and `#!/` route hashes and History API paths), show comments from other screens without attaching them to look-alike elements, return to a comment's screen when it is selected, mark an unrestorable screen as needing a check, and return to the current screen after a document update. Fix WebKit dropping annotation messages after a same-document hash change. Update the bundled skill to version 67.

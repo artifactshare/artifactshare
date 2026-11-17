@@ -91,7 +91,13 @@
         "--insecure-localhost",
         "--project-id",
         "--home",
+        "--q",
         "--query",
+        "--owner-user-ids",
+        "--date-field",
+        "--days",
+        "--from",
+        "--to",
         "--cursor"
       ]
     },
@@ -867,5 +873,5 @@
       ]
     }
   ],
-  "generated_date": "2026-11-14"
+  "generated_date": "2026-11-17"
 }

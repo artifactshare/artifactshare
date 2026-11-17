@@ -1,3 +1,7 @@
+import type { ArtifactsListQuery } from '@artifactshare/contract'
+import { SearchCapacityError } from './search-index/query'
+import { parseSearchInput } from './search-input'
+import { search, type SearchIndexes } from './search.server'
 import { loadArtifactVersionSummaries } from './artifact-version-summary.server'
 import { sql, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
@@ -34,12 +38,18 @@ export type CliArtifactsListData = {
     link_expires_at: string | null
     updated_at: string
     project_id: string | null
+    owner_user_id?: string
     owner_email?: string
     retain_versions?: number | null
     version_count?: number
     total_size_bytes?: number
     artifact_kind: string
+    excerpt?: string
+    group_size?: number
+    group_size_relation?: 'eq' | 'gte'
   }>
+  total?: { value: number; relation: 'eq' | 'gte' }
+  search_hint?: string
   limit: number
   has_more: boolean
   next_cursor: string | null
@@ -381,5 +391,115 @@ function decodeCursor(value: string): Cursor | null {
     return decoded as Cursor
   } catch {
     return null
+  }
+}
+
+export function isArtifactsSearch(args: ArtifactsListQuery) {
+  return [
+    args.q,
+    args.owner_user_ids,
+    args.date_field,
+    args.days,
+    args.from,
+    args.to,
+  ].some((value) => value !== undefined)
+}
+
+export async function searchCliArtifacts(
+  db: Kysely<DB>,
+  indexes: SearchIndexes,
+  user: Pick<SessionUser, 'id'>,
+  args: ArtifactsListQuery & {
+    baseUrl: string
+    source: 'cli' | 'mcp'
+    authority?: Extract<CliAuthority, { kind: 'agent' }>
+    includeVersionSummaries?: boolean
+  },
+): Promise<
+  | CliArtifactsListResult
+  | { kind: 'invalid-input' }
+  | { kind: 'capacity-exceeded' }
+> {
+  if (args.query !== undefined) return { kind: 'invalid-input' }
+  const params = new URLSearchParams({ q: args.q ?? '', pageSize: '50' })
+  for (const owner of args.owner_user_ids ?? []) params.append('owner', owner)
+  if (args.project_id !== undefined) {
+    params.set('location', args.project_id === '' ? 'home' : 'project')
+    if (args.project_id) params.set('projectId', args.project_id)
+  }
+  if (args.date_field !== undefined) params.set('dateField', args.date_field)
+  for (const key of ['days', 'from', 'to'] as const)
+    if (args[key] !== undefined) params.set(key, args[key])
+  const input = parseSearchInput(params)
+  if ('error' in input) return { kind: 'invalid-input' }
+  // Sealed continuations are validated by the search token reader, not the
+  // web URL parser's 200-character input limit. Legacy cursors remain separate.
+  input.cursor = args.cursor
+  if (args.authority) input.filters.credentialScope = args.authority
+  let result
+  try {
+    result = await search(db, indexes, user.id, input, args.source)
+  } catch (error) {
+    if (error instanceof SearchCapacityError)
+      return { kind: 'capacity-exceeded' }
+    throw error
+  }
+  if ('error' in result) return { kind: 'invalid-cursor' }
+  const ids = result.items.map((item) => item.id)
+  const rows = ids.length
+    ? await db
+        .selectFrom('shareables')
+        .innerJoin('users', 'users.id', 'shareables.owner_user_id')
+        .select([
+          'shareables.id',
+          'shareables.link_expires_at',
+          'shareables.updated_at',
+          'users.email',
+        ])
+        .where('shareables.id', 'in', ids)
+        .execute()
+    : []
+  const metadata = new Map(rows.map((row) => [row.id, row]))
+  const summaries =
+    args.includeVersionSummaries && !args.authority
+      ? await loadArtifactVersionSummaries(db, ids)
+      : new Map()
+  return {
+    kind: 'ok',
+    data: {
+      artifacts: result.items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        share_url: shareUrl(args.baseUrl, item.id, item.visibility),
+        visibility: item.visibility,
+        link_expires_at: metadata.get(item.id)?.link_expires_at ?? null,
+        updated_at: metadata.get(item.id)!.updated_at,
+        owner_user_id: item.ownerId,
+        project_id: item.project?.id ?? null,
+        ...(args.authority || args.project_id
+          ? { owner_email: metadata.get(item.id)?.email }
+          : {}),
+        ...summaries.get(item.id),
+        artifact_kind: item.artifactKind,
+        excerpt: item.excerpt,
+        group_size: item.groupSize,
+        group_size_relation: item.groupSizeRelation,
+      })),
+      total: result.total,
+      ...(result.total.value === 0
+        ? {
+            search_hint:
+              'Rephrase the query and search again before concluding that nothing exists.',
+          }
+        : result.tier === 'any'
+          ? {
+              search_hint:
+                'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
+            }
+          : {}),
+      limit: CLI_ARTIFACTS_LIST_LIMIT,
+      has_more: result.nextCursor !== null,
+      next_cursor: result.nextCursor,
+    },
   }
 }

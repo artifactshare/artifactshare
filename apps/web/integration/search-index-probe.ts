@@ -1,3 +1,5 @@
+import { searchCliArtifacts } from '../app/services/cli-artifacts.server'
+import { createDb } from '../app/services/db.server'
 import {
   literalKey,
   groupKey,
@@ -313,6 +315,33 @@ export default {
       case 'queryState':
         result = await stub.queryState()
         break
+      case 'listSearch': {
+        const db = createDb(env.DB)
+        try {
+          result = await searchCliArtifacts(
+            db,
+            (workspace) =>
+              env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+            { id: 'search-reader' },
+            {
+              baseUrl: 'https://example.test',
+              source: 'cli',
+              q: 'bodyneedle',
+              authority: {
+                kind: 'agent',
+                familyId: 'search-family',
+                workspaceId: command.workspace,
+                projectId: 'search-project',
+                projectNameSnapshot: 'Project',
+                agentProfileId: 'search-profile',
+              },
+            },
+          )
+        } finally {
+          await db.destroy()
+        }
+        break
+      }
       case 'search':
         result = await stub.search(command.input)
         break

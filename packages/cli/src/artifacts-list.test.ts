@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { writeSuccess } from './output.js'
 import {
   expectFailure,
   expectSuccess,
@@ -234,6 +235,167 @@ test('artifacts list rejects malformed success responses', async () => {
         code: 'service_error',
       })
       assert.match(payload.error.message, /list metadata/)
+    },
+  )
+})
+
+test('full-text list serializes owner and period filters and preserves empty guidance', async () => {
+  const hint =
+    'Rephrase the query and search again before concluding that nothing exists.'
+  await withServer(
+    (request, response) => {
+      const params = new URL(request.url!, 'http://localhost').searchParams
+      assert.equal(params.get('q'), 'body needle')
+      assert.deepEqual(params.getAll('owner_user_ids'), ['owner-a', 'owner-b'])
+      assert.equal(params.get('date_field'), 'viewed')
+      assert.equal(params.get('days'), '30')
+      assert.equal(params.get('project_id'), '')
+      assert.equal(params.get('cursor'), 'sealed-token')
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifacts: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+          total: { value: 0, relation: 'eq' },
+          search_hint: hint,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'artifacts',
+          'list',
+          '--q',
+          'body needle',
+          '--owner-user-ids',
+          'owner-a',
+          '--ownerUserIds',
+          'owner-b',
+          '--dateField',
+          'viewed',
+          '--days',
+          '30',
+          '--home',
+          '--cursor',
+          'sealed-token',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.equal(result.status, 0)
+      assert.equal(JSON.parse(result.stdout).data.search_hint, hint)
+      assert.deepEqual(JSON.parse(result.stdout).data.total, {
+        value: 0,
+        relation: 'eq',
+      })
+    },
+  )
+})
+
+test('search rejects blank values, conflicting title mode and invalid periods before authentication', () => {
+  for (const flags of [
+    ['--q'],
+    ['--q', ' '],
+    ['--q', 'body', '--query', 'title'],
+    ['--owner-user-ids', ' '],
+    ['--days', '7'],
+    ['--date-field', 'updated', '--from', '2026-02-30'],
+  ]) {
+    expectFailure(
+      run(['artifacts', 'list', ...flags, '--json'], {
+        ARTIFACTSHARE_TOKEN: '',
+      }),
+      { command: 'artifacts list', code: 'validation_failed' },
+    )
+  }
+})
+
+test('empty search guidance remains visible in human and JSON output', () => {
+  const hint =
+    'Rephrase the query and search again before concluding that nothing exists.'
+  const data = {
+    artifacts: [],
+    limit: 50,
+    has_more: false,
+    next_cursor: null,
+    total: { value: 0, relation: 'eq' },
+    search_hint: hint,
+  }
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  try {
+    for (const json of [false, true]) {
+      writeSuccess('artifacts list', data, { json })
+      assert.ok(String(write.mock.calls.at(-1)?.[0]).includes(hint))
+    }
+  } finally {
+    write.mockRestore()
+  }
+})
+
+test('human search continuation preserves the original query and filters', async () => {
+  const original = [
+    'artifacts',
+    'list',
+    '--q',
+    'body needle',
+    '--owner-user-ids',
+    'owner-a',
+    '--home',
+  ]
+  let pages = 0
+  await withServer(
+    (request, response) => {
+      const params = new URL(request.url!, 'http://localhost').searchParams
+      assert.equal(params.get('q'), 'body needle')
+      assert.deepEqual(params.getAll('owner_user_ids'), ['owner-a'])
+      assert.equal(params.get('project_id'), '')
+      assert.equal(params.get('cursor'), pages === 0 ? null : 'next-page')
+      pages++
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifacts: [],
+          limit: 50,
+          total: { value: 2, relation: 'eq' },
+          has_more: pages === 1,
+          next_cursor: pages === 1 ? 'next-page' : null,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const args = [...original, '--base-url', baseUrl]
+      const first = await runAsync(args, { ARTIFACTSHARE_TOKEN: 'test-token' })
+      assert.equal(first.status, 0)
+      const write = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true)
+      let humanOutput: string
+      try {
+        writeSuccess('artifacts list', JSON.parse(first.stdout).data, {
+          json: false,
+        })
+        humanOutput = String(write.mock.calls.at(-1)?.[0])
+      } finally {
+        write.mockRestore()
+      }
+      assert.match(
+        humanOutput,
+        /Repeat the original command with all query and filter options/,
+      )
+      const cursor = humanOutput.match(
+        /adding or replacing --cursor (\S+)/,
+      )?.[1]
+      assert.equal(cursor, 'next-page')
+      const next = await runAsync([...args, '--cursor', cursor!], {
+        ARTIFACTSHARE_TOKEN: 'test-token',
+      })
+      assert.equal(next.status, 0)
+      assert.equal(pages, 2)
     },
   )
 })

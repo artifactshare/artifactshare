@@ -44,6 +44,7 @@ import {
   VersionLabelInputSchema,
   VersionLabelSchema,
   ArtifactVersionSchema,
+  ArtifactsListQuerySchema,
   ArtifactsListResponseSchema,
   CommentPostRequestSchema,
   ProjectCreateRequestSchema,
@@ -1665,4 +1666,55 @@ it('validates complete version summaries and source-free static get', async () =
       link_expires_at: null,
     }).success,
   ).toBe(true)
+})
+
+it('artifact search filters normalize owners and reject conflicting modes and periods', () => {
+  expect(
+    ArtifactsListQuerySchema.parse({
+      q: 'body',
+      owner_user_ids: ['b', 'a', 'b'],
+      date_field: 'updated',
+      days: '7',
+    }).owner_user_ids,
+  ).toEqual(['a', 'b'])
+  for (const value of [
+    { q: '', query: 'title' },
+    { query: 'title', owner_user_ids: ['a'] },
+    { days: '7' },
+    { date_field: 'viewed', from: '2026-02-30' },
+    { date_field: 'updated', from: '2026-03-03', to: '2026-03-01' },
+    { date_field: 'updated', days: '7', to: '2026-01-01' },
+    { owner_user_ids: [''] },
+  ])
+    expect(ArtifactsListQuerySchema.safeParse(value).success).toBe(false)
+  const empty = {
+    artifacts: [],
+    limit: 50,
+    has_more: false,
+    next_cursor: null,
+    total: { value: 0, relation: 'eq' },
+    search_hint:
+      'Rephrase the query and search again before concluding that nothing exists.',
+  }
+  expect(ArtifactsListResponseSchema.parse(empty)).toEqual(empty)
+  const populated = {
+    ...empty,
+    artifacts: [
+      {
+        id: 'search0001',
+        title: 'Report',
+        share_url: 'https://example.test/a/search0001',
+        visibility: 'private',
+        updated_at: '2026-09-15T00:00:00.000Z',
+        project_id: null,
+        owner_user_id: 'owner-a',
+        excerpt: 'Body match',
+        group_size: 2,
+        group_size_relation: 'eq',
+      },
+    ],
+    total: { value: 1, relation: 'eq' },
+    search_hint: undefined,
+  }
+  expect(ArtifactsListResponseSchema.parse(populated)).toEqual(populated)
 })

@@ -8,9 +8,12 @@ import {
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { activeLinkExpiry, workspaceAccessRevokedSql } from '~/modules/access'
 import type { DB } from '~/types/db'
+import type { CliAuthority } from './cli-authority.server'
+import { agentReadableShareableSql } from './agent-scope.server'
 import { grantMatchEmail } from './access.server'
 
 export type DiscoveryFilters = {
+  credentialScope?: Extract<CliAuthority, { kind: 'agent' }>
   ownerUserIds?: readonly string[]
   location?: { kind: 'home' } | { kind: 'project'; id: string }
   ownerUserId?: string
@@ -85,6 +88,12 @@ function discoveryQuery(
     .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
     .select(['s.id', 's.workspace_id as workspaceId'])
     .where(discoveryEligibility(viewer, now))
+  if (filters.credentialScope)
+    query = query.where(sql<boolean>`EXISTS (
+      SELECT 1 FROM users AS search_viewer
+      WHERE search_viewer.id = ${viewer.id}
+        AND ${agentReadableShareableSql('search_viewer', filters.credentialScope, 's')}
+    )`)
   // All other non-administrative opening grounds already occur above as
   // independent discovery grounds. Thus creator + live membership is the only
   // additional membership case; a join alone (even for an admin) cannot open.
@@ -438,13 +447,14 @@ export async function resolveSearchSelections(
   actor: string,
   ownerIds: string[],
   projectIds: string[],
+  credentialScope?: DiscoveryFilters['credentialScope'],
 ) {
   const viewer = await loadDiscoveryViewer(db, actor)
   if (!viewer) return { owners: [], projects: [] }
   const eligible = discoveryQuery(
     db,
     viewer,
-    { includeArchived: true },
+    { includeArchived: true, credentialScope },
     new Date().toISOString(),
   )
   const [owners, projects] = await Promise.all([

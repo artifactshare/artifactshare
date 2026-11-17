@@ -251,23 +251,45 @@ export const REST_SCHEMAS = {
     has_more: { type: 'boolean' },
     next_cursor: nullableString,
   }),
-  ArtifactsListResponse: objectSchema({
-    artifacts: {
-      type: 'array',
-      items: objectSchema({
-        ...versionSummary,
-        id: restString,
-        title: { type: 'string' },
-        share_url: { type: 'string', format: 'uri' },
-        visibility,
-        updated_at: restString,
-        project_id: nullableString,
+  ArtifactsListResponse: objectSchema(
+    {
+      artifacts: {
+        type: 'array',
+        items: objectSchema(
+          {
+            ...versionSummary,
+            owner_user_id: { type: 'string' },
+            excerpt: { type: 'string' },
+            group_size: { type: 'integer', minimum: 1 },
+            group_size_relation: { enum: ['eq', 'gte'] },
+            id: restString,
+            title: { type: 'string' },
+            share_url: { type: 'string', format: 'uri' },
+            visibility,
+            updated_at: restString,
+            project_id: nullableString,
+          },
+          [
+            'id',
+            'title',
+            'share_url',
+            'visibility',
+            'updated_at',
+            'project_id',
+          ],
+        ),
+      },
+      total: objectSchema({
+        value: { type: 'integer', minimum: 0 },
+        relation: { enum: ['eq', 'gte'] },
       }),
+      search_hint: { type: 'string' },
+      limit: { type: 'integer', minimum: 0 },
+      has_more: { type: 'boolean' },
+      next_cursor: nullableString,
     },
-    limit: { type: 'integer', minimum: 0 },
-    has_more: { type: 'boolean' },
-    next_cursor: nullableString,
-  }),
+    ['artifacts', 'limit', 'has_more', 'next_cursor'],
+  ),
   CommentThreadWindow: objectSchema({
     id: restString,
     status: { enum: ['open', 'resolved'] },
@@ -534,12 +556,56 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'List accessible artifacts',
-        'Each row includes retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials cannot list artifacts. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.',
+        'Search returns up to 50 grouped representatives with excerpts, group_size, group_size_relation and total matching groups (1000 cap; eq exact, gte lower bound). Agent search intersects discovery with credential read scope and omits version summaries. Rephrase the query and search again before concluding that nothing exists. Legacy listing: each row includes retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials cannot list artifacts. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.',
         restRef('ArtifactsListResponse'),
         null,
         ['unrestricted', 'agent', 'browser-session'],
       ),
       parameters: [
+        {
+          name: 'q',
+          in: 'query',
+          schema: { type: 'string', maxLength: 500 },
+          description:
+            'Full-text title and body search. Empty q browses discoverable files. Cannot combine search filters with query (validation_failed).',
+        },
+        {
+          name: 'owner_user_ids',
+          in: 'query',
+          style: 'form',
+          explode: true,
+          schema: {
+            type: 'array',
+            maxItems: 100,
+            items: { type: 'string', minLength: 1, maxLength: 200 },
+          },
+          description: 'Repeat owner user IDs, not emails.',
+        },
+        {
+          name: 'date_field',
+          in: 'query',
+          schema: { enum: ['updated', 'viewed'] },
+        },
+        {
+          name: 'days',
+          in: 'query',
+          schema: { enum: ['7', '30', '90'] },
+          description:
+            'Relative period; requires date_field, excludes from/to.',
+        },
+        {
+          name: 'from',
+          in: 'query',
+          schema: { type: 'string' },
+          description: 'Inclusive ISO date/time; requires date_field.',
+        },
+        {
+          name: 'to',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'Exclusive ISO timestamp, or inclusive UTC calendar date; requires date_field.',
+        },
         {
           name: 'project_id',
           in: 'query',
@@ -576,6 +642,10 @@ export const REST_OPERATIONS = {
           description: 'Authentication required or agent viewer missing.',
         },
         403: { description: 'Credential scope denied.' },
+        503: {
+          description:
+            'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again.',
+        },
       },
     },
   },

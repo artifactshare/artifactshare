@@ -183,7 +183,7 @@ function humanSuccess(command: string, data: unknown): string {
     data.has_more === true &&
     typeof data.next_cursor === 'string'
   ) {
-    return `${JSON.stringify(data, null, 2)}\nContinue with --cursor ${data.next_cursor}\n`
+    return `${JSON.stringify(data, null, 2)}\nRepeat the original command with all query and filter options, adding or replacing --cursor ${data.next_cursor}\n`
   }
   if (command === 'changelog') {
     return changelogHumanOutput(data)

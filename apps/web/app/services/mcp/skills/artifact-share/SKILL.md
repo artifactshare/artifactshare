@@ -86,3 +86,16 @@ read that thread by ID; do not replay the write automatically.
 Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.
 
 Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.
+
+## Full-text search
+
+Use `artifacts list --q <text>` (MCP: `list_artifacts` with `q`) to search body text and titles. `query` / `--query` matches titles only; combining it with full-text, owner, or period filters returns `validation_failed`. API `q: ""` browses discoverable files; the CLI requires nonblank `--q`, or omit it for owner/period browsing.
+
+Filter by repeatable `--owner-user-ids` (MCP array `owner_user_ids`, user IDs, not email addresses), `--project-id` / `project_id`, or `--home` / empty `project_id`. Periods require `--date-field updated|viewed` (`date_field`) and either `--days 7|30|90` or ISO `--from` / `--to`. Date-only upper bounds include that UTC day; timestamp upper bounds are exclusive.
+
+Search returns up to 50 grouped representatives per page, excerpts, `group_size` and `group_size_relation`, and `total` matching groups capped at 1000. `eq` means exact; `gte` means a lower bound. Group sizes count allowed matching documents with the same normalized title across the search, not just this page. Repeat normalized filters with `next_cursor`; restart without cursor after changing filters or credentials. Relative periods stay anchored to the first page.
+
+Human CLI and MCP OAuth use person discovery. Restricted agents and bots search only its intersection with their readable project range; search omits their version/retention summaries. Publisher, bridge and bootstrap credentials cannot list/search. MCP OAuth does not accept bots.
+
+Rephrase the query and search again before concluding that nothing exists.
+A completed zero-result search succeeds with this `search_hint`; errors and capacity failures are not empty results.

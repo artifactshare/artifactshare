@@ -1185,11 +1185,14 @@ test('OpenAPI documents logical version summaries and bounded history without pu
       'total_size_bytes',
     ),
   )
-  assert.ok(
-    spec.components.schemas.ArtifactsListResponse.properties.artifacts.items.required.includes(
-      'total_size_bytes',
-    ),
-  )
+  const listEntry =
+    spec.components.schemas.ArtifactsListResponse.properties.artifacts.items
+  assert.ok(Object.hasOwn(listEntry.properties, 'total_size_bytes'))
+  assert.equal(listEntry.required.includes('total_size_bytes'), false)
+  for (const field of ['excerpt', 'group_size', 'group_size_relation']) {
+    assert.ok(Object.hasOwn(listEntry.properties, field))
+    assert.equal(listEntry.required.includes(field), false)
+  }
 })
 
 test('collection OpenAPI declares only actual filters and page responses', () => {
@@ -1197,6 +1200,9 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
   assert.deepEqual(
     operation.parameters.map((parameter) => [parameter.name, parameter.in]),
     [
+      ...['q', 'owner_user_ids', 'date_field', 'days', 'from', 'to'].map(
+        (name) => [name, 'query'],
+      ),
       ['project_id', 'query'],
       ['query', 'query'],
       ['cursor', 'query'],
@@ -1207,5 +1213,6 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
     '400',
     '401',
     '403',
+    '503',
   ])
 })
