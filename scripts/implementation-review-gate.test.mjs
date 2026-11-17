@@ -995,7 +995,29 @@ test('reserves the candidate before reviewer launch and keeps it after failure',
   assert.deepEqual(events, ['admitted', 'launched:codex', 'launched:claude'])
 })
 
-test('the fourth implementation pair is refused with the round-cap handling', async () => {
+test('the last pair under the cap still runs', async () => {
+  const launched = []
+  await assert.rejects(
+    () =>
+      main({
+        countRounds: () => implementationRoundCap - 1,
+        localInstructionsPresent: () => false,
+        ...scopeHarness(),
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        argv: ['--base', 'release'],
+        run: explicitBaseRun,
+        readCleanHead: () => head,
+        review: (name) => {
+          launched.push(name)
+          return Promise.reject(new Error(`${name} failed`))
+        },
+      }),
+    /failed/u,
+  )
+  assert.deepEqual(launched.sort(), ['claude', 'codex'])
+})
+
+test('a pair past the cap is refused with the round-cap handling', async () => {
   const logs = []
   let launched = false
   const code = await main({

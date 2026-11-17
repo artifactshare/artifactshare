@@ -3,6 +3,23 @@ import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { implementationRoundCap } from './implementation-review-gate.mjs'
+
+// The workflow spells the gate's cap in words; derive them from the gate so
+// the document cannot drift from the value it describes.
+const capWords = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven']
+const nextOrdinal = [
+  'first',
+  'second',
+  'third',
+  'fourth',
+  'fifth',
+  'sixth',
+  'seventh',
+  'eighth',
+]
+const cap = capWords[implementationRoundCap]
+const pastCap = nextOrdinal[implementationRoundCap]
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const workflow = fs.readFileSync(
@@ -30,7 +47,10 @@ test('documents proportional specification review and the exact-HEAD Ready prere
   // The pair requirement states the same round-cap exception pr:ready enforces.
   assert.match(
     workflow,
-    /`pr:ready` enforces this\. The one exception is the round cap: once the branch's five pairs are spent, a `PROCEED` round-cap consultation recorded for that exact HEAD takes the pair's place/u,
+    new RegExp(
+      `\`pr:ready\` enforces this\\. The one exception is the round cap: once the branch's ${cap} pairs are spent, a \`PROCEED\` round-cap consultation recorded for that exact HEAD takes the pair's place`,
+      'u',
+    ),
   )
   assert.match(
     pullRequestTemplate,
@@ -181,7 +201,17 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   )
   assert.match(
     workflow,
-    /at most five completed review pairs under the current review profile; `review:implementation` never runs a sixth pair/u,
+    new RegExp(
+      `at most ${cap} completed review pairs under the current review profile; \`review:implementation\` never runs a ${pastCap} pair`,
+      'u',
+    ),
+  )
+  assert.match(
+    workflow,
+    new RegExp(
+      `until the branch has ${cap} completed pairs under the current review profile`,
+      'u',
+    ),
   )
   // The cap ends in a recorded consultation for the exact HEAD, not a dead
   // end, and it reads the change no pair has read.
