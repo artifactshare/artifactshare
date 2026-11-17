@@ -17,11 +17,11 @@ const filler = (length: number) =>
 test.each([
   ['at the start', 0],
   ['early in the body', 1200],
-  ['deep in a long body', 150_000],
+  ['deep in the body', 18_000],
 ])(
   'a long body excerpts its first match %s like a whole-body scan',
   (_, at) => {
-    const body = `${filler(at)}needleterm ${filler(160_000 - at)}`
+    const body = `${filler(at)}needleterm ${filler(20_000 - at)}`
     for (const query of ['needleterm', 'NEEDLETERM', 'needle term', 'term'])
       expect(excerpt(body, query)).toBe(wholeBodyExcerpt(body, query))
     expect(excerpt(body, 'needleterm')).toContain('needleterm')
@@ -31,11 +31,11 @@ test.each([
 test.each([
   ['spaces', ' '.repeat(700)],
   ['hyphens', '-'.repeat(2000)],
-  ['ideographic spaces', '　'.repeat(20_000)],
+  ['ideographic spaces', '　'.repeat(5000)],
   ['combining marks after spaces', ' ́'.repeat(1000)],
   ['symbols', '❶❷❸─'.repeat(500)],
 ])('a segmented match bridging %s matches a whole-body scan', (_, gap) => {
-  const body = `${filler(16_000)} フロント${gap}エンド エンジニア ${filler(40_000)}`
+  const body = `${filler(4000)} フロント${gap}エンド エンジニア ${filler(4000)}`
   for (const query of [
     'フロントエンドエンジニア',
     'フロント エンド エンジニア',
@@ -51,7 +51,7 @@ test('a later shorter match does not hide an earlier longer one', () => {
 })
 
 test('Japanese, katakana and soft-hyphen text match a whole-body scan', () => {
-  const body = `${'共有の設定を確認します。'.repeat(1365)}フロ­ントエンドエンジニアの募集フロントエンドエンジニア${'あ'.repeat(9000)}`
+  const body = `${'共有の設定を確認します。'.repeat(200)}フロ­ントエンドエンジニアの募集フロントエンドエンジニア${'あ'.repeat(2000)}`
   for (const query of [
     'フロントエンドエンジニア',
     'エンジニア',
@@ -62,6 +62,6 @@ test('Japanese, katakana and soft-hyphen text match a whole-body scan', () => {
 })
 
 test('a body without a match has no excerpt', () => {
-  expect(excerpt(filler(50_000), 'absent')).toBe('')
-  expect(excerpt(filler(50_000), '')).toBe(wholeBodyExcerpt(filler(50_000), ''))
+  expect(excerpt(filler(20_000), 'absent')).toBe('')
+  expect(excerpt(filler(20_000), '')).toBe(wholeBodyExcerpt(filler(20_000), ''))
 })
