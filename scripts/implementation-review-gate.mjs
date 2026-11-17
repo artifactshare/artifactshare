@@ -57,7 +57,7 @@ const implementationReviewProfile = Object.freeze({
 })
 // Three completed pairs per branch under the current profile; the fourth is
 // refused so the orchestrator settles what remains instead of looping.
-const implementationRoundCap = 3
+const implementationRoundCap = 5
 const maxCapturedBytes = 8 * 1024
 const consultationTimeoutMs = 1_800_000
 

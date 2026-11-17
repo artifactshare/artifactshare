@@ -30,7 +30,7 @@ test('documents proportional specification review and the exact-HEAD Ready prere
   // The pair requirement states the same round-cap exception pr:ready enforces.
   assert.match(
     workflow,
-    /`pr:ready` enforces this\. The one exception is the round cap: once the branch's three pairs are spent, a `PROCEED` round-cap consultation recorded for that exact HEAD takes the pair's place/u,
+    /`pr:ready` enforces this\. The one exception is the round cap: once the branch's five pairs are spent, a `PROCEED` round-cap consultation recorded for that exact HEAD takes the pair's place/u,
   )
   assert.match(
     pullRequestTemplate,
@@ -181,7 +181,7 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   )
   assert.match(
     workflow,
-    /at most three completed review pairs under the current review profile; `review:implementation` never runs a fourth pair/u,
+    /at most five completed review pairs under the current review profile; `review:implementation` never runs a sixth pair/u,
   )
   // The cap ends in a recorded consultation for the exact HEAD, not a dead
   // end, and it reads the change no pair has read.

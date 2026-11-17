@@ -21,6 +21,7 @@ import {
   completedPairRounds,
   lastCompletedPairHead,
   implementationReviewProfile,
+  implementationRoundCap,
   parseArgs,
   recordCompletedRounds,
   runReviewer,
@@ -999,7 +1000,7 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   let launched = false
   const code = await main({
     argv: [],
-    countRounds: () => 3,
+    countRounds: () => implementationRoundCap,
     localInstructionsPresent: () => false,
     getBranch: () => 'feat/x',
     acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
@@ -1016,7 +1017,7 @@ test('the fourth implementation pair is refused with the round-cap handling', as
   assert.equal(launched, false)
   const result = JSON.parse(logs[0])
   assert.equal(result.verdict, 'ROUND_CAP')
-  assert.equal(result.rounds, 3)
+  assert.equal(result.rounds, implementationRoundCap)
   assert.match(result.note, /claude-fable-5-1 at medium/u)
   assert.match(result.note, /Return to the owner/u)
 })
@@ -1103,7 +1104,7 @@ test('a spent round cap runs the consultation on HEAD and records its decision',
       let headReads = 0
       const result = main({
         argv: ['--dispositions-file', dispositions],
-        countRounds: () => 3,
+        countRounds: () => implementationRoundCap,
         readLastPairHead: () => pairHead,
         localInstructionsPresent: () => false,
         ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1167,7 +1168,7 @@ test('the consultation decision is stored for HEAD without its prose', async (t)
   }
   await main({
     argv: ['--dispositions-file', dispositions],
-    countRounds: () => 3,
+    countRounds: () => implementationRoundCap,
     readLastPairHead: () => head,
     localInstructionsPresent: () => false,
     ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1214,7 +1215,7 @@ test('a spent round cap refuses the consultation off the last pair or with --bas
       await assert.rejects(
         main({
           argv,
-          countRounds: () => 3,
+          countRounds: () => implementationRoundCap,
           readLastPairHead: () => divergent,
           localInstructionsPresent: () => false,
           ...scopeHarness({ getBranch: () => 'feat/x' }),
@@ -1278,7 +1279,7 @@ test("an owner's CLAUDE.local.md stops the gate before any provider starts", asy
   // The round-cap consultation path runs the same precheck as a pair.
   for (const [rounds, argv] of [
     [0, []],
-    [3, ['--dispositions-file', dispositions]],
+    [implementationRoundCap, ['--dispositions-file', dispositions]],
   ]) {
     let launched = false
     await assert.rejects(
