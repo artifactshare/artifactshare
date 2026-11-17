@@ -273,7 +273,7 @@ const EN: CliReferenceContent = {
     recovery: {
       title: 'Failures and recovery',
       body: [
-        'Use artifacts list --q to search body text and titles. --query matches titles only; combining it with q, owner or period filters returns validation_failed. Filter with repeatable --owner-user-ids (user IDs), --project-id or --home, and --date-field updated|viewed with --days 7|30|90 or ISO --from/--to. A date-only upper bound includes that UTC day. API empty q browses; CLI --q must be nonblank.',
+        'Use artifacts list --q to search body text and titles. --query matches titles only; combining it with --q, owner or period filters returns validation_failed. Filter with repeatable --owner-user-ids (user IDs), --project-id or --home, and --date-field updated|viewed with --days 7|30|90 or ISO --from/--to. A date-only upper bound includes that UTC day. API empty q browses; CLI --q must be nonblank.',
         'Search returns excerpts and groups matching documents with the same normalized title. group_size counts allowed matching documents across the search; total counts matching groups, capped at 1000. eq means exact, gte a lower bound. Repeat filters with --cursor; restart without it after changing filters or credentials. Restricted agents and bots search only the intersection of person discovery and their readable project range, without version summaries. Publishers, bridge and bootstrap cannot list/search.',
         'Rephrase the query and search again before concluding that nothing exists. Completed zero-result searches succeed with search_hint; errors and capacity failures are not empty results.',
 
