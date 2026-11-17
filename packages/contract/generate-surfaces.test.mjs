@@ -1213,5 +1213,6 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
     '400',
     '401',
     '403',
+    '503',
   ])
 })

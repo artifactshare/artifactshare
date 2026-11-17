@@ -1367,7 +1367,7 @@ export const CLI_API_ENDPOINTS = {
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403] as const,
+    errorStatuses: [400, 401, 403, 503] as const,
   },
   artifactVersions: {
     path: '/api/cli/artifacts/:id/versions',

@@ -642,6 +642,10 @@ export const REST_OPERATIONS = {
           description: 'Authentication required or agent viewer missing.',
         },
         403: { description: 'Credential scope denied.' },
+        503: {
+          description:
+            'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again.',
+        },
       },
     },
   },
