@@ -1,12 +1,12 @@
 import { useT } from '~/hooks/use-t'
 import { Button } from '~/components/ui/button'
 import { SearchCapacityError } from '~/services/search-index/query'
-import { env } from 'cloudflare:workers'
 import { requireUser } from '~/middleware/context'
-import { withDb } from '~/services/db.server'
 import { parseSearchQuery } from '~/lib/search-query'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { search } from '~/services/search.server'
+import { withSearchTiming } from '~/services/search-timing.server'
+import { data, type HeadersFunction } from 'react-router'
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
 import { SearchResults } from '~/components/app/search-results'
 import type { ScreenSpec } from '~/types/screen'
@@ -126,21 +126,19 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
       actor: user.id,
     }
-  const result = await withDb((db) =>
-    search(
-      db,
-      (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
-      user.id,
-      input,
-      'screen',
-    ),
-  ).catch((error: unknown) => {
-    if (error instanceof SearchCapacityError)
-      return {
-        error: { code: 'search_capacity_exceeded', hint: 'Narrow the query.' },
-      }
-    throw error
-  })
+  const { value: result, serverTiming } = await withSearchTiming(
+    'search',
+    (db, indexes) => search(db, indexes, user.id, input, 'screen'),
+    (error) =>
+      error instanceof SearchCapacityError
+        ? {
+            error: {
+              code: 'search_capacity_exceeded',
+              hint: 'Narrow the query.',
+            },
+          }
+        : undefined,
+  )
   if (
     !('error' in result) &&
     isDevScreenStateRequest(request, 'search/capped')
@@ -162,7 +160,19 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { ...result, nextCursor: 'invalid-fixture-cursor' },
       actor: user.id,
     }
-  return { result, actor: user.id }
+  return data(
+    { result, actor: user.id },
+    {
+      headers: { 'Server-Timing': serverTiming },
+    },
+  )
+}
+// Only the search breakdown passes through; parent headers stay as they are.
+export const headers: HeadersFunction = ({ parentHeaders, loaderHeaders }) => {
+  const responseHeaders = new Headers(parentHeaders)
+  const timing = loaderHeaders.get('Server-Timing')
+  if (timing) responseHeaders.append('Server-Timing', timing)
+  return responseHeaders
 }
 export default function SearchPage({ loaderData }: Route.ComponentProps) {
   return <SearchResults {...loaderData} />

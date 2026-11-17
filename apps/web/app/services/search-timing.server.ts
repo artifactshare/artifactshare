@@ -1,0 +1,191 @@
+import { env } from 'cloudflare:workers'
+import { withDb, type Db } from './db.server'
+import type { SearchIndex, SearchIndexes } from './search.server'
+
+/**
+ * Time one kind of I/O. Searches run calls side by side, so the reported
+ * duration is the time at least one call was in flight, not their sum.
+ * Workers clocks advance only across I/O, which is what is measured here.
+ */
+type Lane = { count: number; busyMs: number; inflight: number; since: number }
+
+/** Where one search request spends its time. */
+export type SearchTimings = {
+  d1: Lane & { sqlMs: number }
+  index: Lane
+}
+
+const lane = (): Lane => ({ count: 0, busyMs: 0, inflight: 0, since: 0 })
+
+export function createSearchTimings(): SearchTimings {
+  return { d1: { ...lane(), sqlMs: 0 }, index: lane() }
+}
+
+async function track<T>(target: Lane, calls: number, run: () => Promise<T>) {
+  if (target.inflight++ === 0) target.since = performance.now()
+  try {
+    return await run()
+  } finally {
+    target.count += calls
+    if (--target.inflight === 0)
+      target.busyMs += performance.now() - target.since
+  }
+}
+
+type D1Result = { meta?: { duration?: number } }
+const timedMethods = new Set(['all', 'run', 'first', 'raw'])
+
+/** D1 reports SQL execution time inside the database; first() and raw() do not. */
+function addSqlTime(timings: SearchTimings, result: unknown) {
+  for (const entry of Array.isArray(result) ? result : [result]) {
+    const duration = (entry as D1Result | null)?.meta?.duration
+    if (typeof duration === 'number') timings.d1.sqlMs += duration
+  }
+}
+
+/** D1 batches accept only the binding's own statements, not proxies. */
+const bindingStatements = new WeakMap<object, D1PreparedStatement>()
+
+function timeStatement(
+  statement: D1PreparedStatement,
+  timings: SearchTimings,
+): D1PreparedStatement {
+  const timed = new Proxy(statement, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target)
+      if (typeof value !== 'function') return value
+      if (property === 'bind')
+        return (...values: unknown[]) =>
+          timeStatement(target.bind(...values), timings)
+      if (typeof property !== 'string' || !timedMethods.has(property))
+        return value.bind(target)
+      return (...args: unknown[]) =>
+        track(timings.d1, 1, async () => {
+          const result: unknown = await value.apply(target, args)
+          addSqlTime(timings, result)
+          return result
+        })
+    },
+  })
+  bindingStatements.set(timed, statement)
+  return timed
+}
+
+/** Time every statement and batch a search runs on this binding. */
+export function timeD1(
+  database: D1Database | undefined,
+  timings: SearchTimings,
+): D1Database | undefined {
+  // Without a binding, withDb falls back to its default database untimed.
+  if (!database) return undefined
+  return new Proxy(database, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target)
+      if (property === 'prepare' && typeof value === 'function')
+        // Forwards the caller's SQL unchanged; the D1 compatibility checks
+        // apply where that SQL is written (Kysely or a literal prepare call).
+        return (sql: string) =>
+          timeStatement(
+            Reflect.apply(value, target, [sql]) as D1PreparedStatement,
+            timings,
+          )
+      if (property === 'batch')
+        // A batch is one round trip, counted by its statements.
+        return (statements: D1PreparedStatement[]) =>
+          track(timings.d1, statements.length, async () => {
+            const result = await target.batch(
+              statements.map((entry) => bindingStatements.get(entry) ?? entry),
+            )
+            addSqlTime(timings, result)
+            return result
+          })
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
+/** Time every call a search makes to its workspace indexes. */
+export function timeIndexes(
+  indexes: SearchIndexes,
+  timings: SearchTimings,
+): SearchIndexes {
+  const timed =
+    <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
+    (...args: A) =>
+      track(timings.index, 1, () => call(...args))
+  return (workspaceId) => {
+    const index = indexes(workspaceId)
+    return {
+      search: timed((...args: Parameters<SearchIndex['search']>) =>
+        index.search(...args),
+      ),
+      groupMembers: timed((...args: Parameters<SearchIndex['groupMembers']>) =>
+        index.groupMembers(...args),
+      ),
+      details: timed((...args: Parameters<SearchIndex['details']>) =>
+        index.details(...args),
+      ),
+    }
+  }
+}
+
+/** Busy time so far, including calls still in flight when a search fails. */
+function lanePart(name: string, target: Lane, unit: string, now: number) {
+  const busy = target.busyMs + (target.inflight > 0 ? now - target.since : 0)
+  const running = target.inflight > 0 ? `, ${target.inflight} running` : ''
+  return `${name};dur=${Math.round(busy)};desc="${target.count} ${unit}${running}"`
+}
+
+/** Totals only: the header is visible to the signed-in viewer. */
+export function serverTiming(timings: SearchTimings, totalMs: number) {
+  const now = performance.now()
+  return [
+    `search;dur=${Math.round(totalMs)}`,
+    lanePart('d1', timings.d1, 'queries', now),
+    `d1sql;dur=${Math.round(timings.d1.sqlMs)}`,
+    lanePart('index', timings.index, 'calls', now),
+  ].join(', ')
+}
+
+const workspaceIndexes: SearchIndexes = (workspace) =>
+  env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`)
+
+/**
+ * Run one search request with timed D1 and index access. The breakdown is
+ * returned for the Server-Timing header. `expected` turns a known outcome,
+ * such as a capacity error, into a value that keeps its breakdown; any other
+ * error is logged with the breakdown so slow failures still leave a record.
+ */
+export async function withSearchTiming<T, E = never>(
+  route: string,
+  run: (db: Db, indexes: SearchIndexes) => Promise<T>,
+  expected?: (error: unknown) => E | undefined,
+): Promise<{ value: T | E; serverTiming: string }> {
+  const timings = createSearchTimings(),
+    started = performance.now()
+  try {
+    const value = await withDb(
+      (db) => run(db, timeIndexes(workspaceIndexes, timings)),
+      timeD1(env.DB, timings),
+    )
+    return {
+      value,
+      serverTiming: serverTiming(timings, performance.now() - started),
+    }
+  } catch (error) {
+    const value = expected?.(error)
+    if (value !== undefined)
+      return {
+        value,
+        serverTiming: serverTiming(timings, performance.now() - started),
+      }
+    console.warn(
+      JSON.stringify({
+        event: 'search_timing_failed',
+        route,
+        serverTiming: serverTiming(timings, performance.now() - started),
+      }),
+    )
+    throw error
+  }
+}
