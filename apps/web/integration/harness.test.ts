@@ -225,6 +225,11 @@ function searchProbe(workspace: string) {
         matchedKeywords: string[]
       }>
     > => call('details', undefined, undefined, undefined, { input, ids }),
+    detailsSearches: (
+      input: IndexSearchInput,
+      ids: string[],
+    ): Promise<{ rows: unknown[]; searches: number }> =>
+      call('detailsSearches', undefined, undefined, undefined, { input, ids }),
     sync: (_workspace?: string) => call('sync'),
     attemptSync: (_workspace?: string) => call('attemptSync'),
     resume: () => call('resume'),
@@ -3471,6 +3476,27 @@ test('workspace search RPC ranks active pages, cross-chunk evidence and literal 
       'weight-script',
     ]),
   ).toMatchObject([{ id: 'weight-script', matchedKeywords: ['weight'] }])
+  // A single term reuses the page query for its keyword evidence; each term
+  // of a longer query still has its own query.
+  expect(await probe.detailsSearches({ query: 'alpha' }, ['site'])).toEqual({
+    rows: [
+      {
+        id: 'site',
+        path: 'z.html',
+        excerpt: 'alpha beta',
+        hasBody: true,
+        matchedKeywords: ['alpha'],
+      },
+    ],
+    searches: 1,
+  })
+  expect(
+    (await probe.detailsSearches({ query: 'alpha beta' }, ['site'])).searches,
+  ).toBe(3)
+  expect(
+    (await probe.detailsSearches({ query: 'alpha', any: true }, ['site']))
+      .searches,
+  ).toBe(2)
   expect(
     await probe.details({ query: 'alpha beta', sort: 'newest' }, ['site']),
   ).toEqual([

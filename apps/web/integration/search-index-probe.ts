@@ -117,6 +117,25 @@ export class WorkspaceSearchIndex extends Index {
     this.failures = failures
     this.operations = operations
   }
+  /** Run details while counting the full-text statements it executes. */
+  detailsSearches(input: IndexSearchInput, ids: string[]) {
+    const storage = this.ctx.storage.sql
+    const exec = storage.exec.bind(storage)
+    let searches = 0
+    Object.defineProperty(storage, 'exec', {
+      configurable: true,
+      value: (...args: Parameters<SqlStorage['exec']>) => {
+        if (/\bMATCH\b/.test(args[0])) searches++
+        return exec(...args)
+      },
+    })
+    try {
+      const rows = this.details(input, ids)
+      return { rows, searches }
+    } finally {
+      Reflect.deleteProperty(storage, 'exec')
+    }
+  }
   queryState() {
     return {
       constructorChanges: this.constructorChanges,
@@ -314,6 +333,9 @@ export default {
         break
       case 'queryState':
         result = await stub.queryState()
+        break
+      case 'detailsSearches':
+        result = await stub.detailsSearches(command.input, command.ids)
         break
       case 'listSearch': {
         const db = createDb(env.DB)
