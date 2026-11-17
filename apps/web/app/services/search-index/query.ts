@@ -111,12 +111,12 @@ export function prepareQuery(value: string) {
 const graphemeSegmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' })
 const wordSegmenter = new Intl.Segmenter('ja', { granularity: 'word' })
 
-/** Map both literal/prefix and segmented matches back onto original source text. */
-export function searchMatchSpans(
-  body: string,
-  query: string,
-): Array<[number, number]> {
-  const prepared = prepareQuery(query)
+/**
+ * Normalize each grapheme on its own and map every normalized code unit back
+ * to the grapheme's source offsets. Highlighting and excerpts share this so
+ * their matches stay identical.
+ */
+function normalizedWithOffsets(body: string, withEnds: boolean) {
   const starts: number[] = [],
     ends: number[] = [],
     pieces: string[] = []
@@ -125,10 +125,19 @@ export function searchMatchSpans(
     pieces.push(normalized)
     for (let i = 0; i < normalized.length; i++) {
       starts.push(part.index)
-      ends.push(part.index + part.segment.length)
+      if (withEnds) ends.push(part.index + part.segment.length)
     }
   }
-  const normalized = pieces.join('')
+  return { normalized: pieces.join(''), starts, ends }
+}
+
+/** Map both literal/prefix and segmented matches back onto original source text. */
+export function searchMatchSpans(
+  body: string,
+  query: string,
+): Array<[number, number]> {
+  const prepared = prepareQuery(query)
+  const { normalized, starts, ends } = normalizedWithOffsets(body, true)
   const spans: Array<[number, number]> = []
   const collect = (
     text: string,
@@ -179,18 +188,7 @@ export function searchMatchSpans(
  */
 function firstMatchStart(body: string, query: string): number | undefined {
   const prepared = prepareQuery(query)
-  const starts: number[] = [],
-    ends: number[] = [],
-    pieces: string[] = []
-  for (const part of graphemeSegmenter.segment(body)) {
-    const normalized = part.segment.normalize('NFKC').toLowerCase()
-    pieces.push(normalized)
-    for (let i = 0; i < normalized.length; i++) {
-      starts.push(part.index)
-      ends.push(part.index + part.segment.length)
-    }
-  }
-  const normalized = pieces.join('')
+  const { normalized, starts } = normalizedWithOffsets(body, false)
   let best: number | undefined
   const consider = (start: number) => {
     if (best === undefined || start < best) best = start
@@ -231,12 +229,12 @@ function firstMatchStart(body: string, query: string): number | undefined {
     const text = tail + added,
       offset = joinedLength - tail.length
     for (const term of terms) {
+      // Matches wholly inside the tail were counted with earlier text; the
+      // first new one is the earliest this text can add.
       let at = text.indexOf(term)
-      while (at >= 0) {
-        // Matches wholly inside the tail were counted with earlier text.
-        if (at + term.length > tail.length) consider(tokenStarts[offset + at])
+      while (at >= 0 && at + term.length <= tail.length)
         at = text.indexOf(term, at + 1)
-      }
+      if (at >= 0) consider(tokenStarts[offset + at])
     }
     joinedLength += added.length
     tail = longest > 1 ? text.slice(-(longest - 1)) : ''
