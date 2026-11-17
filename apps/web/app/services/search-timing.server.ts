@@ -228,7 +228,7 @@ export async function withSearchTiming<T, E = never>(
  * one created with the apac-ne location hint and one without a hint. The
  * first call creates each object, so the second call is the one reported.
  */
-export async function probeIndexLocations(): Promise<string[]> {
+export function probeIndexLocations(): Promise<string[]> {
   const ping = async (
     label: string,
     name: string,
