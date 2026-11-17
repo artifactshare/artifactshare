@@ -12,6 +12,7 @@ import {
   assertCaptureServerHead,
   cleanCaptureHead,
   devShareableId,
+  localSandboxOrigin,
 } from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
@@ -102,11 +103,33 @@ export async function recordCaptureRevision(
   }
 }
 
+/** The sandbox the walkthrough expects beside `baseUrl` (see localSandboxOrigin). */
+export function walkthroughSandboxOrigin(baseUrl, env = process.env) {
+  return localSandboxOrigin(baseUrl, env) ?? 'https://localhost:5174'
+}
+
+/**
+ * The CLI build the walkthrough runs. The local capture command builds the
+ * CLI for the current HEAD into its runtime directory and names it here, so a
+ * stale `packages/cli/dist` is neither used nor rebuilt in place.
+ */
+export function walkthroughCliEntry(env = process.env) {
+  return resolve(env.WALKTHROUGH_CLI_ENTRY || 'packages/cli/dist/index.js')
+}
+
+/** What to do when the CLI build the walkthrough runs is missing. */
+export function missingCliRecovery(env = process.env) {
+  const entry = walkthroughCliEntry(env)
+  return env.WALKTHROUGH_CLI_ENTRY
+    ? `cli: ${entry} is missing; the local capture's CLI build for this run did not produce it. Rerun pnpm walkthroughs:capture:local and check the cli build output`
+    : `cli: ${entry} is missing; run pnpm --filter @artifactshare/cli build`
+}
+
 async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
     ['app', '/'],
-    ['sandbox', 'https://localhost:5174/'],
+    ['sandbox', `${walkthroughSandboxOrigin(baseUrl)}/`],
   ]) {
     try {
       const response = path.startsWith('http')
@@ -124,11 +147,9 @@ async function preflight(baseUrl, head) {
     }
   }
   try {
-    await stat(resolve('packages/cli/dist/index.js'))
+    await stat(walkthroughCliEntry())
   } catch {
-    failures.push(
-      'cli: packages/cli/dist/index.js is missing; run pnpm --filter @artifactshare/cli build',
-    )
+    failures.push(missingCliRecovery())
   }
   // A second app request catches the dependency-optimization reload window
   // before any browser or scenario state is created.
@@ -354,7 +375,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     await mkdir(cli.home, { recursive: true })
     const result = await execFileAsync(
       process.execPath,
-      [resolve('packages/cli/dist/index.js'), ...args],
+      [walkthroughCliEntry(), ...args],
       { cwd: cli.cwd, env: cli.env, maxBuffer: 4 * 1024 * 1024 },
     )
     const parsed = JSON.parse(result.stdout)

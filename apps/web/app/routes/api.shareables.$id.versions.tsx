@@ -21,7 +21,7 @@ import {
 } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
 import { publish, publishPrincipal } from '~/modules/publish'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import type { Route } from './+types/api.shareables.$id.versions'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -301,6 +301,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
           id,
           shareable?.visibility ?? 'private',
           isProduction(env),
+          devAppPort(env),
         ),
       }),
     )

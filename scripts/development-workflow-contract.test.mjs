@@ -37,6 +37,15 @@ test('documents proportional review and validation', () => {
   )
 })
 
+test('UI critique names the capture commands that start their own stack', () => {
+  const critique = workflow.split('## UI critique\n')[1]?.split('\n## ')[0]
+  assert.ok(critique)
+  assert.match(
+    critique,
+    /On a clean checkout with no server running, `pnpm screens:capture:local -- --screen <id>` and `pnpm walkthroughs:capture:local -- --task <id>` prepare missing local inputs, start their own app, sandbox and og-image services for the current HEAD on separate ports, registry and storage, run the same capture, and stop everything they started; they exit nonzero on any capture or walkthrough failure\./u,
+  )
+})
+
 test('requires root-cause rationale next to the smallest-design guidance', () => {
   const proportional = workflow
     .split('## Keep the workflow proportional\n')[1]

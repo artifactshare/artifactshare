@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve as resolvePath } from 'node:path'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import {
@@ -17,6 +18,9 @@ import {
   recordCaptureRevision,
   requestOriginPhase,
   shouldWaitForViewerReady,
+  missingCliRecovery,
+  walkthroughCliEntry,
+  walkthroughSandboxOrigin,
 } from './task-walkthrough-capture.mjs'
 import { championLoopTaskIds } from './task-walkthroughs.mjs'
 
@@ -74,10 +78,56 @@ test('captures pending navigation and clicks before their ready delay', () => {
   assert.equal(clickSettleMilliseconds({}), 500)
 })
 
+test('preflights the selected sandbox, or 5174 for an external server', () => {
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:41101', {
+      SCREEN_CAPTURE_SANDBOX_URL: 'https://localhost:41102/',
+    }),
+    'https://localhost:41102',
+  )
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:5173', {}),
+    'https://localhost:5174',
+  )
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:41101', {}),
+    'https://localhost:5174',
+  )
+})
+
+test('runs the CLI build the local capture names, or the checkout build', () => {
+  assert.equal(
+    walkthroughCliEntry({ WALKTHROUGH_CLI_ENTRY: '/run/cli/dist/index.js' }),
+    '/run/cli/dist/index.js',
+  )
+  assert.equal(
+    walkthroughCliEntry({}),
+    resolvePath('packages/cli/dist/index.js'),
+  )
+})
+
+test('a missing CLI build names the step that builds it', () => {
+  const runtime = missingCliRecovery({
+    WALKTHROUGH_CLI_ENTRY: '/run/cli/dist/index.js',
+  })
+  assert.match(runtime, /\/run\/cli\/dist\/index\.js is missing/)
+  assert.match(runtime, /local capture's CLI build/)
+  assert.match(runtime, /pnpm walkthroughs:capture:local/)
+  assert.doesNotMatch(runtime, /--filter @artifactshare\/cli build/)
+  assert.match(
+    missingCliRecovery({}),
+    /dist\/index\.js is missing; run pnpm --filter @artifactshare\/cli build/,
+  )
+})
+
 test('derives the recipient link URL used by walkthrough clipboard checks', () => {
   assert.equal(
     linkViewerUrlForCapture('https://localhost:5173', 'abc123def4'),
     'https://abc123def4.localhost:5173/',
+  )
+  assert.equal(
+    linkViewerUrlForCapture('https://localhost:41101', 'abc123def4'),
+    'https://abc123def4.localhost:41101/',
   )
   assert.equal(
     linkViewerUrlForCapture('https://artifactshare.com', 'abc123def4'),

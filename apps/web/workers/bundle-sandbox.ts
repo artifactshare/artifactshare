@@ -18,7 +18,8 @@ import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
 import {
   APEX_HOST,
   DELIVERY_UNAVAILABLE_PATH,
-  APP_DEV_PORT,
+  devAppOrigin,
+  devAppPort,
   isProduction,
   MCP_EMBED_FRAME_ANCESTORS,
   linkViewerOrigin,
@@ -109,10 +110,10 @@ export async function handleArtifactSandboxRequest(
   )
   const appOrigin = isProduction(env)
     ? `https://${APEX_HOST}`
-    : `https://localhost:${APP_DEV_PORT}`
+    : devAppOrigin(env)
   const viewerUrl = identity
     ? identity.domain === 'link'
-      ? linkViewerUrl(isProduction(env), identity.shareableId)
+      ? linkViewerUrl(isProduction(env), identity.shareableId, devAppPort(env))
       : `${appOrigin}/a/${encodeURIComponent(identity.shareableId)}?version=${encodeURIComponent(identity.versionId)}`
     : appOrigin
   const headers = new Headers(response.headers)
@@ -277,10 +278,16 @@ function sandboxProbeResponse(
   const origin = request.headers.get('Origin')
   const allowed = new Set(
     identity.domain === 'link'
-      ? [linkViewerOrigin(isProduction(env), identity.shareableId)]
+      ? [
+          linkViewerOrigin(
+            isProduction(env),
+            identity.shareableId,
+            devAppPort(env),
+          ),
+        ]
       : isProduction(env)
         ? [`https://${APEX_HOST}`, `https://${WWW_HOST}`]
-        : [`https://localhost:${APP_DEV_PORT}`],
+        : [devAppOrigin(env)],
   )
   const headers = new Headers({
     'Cache-Control': 'private, no-store, no-transform',
@@ -1269,10 +1276,16 @@ function frameAncestorsValue(
 ): string {
   const origins =
     responseDomain?.domain === 'link'
-      ? [linkViewerOrigin(isProduction(env), responseDomain.shareableId)]
+      ? [
+          linkViewerOrigin(
+            isProduction(env),
+            responseDomain.shareableId,
+            devAppPort(env),
+          ),
+        ]
       : isProduction(env)
         ? [`https://${APEX_HOST}`, `https://${WWW_HOST}`]
-        : [`https://localhost:${APP_DEV_PORT}`]
+        : [devAppOrigin(env)]
   // Embed-token previews are framed from the MCP host's widget sandbox, so the
   // content must name those origins as valid ancestors — only for embed tokens.
   if (embed) origins.push(...MCP_EMBED_FRAME_ANCESTORS)

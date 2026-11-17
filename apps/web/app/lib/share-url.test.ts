@@ -49,6 +49,18 @@ describe('buildShareableUrl', () => {
     )
   })
 
+  test('keeps the app port of a local stack started on other ports', () => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'localhost', origin: 'https://localhost:41101' },
+    })
+    expect(buildShareableUrl('abc123def4', 'link')).toBe(
+      'https://abc123def4.localhost:41101/',
+    )
+    expect(
+      buildShareableUrl('abc123def4', 'link', 'https://localhost:41101'),
+    ).toBe('https://abc123def4.localhost:41101/')
+  })
+
   test('uses the app origin when called from a production viewer host', () => {
     vi.stubGlobal('window', {
       location: {

@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { isLinkReportReason } from '~/lib/link-report'
-import { isProduction, linkViewerUrl } from '~/lib/hosts'
+import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { isSandboxArtifactId } from '~/lib/sandbox-block-report'
 import { isSameOriginRequest } from '~/lib/same-origin-request'
 import { linkDomainContext } from '~/middleware/context'
@@ -80,7 +80,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
   const result = await recordLinkReport(createDb(), params.id, {
     ...report,
-    viewerUrl: linkViewerUrl(isProduction(env), params.id),
+    viewerUrl: linkViewerUrl(isProduction(env), params.id, devAppPort(env)),
   })
   if (result === 'not-found') return notFound()
   reportCooldowns.set(cooldownKey, now)

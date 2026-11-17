@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Duplex } from 'node:stream'
-import { createServer } from 'node:http'
+import { createServer, type RequestListener } from 'node:http'
+import { lookup } from 'node:dns/promises'
 import { once } from 'node:events'
 import { http, HttpResponse } from 'msw/http'
 import { setupServer } from 'msw/node'
@@ -25,43 +26,63 @@ test.each([
 ] as const)(
   '%s enforces its outbound boundary while allowing handled and loopback traffic',
   async (name, policy, diagnostic) => {
-    const local = createServer((_request, response) => response.end('loopback'))
+    const answer: RequestListener = (_request, response) =>
+      response.end('loopback')
+    // One listener per loopback family, each on its own OS-assigned port, so
+    // every request reaches a listener this test owns: a wildcard bind loses
+    // 127.0.0.1:<port> to another process holding only that address (such as
+    // a local capture stack), which would then answer these requests.
+    const local4 = createServer(answer)
+    const local6 = createServer(answer)
     const network = setupServer(
       http.get('https://declared.invalid/request', () =>
         HttpResponse.text('handled'),
       ),
     )
+    const close = (server: typeof local4) =>
+      new Promise<void>((resolve, reject) =>
+        server.listening
+          ? server.close((error) => (error ? reject(error) : resolve()))
+          : resolve(),
+      )
     // Vitest retains the assertion failure even if teardown also fails.
     onTestFinished(async () => {
       network.close()
-      await new Promise<void>((resolve, reject) =>
-        local.close((error) => (error ? reject(error) : resolve())),
-      )
+      await Promise.all([close(local4), close(local6)])
     })
-    local.listen(0)
-    await once(local, 'listening')
-    const address = local.address()
-    if (!address || typeof address === 'string')
-      throw new Error('Missing TCP address')
+    const listenOn = async (server: typeof local4, host: string) => {
+      server.listen(0, host)
+      await once(server, 'listening')
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Missing TCP address')
+      return address.port
+    }
+    const port4 = await listenOn(local4, '127.0.0.1')
+    const port6 = await listenOn(local6, '::1')
+    // `localhost` is requested on the port of the family fetch connects to
+    // first: the first address the resolver returns.
+    const { family } = await lookup('localhost')
+    const localhostPort = family === 6 ? port6 : port4
     network.listen({ onUnhandledFrame: policy })
     expect(await (await fetch('https://declared.invalid/request')).text()).toBe(
       'handled',
     )
-    expect(
-      await (await fetch(`http://127.0.0.1:${address.port}/`)).text(),
-    ).toBe('loopback')
+    expect(await (await fetch(`http://127.0.0.1:${port4}/`)).text()).toBe(
+      'loopback',
+    )
     if (name === 'usercontent') {
       expect(
-        await (await fetch(`http://localhost:${address.port}/`)).text(),
+        await (await fetch(`http://localhost:${localhostPort}/`)).text(),
       ).toBe('loopback')
-      const ipv6 = new URL(`http://localhost:${address.port}/`)
+      const ipv6 = new URL(`http://localhost:${port6}/`)
       ipv6.hostname = '[::1]'
       expect(await (await fetch(ipv6)).text()).toBe('loopback')
     } else {
-      const response = await fetch(`http://localhost:${address.port}/`)
+      const response = await fetch(`http://localhost:${localhostPort}/`)
       expect(response.status).toBe(500)
       expect(await response.text()).toContain(
-        `Unhandled outbound request: GET http://localhost:${address.port}/`,
+        `Unhandled outbound request: GET http://localhost:${localhostPort}/`,
       )
     }
     const rejected = await fetch('https://undeclared.invalid/request')

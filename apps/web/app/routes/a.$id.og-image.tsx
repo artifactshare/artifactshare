@@ -5,7 +5,7 @@ import {
 } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
 import { env } from 'cloudflare:workers'
-import { isProduction, linkViewerUrl } from '~/lib/hosts'
+import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { fetchShareOgImage } from '~/services/og-image-worker.server'
 
 export async function loader({
@@ -74,7 +74,9 @@ export async function loader({
   // Only link-visibility shares render a preview card, and their share URL is
   // the per-ID viewer host itself, so the label is that host. App-hosted owner
   // avatars still resolve against the app origin.
-  const canonicalUrl = new URL(linkViewerUrl(isProduction(env), shareable.id))
+  const canonicalUrl = new URL(
+    linkViewerUrl(isProduction(env), shareable.id, devAppPort(env)),
+  )
   const ownerAvatarUrl = safeOwnerAvatarUrl(
     shareable.owner_image,
     new URL(`/a/${shareable.id}`, env.BETTER_AUTH_URL),

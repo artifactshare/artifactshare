@@ -28,6 +28,8 @@ import {
   captureScreenImages,
   writeCaptureReviewOutput,
   fileName,
+  localSandboxOrigin,
+  needsLocalSandbox,
 } from './screen-capture.mjs'
 
 function fixture(t) {
@@ -152,6 +154,28 @@ test('preserves an explicitly injected screen capture output root', () => {
   assert.equal(
     screenCaptureOutputDirectory('before', '/tmp/explicit-captures'),
     join('/tmp/explicit-captures', 'before'),
+  )
+})
+
+test('the sandbox preflight follows the selected sandbox and keeps the pnpm dev default', () => {
+  const sandboxScreen = { ready: { selector: '[data-sandbox-state="ready"]' } }
+  const selected = { SCREEN_CAPTURE_SANDBOX_URL: 'https://localhost:41102' }
+  assert.equal(
+    localSandboxOrigin('https://localhost:41101', selected),
+    'https://localhost:41102',
+  )
+  assert.equal(
+    needsLocalSandbox('https://localhost:41101', [sandboxScreen], selected),
+    true,
+  )
+  assert.equal(
+    localSandboxOrigin('https://localhost:5173', {}),
+    'https://localhost:5174',
+  )
+  assert.equal(localSandboxOrigin('https://localhost:41101', {}), null)
+  assert.equal(
+    needsLocalSandbox('https://localhost:41101', [sandboxScreen], {}),
+    false,
   )
 })
 

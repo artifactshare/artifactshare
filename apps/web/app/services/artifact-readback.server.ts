@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import type { CommentThreadView } from '~/lib/comments'
 import type { ArtifactKind } from '~/lib/shareable-types'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 
 export type ArtifactSourceFormat = 'html' | 'markdown'
 
@@ -111,7 +111,13 @@ export function shareUrl(
   id: string,
   visibility: string = 'private',
 ): string {
-  return shareableUrl(baseUrl, id, visibility, isProduction(env))
+  return shareableUrl(
+    baseUrl,
+    id,
+    visibility,
+    isProduction(env),
+    devAppPort(env),
+  )
 }
 
 export function agentCommentMutationFields(result: {
