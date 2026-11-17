@@ -12,7 +12,7 @@ test.each(['en', 'ja'] as const)(
     const facts =
       locale === 'en'
         ? [
-            'for all members',
+            'PDF body text and video speech are not included',
             'Owner',
             'Project',
             'Period',
@@ -26,7 +26,7 @@ test.each(['en', 'ja'] as const)(
             'Admin rights alone do not make a file appear',
           ]
         : [
-            'すべてのメンバー向け',
+            'PDF の本文や動画の音声は含みません',
             '所有者',
             'プロジェクト',
             '期間',
