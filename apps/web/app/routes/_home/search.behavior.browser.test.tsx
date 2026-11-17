@@ -402,6 +402,14 @@ test('Back and viewer return reload later pages before restoring their visible a
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/opens')) return new Response(null, { status: 204 })
+      if (url.includes('/search-suggestions'))
+        return Response.json({
+          files: [],
+          recent: [],
+          owners: [],
+          projects: [],
+        })
+      if (url.includes('/search-logs')) return Response.json({ searches: [] })
       if (url.includes('/search-groups')) {
         const second = url.includes('cursor=')
         return Response.json({

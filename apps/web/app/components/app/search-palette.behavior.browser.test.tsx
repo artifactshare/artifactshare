@@ -782,3 +782,88 @@ test('unresolved inherited IDs keep neutral labels without borrowing another sel
     .element(page.getByRole('button', { name: /Project: Home \(no project\)/ }))
     .toBeVisible()
 })
+
+test('phone header keeps search on the right and the empty palette says it is loading recent files', async () => {
+  await page.viewport(390, 700)
+  // Report a wide screen so only the CSS breakpoints decide the phone layout.
+  const matchMedia = window.matchMedia.bind(window)
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    ...matchMedia(query),
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+  // Suggestions never answer, so the palette stays in its loading state.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) =>
+      String(input).includes('search-logs')
+        ? Promise.resolve(Response.json({ searches: [] }))
+        : new Promise<Response>(() => {}),
+    ),
+  )
+  const router = createMemoryRouter([
+    {
+      id: 'root',
+      path: '/',
+      loader: () => ({ locale: 'en' }),
+      element: (
+        <Topbar
+          workspaceName="Workspace"
+          user={{
+            id: 'viewer',
+            name: 'Viewer',
+            email: 'viewer@example.com',
+            image: null,
+            initial: 'V',
+          }}
+        />
+      ),
+    },
+  ])
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(
+    <TooltipProvider>
+      <RouterProvider router={router} />
+    </TooltipProvider>,
+  )
+  const trigger = page.getByRole('button', { name: /^Search(?::|$)/ })
+  await expect.element(trigger).toBeVisible()
+  await waitForBrowserLayout()
+  expect(trigger.element().getBoundingClientRect().left).toBeGreaterThan(
+    window.innerWidth / 2,
+  )
+  // CSS alone places it there, before the width check in JavaScript runs.
+  // An icon button, not the desktop field with its placeholder and ⌘K.
+  expect(trigger.element().getBoundingClientRect().width).toBeLessThan(60)
+  await trigger.click()
+  await expect
+    .element(page.getByRole('status').filter({ hasText: 'Loading…' }))
+    .toBeVisible()
+})
+
+test('choosing a suggested person clears the partial name and keeps a row that runs the search', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('search-logs')) return Response.json({ searches: [] })
+      return Response.json(
+        new URL(url, location.origin).searchParams.get('q')
+          ? { ...empty, owners: [{ id: 'alex', name: 'Alex Kim' }] }
+          : empty,
+      )
+    }),
+  )
+  const router = mountPalette()
+  await page.getByRole('button', { name: /^Search(?::|$)/ }).click()
+  const field = page.getByRole('combobox', { name: /^(Keywords|キーワード)$/ })
+  await field.fill('Ale')
+  await page.getByRole('option', { name: /Alex Kim/ }).click()
+  await expect.element(field).toHaveValue('')
+  await page.getByRole('option', { name: /^View all matching files/ }).click()
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  expect(router.state.location.search).toContain('owner=alex')
+})

@@ -700,6 +700,17 @@ export async function searchSuggestions(
   now = new Date().toISOString(),
 ) {
   const discoveryInput = { ...input.filters, viewerUserId: user.id, now }
+  // An empty query shows only recently opened files, so skip the index and
+  // name lookups whose results the palette would discard.
+  if (!input.query.trim())
+    return {
+      files: [],
+      owners: [],
+      projects: [],
+      recent: (await recentSuggestions(db, user.id, discoveryInput)).map(
+        ownedBy(user.id),
+      ),
+    }
   const [hits, projects, owners] = await Promise.all([
     enumerateSuggestionIds(db, discoveryInput).then(async (sources) =>
       (
@@ -731,10 +742,7 @@ export async function searchSuggestions(
     suggestProjects(db, user.id, input.query, input.filters.includeArchived),
     suggestionOwners(db, discoveryInput, input.query),
   ])
-  const selected = mergeSearchHits(
-    hits,
-    input.sort === 'newest' || !input.query.trim(),
-  ).slice(0, 6)
+  const selected = mergeSearchHits(hits, input.sort === 'newest').slice(0, 6)
   const byId = new Map(
     (
       await metadata(
@@ -774,63 +782,71 @@ export async function searchSuggestions(
         ]
       : []
   })
-  const recent: Metadata[] = []
-  if (!input.query.trim()) {
-    // Bound history reads while filling the six currently discoverable slots.
-    for (let offset = 0; offset < 500 && recent.length < 6; offset += 50) {
-      const candidates = await db
-        .selectFrom('shareable_viewer_recency as r')
-        .innerJoin('shareables as s', 's.id', 'r.shareable_id')
-        .select(['s.id', 's.workspace_id as workspaceId', 'r.last_viewed_at'])
-        .where('r.viewer_user_id', '=', user.id)
-        .orderBy('r.last_viewed_at', 'desc')
-        .orderBy('s.id')
-        .limit(50)
-        .offset(offset)
-        .execute()
-      const allowed = new Set<string>()
-      for (const workspaceId of new Set(
-        candidates.map((row) => row.workspaceId),
-      )) {
-        for (const row of await discoverCandidates(db, {
-          ...discoveryInput,
-          workspaceId,
-          candidateIds: candidates
-            .filter((candidate) => candidate.workspaceId === workspaceId)
-            .map((candidate) => candidate.id),
-        }))
-          allowed.add(row.id)
-      }
-      const visible = candidates.filter((row) => allowed.has(row.id))
-      const metas = new Map(
-        (
-          await metadata(
-            db,
-            visible.map((row) => row.id),
-            user.id,
-          )
-        ).map((row) => [row.id, row]),
-      )
-      for (const row of visible) {
-        const meta = metas.get(row.id)
-        if (meta) recent.push(meta)
-        if (recent.length === 6) break
-      }
-      if (candidates.length < 50) break
-    }
-  }
-  // The palette has no session; mark the viewer's own files so it can say
-  // "Me" like the results page.
-  const mine = <T extends { ownerId: string }>(row: T) => ({
+  return { files: files.map(ownedBy(user.id)), owners, projects, recent: [] }
+}
+
+// The palette has no session; mark the viewer's own files so it can say
+// "Me" like the results page.
+const ownedBy =
+  (viewerId: string) =>
+  <T extends { ownerId: string }>(row: T) => ({
     ...row,
-    ownedByViewer: row.ownerId === user.id,
+    ownedByViewer: row.ownerId === viewerId,
   })
-  return {
-    files: files.map(mine),
-    owners,
-    projects,
-    recent: recent.map(mine),
+
+/** The six most recently opened files the viewer can still discover. */
+async function recentSuggestions(
+  db: Db,
+  viewerId: string,
+  discoveryInput: Omit<
+    Parameters<typeof discoverCandidates>[1],
+    'workspaceId' | 'candidateIds'
+  >,
+) {
+  const recent: Metadata[] = []
+  // Bound history reads while filling the six currently discoverable slots.
+  for (let offset = 0; offset < 500 && recent.length < 6; offset += 50) {
+    const candidates = await db
+      .selectFrom('shareable_viewer_recency as r')
+      .innerJoin('shareables as s', 's.id', 'r.shareable_id')
+      .select(['s.id', 's.workspace_id as workspaceId', 'r.last_viewed_at'])
+      .where('r.viewer_user_id', '=', viewerId)
+      .orderBy('r.last_viewed_at', 'desc')
+      .orderBy('s.id')
+      .limit(50)
+      .offset(offset)
+      .execute()
+    const allowed = new Set<string>()
+    for (const workspaceId of new Set(
+      candidates.map((row) => row.workspaceId),
+    )) {
+      for (const row of await discoverCandidates(db, {
+        ...discoveryInput,
+        workspaceId,
+        candidateIds: candidates
+          .filter((candidate) => candidate.workspaceId === workspaceId)
+          .map((candidate) => candidate.id),
+      }))
+        allowed.add(row.id)
+    }
+    const visible = candidates.filter((row) => allowed.has(row.id))
+    const metas = new Map(
+      (
+        await metadata(
+          db,
+          visible.map((row) => row.id),
+          viewerId,
+        )
+      ).map((row) => [row.id, row]),
+    )
+    for (const row of visible) {
+      const meta = metas.get(row.id)
+      if (meta) recent.push(meta)
+      if (recent.length === 6) break
+    }
+    if (candidates.length < 50) break
   }
+  return recent
 }
 
 function searchFacets(rows: Metadata[], actor: string, exact: boolean) {

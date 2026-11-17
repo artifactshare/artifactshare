@@ -65,8 +65,13 @@ export function clearSearchFilters(params: URLSearchParams) {
 }
 export function removeSelectedName(query: string, name: string) {
   if (!name) return query
-  const lowered = query.toLocaleLowerCase(),
-    target = name.toLocaleLowerCase()
+  // Locale-free lowercasing, like the server's name matching.
+  const lowered = query.toLowerCase(),
+    target = name.toLowerCase()
+  // Suggestions match when the whole query is part of the name, so a partly
+  // typed name was only typed to find this choice.
+  const typed = lowered.trim()
+  if (typed && target.includes(typed)) return ''
   const wordName = /[\p{Script=Latin}\p{N}]/u.test(name)
   let index = lowered.indexOf(target)
   while (index >= 0) {

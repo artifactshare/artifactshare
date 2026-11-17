@@ -56,6 +56,9 @@ test('selecting a name removes only that span and preserves unrelated words', ()
   expect(removeSelectedName('report Alex budget', 'Alex')).toBe('report budget')
   expect(removeSelectedName('report budget', 'Alex')).toBe('report budget')
   expect(removeSelectedName('annual report Ann', 'Ann')).toBe('annual report')
+  expect(removeSelectedName('ale', 'Alex Kim')).toBe('')
+  expect(removeSelectedName(' 溝口 ', '溝口浩二')).toBe('')
+  expect(removeSelectedName('設計', '設計')).toBe('')
 })
 
 test('canonical history dates display inclusive calendar days without widening the interval', async () => {

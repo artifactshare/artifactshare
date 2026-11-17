@@ -1,4 +1,10 @@
-import { IconSearch, IconX, IconFolder, IconHistory } from '@tabler/icons-react'
+import {
+  IconSearch,
+  IconX,
+  IconFolder,
+  IconHistory,
+  IconLoader2,
+} from '@tabler/icons-react'
 import {
   useEffect,
   useMemo,
@@ -24,6 +30,7 @@ import { FileTypeIcon } from './file-type-icon'
 import { Highlight } from './search-results'
 import { renderTypeFromKind } from '~/lib/artifact-type'
 import { Button } from '~/components/ui/button'
+import { cn } from '~/lib/utils'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
@@ -110,8 +117,12 @@ export function SearchPalette({
   )
   return (
     <div
+      // Breakpoint classes, not the `mobile` state, so the first paint on a
+      // phone already shows the icon button on the right.
       className={
-        mobile && !resultsPage ? 'shrink-0' : 'nav:max-w-xl min-w-0 flex-1'
+        resultsPage
+          ? 'nav:max-w-xl min-w-0 flex-1'
+          : 'max-nav:ml-auto max-nav:shrink-0 nav:max-w-xl nav:min-w-0 nav:flex-1'
       }
     >
       {mobile ? (
@@ -161,27 +172,24 @@ function SearchTrigger({
           : `${t('pal.search')}: ${currentQuery || t('pal.placeholder')}${mobile ? '' : ' ⌘K'}`
       }
       className={
-        mobile
-          ? resultsPage
-            ? 'text-muted-foreground min-w-0 flex-1 justify-start gap-2'
-            : 'gap-2'
-          : 'text-muted-foreground w-full justify-start gap-2'
+        resultsPage
+          ? 'text-muted-foreground max-nav:min-w-0 max-nav:flex-1 nav:w-full justify-start gap-2'
+          : 'nav:text-muted-foreground nav:w-full nav:justify-start gap-2'
       }
       onClick={onOpen}
     >
       <IconSearch aria-hidden="true" />
-      {(!mobile || resultsPage) && (
-        <>
-          <span className="min-w-0 flex-1 truncate text-left">
-            {currentQuery || t('pal.placeholder')}
-          </span>
-          {!mobile && (
-            <kbd aria-hidden="true" className="text-xs">
-              ⌘K
-            </kbd>
-          )}
-        </>
-      )}
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-left',
+          !resultsPage && 'max-nav:hidden',
+        )}
+      >
+        {currentQuery || t('pal.placeholder')}
+      </span>
+      <kbd aria-hidden="true" className="max-nav:hidden text-xs">
+        ⌘K
+      </kbd>
     </Button>
   )
 }
@@ -381,7 +389,9 @@ function PaletteBody({
     [retry, setRetry] = useState(0)
   const { history, historyError } = useSearchHistory(retry)
   const sequence = useRef(0),
-    composition = useRef(false)
+    composition = useRef(false),
+    // Opening the palette fetches at once; only typing waits for a pause.
+    fetched = useRef(false)
   const params = new URLSearchParams(initialParams)
   params.set('q', query)
   params.delete('owner')
@@ -393,31 +403,35 @@ function PaletteBody({
     const generation = ++sequence.current
     if (composing) return
     const controller = new AbortController()
-    const timer = setTimeout(() => {
-      setStatus('loading')
-      void fetch(
-        `/api/search-suggestions?${searchApiParams(new URLSearchParams(signature))}`,
-        { signal: controller.signal },
-      )
-        .then((response) => {
-          if (!response.ok) {
-            void response.body?.cancel()
-            throw new Error('suggestions')
-          }
-          return response.json<Suggestions>()
-        })
-        .then((data: Suggestions) => {
-          if (sequence.current === generation) {
-            setResults(data)
-            setSelected(-1)
-            setStatus('ready')
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted && sequence.current === generation)
-            setStatus('error')
-        })
-    }, 150)
+    const timer = setTimeout(
+      () => {
+        fetched.current = true
+        setStatus('loading')
+        void fetch(
+          `/api/search-suggestions?${searchApiParams(new URLSearchParams(signature))}`,
+          { signal: controller.signal },
+        )
+          .then((response) => {
+            if (!response.ok) {
+              void response.body?.cancel()
+              throw new Error('suggestions')
+            }
+            return response.json<Suggestions>()
+          })
+          .then((data: Suggestions) => {
+            if (sequence.current === generation) {
+              setResults(data)
+              setSelected(-1)
+              setStatus('ready')
+            }
+          })
+          .catch(() => {
+            if (!controller.signal.aborted && sequence.current === generation)
+              setStatus('error')
+          })
+      },
+      fetched.current ? 150 : 0,
+    )
     return () => {
       clearTimeout(timer)
       controller.abort()
@@ -460,6 +474,7 @@ function PaletteBody({
   )
   const options = paletteOptions({
     query,
+    filtered: owners.length > 0 || Boolean(scope),
     results,
     history,
     choose,
@@ -526,7 +541,7 @@ function PaletteBody({
         )}
         <Input
           ref={input}
-          className="min-w-16 flex-1 border-0 px-0 shadow-none focus-visible:ring-0"
+          className="min-w-16 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
           placeholder={t('pal.placeholder')}
           role="combobox"
           aria-label={t('search.keyword')}
@@ -680,13 +695,21 @@ function PaletteCandidates({
             : 'text-muted-foreground px-3 py-1 text-sm'
         }
       >
-        {status === 'loading'
-          ? t('search.loading')
-          : status === 'error'
-            ? t('search.failure')
-            : t('search.suggestionCount', {
-                n: options.filter((option) => option.key !== 'all').length,
-              })}
+        {status === 'loading' ? (
+          <span className="flex items-center gap-2">
+            <IconLoader2
+              className="size-4 motion-safe:animate-spin motion-safe:[animation-duration:var(--anim-spin-duration)]"
+              aria-hidden="true"
+            />
+            {t(query.trim() ? 'search.loading' : 'search.loadingRecent')}
+          </span>
+        ) : status === 'error' ? (
+          t('search.failure')
+        ) : (
+          t('search.suggestionCount', {
+            n: options.filter((option) => option.key !== 'all').length,
+          })
+        )}
       </div>
       {(status === 'error' || historyError) && (
         <Button onClick={retry}>{t('search.retry')}</Button>
@@ -778,6 +801,7 @@ function PaletteCandidates({
 
 function paletteOptions({
   query,
+  filtered,
   results,
   history,
   choose,
@@ -787,6 +811,8 @@ function paletteOptions({
   formatDate,
 }: {
   query: string
+  /** An owner or project chip is set, so Enter searches even without words. */
+  filtered: boolean
   results: Suggestions
   history: Array<{
     id: string
@@ -869,10 +895,12 @@ function paletteOptions({
           ),
       })
   }
-  if (query.trim())
+  if (query.trim() || filtered)
     options.push({
       key: 'all',
-      label: t('search.all', { q: query }),
+      label: query.trim()
+        ? t('search.all', { q: query })
+        : t('search.allFiltered'),
       activate: submit,
     })
   return options
