@@ -18,6 +18,8 @@ import {
 import { roundCapConsultation } from './agent-role-settings.mjs'
 import {
   readRounds,
+  matchingPairHistory,
+  refusedHead,
   roundsPath,
   writeConsultation,
   writeRounds,
@@ -2266,6 +2268,7 @@ test('Ready coordinator orders locking, Ready, queue, and cleanup with the same 
   const ledger = tempLedger()
   const logs = []
   const code = await runReady({
+    acquireScopeLock: () => Promise.resolve(() => {}),
     parsed: parseArgs(['--', '--no-deferred', '--queue']),
     ledger,
     exec: (file, args) => {
@@ -2314,6 +2317,7 @@ test('queue and cleanup failures retain diagnostics and propagate nonzero status
     const messages = []
     let cleanupCalls = 0
     const code = await runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       parsed: parseArgs(['--no-deferred', '--queue']),
       ledger: tempLedger(),
       exec: h.exec,
@@ -2365,6 +2369,7 @@ test('failed Ready, dry-run, and Ready without queue never start queue or cleanu
     const h = harness({ body: 'Public body', dirty: mode === 'failed' })
     let mutated = false
     const code = await runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       parsed: parseArgs([
         '--no-deferred',
         ...(mode === 'plain' ? [] : ['--queue']),
@@ -2399,6 +2404,7 @@ test('concurrent Ready reads the winning findings only after release', async () 
   const secondGate = Promise.withResolvers()
   const wrote = Promise.withResolvers()
   const first = runReady({
+    acquireScopeLock: () => Promise.resolve(() => {}),
     ledger,
     parsed: parseArgs(['--deferred', 'winning finding']),
     exec: harness({ body: 'Public body' }).exec,
@@ -2414,6 +2420,7 @@ test('concurrent Ready reads the winning findings only after release', async () 
   const secondHarness = harness({ body: 'Public body' })
   const errors = []
   const second = runReady({
+    acquireScopeLock: () => Promise.resolve(() => {}),
     ledger,
     parsed: parseArgs(['--no-deferred']),
     exec: (file, args) => {
@@ -2446,6 +2453,7 @@ for (const mode of ['immediate', 'contended', 'timeout', 'dry']) {
     const errors = []
     let released = false
     const pending = runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       ledger,
       exec: h.exec,
       parsed: parseArgs([
@@ -2491,6 +2499,7 @@ test('queue merge reacquires landing lock and reports recovery on timeout', asyn
     const errors = []
     let locks = 0
     const code = await runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       ledger,
       parsed: parseArgs(['--deferred', 'finding', '--queue']),
       exec: (file, args) => {
@@ -2543,6 +2552,7 @@ test('dry Ready checks the ledger snapshot obtained after acquisition', async ()
   const errors = []
   let released = false
   const pending = runReady({
+    acquireScopeLock: () => Promise.resolve(() => {}),
     ledger,
     parsed: parseArgs(['--no-deferred', '--dry-run']),
     exec: h.exec,
@@ -2579,6 +2589,7 @@ for (const dirty of [false, true]) {
     const ledger = tempLedger()
     const messages = []
     const code = await runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       parsed: parseArgs(['--deferred', 'synthetic finding', '--queue']),
       ledger,
       exec: h.exec,
@@ -2622,6 +2633,7 @@ for (const cleanupFails of [false, true]) {
     let cleanupResult
     let locks = 0
     const code = await runReady({
+      acquireScopeLock: () => Promise.resolve(() => {}),
       ledger,
       parsed: parseArgs(['--no-deferred', '--queue']),
       exec: (file, args) => {
@@ -2682,3 +2694,168 @@ for (const cleanupFails of [false, true]) {
     )
   })
 }
+
+test('early workaround authorization is bound to evidence and FIX HERE survives replacement', async (t) => {
+  for (const variant of [
+    'healthy',
+    'clean replacement',
+    'FIX HERE',
+    'replacement',
+    'mixed',
+    'corrupt',
+    'profile',
+    'coverage',
+    'stale',
+  ]) {
+    await t.test(variant, () => {
+      const h = harness({ body: 'Public body', evidence: { pair: false } })
+      const run = (_file, args) =>
+        args[0] === 'branch' ? 'topic' : h.commonDir
+      const finding = {
+        id: 'W1',
+        file: 'adapter.mjs',
+        severity: 'blocker',
+        workaround: true,
+        root_cause: 'External dependency',
+        removing_change: 'Dependency fix',
+      }
+      const evidence = {
+        run,
+        base: mergeBase,
+        blockers: { codex: 1, claude: 0 },
+        workarounds: {
+          codex: { workaroundBlockers: 1, workaroundFindings: [finding] },
+          claude: { workaroundBlockers: 0, workaroundFindings: [] },
+        },
+      }
+      recordCompletedRounds(head, evidence)
+      const codexPath = roundsPath('topic', 'codex', run)
+      const claudePath = roundsPath('topic', 'claude', run)
+      const pair = matchingPairHistory({
+        codexState: readRounds(codexPath),
+        claudeState: readRounds(claudePath),
+        profile: implementationReviewProfile,
+      })
+      const consultationPath = roundsPath('topic', 'consultation', run)
+      const decision = {
+        head,
+        pairHead: head,
+        pairId: pair.pairId,
+        kind: 'workarounds',
+        decision: variant === 'FIX HERE' ? 'FIX HERE' : 'PROCEED',
+        profile: roundCapConsultation,
+      }
+      writeConsultation(consultationPath, decision)
+      if (variant === 'clean replacement')
+        recordEvidence(h.commonDir, head, { critique: false })
+      if (variant === 'replacement') recordCompletedRounds(head, evidence)
+      if (
+        ['mixed', 'corrupt', 'profile', 'stale', 'coverage'].includes(variant)
+      ) {
+        const state = readRounds(codexPath)
+        const round = state.rounds.at(-1)
+        if (variant === 'mixed') round.blockers = 2
+        if (variant === 'corrupt') round.workaroundFindings[0].root_cause = ''
+        if (variant === 'profile') round.profile = {}
+        if (variant === 'stale') round.head = 'e'.repeat(40)
+        if (variant === 'coverage') {
+          round.base = 'f'.repeat(40)
+          const claude = readRounds(claudePath)
+          claude.rounds.at(-1).base = round.base
+          writeRounds(claudePath, claude)
+        }
+        writeRounds(codexPath, state)
+      }
+      if (variant === 'FIX HERE') {
+        recordEvidence(h.commonDir, head, { critique: false })
+        // Subsequent writes at another HEAD and either kind cannot erase refusal.
+        for (const kind of ['workarounds', 'round-cap']) {
+          writeConsultation(consultationPath, {
+            ...decision,
+            head: 'e'.repeat(40),
+            kind,
+            decision: 'PROCEED',
+          })
+          writeConsultation(consultationPath, {
+            ...decision,
+            kind,
+            decision: 'PROCEED',
+            profile: { changed: true },
+          })
+          assert.equal(refusedHead(consultationPath, head), true)
+        }
+      }
+      const ledger = tempLedger()
+      const attempt = () =>
+        ready({ exec: h.exec, parsed: evidenceParsed(), ledger })
+      const accepted = ['healthy', 'clean replacement'].includes(variant)
+      if (accepted) attempt()
+      else
+        assert.throws(
+          attempt,
+          variant === 'FIX HERE' ? /FIX HERE/ : /invalid or stale/,
+        )
+      assert.equal(markedReady(h), accepted)
+      if (!accepted) assert.equal(existsSync(ledger), false)
+    })
+  }
+})
+
+test('Ready waits for the gate scope lock and reads a refusal written before acquisition', async () => {
+  const h = harness({ body: 'Public body' })
+  const waiting = Promise.withResolvers()
+  const acquired = Promise.withResolvers()
+  const errors = []
+  let released = false
+  const ledger = tempLedger()
+  const pending = runReady({
+    parsed: evidenceParsed(),
+    ledger,
+    exec: h.exec,
+    acquireLock: () => () => {},
+    acquireScopeLock: (branch) => {
+      assert.equal(branch, 'topic')
+      waiting.resolve()
+      return acquired.promise
+    },
+    log: () => {},
+    reportError: (message) => errors.push(message),
+  })
+  await waiting.promise
+  assert.equal(markedReady(h), false)
+  const path = roundsPath('topic', 'consultation', () => h.commonDir)
+  writeConsultation(path, {
+    head,
+    pairHead: head,
+    pairId: 'pair',
+    kind: 'workarounds',
+    decision: 'FIX HERE',
+    profile: roundCapConsultation,
+  })
+  acquired.resolve(() => {
+    released = true
+  })
+  assert.equal(await pending, 1)
+  assert.equal(released, true)
+  assert.match(errors.join('\n'), /FIX HERE/)
+  assert.equal(markedReady(h), false)
+  assert.equal(existsSync(ledger), false)
+})
+
+test('a correcting commit with a fresh clean pair is eligible without erasing old refusal', () => {
+  const corrected = 'e'.repeat(40)
+  const h = harness({ localHead: corrected, body: 'Public body' })
+  const path = roundsPath('topic', 'consultation', () => h.commonDir)
+  writeConsultation(path, {
+    head,
+    pairHead: head,
+    pairId: 'old-pair',
+    kind: 'workarounds',
+    decision: 'FIX HERE',
+    profile: roundCapConsultation,
+  })
+  ready({ exec: h.exec, parsed: evidenceParsed(), ledger: tempLedger() })
+  assert.equal(markedReady(h), true)
+  assert.equal(refusedHead(path, head), true)
+  assert.equal(refusedHead(path, corrected), false)
+})

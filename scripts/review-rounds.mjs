@@ -1,3 +1,4 @@
+import { validWorkaroundFinding } from './implementation-review-input.mjs'
 import { execFileSync } from 'node:child_process'
 import {
   mkdirSync,
@@ -110,6 +111,7 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
     codex.head !== claude.head ||
     !codex.base ||
     codex.base !== claude.base ||
+    codex.pairId !== claude.pairId ||
     !codex.profile ||
     !claude.profile ||
     !sameJson(codex.profile, profile) ||
@@ -117,6 +119,19 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
   )
     return undefined
   return {
+    ...(codex.pairId && codex.pairId === claude.pairId
+      ? { pairId: codex.pairId }
+      : {}),
+    ...(validWorkaroundRound(codex) && validWorkaroundRound(claude)
+      ? {
+          workaroundBlockers:
+            codex.workaroundBlockers + claude.workaroundBlockers,
+          workaroundFindings: {
+            codex: codex.workaroundFindings,
+            claude: claude.workaroundFindings,
+          },
+        }
+      : {}),
     head: codex.head,
     base: codex.base,
     profile: codex.profile,
@@ -125,9 +140,90 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
       : {}),
     // Only the blocker counts the gate parsed from both results; a round
     // without one (legacy, or an unparseable result) leaves this undefined.
-    ...(Number.isInteger(codex.blockers) && Number.isInteger(claude.blockers)
+    ...(Number.isInteger(codex.blockers) &&
+    codex.blockers >= 0 &&
+    Number.isInteger(claude.blockers) &&
+    claude.blockers >= 0
       ? { blockers: codex.blockers + claude.blockers }
       : {}),
+  }
+}
+
+function validWorkaroundRound(round) {
+  return (
+    Object.keys(round).every((key) =>
+      [
+        'head',
+        'reviewer',
+        'at',
+        'base',
+        'commitBase',
+        'profile',
+        'blockers',
+        'pairId',
+        'workaroundBlockers',
+        'workaroundFindings',
+      ].includes(key),
+    ) &&
+    typeof round.pairId === 'string' &&
+    !!round.pairId.trim() &&
+    Number.isInteger(round.blockers) &&
+    round.blockers >= 0 &&
+    Number.isInteger(round.workaroundBlockers) &&
+    round.workaroundBlockers >= 0 &&
+    round.workaroundBlockers <= round.blockers &&
+    Array.isArray(round.workaroundFindings) &&
+    round.workaroundFindings.length === round.workaroundBlockers &&
+    round.workaroundFindings.every(
+      (finding) =>
+        validWorkaroundFinding(finding) &&
+        Object.keys(finding).every((key) =>
+          [
+            'id',
+            'file',
+            'line',
+            'summary',
+            'severity',
+            'workaround',
+            'root_cause',
+            'removing_change',
+          ].includes(key),
+        ) &&
+        (finding.line === undefined ||
+          (Number.isInteger(finding.line) && finding.line > 0)) &&
+        (finding.summary === undefined ||
+          (typeof finding.summary === 'string' && !!finding.summary.trim())) &&
+        typeof finding.id === 'string' &&
+        !!finding.id.trim() &&
+        typeof finding.file === 'string' &&
+        !!finding.file.trim(),
+    ) &&
+    new Set(round.workaroundFindings.map(({ id }) => id)).size ===
+      round.workaroundFindings.length
+  )
+}
+
+export function allWorkaroundPair(pair, head) {
+  return (
+    pair?.head === head &&
+    typeof pair.pairId === 'string' &&
+    Number.isInteger(pair.blockers) &&
+    pair.blockers > 0 &&
+    pair.workaroundBlockers === pair.blockers &&
+    !!pair.workaroundFindings
+  )
+}
+
+export function refusedHead(path, head) {
+  try {
+    const state = JSON.parse(readFileSync(path, 'utf8'))
+    return (
+      state.schema_version === 1 &&
+      Array.isArray(state.fixHereHeads) &&
+      state.fixHereHeads.includes(head)
+    )
+  } catch {
+    return false
   }
 }
 
@@ -143,7 +239,10 @@ export function completedPairs({ codexState, claudeState, profile }) {
   const codex = rounds(codexState)
   return rounds(claudeState).filter((round) =>
     codex.some(
-      (other) => other.head === round.head && other.base === round.base,
+      (other) =>
+        other.head === round.head &&
+        other.base === round.base &&
+        other.pairId === round.pairId,
     ),
   )
 }
@@ -221,17 +320,50 @@ export function readConsultation(path, profile) {
     !/^[0-9a-f]{40}$/u.test(consultation.head) ||
     typeof consultation.pairHead !== 'string' ||
     !/^[0-9a-f]{40}$/u.test(consultation.pairHead) ||
-    !consultationDecisions.includes(consultation.decision) ||
+    !(consultation.kind === 'workarounds'
+      ? ['PROCEED', 'FIX HERE'].includes(consultation.decision) &&
+        typeof consultation.pairId === 'string' &&
+        !!consultation.pairId.trim() &&
+        Object.keys(consultation).every((key) =>
+          [
+            'head',
+            'pairHead',
+            'pairId',
+            'kind',
+            'decision',
+            'profile',
+            'at',
+          ].includes(key),
+        )
+      : (consultation.kind === undefined ||
+          consultation.kind === 'round-cap') &&
+        consultationDecisions.includes(consultation.decision)) ||
     !sameJson(consultation.profile, profile)
   )
     return undefined
   return consultation
 }
 
-export function writeConsultation(path, { head, pairHead, decision, profile }) {
+export function writeConsultation(
+  path,
+  { head, pairHead, decision, profile, kind = 'round-cap', pairId },
+) {
+  let previous
+  try {
+    previous = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    previous = {}
+  }
+  const fixHereHeads = new Set(
+    Array.isArray(previous.fixHereHeads) ? previous.fixHereHeads : [],
+  )
+  if (kind === 'workarounds' && decision === 'FIX HERE') fixHereHeads.add(head)
   writeRounds(path, {
     schema_version: 1,
+    fixHereHeads: [...fixHereHeads],
     consultation: {
+      kind,
+      ...(pairId ? { pairId } : {}),
       head,
       pairHead,
       decision,
@@ -295,9 +427,24 @@ export function isStrictAncestor(base, head, run = commandOutput) {
 
 export function recordRound(
   state,
-  { head, reviewer, base, profile, commitBase, blockers },
+  {
+    head,
+    reviewer,
+    base,
+    profile,
+    commitBase,
+    blockers,
+    pairId,
+    workaroundBlockers,
+    workaroundFindings,
+  },
 ) {
   const round = { head, reviewer, at: new Date().toISOString() }
+  if (pairId !== undefined) round.pairId = pairId
+  if (workaroundBlockers !== undefined)
+    round.workaroundBlockers = workaroundBlockers
+  if (workaroundFindings !== undefined)
+    round.workaroundFindings = workaroundFindings
   if (base !== undefined) round.base = base
   if (commitBase !== undefined) round.commitBase = commitBase
   if (profile !== undefined) round.profile = profile

@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { finalReviews } from './agent-role-settings.mjs'
 import {
   baseIsReachable,
+  allWorkaroundPair,
+  writeConsultation,
+  refusedHead,
   isStrictAncestor,
   matchingPairHistory,
   pairCoversBranch,
@@ -398,5 +401,47 @@ test('a pair covers the branch only from the merge base or through earlier pairs
       run,
     }),
     true,
+  )
+})
+
+test('refusals survive both consultation kinds and legacy clean pairs remain usable', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'workaround-history-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const path = join(directory, 'consultation.json')
+  writeConsultation(path, {
+    head: first,
+    pairHead: first,
+    pairId: 'pair-1',
+    kind: 'workarounds',
+    decision: 'FIX HERE',
+    profile: finalReviews,
+  })
+  for (const kind of ['workarounds', 'round-cap']) {
+    for (const head of [second, first]) {
+      writeConsultation(path, {
+        head,
+        pairHead: head,
+        pairId: 'pair-2',
+        kind,
+        decision: 'PROCEED',
+        profile: { changed: true },
+      })
+      assert.equal(refusedHead(path, first), true)
+      assert.equal(refusedHead(path, second), false)
+    }
+  }
+  const legacy = pair()
+  for (const legacyState of [legacy.codexState, legacy.claudeState])
+    legacyState.rounds[0].blockers = 0
+  assert.equal(
+    matchingPairHistory({ ...legacy, profile: finalReviews }).blockers,
+    0,
+  )
+  assert.equal(
+    allWorkaroundPair(
+      matchingPairHistory({ ...legacy, profile: finalReviews }),
+      first,
+    ),
+    false,
   )
 })

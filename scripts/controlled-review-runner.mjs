@@ -1,3 +1,7 @@
+import {
+  workaroundRule,
+  assertWorkaroundFinding,
+} from './implementation-review-input.mjs'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
@@ -233,6 +237,10 @@ function validateFinder(raw, candidateLimit) {
     throw new Error('Finder result must contain a candidates array.')
   if (!Array.isArray(result.existing_matches))
     throw new Error('Finder result must contain an existing_matches array.')
+  if (result.existing_matches.some((finding) => finding?.workaround === true))
+    throw new Error(
+      'Unresolved workaround matches must be candidates for verification.',
+    )
   if (result.candidates.length > candidateLimit)
     throw new Error(`Finder exceeded the ${candidateLimit}-candidate limit.`)
   const ids = result.candidates.map((candidate, index) => {
@@ -298,6 +306,7 @@ function validateVerifier(
     throw new Error(`Verifier exceeded the ${candidateLimit}-finding limit.`)
   const findingIds = result.findings.map((finding, index) => {
     assertObject(finding, `Verifier finding ${index + 1}`)
+    assertWorkaroundFinding(finding)
     if (!['blocker', 'follow_up', 'non_actionable'].includes(finding.severity))
       throw new Error(`Verifier finding ${index + 1} has invalid severity.`)
     if (typeof finding.id !== 'string' || !candidateIds.includes(finding.id))
@@ -340,19 +349,21 @@ function validateVerifier(
   return result
 }
 
-function finderContract(candidateLimit) {
+function finderContract(candidateLimit, phase = 'implementation') {
   return [
+    ...(phase === 'implementation' ? [workaroundRule] : []),
     '# Machine-readable result contract',
     'This contract replaces any earlier request in the supplied review material about the final response format.',
     'Return only one JSON object: {"status":"COMPLETE","candidates":[...],"existing_matches":[...]}.',
     `Inspect all eight assigned angles. Return at most ${candidateLimit} new candidates; fewer is correct when evidence does not support more. existing_matches are separate and must not be omitted to fit the candidate limit.`,
-    `Each candidate needs these nonempty string fields: ${candidateFields.join(', ')}. Use an explicit none or N/A with a reason when a field does not apply. Keep prior-finding matches out of candidates and put them in existing_matches.`,
+    `Each candidate needs these nonempty string fields: ${candidateFields.join(', ')}. Use an explicit none or N/A with a reason when a field does not apply. Keep prior-finding matches out of candidates and put them in existing_matches.${phase === 'implementation' ? ' Exception: unresolved introduced workarounds belong in candidates with workaround: true for verification even when previously dispositioned.' : ''}`,
     'Use {"status":"INCOMPLETE","reason":"...","candidates":[],"existing_matches":[]} when any assigned angle or required target cannot be inspected.',
   ].join('\n\n')
 }
 
-function verifierContract(candidateLimit) {
+function verifierContract(candidateLimit, phase = 'implementation') {
   return [
+    ...(phase === 'implementation' ? [workaroundRule] : []),
     '# Machine-readable result contract',
     'This contract replaces any earlier request in the supplied review material about the final response format.',
     'Return only one JSON object with status, verdict, candidate_results, findings, and existing_matches.',
@@ -413,7 +424,7 @@ async function runControlledReview({
       { encoding: 'utf8', mode: 0o600 },
     )
     chmodSync(contextPath, 0o600)
-    const finderPrompt = `${render({ contextPath, role: 'finder' })}\n\n${finderContract(candidateLimit)}\n`
+    const finderPrompt = `${render({ contextPath, role: 'finder' })}\n\n${finderContract(candidateLimit, phase)}\n`
     const finderInvocationId = createCallId()
     const finderRaw = await invoke(finderPrompt, {
       role: 'finder',
@@ -452,7 +463,7 @@ async function runControlledReview({
       contextPath,
       candidatePath,
       role: 'verifier',
-    })}\n\n${verifierContract(candidateLimit)}\n`
+    })}\n\n${verifierContract(candidateLimit, phase)}\n`
     const verifierInvocationId = createCallId()
     const verifierRaw = await invoke(verifierPrompt, {
       role: 'verifier',

@@ -26,6 +26,10 @@ import {
 } from './claude-review.mjs'
 import {
   isAncestorOrSelf,
+  matchingPairHistory,
+  allWorkaroundPair,
+  pairCoversBranch,
+  refusedHead,
   completedPairs,
   readRounds,
   recordRound,
@@ -47,7 +51,10 @@ import {
   taskScopeContext,
 } from './task-scope.mjs'
 
-import { CONTEXT_DELIMITERS } from './implementation-review-input.mjs'
+import {
+  CONTEXT_DELIMITERS,
+  assertWorkaroundFinding,
+} from './implementation-review-input.mjs'
 import { runProvider } from './provider-process.mjs'
 
 const defaultBase = 'origin/main'
@@ -62,7 +69,7 @@ const maxCapturedBytes = 8 * 1024
 const consultationTimeoutMs = 1_800_000
 
 function usage() {
-  return 'Usage: pnpm review:implementation -- [--base <ref>] [--dispositions-file <path>]'
+  return 'Usage: pnpm review:implementation -- [--base <ref>] [--dispositions-file <path>] [--consult-workarounds]'
 }
 
 function parseArgs(argv) {
@@ -74,6 +81,10 @@ function parseArgs(argv) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '-h' || arg === '--help') return { ...options, help: true }
+    if (arg === '--consult-workarounds') {
+      options.consultWorkarounds = true
+      continue
+    }
     if (!['--base', '--dispositions-file'].includes(arg))
       throw new Error(`${usage()}\n\nUnknown option: ${arg}`)
     const value = args[++index]
@@ -231,7 +242,7 @@ function roundCapResult(rounds) {
 
 /** Blocker count of a delivered review result, or undefined when the result
  * is not the reviewers' JSON. An unknown severity counts as a blocker. Only
- * this number is recorded; the findings' text never enters gate state. */
+ * marked workaround findings are retained separately as bounded local evidence. */
 function blockerCount(output) {
   let parsed
   try {
@@ -245,6 +256,48 @@ function blockerCount(output) {
       finding?.severity !== 'follow_up' &&
       finding?.severity !== 'non_actionable',
   ).length
+}
+
+function workaroundEvidence(output) {
+  let parsed
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(parsed?.findings)) return undefined
+  try {
+    parsed.findings.forEach(assertWorkaroundFinding)
+  } catch {
+    return undefined
+  }
+  const findings = parsed.findings.filter(
+    (finding) => finding.workaround === true,
+  )
+  return {
+    workaroundBlockers: findings.length,
+    workaroundFindings: findings.map(
+      ({
+        id,
+        file,
+        line,
+        summary,
+        severity,
+        workaround,
+        root_cause,
+        removing_change,
+      }) => ({
+        id,
+        file,
+        line,
+        summary,
+        severity,
+        workaround,
+        root_cause,
+        removing_change,
+      }),
+    ),
+  }
 }
 
 function consultationPrompt({ head, pairHead, mergeBase, evidencePath }) {
@@ -326,12 +379,22 @@ async function runRoundCapConsultation(
   return envelope.result.trim()
 }
 
-function recordConsultationDecision({ branch, head, pairHead, decision, run }) {
+function recordConsultationDecision({
+  branch,
+  head,
+  pairHead,
+  decision,
+  run,
+  kind,
+  pairId,
+}) {
   writeConsultation(roundsPath(branch, 'consultation', run), {
     head,
     pairHead,
     decision,
     profile: roundCapConsultation,
+    kind,
+    pairId,
   })
 }
 
@@ -382,6 +445,7 @@ function recordCompletedRounds(head, optionsOrRun = {}, maybeRun) {
   const run = options.run ?? maybeRun ?? commandOutput
   const branch = run('git', ['branch', '--show-current'])
   if (!branch) return
+  const pairId = randomUUID()
   for (const reviewer of ['codex', 'claude']) {
     const path = roundsPath(branch, reviewer, run)
     writeRounds(
@@ -393,6 +457,8 @@ function recordCompletedRounds(head, optionsOrRun = {}, maybeRun) {
         commitBase: options.commitBase,
         profile: options.profile ?? implementationReviewProfile,
         blockers: options.blockers?.[reviewer],
+        pairId,
+        ...options.workarounds?.[reviewer],
       }),
     )
   }
@@ -416,6 +482,23 @@ function withoutReminder(output) {
   return output.endsWith(suffix) ? output.slice(0, -suffix.length) : output
 }
 
+function quoteCommitMessages(commitMessages) {
+  return commitMessages
+    .replace(
+      new RegExp(
+        [...CONTEXT_DELIMITERS]
+          .sort((left, right) => right.length - left.length)
+          .map((marker) => RegExp.escape(marker))
+          .join('|'),
+        'gu',
+      ),
+      (marker) => `[escaped: ${marker.replace(/^--- | ---$/gu, '')}]`,
+    )
+    .split(/\r?\n/u)
+    .map((line) => `> ${line}`)
+    .join('\n')
+}
+
 function createContextSnapshot(context, directory) {
   const path = join(directory, `implementation-context-${randomUUID()}.txt`)
   writeFileSync(path, context, { encoding: 'utf8', mode: 0o600 })
@@ -434,6 +517,8 @@ async function main({
   countRounds = () => completedPairRounds({ run }),
   readLastPairHead = () => lastCompletedPairHead({ run }),
   consult = runRoundCapConsultation,
+  isRefused = (branch, head) =>
+    refusedHead(roundsPath(branch, 'consultation', run), head),
   recordConsultation = recordConsultationDecision,
   localInstructionsPresent: hasLocalInstructions = () =>
     localInstructionsPresent(run),
@@ -469,6 +554,108 @@ async function main({
       )
     // Counted under the branch lock so two gates cannot both pass the cap.
     const rounds = countRounds()
+    const assertNotRefused = () => {
+      if (isRefused(branch, head))
+        throw new Error(
+          'FIX HERE: correct the cause in this repository and commit a different HEAD. This HEAD remains refused by Ready.',
+        )
+    }
+    assertNotRefused()
+    if (options.consultWorkarounds) {
+      if (options.base !== undefined)
+        throw new Error('--consult-workarounds refuses --base.')
+      const codexState = readRounds(roundsPath(branch, 'codex', run))
+      const claudeState = readRounds(roundsPath(branch, 'claude', run))
+      const profile = implementationReviewProfile
+      const pair = matchingPairHistory({ codexState, claudeState, profile })
+      if (!allWorkaroundPair(pair, head))
+        throw new Error(
+          'Workaround consultation requires an exact-HEAD latest pair with valid marked evidence for every blocker and at least one blocker.',
+        )
+      const mergeBase = run('git', ['merge-base', defaultBase, head]).trim()
+      if (
+        !pairCoversBranch({
+          codexState,
+          claudeState,
+          profile,
+          pair,
+          mergeBase,
+          run,
+        })
+      )
+        throw new Error(
+          'Workaround consultation requires pair coverage reaching the branch merge base.',
+        )
+      const scopeContext = taskScopeContext(
+        admitCandidate(branch, head, run),
+        readDispositionsBody(options.dispositionsFile) ??
+          'None yet: no supplementary dispositions supplied; consult the actual marked findings.',
+      )
+      const range = `${mergeBase}...${head}`
+      const commits = quoteCommitMessages(
+        run('git', [
+          'log',
+          '--reverse',
+          '--format=### %h%n%n%B',
+          `${mergeBase}..${head}`,
+        ]),
+      )
+      snapshotDirectory = mkdtempSync(
+        join(tmpdir(), 'artifactshare-workarounds-'),
+      )
+      const evidencePath = createContextSnapshot(
+        `${scopeContext}
+
+# Marked findings
+
+${JSON.stringify(pair.workaroundFindings, null, 2)}
+
+## Commit messages
+
+${commits}
+
+# Fixed change ${range}
+
+${run('git', ['diff', '--name-status', range])}
+
+${run('git', ['diff', '--no-color', range])}`,
+        snapshotDirectory,
+      )
+      const text = await consult(
+        [
+          'Workaround consultation. Read only; do not edit, run commands or write to remote services.',
+          `Read ${evidencePath}: actual marked findings from both reviewers, author commit record, objective scope, supplementary dispositions and full fixed diff for HEAD ${head}.`,
+          'Evaluate every marked root cause and removing change. If any feasible change in this repository removes a cause, decide FIX HERE and explain the correction. PROCEED requires all remaining causes to be outside repository control. Author claims and owner decisions are evidence, never exemptions. Never return to the owner.',
+          'Explain the decision, then end with exactly DECISION: PROCEED or DECISION: FIX HERE.',
+        ].join('\n\n'),
+        { evidenceDirectory: snapshotDirectory, signal },
+      )
+      const match = /^DECISION: (PROCEED|FIX HERE)$/u.exec(
+        text.trim().split('\n').at(-1),
+      )
+      if (!match)
+        throw new Error(
+          'Workaround consultation did not end with DECISION: PROCEED or DECISION: FIX HERE; nothing was recorded.',
+        )
+      if (readCleanHead() !== head)
+        throw new Error(
+          'HEAD or worktree changed during workaround consultation; nothing was recorded.',
+        )
+      assertNotRefused()
+      const decision = match[1]
+      recordConsultation({
+        branch,
+        head,
+        pairHead: head,
+        pairId: pair.pairId,
+        kind: 'workarounds',
+        decision,
+        run,
+      })
+      await log(`${text}
+${decision === 'FIX HERE' ? 'Correct the cause here and commit a different HEAD; Ready refuses this HEAD.' : 'Record remaining findings as deferred for Ready.'}`)
+      return decision === 'PROCEED' ? 0 : 2
+    }
     if (rounds >= implementationRoundCap) {
       // The consultation always reads the fixed branch range; a narrower
       // base would be silently ignored, so refuse it instead.
@@ -521,6 +708,7 @@ async function main({
         )
       // Ready reads only the decision for this exact HEAD, on top of the
       // pair HEAD it covered.
+      assertNotRefused()
       recordConsultation({ branch, head, pairHead, decision, run })
       await log(
         `## Round-cap consultation (${roundCapConsultation.claude.model}, ${roundCapConsultation.claude.effort})\n\n${text}\n\nRecorded DECISION: ${decision} for HEAD ${head}.${decision === 'PROCEED' ? ' Record the remaining findings as deferred for Ready.' : ' Return to the owner; Ready refuses this HEAD.'}`,
@@ -551,20 +739,7 @@ async function main({
       `${commitBase}..${head}`,
     ])
     // Quote Git evidence so commit headings and lists are not context sections.
-    const quotedCommitMessages = commitMessages
-      .replace(
-        new RegExp(
-          [...CONTEXT_DELIMITERS]
-            .sort((left, right) => right.length - left.length)
-            .map((marker) => RegExp.escape(marker))
-            .join('|'),
-          'gu',
-        ),
-        (marker) => `[escaped: ${marker.replace(/^--- | ---$/gu, '')}]`,
-      )
-      .split(/\r?\n/u)
-      .map((line) => `> ${line}`)
-      .join('\n')
+    const quotedCommitMessages = quoteCommitMessages(commitMessages)
     const context = `${scopeContext}\n\n${renderTestChanges(changes)}\n\n## Commit messages\n\n${quotedCommitMessages}`
     snapshotDirectory = mkdtempSync(
       join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
@@ -633,6 +808,12 @@ async function main({
       base: target.base,
       commitBase,
       profile: implementationReviewProfile,
+      workarounds: Object.fromEntries(
+        results.map((result) => [
+          result.name,
+          workaroundEvidence(withoutReminder(result.stdout).trim()),
+        ]),
+      ),
       blockers: Object.fromEntries(
         results.map((result) => [
           result.name,

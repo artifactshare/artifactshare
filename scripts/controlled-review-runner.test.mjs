@@ -510,3 +510,90 @@ test('one wall deadline is shared by finder and verifier', async () => {
   })
   assert.deepEqual(timeouts, [900, 600])
 })
+
+test('an unresolved dispositioned workaround reaches verification and final marked output', async () => {
+  const mark = {
+    workaround: true,
+    root_cause: 'Dependency limitation',
+    removing_change: 'Fix dependency',
+  }
+  let verified = false
+  const result = await runControlledReview({
+    context:
+      '## Dispositions\n- deferred: W1, owner approved the recorded workaround.',
+    phase: 'implementation',
+    createCallId: () => (verified ? 'verifier' : 'finder'),
+    render: ({ candidatePath }) =>
+      candidatePath ? readFileSync(candidatePath, 'utf8') : 'find',
+    invoke: (prompt, { role }) => {
+      assert.match(
+        prompt,
+        /unresolved introduced workarounds|Unresolved introduced-workaround|workaround/i,
+      )
+      if (role === 'finder') {
+        assert.match(prompt, /even when previously dispositioned/)
+        return JSON.stringify({
+          status: 'COMPLETE',
+          candidates: [{ ...candidate(), ...mark, prior_finding_id: 'W1' }],
+          existing_matches: [],
+        })
+      }
+      verified = true
+      assert.match(prompt, /Dependency limitation/)
+      return JSON.stringify({
+        status: 'COMPLETE',
+        verdict: 'FINDINGS',
+        existing_matches: [],
+        candidate_results: [
+          {
+            candidate_id: 'finder:F1',
+            technical_verdict: 'CONFIRMED',
+            evidence: 'Unresolved introduced workaround',
+            scope_applicability: 'Current change',
+            prior_disposition: 'Owner approval is not exemption',
+            unknowns: 'none',
+          },
+        ],
+        findings: [
+          {
+            id: 'finder:F1',
+            file: 'content.txt',
+            severity: 'blocker',
+            ...mark,
+            minimal_fix: mark.removing_change,
+            new_evidence: 'Introduced workaround remains',
+          },
+        ],
+      })
+    },
+  })
+  assert.equal(verified, true)
+  const output = JSON.parse(controlledReviewOutput(result))
+  assert.equal(output.findings[0].workaround, true)
+  assert.equal(output.findings[0].root_cause, mark.root_cause)
+  assert.equal(output.findings[0].removing_change, mark.removing_change)
+  for (const changes of [
+    { workaround: 'true' },
+    { severity: 'follow_up' },
+    { root_cause: '' },
+  ]) {
+    const malformed = structuredClone(result.verifier)
+    Object.assign(malformed.findings[0], changes)
+    assert.throws(
+      () => validateVerifier(JSON.stringify(malformed), ['finder:F1'], 8),
+      /Invalid workaround mark/,
+    )
+  }
+  assert.throws(
+    () =>
+      validateFinder(
+        JSON.stringify({
+          status: 'COMPLETE',
+          candidates: [],
+          existing_matches: [{ id: 'W1', ...mark }],
+        }),
+        8,
+      ),
+    /must be candidates/,
+  )
+})

@@ -63,7 +63,7 @@ test('documents proportional specification review and the exact-HEAD Ready prere
   assert.match(
     workflow,
     new RegExp(
-      `\`pr:ready\` enforces this\\. The one exception is the round cap: once the branch's ${cap} pairs are spent, a \`PROCEED\` round-cap consultation recorded for that exact HEAD takes the pair's place`,
+      `\`pr:ready\` enforces this\\. One exception is the round cap: once the branch's ${cap} pairs are spent, a \`PROCEED\` round-cap consultation recorded for that exact HEAD takes the pair's place`,
       'u',
     ),
   )
@@ -152,7 +152,7 @@ test('requires root-cause rationale next to the smallest-design guidance', () =>
   )
   assert.match(
     proportional,
-    /A workaround is acceptable only when the commit message \(repeated in the PR description\) records the workaround, the root cause it leaves in place, and a reason other than size or effort, such as an explicit owner decision or a conflict with protected scope\./u,
+    /An introduced workaround is always a blocker, even when recorded or owner-approved\./u,
   )
   assert.match(
     proportional,
@@ -181,7 +181,7 @@ test('classifies introduced workarounds without the required record as blockers'
   assert.ok(blocker)
   assert.match(
     blocker,
-    /A workaround introduced by the change, including an existing workaround copied to a new site, is also a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort\./u,
+    /A workaround introduced by the change, including an existing workaround copied to a new site, is always a blocker, even when recorded or owner-approved\./u,
   )
   const limits = classification
     .split('\n\n')
@@ -197,7 +197,7 @@ test('classifies introduced workarounds without the required record as blockers'
   )
   assert.match(
     limits,
-    /A complete record does not exempt a workaround from the other blocker criteria\./u,
+    /A complete record and an owner decision never exempt an unresolved introduced workaround\./u,
   )
   assert.match(
     limits,
@@ -372,6 +372,29 @@ test('the PR Change section requests the public workaround record', () => {
   assert.ok(change)
   assert.match(
     change,
-    /Describe any workaround, the root cause it leaves in place, and a reason other than size or effort\. Record this in the commit message \(repeated in the PR description\)\./u,
+    /Describe any workaround, the root cause it leaves in place, and why the cause cannot be removed in this repository\. Record this in the commit message \(repeated in the PR description\)\./u,
   )
+})
+
+test('all policy surfaces require marked evidence and persistent FIX HERE refusal', () => {
+  for (const name of [
+    'docs/development-workflow.md',
+    '.github/PULL_REQUEST_TEMPLATE.md',
+    'AGENTS.md',
+    'CLAUDE.md',
+  ]) {
+    const text = fs.readFileSync(path.join(root, name), 'utf8')
+    for (const required of [
+      'Introduced workarounds are always blockers',
+      'neither an author record nor an owner decision is an exemption',
+      '--consult-workarounds',
+      'exact-HEAD latest pair',
+      'all blockers marked',
+      'pair identity',
+      'FIX HERE',
+      'new commit',
+      'RETURN TO OWNER',
+    ])
+      assert.ok(text.includes(required), name + ': ' + required)
+  }
 })

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import {
   existsSync,
+  readdirSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -38,6 +39,7 @@ import {
 } from './implementation-review-input.mjs'
 import {
   readConsultation,
+  refusedHead,
   readRounds,
   recordRound,
   roundsPath,
@@ -65,6 +67,7 @@ const scope = {
 
 function scopeHarness(overrides = {}) {
   return {
+    isRefused: () => false,
     inspectTestChanges: ({ base: rangeBase, head: rangeHead }) => ({
       schemaVersion: 1,
       base: rangeBase,
@@ -1202,6 +1205,7 @@ test('the consultation decision is stored for HEAD without its prose', async (t)
   })
   const path = roundsPath('feat/x', 'consultation', run)
   assert.deepEqual(readConsultation(path, roundCapConsultation), {
+    kind: 'round-cap',
     head,
     pairHead: head,
     decision: 'PROCEED',
@@ -1615,3 +1619,185 @@ for (const scenario of [
     }
   })
 }
+
+test('recorded owner-approved workaround remains a blocker and early consultation uses its evidence', async (t) => {
+  for (const variant of [
+    'PROCEED',
+    'FIX HERE',
+    'mixed',
+    'stale',
+    'zero',
+    'legacy',
+    'corrupt',
+    'pair',
+    'coverage',
+    'RETURN TO OWNER',
+    'cap',
+    'head-changed',
+    'provider-failure',
+    'string-mark',
+    'unknown-field',
+    'profile',
+    'base',
+  ]) {
+    await t.test(variant, async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'workaround-gate-'))
+      t.after(() => rmSync(directory, { recursive: true, force: true }))
+      const run = (file, args) => {
+        if (args[0] === 'branch') return 'feature'
+        if (args.includes('--git-common-dir')) return directory
+        if (args[0] === 'merge-base' && args[1] === '--is-ancestor')
+          throw new Error('not ancestor')
+        if (args[0] === 'merge-base')
+          return variant === 'coverage' && args[1] !== 'origin/main'
+            ? 'd'.repeat(40)
+            : base
+        if (args[0] === 'log')
+          return '### aaaaaaa\n\nWorkaround: adapter fallback. Root cause: dependency listener. Cannot fix here: dependency controls address family. Owner approved.\n'
+        if (args[0] === 'diff') return '+ changed dependency adapter'
+        return explicitBaseRun(file, args)
+      }
+      const finding = {
+        id: 'W1',
+        file: 'adapter.mjs',
+        line: 1,
+        summary: 'Recorded workaround, owner approved',
+        severity: 'blocker',
+        workaround: true,
+        root_cause: 'Dependency address family limitation',
+        removing_change: 'Fix dependency listener',
+      }
+      let observedHead = head
+      const options = {
+        ...scopeHarness(),
+        isRefused: (branch, target) =>
+          refusedHead(roundsPath(branch, 'consultation', run), target),
+        localInstructionsPresent: () => false,
+        acquireLock: () => Promise.resolve(() => Promise.resolve()),
+        run,
+        readCleanHead: () => observedHead,
+        log: () => {},
+        timingLog: () => {},
+      }
+      await main({
+        ...options,
+        argv: ['--base', 'release'],
+        countRounds: () => 0,
+        review: (name) =>
+          Promise.resolve({
+            name,
+            stderr: '',
+            stdout: JSON.stringify({
+              findings: name === 'codex' ? [finding] : [],
+            }),
+          }),
+      })
+      const path = roundsPath('feature', 'codex', run)
+      const state = readRounds(path)
+      assert.equal(state.rounds[0].blockers, 1)
+      assert.equal(state.rounds[0].workaroundBlockers, 1)
+      assert.deepEqual(state.rounds[0].workaroundFindings, [finding])
+      const round = state.rounds[0]
+      if (variant === 'mixed') round.blockers = 2
+      if (variant === 'stale') round.head = 'c'.repeat(40)
+      if (variant === 'zero') {
+        round.blockers = 0
+        round.workaroundBlockers = 0
+        round.workaroundFindings = []
+      }
+      if (variant === 'legacy') delete round.workaroundFindings
+      if (variant === 'corrupt') round.workaroundFindings[0].root_cause = ''
+      if (variant === 'string-mark')
+        round.workaroundFindings[0].workaround = 'true'
+      if (variant === 'unknown-field')
+        round.workaroundFindings[0].unexpected = true
+      if (variant === 'profile') round.profile = {}
+      if (variant === 'pair') round.pairId = 'another'
+      writeRounds(path, state)
+      let launches = 0
+      const attempt = () =>
+        main({
+          ...options,
+          argv: [
+            '--consult-workarounds',
+            ...(variant === 'base' ? ['--base', 'release'] : []),
+          ],
+          admitCandidate: () => ({
+            ...options.admitCandidate(),
+            admitted_heads: ['c'.repeat(40), head],
+          }),
+          countRounds: () => (variant === 'cap' ? 5 : 1),
+          consult: (_prompt, { evidenceDirectory }) => {
+            launches++
+            const snapshot = readFileSync(
+              join(evidenceDirectory, readdirSync(evidenceDirectory)[0]),
+              'utf8',
+            )
+            for (const text of [
+              'Dependency address family limitation',
+              'Fix dependency listener',
+              'Recorded workaround, owner approved',
+              'Workaround: adapter fallback.',
+              'Cannot fix here: dependency controls address family.',
+              'Owner approved.',
+              scope.objective,
+              '+ changed dependency adapter',
+            ])
+              assert.ok(snapshot.includes(text), text)
+            if (variant === 'provider-failure')
+              throw new Error('provider failed')
+            if (variant === 'head-changed') observedHead = 'e'.repeat(40)
+            return (
+              'Cause assessed.\nDECISION: ' +
+              (['cap', 'head-changed'].includes(variant) ? 'PROCEED' : variant)
+            )
+          },
+        })
+      const decisionPath = roundsPath('feature', 'consultation', run)
+      if (['PROCEED', 'FIX HERE', 'cap'].includes(variant)) {
+        assert.equal(await attempt(), variant === 'FIX HERE' ? 2 : 0)
+        const decision = readConsultation(decisionPath, roundCapConsultation)
+        assert.equal(decision.kind, 'workarounds')
+        assert.equal(decision.pairId, round.pairId)
+        if (variant === 'FIX HERE') {
+          await assert.rejects(attempt, /FIX HERE/)
+          await assert.rejects(
+            main({
+              ...options,
+              argv: [],
+              countRounds: () => 5,
+              consult: () => {
+                throw new Error('must not launch')
+              },
+            }),
+            /FIX HERE/,
+          )
+          assert.equal(launches, 1)
+        }
+      } else {
+        await assert.rejects(
+          attempt,
+          variant === 'RETURN TO OWNER'
+            ? /did not end/
+            : variant === 'head-changed'
+              ? /HEAD or worktree changed/
+              : variant === 'provider-failure'
+                ? /provider failed/
+                : variant === 'base'
+                  ? /refuses --base/
+                  : /requires/,
+        )
+        assert.equal(
+          launches,
+          ['RETURN TO OWNER', 'head-changed', 'provider-failure'].includes(
+            variant,
+          )
+            ? 1
+            : 0,
+        )
+        assert.equal(existsSync(decisionPath), false)
+      }
+      assert.equal(readRounds(path).rounds.length, 1)
+    })
+  }
+})

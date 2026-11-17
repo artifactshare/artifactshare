@@ -12,9 +12,12 @@ import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
 import { landed, renderLandedResult } from './pr-landed.mjs'
 import { implementationReviewProfile } from './implementation-review-gate.mjs'
+import { acquireTaskScopeLock, currentTaskBranch } from './task-scope.mjs'
 import { roundCapConsultation } from './agent-role-settings.mjs'
 import {
   gitCommonDir,
+  refusedHead,
+  allWorkaroundPair,
   isAncestorOrSelf,
   lastCompletedPair,
   matchingPairHistory,
@@ -728,6 +731,10 @@ function uiFiles(exec, base) {
  * or unreadable history is not evidence. */
 function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
   const run = (file, args) => output(exec, file, args)
+  if (refusedHead(roundsPathIn(commonDir, branch, 'consultation'), head))
+    throw new Error(
+      'FIX HERE: Ready refuses this HEAD. Correct the cause in this repository and commit a different HEAD.',
+    )
   const consultation = readConsultation(
     roundsPathIn(commonDir, branch, 'consultation'),
     roundCapConsultation,
@@ -736,7 +743,26 @@ function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
   const claudeState = readRounds(roundsPathIn(commonDir, branch, 'claude'))
   const profile = implementationReviewProfile
   let staleConsultation
-  if (consultation?.head === head) {
+  if (consultation?.head === head && consultation.kind === 'workarounds') {
+    const pair = matchingPairHistory({ codexState, claudeState, profile })
+    if (
+      consultation.decision === 'PROCEED' &&
+      allWorkaroundPair(pair, head) &&
+      consultation.pairId === pair.pairId &&
+      consultation.pairHead === head &&
+      pairCoversBranch({
+        codexState,
+        claudeState,
+        profile,
+        pair,
+        mergeBase: run('git', ['merge-base', `origin/${base}`, head]),
+        run,
+      })
+    )
+      return
+    staleConsultation =
+      'Workaround consultation evidence is invalid or stale; Ready was not changed.'
+  } else if (consultation?.head === head) {
     if (consultation.decision !== 'PROCEED')
       throw new Error(
         `The round-cap consultation for HEAD ${head} decided RETURN TO OWNER. Ready was not changed; return the remaining blockers to the owner.`,
@@ -1107,6 +1133,7 @@ export async function runReady({
   exec = execFileSync,
   readFile = readFileSync,
   acquireLock = acquireFileLock,
+  acquireScopeLock = acquireTaskScopeLock,
   queueFlow = queue,
   landedFlow = landed,
   log = (line) => process.stdout.write(`${line}\n`),
@@ -1120,15 +1147,26 @@ export async function runReady({
     let result
     let operationError
     let releaseError
+    let releaseScope
     try {
+      const run = (file, args) => output(exec, file, args)
+      releaseScope = await acquireScopeLock(currentTaskBranch(run), { run })
       result = ready({ parsed, ledger, exec, readFile })
     } catch (error) {
       operationError = error
     }
     try {
-      await release()
+      if (releaseScope) await releaseScope()
     } catch (error) {
       releaseError = error instanceof Error ? error : new Error(String(error))
+    }
+    try {
+      await release()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      releaseError = releaseError
+        ? new Error(`${releaseError.message}; ${message}`)
+        : new Error(message)
     }
     if (operationError) {
       reportError(

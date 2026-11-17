@@ -1,3 +1,4 @@
+import { workaroundRule } from './implementation-review-input.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -144,10 +145,7 @@ test('the change context is present only while the review runs', async () => {
     seen.text,
     /A blocker is a finding that prevents what the issue/u,
   )
-  assert.match(
-    seen.text,
-    /Exception: a workaround introduced by the change \(including an existing workaround copied to a new site\), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort; check the Commit messages section of the review context for this record \(repeated in the PR description\)\./u,
-  )
+  assert.match(seen.text, new RegExp(RegExp.escape(workaroundRule), 'u'))
   assert.equal(existsSync(localPath), false)
 
   await assert.rejects(
@@ -225,4 +223,35 @@ test('only the last JSON block counts, even when an earlier one parses', () => {
     `${fence}json\n[{"id":"x","file":"a","summary":"s","severity":"follow_up"}]\n${fence}\nREVIEW_STATUS: COMPLETE`,
   )
   assert.equal(withId[0].id, 'code-review-1')
+})
+
+test('marked blockers retain cause and correction while malformed marks fail closed', () => {
+  const finding = {
+    file: 'adapter.mjs',
+    summary: 'Recorded owner-approved workaround',
+    severity: 'blocker',
+    workaround: true,
+    root_cause: 'Dependency limitation',
+    removing_change: 'Fix dependency',
+  }
+  const parse = (entry) =>
+    parseCodeReviewFindings(
+      `${fence}json\n${JSON.stringify([entry])}\n${fence}\nREVIEW_STATUS: COMPLETE`,
+    )
+  const result = JSON.parse(
+    codeReviewOutput({ findings: parse(finding), callId: 'c1', level: 'high' }),
+  )
+  assert.equal(result.verdict, 'FINDINGS')
+  assert.deepEqual(result.findings[0], { ...finding, id: 'code-review-1' })
+  for (const changes of [
+    { workaround: 'true' },
+    { severity: 'follow_up' },
+    { root_cause: '' },
+    { removing_change: '' },
+  ]) {
+    assert.throws(
+      () => parse({ ...finding, ...changes }),
+      /Invalid workaround mark/,
+    )
+  }
 })
