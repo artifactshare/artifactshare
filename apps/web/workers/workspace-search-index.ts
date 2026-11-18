@@ -16,7 +16,7 @@ import {
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
-import { createDb } from '../app/services/db.server'
+import { createDb, type Db } from '../app/services/db.server'
 import {
   inventory,
   fingerprint,
@@ -64,6 +64,8 @@ type Active = {
   format: number
 }
 const BATCH = 5
+const FAILURE_SPACING_MS = 5 * 60_000
+const GIVE_UP_AFTER_MS = 60 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
@@ -110,6 +112,30 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
     ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
+    )
+    // Thrown failures per pending item and when the last one counted;
+    // budget yields do not count. Each column is added on its own.
+    const pendingColumns = new Set(
+      ctx.storage.sql
+        .exec<{ name: string }>('PRAGMA table_info(pending)')
+        .toArray()
+        .map((row) => row.name),
+    )
+    if (!pendingColumns.has('failures'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
+      )
+    if (!pendingColumns.has('failed_at'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
+      )
+    if (!pendingColumns.has('first_failed_at'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
+      )
+    // When a placed index reported its first full reconciliation as ready.
+    ctx.storage.sql.exec(
+      'CREATE TABLE IF NOT EXISTS placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
     )
     // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
@@ -456,6 +482,59 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .toArray()[0]
   }
+  /**
+   * A placed index reports once that its first full reconciliation finished:
+   * the D1 scan reached the end, nothing is staged, and every pending item
+   * has either finished or failed at least three times. Searches move to it
+   * then; the report is never withdrawn.
+   */
+  private async reportReady(db: Db, state: State): Promise<void> {
+    const location = this.location()
+    if (!location || state.cursor || this.#otherLocation) return
+    // An item stops holding readiness back only after three counted
+    // failures over at least an hour, so an outage that clears within the
+    // hour cannot move searches to an incomplete index.
+    const blocked = this.ctx.storage.sql
+      .exec<{ blocked: number }>(
+        `SELECT (
+          EXISTS(SELECT 1 FROM placement)
+          OR EXISTS(SELECT 1 FROM pending WHERE failures < 3 OR first_failed_at > ?1)
+          OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(
+            SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3 AND p.first_failed_at <= ?1))
+        ) AS blocked`,
+        Date.now() - GIVE_UP_AFTER_MS,
+      )
+      .one().blocked
+    if (blocked) return
+    const row = await db
+      .selectFrom('search_index_workspaces')
+      .select(['location_hint', 'ready_at'])
+      .where('workspace_id', '=', state.workspace)
+      .executeTakeFirst()
+    // A workspace recorded for another location never uses this index.
+    if (row?.location_hint && row.location_hint !== location) {
+      this.#otherLocation = true
+      return
+    }
+    if (row?.location_hint !== location) return
+    let readyAt = row.ready_at
+    if (!readyAt) {
+      readyAt = new Date().toISOString()
+      await db
+        .updateTable('search_index_workspaces')
+        .set({ ready_at: readyAt })
+        .where('workspace_id', '=', state.workspace)
+        .where('location_hint', '=', location)
+        .where('ready_at', 'is', null)
+        .execute()
+    }
+    this.ctx.storage.sql.exec(
+      'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
+      readyAt,
+    )
+  }
+  #otherLocation = false
+
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
     workspaceSearchPrefix(workspace)
@@ -590,6 +669,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             else await this.remove(state.workspace, id)
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
+            // Count a failure at most every five minutes, so a brief outage
+            // cannot use up an item's attempts within seconds.
+            this.ctx.storage.sql.exec(
+              'UPDATE pending SET failures=failures+1, failed_at=?1, first_failed_at=CASE WHEN first_failed_at=0 THEN ?1 ELSE first_failed_at END WHERE id=?2 AND failed_at <= ?3',
+              Date.now(),
+              id,
+              Date.now() - FAILURE_SPACING_MS,
+            )
             console.error('workspace_search_item_failed')
           }
         }
@@ -642,6 +729,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             "UPDATE state SET sweep='' WHERE singleton=1",
           )
         const more = this.state()!
+        await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
           .exec<{ count: number }>(
             'SELECT ((SELECT count(*) FROM pending) + (SELECT count(*) FROM reclaims)) AS count',
