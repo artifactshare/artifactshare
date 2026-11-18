@@ -15,6 +15,7 @@ import {
   cliScopeDeniedResponse,
 } from '~/lib/cli-agent-operations'
 import { bridgeErrorResponse } from '~/lib/bridge-api.server'
+import { rememberSearchIndexLocation } from '~/services/search-index/placement.server'
 import { authSourceContext, cliAuthorityContext, userContext } from './context'
 
 const AUTH_OBSERVATION_SAMPLE_RATE = 0.05
@@ -37,6 +38,7 @@ export const sessionMiddleware: MiddlewareFunction = async (
   const user = await getSessionUser(request)
 
   context.set(userContext, user)
+  if (user) rememberSearchIndexLocation(request, user)
   logAuthObservation(
     request,
     {
