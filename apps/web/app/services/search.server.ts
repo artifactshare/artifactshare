@@ -284,7 +284,7 @@ async function collect(
   )
   // Metadata is read alongside the live discovery check and kept only for
   // the rows that check accepts.
-  const remember = async (rows: Hit[]) => {
+  const check = async (rows: Hit[]) => {
     const [visible, rowsMetadata] = await Promise.all([
       accepted(db, actor, input.filters, now, rows),
       metadata(
@@ -293,11 +293,18 @@ async function collect(
         actor.id,
       ),
     ])
+    return { visible, rowsMetadata }
+  }
+  const keep = ({
+    visible,
+    rowsMetadata,
+  }: Awaited<ReturnType<typeof check>>) => {
     hits.push(...visible)
     const ids = new Set(visible.map((row) => row.id))
     for (const row of rowsMetadata) if (ids.has(row.id)) metas.set(row.id, row)
     return visible
   }
+  const remember = async (rows: Hit[]) => keep(await check(rows))
   if (ownWorkspace) {
     const stub = indexes(ownWorkspace)
     const request = await indexInput(db, input, ownWorkspace, any)
@@ -354,24 +361,33 @@ async function collect(
     incomplete = !exhausted
   }
 
-  for (const source of sources) {
-    const request = await indexInput(db, input, source.workspaceId, any)
-    let cursor: number | undefined
-    do {
-      const page = await indexPage(indexes(source.workspaceId), {
-        ...request,
-        allowedIds: source.ids,
-        cursor,
-      })
-      await remember(
-        page.items.map((row) => ({
-          ...row,
-          workspaceId: source.workspaceId,
-        })),
-      )
-      cursor = page.nextCursor ?? undefined
-    } while (cursor !== undefined)
-  }
+  // Each workspace's index is read side by side; results are kept in the
+  // workspaces' order so ranking stays the same as reading them in turn.
+  const checked = await Promise.all(
+    sources.map(async (source) => {
+      const request = await indexInput(db, input, source.workspaceId, any)
+      const pages: Array<Awaited<ReturnType<typeof check>>> = []
+      let cursor: number | undefined
+      do {
+        const page = await indexPage(indexes(source.workspaceId), {
+          ...request,
+          allowedIds: source.ids,
+          cursor,
+        })
+        pages.push(
+          await check(
+            page.items.map((row) => ({
+              ...row,
+              workspaceId: source.workspaceId,
+            })),
+          ),
+        )
+        cursor = page.nextCursor ?? undefined
+      } while (cursor !== undefined)
+      return pages
+    }),
+  )
+  for (const pages of checked) for (const page of pages) keep(page)
   const merged = mergeSearchHits(
     [...new Map(hits.map((row) => [row.id, row])).values()],
     input.sort === 'newest' || !input.query.trim(),

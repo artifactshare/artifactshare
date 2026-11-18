@@ -1695,3 +1695,51 @@ test('a search waits on few sequential round trips and reads the viewer once', a
   expect(viewerReads).toBe(1)
   expect(membershipReads).toBe(0)
 })
+
+test('other workspaces are searched side by side and keep their order', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO workspaces(id,name,created_at) VALUES('xa','A','${now}'),('xb','B','${now}');
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,owner_user_id,created_by_id,created_at,updated_at) VALUES
+      ('xa-home','xa','inbox','Home','viewer','viewer','${now}','${now}'),
+      ('xb-home','xb','inbox','Home','viewer','viewer','${now}','${now}');
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES
+      ('in-a','xa','viewer','Alpha A','html_page','private','xa-home','${now}','${now}','${now}'),
+      ('in-b','xb','viewer','Alpha B','html_page','private','xb-home','${now}','${now}','${now}');
+  `)
+  const started: string[] = []
+  const release = new Map<string, () => void>()
+  const external = (workspace: string, id: string): SearchIndex => ({
+    ...index(),
+    search: () => {
+      started.push(workspace)
+      return new Promise((resolve) =>
+        release.set(workspace, () =>
+          resolve({
+            items: [{ id, tier: 'all', rank: 1, activityAt: now }],
+            nextCursor: null,
+          }),
+        ),
+      )
+    },
+  })
+  const indexes = {
+    ws: index(),
+    xa: external('xa', 'in-a'),
+    xb: external('xb', 'in-b'),
+  }
+  const pending = search(
+    fixture.db,
+    (workspace) => indexes[workspace as keyof typeof indexes],
+    'viewer',
+    { ...input, pageSize: 20 },
+  )
+  await vi.waitFor(() => expect(started.sort()).toEqual(['xa', 'xb']))
+  // Answer in reverse; the result order still follows the workspaces.
+  release.get('xb')!()
+  release.get('xa')!()
+  const result = await pending
+  if ('error' in result) throw new Error('unexpected search failure')
+  expect(result.items.map((row) => row.id)).toEqual(
+    expect.arrayContaining(['in-a', 'in-b']),
+  )
+})
