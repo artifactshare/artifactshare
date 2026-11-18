@@ -68,7 +68,8 @@ test('only an active member records the location, and only once', async () => {
     })
   expect(await record('removed', 'weur')).toBeNull()
   expect(await record('outsider', 'weur')).toBeNull()
-  expect(recorded()).toEqual({ location_hint: null })
+  // A non-member writes nothing, not even an empty row.
+  expect(recorded()).toBeUndefined()
   expect(await record('member', 'apac-ne')).toBe('apac-ne')
   expect(await record('member', 'weur')).toBe('apac-ne')
   // Another request finding it already recorded still sees the location.
@@ -114,7 +115,7 @@ test('a member records after a non-member, and later requests skip the write', a
     options,
   )
   await Promise.all(pending)
-  expect(recorded()).toEqual({ location_hint: null })
+  expect(recorded()).toBeUndefined()
   // The same non-member is not retried for a while.
   rememberSearchIndexLocation(
     japan,
@@ -137,7 +138,7 @@ test('a member records after a non-member, and later requests skip the write', a
   expect(background).toHaveBeenCalledTimes(2)
 })
 
-test('bots, unmapped regions and missing background work record nothing', () => {
+test('bots and unmapped regions record nothing', () => {
   const background = vi.fn()
   const human = { id: 'member', workspaceId: 'ws-a', kind: 'human' as const }
   rememberSearchIndexLocation(japan, { ...human, kind: 'bot' }, { background })
@@ -146,7 +147,6 @@ test('bots, unmapped regions and missing background work record nothing', () => 
     human,
     { background },
   )
-  rememberSearchIndexLocation(japan, human, { background: undefined })
   expect(background).not.toHaveBeenCalled()
 })
 
@@ -175,4 +175,27 @@ test('a failed write or a refused waitUntil logs once and allows a retry', async
   rememberSearchIndexLocation(japan, human, { background, open: failing })
   expect(background).toHaveBeenCalledTimes(1)
   error.mockRestore()
+})
+
+test('a write that never settles stops blocking after a minute', () => {
+  const human = { id: 'member', workspaceId: 'ws-d', kind: 'human' as const }
+  const stalled = () => new Promise<never>(() => {})
+  const background = vi.fn()
+  rememberSearchIndexLocation(japan, human, {
+    background,
+    open: stalled,
+    now: 0,
+  })
+  rememberSearchIndexLocation(japan, human, {
+    background,
+    open: stalled,
+    now: 59_000,
+  })
+  expect(background).toHaveBeenCalledTimes(1)
+  rememberSearchIndexLocation(japan, human, {
+    background,
+    open: stalled,
+    now: 61_000,
+  })
+  expect(background).toHaveBeenCalledTimes(2)
 })

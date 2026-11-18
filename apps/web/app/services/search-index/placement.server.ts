@@ -115,57 +115,64 @@ export function searchIndexLocation(cf: {
 
 /**
  * Record the location once for a workspace when the user is one of its
- * active members and none is recorded yet. One statement returns the stored
- * location: null means the workspace still has none (the user is not an
- * active member), whether or not another request recorded it first.
+ * active members and none is recorded yet. Returns the stored location,
+ * or null when the workspace still has none (the user is not an active
+ * member). Nothing is written unless a location is recorded.
  */
 export async function recordSearchIndexLocation(
   db: Db,
   input: { workspaceId: string; userId: string; location: SearchIndexLocation },
 ): Promise<string | null> {
-  const result = await sql<{ location_hint: string | null }>`
+  const written = await sql<{ location_hint: string }>`
     INSERT INTO search_index_workspaces(workspace_id, dispatched_at, location_hint)
-    SELECT ${input.workspaceId}, '', CASE WHEN EXISTS (
+    SELECT ${input.workspaceId}, '', ${input.location}
+    WHERE EXISTS (
       SELECT 1 FROM workspace_members
       WHERE workspace_id = ${input.workspaceId}
         AND user_id = ${input.userId}
         AND status = 'active'
-    ) THEN ${input.location} END
-    WHERE true
-    ON CONFLICT(workspace_id) DO UPDATE SET location_hint =
-      coalesce(search_index_workspaces.location_hint, excluded.location_hint)
+    )
+    ON CONFLICT(workspace_id) DO UPDATE SET location_hint = excluded.location_hint
+    WHERE search_index_workspaces.location_hint IS NULL
     RETURNING location_hint
   `.execute(db)
-  return result.rows[0]?.location_hint ?? null
+  if (written.rows[0]) return written.rows[0].location_hint
+  // Nothing written: either a location was already recorded or the user is
+  // not an active member.
+  const stored = await db
+    .selectFrom('search_index_workspaces')
+    .select('location_hint')
+    .where('workspace_id', '=', input.workspaceId)
+    .executeTakeFirst()
+  return stored?.location_hint ?? null
 }
 
-/** Insertion-ordered set that drops its oldest entry beyond a limit. */
-class BoundedSet {
-  readonly #values = new Map<string, number>()
-  constructor(readonly limit: number) {}
-  has(key: string, now: number) {
-    const expires = this.#values.get(key)
-    if (expires === undefined) return false
-    if (expires > now) return true
-    this.#values.delete(key)
-    return false
-  }
-  add(key: string, expires: number) {
-    this.#values.delete(key)
-    this.#values.set(key, expires)
-    if (this.#values.size > this.limit)
-      this.#values.delete(this.#values.keys().next().value!)
-  }
-}
-
-// A recorded location never changes, so a workspace with one is skipped for
-// the rest of this isolate. A user who could not record (not an active
-// member) is skipped for that workspace for a while, so repeated requests
-// do not keep writing; any other member can still record meanwhile.
-const recorded = new BoundedSet(10_000)
-const declined = new BoundedSet(10_000)
-const inFlight = new Set<string>()
+const CACHE_LIMIT = 10_000
 const DECLINED_MS = 10 * 60_000
+const IN_FLIGHT_MS = 60_000
+
+// Workspaces known to have a location, which never changes. Oldest first.
+const recorded = new Set<string>()
+// Workspace and user pairs that could not record (not an active member),
+// with when they may try again; any other member can still record.
+const declinedUntil = new Map<string, number>()
+// Workspaces with a write in progress and when it started. A write that
+// never settles stops blocking after a minute.
+const inFlightSince = new Map<string, number>()
+
+function addRecorded(workspaceId: string) {
+  recorded.delete(workspaceId)
+  recorded.add(workspaceId)
+  if (recorded.size > CACHE_LIMIT)
+    recorded.delete(recorded.values().next().value!)
+}
+
+function addDeclined(attempt: string, until: number) {
+  declinedUntil.delete(attempt)
+  declinedUntil.set(attempt, until)
+  if (declinedUntil.size > CACHE_LIMIT)
+    declinedUntil.delete(declinedUntil.keys().next().value!)
+}
 
 function logRecordFailure(error: unknown) {
   console.error(
@@ -185,13 +192,12 @@ export function rememberSearchIndexLocation(
   request: Request,
   user: { id: string; workspaceId: string; kind: 'human' | 'bot' },
   options: {
-    background?: ((promise: Promise<unknown>) => void) | undefined
+    background?: (promise: Promise<unknown>) => void
     open?: <T>(run: (db: Db) => Promise<T>) => Promise<T>
     now?: number
   } = {},
 ) {
-  const background =
-    'background' in options ? options.background : workers.waitUntil
+  const background = options.background ?? workers.waitUntil
   const open = options.open ?? withDb
   const now = options.now ?? Date.now()
   const workspaceId = user.workspaceId
@@ -199,9 +205,9 @@ export function rememberSearchIndexLocation(
   if (
     typeof background !== 'function' ||
     user.kind !== 'human' ||
-    recorded.has(workspaceId, now) ||
-    declined.has(attempt, now) ||
-    inFlight.has(workspaceId)
+    recorded.has(workspaceId) ||
+    (declinedUntil.get(attempt) ?? 0) > now ||
+    now - (inFlightSince.get(workspaceId) ?? -Infinity) < IN_FLIGHT_MS
   )
     return
   const location = searchIndexLocation({
@@ -210,8 +216,7 @@ export function rememberSearchIndexLocation(
     longitude: request.cf?.longitude,
   })
   if (!location) return
-  inFlight.add(workspaceId)
-  // The write releases inFlight itself, even if waitUntil refuses it.
+  inFlightSince.set(workspaceId, now)
   const work = open((db) =>
     recordSearchIndexLocation(db, {
       workspaceId,
@@ -220,11 +225,11 @@ export function rememberSearchIndexLocation(
     }),
   )
     .then((stored) => {
-      if (stored) recorded.add(workspaceId, Number.POSITIVE_INFINITY)
-      else declined.add(attempt, now + DECLINED_MS)
+      if (stored) addRecorded(workspaceId)
+      else addDeclined(attempt, now + DECLINED_MS)
     })
     .catch(logRecordFailure)
-    .finally(() => inFlight.delete(workspaceId))
+    .finally(() => inFlightSince.delete(workspaceId))
   try {
     background(work)
   } catch (error) {
