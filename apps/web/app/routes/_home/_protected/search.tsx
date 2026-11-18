@@ -132,7 +132,7 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   // Temporary placement check, only when asked for: measured before the
   // search so its round trips do not wait on search work.
   const probes = url.searchParams.has('probe-index-location')
-    ? await probeIndexLocations().catch((error: unknown) => {
+    ? await probeIndexLocations(user.workspaceId).catch((error: unknown) => {
         console.warn(
           JSON.stringify({
             event: 'search_index_probe_failed',
