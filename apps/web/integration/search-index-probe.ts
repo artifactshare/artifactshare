@@ -147,6 +147,7 @@ export class WorkspaceSearchIndex extends Index {
     }
   }
   seedDocuments(documents: SearchProbeDocument[]): void {
+    this.ensureSchema()
     this.ctx.storage.transactionSync(() => {
       for (const row of documents) {
         const generation = row.generation ?? 'current'
@@ -201,6 +202,7 @@ export class WorkspaceSearchIndex extends Index {
     count: number,
     size: number,
   ): void {
+    this.ensureSchema()
     this.ctx.storage.transactionSync(() => {
       for (let i = offset; i < offset + count; i++) {
         const id = `${workspace}-${i}`
@@ -284,6 +286,10 @@ export class WorkspaceSearchIndex extends Index {
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
+  }
+  /** Create the tables a first sync would, for tests that prepare them. */
+  createSchema(): void {
+    this.ensureSchema()
   }
   resume(): Promise<void> {
     return super.alarm()
@@ -418,6 +424,9 @@ export default {
         break
       case 'resume':
         result = await stub.resume()
+        break
+      case 'ensureSchema':
+        result = await stub.createSchema()
         break
       case 'resumeAt':
         result = await stub.resumeAt(command.now)

@@ -13,10 +13,12 @@ import { DurableObject } from 'cloudflare:workers'
 import {
   isSearchIndexLocation,
   SEARCH_INDEX_LOCATIONS,
+  readyPlacedLocation,
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
 import { createDb, type Db } from '../app/services/db.server'
+import { readPlacement } from '../app/services/search-index/placement.server'
 import {
   inventory,
   fingerprint,
@@ -79,13 +81,31 @@ const PASS_BATCH = 50
 const FULL_PASS_INTERVAL_MS = 12 * 60 * 60_000
 // A change written with a slightly older clock than the mark is still found.
 const RECENT_OVERLAP_MS = 5 * 60_000
+const PLACEMENT_CHECK_MS = 5 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private running = false
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env)
-    ctx.storage.sql.exec(`
+    // Storage is created by the first sync, never by a read: a read can
+    // reach an index that was never synced, or a legacy index that retired.
+    if (
+      ctx.storage.sql
+        .exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'")
+        .toArray().length
+    )
+      this.#initSchema()
+  }
+  // Whether this instance has its tables; false before the first sync and
+  // after a retired index deleted its storage.
+  #schemaReady = false
+  protected ensureSchema(): void {
+    if (!this.#schemaReady) this.#initSchema()
+  }
+  #initSchema(): void {
+    this.#schemaReady = true
+    this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS active (id TEXT PRIMARY KEY, generation TEXT NOT NULL, fingerprint TEXT NOT NULL, content TEXT NOT NULL, format INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pending (id TEXT PRIMARY KEY, attempted INTEGER NOT NULL DEFAULT 0);
@@ -106,55 +126,55 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       INSERT OR IGNORE INTO schema_version(version) VALUES(1);
     `)
     const columns = new Set(
-      ctx.storage.sql
+      this.ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(documents)')
         .toArray()
         .map((row) => row.name),
     )
     if (!columns.has('title_key'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         "ALTER TABLE documents ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
       )
     if (!columns.has('activity_at'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         "ALTER TABLE documents ADD COLUMN activity_at TEXT NOT NULL DEFAULT ''",
       )
     if (!columns.has('group_key'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         "ALTER TABLE documents ADD COLUMN group_key TEXT NOT NULL DEFAULT ''",
       )
-    ctx.storage.sql.exec(
+    this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
     )
     // Thrown failures per pending item and when the last one counted;
     // budget yields do not count. Each column is added on its own.
     const pendingColumns = new Set(
-      ctx.storage.sql
+      this.ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(pending)')
         .toArray()
         .map((row) => row.name),
     )
     if (!pendingColumns.has('failures'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
       )
     if (!pendingColumns.has('failed_at'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // When a failed item may be tried again; 0 means now.
     if (!pendingColumns.has('retry_at'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0',
       )
     if (!pendingColumns.has('first_failed_at'))
-      ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // Reconciliation progress: how far changes were compared (by updated_at),
     // and when the last full scan and sweep finished.
     const stateColumns = new Set(
-      ctx.storage.sql
+      this.ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(state)')
         .toArray()
         .map((row) => row.name),
@@ -167,20 +187,20 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       ['swept_at', 'INTEGER NOT NULL DEFAULT 0'],
     ] as const)
       if (!stateColumns.has(column))
-        ctx.storage.sql.exec(
+        this.ctx.storage.sql.exec(
           `ALTER TABLE state ADD COLUMN ${column} ${definition}`,
         )
     // When a placed index reported its first full reconciliation as ready.
-    ctx.storage.sql.exec(
+    this.ctx.storage.sql.exec(
       'CREATE TABLE IF NOT EXISTS placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
     )
     // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
       for (const event of ['INSERT', 'UPDATE', 'DELETE'])
-        ctx.storage.sql.exec(
+        this.ctx.storage.sql.exec(
           `DROP TRIGGER IF EXISTS invalidate_query_${table}_${event}`,
         )
-    ctx.storage.sql
+    this.ctx.storage.sql
       .exec(`DROP TABLE IF EXISTS query_results; DROP TABLE IF EXISTS query_cache; DROP TABLE IF EXISTS query_allowed_ids;
       CREATE INDEX IF NOT EXISTS chunks_document_ordinal ON chunks(document,ordinal);`)
   }
@@ -293,6 +313,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   }
 
   search(input: IndexSearchInput): IndexSearchResult {
+    if (!this.#schemaReady) return { items: [], nextCursor: null }
     try {
       return this.searchPage(input)
     } catch (error) {
@@ -344,6 +365,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   }
 
   groupMembers(input: IndexSearchInput, keys: string[]): IndexSearchResult {
+    if (!this.#schemaReady) return { items: [], nextCursor: null }
     try {
       const query = this.#matchingPages({ ...input, groupKeys: keys })
       const cursor = Math.max(0, input.cursor ?? 0)
@@ -389,19 +411,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
-  /**
-   * Temporary placement check: no index work, and the Cloudflare location
-   * this object runs in, read once from the trace endpoint.
-   */
-  #colo: Promise<string> | undefined
-  placement(): Promise<string> {
-    this.#colo ??= fetch('https://www.cloudflare.com/cdn-cgi/trace')
-      .then((response) => (response.ok ? response.text() : ''))
-      .then((text) => /^colo=(\w+)$/m.exec(text)?.[1] ?? 'unknown')
-      .catch(() => 'unknown')
-    return this.#colo
-  }
-
   details(
     input: IndexSearchInput,
     ids: string[],
@@ -412,6 +421,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     hasBody: boolean
     matchedKeywords: string[]
   }> {
+    if (!this.#schemaReady) return []
     const query = this.#matchingPages({ ...input, allowedIds: ids }, true)
     const rows = this.ctx.storage.sql
       .exec<{ id: string; document: number; path: string }>(
@@ -544,11 +554,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .one().blocked
     if (blocked) return
-    const row = await db
-      .selectFrom('search_index_workspaces')
-      .select(['location_hint', 'ready_at'])
-      .where('workspace_id', '=', state.workspace)
-      .executeTakeFirst()
+    const row = await readPlacement(db, state.workspace)
     // A workspace recorded for another location never uses this index.
     if (row?.location_hint && row.location_hint !== location) {
       this.#otherLocation = true
@@ -572,6 +578,29 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   #otherLocation = false
+  // When this legacy instance last read whether its workspace moved on.
+  #placementCheckedAt = 0
+  /**
+   * Delete a legacy index's extracted text, every page in this run, then its
+   * alarm and storage. A placed index keeps its text under its own area.
+   */
+  private async retire(workspace: string): Promise<void> {
+    let truncated = true
+    while (truncated) {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const page = await this.env.BUCKET.list({
+        prefix: workspaceSearchPrefix(workspace),
+        limit: 1000,
+      })
+      const keys = page.objects.map((object) => object.key)
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      if (keys.length) await this.env.BUCKET.delete(keys)
+      truncated = page.truncated
+    }
+    await this.ctx.storage.deleteAlarm()
+    await this.ctx.storage.deleteAll()
+    this.#schemaReady = false
+  }
   // When this instance last received a sync request, so a failure based on
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
@@ -581,9 +610,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     workspaceSearchPrefix(workspace)
     if (location !== undefined && !isSearchIndexLocation(location))
       throw new Error('search_partition_mismatch')
-    const state = this.state()
-    if (state && state.workspace !== workspace)
-      throw new Error('search_workspace_mismatch')
     if (
       !this.ctx.id.equals(
         this.env.WORKSPACE_SEARCH_INDEX.idFromName(
@@ -592,6 +618,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
     )
       throw new Error('search_partition_mismatch')
+    // Storage is created only for a sync this object accepts by name.
+    this.ensureSchema()
+    const state = this.state()
+    if (state && state.workspace !== workspace)
+      throw new Error('search_workspace_mismatch')
     this.#location = { value: location }
     this.ctx.storage.sql.exec(
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
@@ -616,6 +647,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     // An eviction or exception always leaves a durable continuation.
     try {
       await this.ctx.storage.setAlarm(Date.now() + 30_000)
+      // An index without storage has nothing to run.
+      if (!this.#schemaReady) {
+        await this.ctx.storage.deleteAlarm()
+        return
+      }
       const state = this.state()
       if (!state) return
       const readAt = Date.now()
@@ -652,6 +688,23 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       const walkStarts = Boolean(state.dirty) && !state.recent_time
       const db = createDb(this.env.DB)
       try {
+        // Once searches use the placed index, the legacy one is no longer
+        // synced; it deletes its extracted text and then its own storage.
+        // Checked when a walk or a full pass starts, and at least every few
+        // minutes while the legacy index keeps working for other reasons.
+        if (
+          this.location() === undefined &&
+          (walkStarts ||
+            (scanDue && !cursor) ||
+            readAt - this.#placementCheckedAt >= PLACEMENT_CHECK_MS)
+        ) {
+          this.#placementCheckedAt = readAt
+          const placement = await readPlacement(db, state.workspace)
+          if (readyPlacedLocation(placement)) {
+            await this.retire(state.workspace)
+            return
+          }
+        }
         if (scanDue && !cursor)
           await db
             .insertInto('search_index_workspaces')
@@ -962,7 +1015,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // Signals received across any awaited operation belong to the next pass.
       // Recheck after idle scheduling so that it cannot overwrite their alarm.
       this.running = false
-      if ((this.state()?.dirty ?? 0) > unconsumed)
+      if (this.#schemaReady && (this.state()?.dirty ?? 0) > unconsumed)
         await this.ctx.storage.setAlarm(Date.now() + 1000)
     }
   }

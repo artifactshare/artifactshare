@@ -3,10 +3,11 @@ import type { Db } from '../db.server'
 import type { SearchIndexes } from '../search.server'
 import type { WorkspaceSearchIndex } from '../../../workers/workspace-search-index'
 import {
-  isSearchIndexLocation,
   placedSearchIndex,
+  readyPlacedLocation,
   searchIndexName,
 } from './names'
+import { readPlacement } from './placement.server'
 
 /**
  * The index each workspace's searches use in one request: the placed index
@@ -24,27 +25,20 @@ export function workspaceSearchIndexes(
   const choose = (workspaceId: string) => {
     let index = chosen.get(workspaceId)
     if (!index) {
-      index = db
-        .selectFrom('search_index_workspaces')
-        .select(['location_hint', 'ready_at'])
-        .where('workspace_id', '=', workspaceId)
-        .executeTakeFirst()
-        .then(
-          (row) =>
-            row?.ready_at && isSearchIndexLocation(row.location_hint)
-              ? placedSearchIndex(namespace, workspaceId, row.location_hint)
-              : namespace.getByName(searchIndexName(workspaceId)),
-          // An unreadable choice falls back to the legacy index.
-          (error: unknown) => {
-            console.warn(
-              JSON.stringify({
-                event: 'search_index_choice_failed',
-                message: error instanceof Error ? error.message : String(error),
-              }),
-            )
-            return namespace.getByName(searchIndexName(workspaceId))
-          },
-        )
+      // A transient read failure is retried once. A failure after that fails
+      // the search and is not kept, so a later call reads again. Falling
+      // back to the legacy index would recreate one that already retired,
+      // and the search's own permission checks need D1 as well.
+      const read = () => readPlacement(db, workspaceId)
+      index = read()
+        .catch(read)
+        .then((row) => {
+          const location = readyPlacedLocation(row)
+          return location
+            ? placedSearchIndex(namespace, workspaceId, location)
+            : namespace.getByName(searchIndexName(workspaceId))
+        })
+      index.catch(() => chosen.delete(workspaceId))
       chosen.set(workspaceId, index)
     }
     return index

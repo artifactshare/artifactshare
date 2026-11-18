@@ -70,3 +70,24 @@ test('the legacy index is synced even when the location read fails', async () =>
   expect(error).not.toHaveBeenCalled()
   error.mockRestore()
 })
+
+test('a notification skips the legacy index once the placed index is ready', async () => {
+  fixture.sqlite.exec(
+    "UPDATE search_index_workspaces SET ready_at='" +
+      now +
+      "' WHERE workspace_id='ws-a'",
+  )
+  const synced: string[] = []
+  workerEnv.WORKSPACE_SEARCH_INDEX = {
+    getByName: (name: string) => ({
+      sync: () => {
+        synced.push(name)
+        return Promise.resolve()
+      },
+    }),
+  }
+  const pending: Promise<unknown>[] = []
+  scheduleWorkspaceSearch('ws-a', (promise) => pending.push(promise))
+  await Promise.all(pending)
+  expect(synced).toEqual(['ws-a:0@apac-ne'])
+})

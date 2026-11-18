@@ -44,3 +44,15 @@ export function placedSearchIndex<
     locationHint: location,
   })
 }
+
+/**
+ * The location whose placed index a workspace's searches use: recorded and
+ * reported ready. Until then the legacy index is searched and synced.
+ */
+export function readyPlacedLocation(
+  row: { location_hint: string | null; ready_at: string | null } | undefined,
+): SearchIndexLocation | undefined {
+  return row?.ready_at && isSearchIndexLocation(row.location_hint)
+    ? row.location_hint
+    : undefined
+}
