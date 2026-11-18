@@ -539,6 +539,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   #otherLocation = false
+  // Sync requests received by this instance, so an attempt that fails after
+  // a sync arrived does not postpone the retry that sync asked for.
+  #syncs = 0
 
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
@@ -563,6 +566,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
     // A sync request retries every waiting item at once, so a transient
     // failure recovers on the next notification or scheduled dispatch.
+    this.#syncs++
     this.ctx.storage.sql.exec('UPDATE pending SET retry_at=0 WHERE retry_at>0')
     await this.ctx.storage.setAlarm(Date.now() + 1000)
     await this.run()
@@ -669,6 +673,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .executeTakeFirst(),
           ),
         )
+        const syncsAtStart = this.#syncs
         for (const [position, id] of ordered.entries()) {
           this.ctx.storage.sql.exec(
             'UPDATE pending SET attempted=? WHERE id=?',
@@ -680,31 +685,27 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
             if (source) {
               // react-doctor-disable-next-line react-doctor/async-await-in-loop
-              if (!(await this.replace(source))) {
-                // A partial pass made progress; continue without waiting.
-                this.ctx.storage.sql.exec(
-                  'UPDATE pending SET retry_at=0 WHERE id=?',
-                  id,
-                )
-                continue
-              }
+              if (!(await this.replace(source))) continue
             }
             // react-doctor-disable-next-line react-doctor/async-await-in-loop
             else await this.remove(state.workspace, id)
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
-            // Count a failure at most every five minutes, so a brief outage
-            // cannot use up an item's attempts within seconds.
+            // Count a failure at most every five minutes and wait before the
+            // next try, unless a sync request arrived during this attempt.
+            const failedAt = Date.now()
             this.ctx.storage.sql.exec(
-              'UPDATE pending SET failures=failures+1, failed_at=?1, first_failed_at=CASE WHEN first_failed_at=0 THEN ?1 ELSE first_failed_at END WHERE id=?2 AND failed_at <= ?3',
-              Date.now(),
+              `UPDATE pending SET
+                failures = failures + (failed_at <= ?2),
+                first_failed_at = CASE WHEN failed_at <= ?2 AND first_failed_at = 0 THEN ?1 ELSE first_failed_at END,
+                failed_at = CASE WHEN failed_at <= ?2 THEN ?1 ELSE failed_at END,
+                retry_at = CASE WHEN ?4 THEN ?1 + ?5 ELSE retry_at END
+              WHERE id = ?3`,
+              failedAt,
+              failedAt - FAILURE_SPACING_MS,
               id,
-              Date.now() - FAILURE_SPACING_MS,
-            )
-            this.ctx.storage.sql.exec(
-              'UPDATE pending SET retry_at=? WHERE id=?',
-              Date.now() + FAILURE_SPACING_MS,
-              id,
+              this.#syncs === syncsAtStart ? 1 : 0,
+              FAILURE_SPACING_MS,
             )
             console.error('workspace_search_item_failed')
           }
