@@ -14,6 +14,7 @@ const readBearerSessionTokenMock = vi.hoisted(() =>
   }),
 )
 const createDbMock = vi.hoisted(() => vi.fn())
+const rememberSearchIndexLocationMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/services/auth.server', () => ({
   getSessionUser: getSessionUserMock,
@@ -27,6 +28,10 @@ vi.mock('~/services/cli-authority.server', () => ({
 
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
+}))
+
+vi.mock('~/services/search-index/placement.server', () => ({
+  rememberSearchIndexLocation: rememberSearchIndexLocationMock,
 }))
 
 vi.mock('cloudflare:workers', () => ({
@@ -98,6 +103,8 @@ describe('sessionMiddleware', () => {
     // the old cookie lookup must make the negative control fail.
     expect(createDbMock).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledTimes(1)
+    // The signed-in user's request also records the search index location.
+    expect(rememberSearchIndexLocationMock).toHaveBeenCalledWith(request, user)
   })
 })
 
