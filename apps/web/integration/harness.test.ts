@@ -160,7 +160,21 @@ const harness = createTestHarness({
 const network = setupServer()
 if (typeof integrationConfig.name !== 'string')
   throw new Error('Main Worker config is missing its name')
-const worker = harness.getWorker(integrationConfig.name)
+// Requests carry an empty country and continent unless a test sets cf (the
+// local runtime fills in the rest), so a workspace's search index location
+// is recorded only where a test asks for one.
+const primaryWorker = harness.getWorker(integrationConfig.name)
+const worker = new Proxy(primaryWorker, {
+  get(target, property, receiver) {
+    if (property === 'fetch')
+      return (
+        input: Parameters<typeof primaryWorker.fetch>[0],
+        init?: Parameters<typeof primaryWorker.fetch>[1],
+      ) => target.fetch(input, { cf: { country: '', continent: '' }, ...init })
+    const value: unknown = Reflect.get(target, property, receiver)
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+})
 const sandboxWorker = harness.getWorker(sandboxName)
 
 function searchProbe(workspace: string) {
@@ -887,6 +901,85 @@ describe('Worker integration harness', () => {
     expect(await syncNamed('ws-placed:0@apac-ne', 'mars')).toBe(
       'search_partition_mismatch',
     )
+  }, 60_000)
+
+  test('a legacy index stops syncing and deletes itself once the placed index is ready', async () => {
+    const owner = {
+      workspaceId: 'ws-retire',
+      userId: 'user-retire',
+      email: 'retire@example.test',
+      name: 'Retire',
+      sessionToken: 'retire-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('retire-inbox',?,'inbox',?,?,'Inbox',?,?)",
+      ).bind(owner.workspaceId, owner.userId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('retire-page',?,?,'Retire','retire-inbox','html_page','private','v-retire-page',?,?)",
+      ).bind(owner.workspaceId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-retire-page','retire-page','html_page','published','/index.html','artifacts/retire/page',100,'sha',?,?)",
+      ).bind(owner.userId, now),
+    ])
+    await env.BUCKET.put('artifacts/retire/page', '<p>retireneedle</p>')
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    const legacy = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-retire:0' },
+    )
+    expect(await legacy.exec('SELECT count(*) AS count FROM active')).toEqual([
+      { count: 1 },
+    ])
+    // A recorded location builds the placed index, which reports ready.
+    await env.DB.prepare(
+      "UPDATE search_index_workspaces SET location_hint='apac-ne', dispatched_at='' WHERE workspace_id=?",
+    )
+      .bind(owner.workspaceId)
+      .run()
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(
+      await env.DB.prepare(
+        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
+      )
+        .bind(owner.workspaceId)
+        .first('ready_at'),
+    ).not.toBeNull()
+    // Its next run deletes the legacy text and storage, not the placed copy.
+    await searchProbe(owner.workspaceId).resume()
+    expect(
+      (await env.BUCKET.list({ prefix: 'search-text/ws-retire/' })).objects,
+    ).toEqual([])
+    expect(
+      (await env.BUCKET.list({ prefix: 'search-text/@apac-ne/ws-retire/' }))
+        .objects.length,
+    ).toBe(1)
+    expect(
+      await legacy.exec("SELECT name FROM sqlite_master WHERE name='state'"),
+    ).toEqual([])
+    // Later notifications reach only the placed index.
+    await env.DB.prepare(
+      "UPDATE search_index_workspaces SET dispatched_at='' WHERE workspace_id=?",
+    )
+      .bind(owner.workspaceId)
+      .run()
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(
+      await legacy.exec("SELECT name FROM sqlite_master WHERE name='state'"),
+    ).toEqual([])
+    const placed = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-retire:0@apac-ne' },
+    )
+    expect(
+      await placed.exec(
+        'SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH ?',
+        'retireneedle',
+      ),
+    ).toEqual([{ shareable: 'retire-page' }])
   }, 60_000)
 
   test('a placed index reports ready after its first pass, past items that keep failing', async () => {

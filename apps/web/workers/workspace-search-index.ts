@@ -572,6 +572,27 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   #otherLocation = false
+  // Set once this legacy index deleted its storage; it then does no work.
+  #retired = false
+  /**
+   * Delete a legacy index's extracted text, a page per step, then its
+   * alarm and storage. A placed index keeps its text under its own area.
+   */
+  private async retire(workspace: string): Promise<void> {
+    const page = await this.env.BUCKET.list({
+      prefix: workspaceSearchPrefix(workspace),
+      limit: 1000,
+    })
+    const keys = page.objects.map((object) => object.key)
+    if (keys.length) await this.env.BUCKET.delete(keys)
+    if (page.truncated) {
+      await this.ctx.storage.setAlarm(Date.now() + 1000)
+      return
+    }
+    await this.ctx.storage.deleteAlarm()
+    await this.ctx.storage.deleteAll()
+    this.#retired = true
+  }
   // When this instance last received a sync request, so a failure based on
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
@@ -652,6 +673,22 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       const walkStarts = Boolean(state.dirty) && !state.recent_time
       const db = createDb(this.env.DB)
       try {
+        // Once searches use the placed index, the legacy one is no longer
+        // synced; it deletes its extracted text and then its own storage.
+        if (this.location() === undefined) {
+          const placement = await db
+            .selectFrom('search_index_workspaces')
+            .select(['location_hint', 'ready_at'])
+            .where('workspace_id', '=', state.workspace)
+            .executeTakeFirst()
+          if (
+            placement?.ready_at &&
+            isSearchIndexLocation(placement.location_hint)
+          ) {
+            await this.retire(state.workspace)
+            return
+          }
+        }
         if (scanDue && !cursor)
           await db
             .insertInto('search_index_workspaces')
@@ -962,7 +999,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // Signals received across any awaited operation belong to the next pass.
       // Recheck after idle scheduling so that it cannot overwrite their alarm.
       this.running = false
-      if ((this.state()?.dirty ?? 0) > unconsumed)
+      if (!this.#retired && (this.state()?.dirty ?? 0) > unconsumed)
         await this.ctx.storage.setAlarm(Date.now() + 1000)
     }
   }

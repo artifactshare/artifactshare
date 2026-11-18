@@ -95,3 +95,19 @@ test('a failing legacy sync does not stop the placed sync', async () => {
   ).rejects.toThrow('workspace_search_dispatch_failed')
   expect(calls.map((call) => call.name)).toContain('ws-a:0@apac-ne')
 })
+
+test('once the placed index is ready, dispatch syncs only the placed index', async () => {
+  fixture.sqlite.exec(
+    "UPDATE search_index_workspaces SET ready_at='" +
+      now +
+      "' WHERE workspace_id IN ('ws-a','ws-b')",
+  )
+  const { calls, binding } = namespace()
+  await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
+  // ws-b has no location, so its legacy index is still the one searched.
+  expect(calls.map((call) => call.name).sort()).toEqual([
+    'ws-a:0@apac-ne',
+    'ws-b:0',
+    'ws-c:0',
+  ])
+})
