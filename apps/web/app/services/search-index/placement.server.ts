@@ -114,42 +114,67 @@ export function searchIndexLocation(cf: {
 }
 
 /**
- * Record the location once for a workspace, only when the user is one of
- * its active members and no location is recorded yet. Returns whether the
- * workspace has a recorded location afterwards.
+ * Record the location once for a workspace when the user is one of its
+ * active members and none is recorded yet. One statement returns the stored
+ * location: null means the workspace still has none (the user is not an
+ * active member), whether or not another request recorded it first.
  */
 export async function recordSearchIndexLocation(
   db: Db,
   input: { workspaceId: string; userId: string; location: SearchIndexLocation },
-): Promise<boolean> {
-  const existing = await db
-    .selectFrom('search_index_workspaces')
-    .select('location_hint')
-    .where('workspace_id', '=', input.workspaceId)
-    .executeTakeFirst()
-  if (existing?.location_hint) return true
-  const written = await sql<{ location_hint: string }>`
+): Promise<string | null> {
+  const result = await sql<{ location_hint: string | null }>`
     INSERT INTO search_index_workspaces(workspace_id, dispatched_at, location_hint)
-    SELECT ${input.workspaceId}, '', ${input.location}
-    WHERE EXISTS (
+    SELECT ${input.workspaceId}, '', CASE WHEN EXISTS (
       SELECT 1 FROM workspace_members
       WHERE workspace_id = ${input.workspaceId}
         AND user_id = ${input.userId}
         AND status = 'active'
-    )
-    ON CONFLICT(workspace_id) DO UPDATE SET location_hint = excluded.location_hint
-    WHERE search_index_workspaces.location_hint IS NULL
+    ) THEN ${input.location} END
+    WHERE true
+    ON CONFLICT(workspace_id) DO UPDATE SET location_hint =
+      coalesce(search_index_workspaces.location_hint, excluded.location_hint)
     RETURNING location_hint
   `.execute(db)
-  return written.rows.length > 0
+  return result.rows[0]?.location_hint ?? null
 }
 
-// A recorded location never changes, so a workspace known to have one is
-// skipped for the rest of this isolate. A workspace whose request did not
-// record (not an active member) stays eligible for the next request.
-const recorded = new Set<string>()
+/** Insertion-ordered set that drops its oldest entry beyond a limit. */
+class BoundedSet {
+  readonly #values = new Map<string, number>()
+  constructor(readonly limit: number) {}
+  has(key: string, now: number) {
+    const expires = this.#values.get(key)
+    if (expires === undefined) return false
+    if (expires > now) return true
+    this.#values.delete(key)
+    return false
+  }
+  add(key: string, expires: number) {
+    this.#values.delete(key)
+    this.#values.set(key, expires)
+    if (this.#values.size > this.limit)
+      this.#values.delete(this.#values.keys().next().value!)
+  }
+}
+
+// A recorded location never changes, so a workspace with one is skipped for
+// the rest of this isolate. A user who could not record (not an active
+// member) is skipped for that workspace for a while, so repeated requests
+// do not keep writing; any other member can still record meanwhile.
+const recorded = new BoundedSet(10_000)
+const declined = new BoundedSet(10_000)
 const inFlight = new Set<string>()
-const RECORDED_LIMIT = 10_000
+const DECLINED_MS = 10 * 60_000
+
+function logRecordFailure(error: unknown) {
+  console.error(
+    JSON.stringify({
+      event: 'search_index_location_record_failed',
+      message: error instanceof Error ? error.message : String(error),
+    }),
+  )
+}
 
 /**
  * After a signed-in request, record the workspace's search index location
@@ -159,15 +184,23 @@ const RECORDED_LIMIT = 10_000
 export function rememberSearchIndexLocation(
   request: Request,
   user: { id: string; workspaceId: string; kind: 'human' | 'bot' },
-  background:
-    | ((promise: Promise<unknown>) => void)
-    | undefined = workers.waitUntil,
+  options: {
+    background?: ((promise: Promise<unknown>) => void) | undefined
+    open?: <T>(run: (db: Db) => Promise<T>) => Promise<T>
+    now?: number
+  } = {},
 ) {
+  const background =
+    'background' in options ? options.background : workers.waitUntil
+  const open = options.open ?? withDb
+  const now = options.now ?? Date.now()
   const workspaceId = user.workspaceId
+  const attempt = `${workspaceId}\u0000${user.id}`
   if (
     typeof background !== 'function' ||
     user.kind !== 'human' ||
-    recorded.has(workspaceId) ||
+    recorded.has(workspaceId, now) ||
+    declined.has(attempt, now) ||
     inFlight.has(workspaceId)
   )
     return
@@ -178,37 +211,23 @@ export function rememberSearchIndexLocation(
   })
   if (!location) return
   inFlight.add(workspaceId)
+  // The write releases inFlight itself, even if waitUntil refuses it.
+  const work = open((db) =>
+    recordSearchIndexLocation(db, {
+      workspaceId,
+      userId: user.id,
+      location,
+    }),
+  )
+    .then((stored) => {
+      if (stored) recorded.add(workspaceId, Number.POSITIVE_INFINITY)
+      else declined.add(attempt, now + DECLINED_MS)
+    })
+    .catch(logRecordFailure)
+    .finally(() => inFlight.delete(workspaceId))
   try {
-    background(
-      withDb((db) =>
-        recordSearchIndexLocation(db, {
-          workspaceId,
-          userId: user.id,
-          location,
-        }),
-      )
-        .then((done) => {
-          if (!done) return
-          if (recorded.size >= RECORDED_LIMIT) recorded.clear()
-          recorded.add(workspaceId)
-        })
-        .catch((error: unknown) => {
-          console.error(
-            JSON.stringify({
-              event: 'search_index_location_record_failed',
-              message: error instanceof Error ? error.message : String(error),
-            }),
-          )
-        })
-        .finally(() => inFlight.delete(workspaceId)),
-    )
+    background(work)
   } catch (error) {
-    inFlight.delete(workspaceId)
-    console.error(
-      JSON.stringify({
-        event: 'search_index_location_record_failed',
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    )
+    logRecordFailure(error)
   }
 }

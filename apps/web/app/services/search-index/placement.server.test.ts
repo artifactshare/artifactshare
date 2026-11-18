@@ -66,12 +66,13 @@ test('only an active member records the location, and only once', async () => {
       userId,
       location,
     })
-  expect(await record('removed', 'weur')).toBe(false)
-  expect(await record('outsider', 'weur')).toBe(false)
-  expect(recorded()).toBeUndefined()
-  expect(await record('member', 'apac-ne')).toBe(true)
-  expect(recorded()).toEqual({ location_hint: 'apac-ne' })
-  expect(await record('member', 'weur')).toBe(true)
+  expect(await record('removed', 'weur')).toBeNull()
+  expect(await record('outsider', 'weur')).toBeNull()
+  expect(recorded()).toEqual({ location_hint: null })
+  expect(await record('member', 'apac-ne')).toBe('apac-ne')
+  expect(await record('member', 'weur')).toBe('apac-ne')
+  // Another request finding it already recorded still sees the location.
+  expect(await record('removed', 'weur')).toBe('apac-ne')
   expect(recorded()).toEqual({ location_hint: 'apac-ne' })
 })
 
@@ -93,43 +94,85 @@ test('an existing dispatch row keeps its schedule and gains the location', async
   ).toEqual({ dispatched_at: now, location_hint: 'apac-ne' })
 })
 
+const request = (cf: Record<string, string>) =>
+  Object.assign(new Request('https://example.test/'), { cf }) as Request
+const japan = request({ country: 'JP', continent: 'AS' })
+
+test('a member records after a non-member, and later requests skip the write', async () => {
+  const pending: Promise<unknown>[] = []
+  const background = vi.fn((promise: Promise<unknown>) => {
+    pending.push(promise)
+  })
+  const options = {
+    background,
+    open: <T>(run: (db: typeof fixture.db) => Promise<T>) => run(fixture.db),
+    now: 0,
+  }
+  rememberSearchIndexLocation(
+    japan,
+    { id: 'removed', workspaceId: 'ws', kind: 'human' },
+    options,
+  )
+  await Promise.all(pending)
+  expect(recorded()).toEqual({ location_hint: null })
+  // The same non-member is not retried for a while.
+  rememberSearchIndexLocation(
+    japan,
+    { id: 'removed', workspaceId: 'ws', kind: 'human' },
+    options,
+  )
+  expect(background).toHaveBeenCalledTimes(1)
+  rememberSearchIndexLocation(
+    japan,
+    { id: 'member', workspaceId: 'ws', kind: 'human' },
+    options,
+  )
+  await Promise.all(pending)
+  expect(recorded()).toEqual({ location_hint: 'apac-ne' })
+  rememberSearchIndexLocation(
+    japan,
+    { id: 'member', workspaceId: 'ws', kind: 'human' },
+    options,
+  )
+  expect(background).toHaveBeenCalledTimes(2)
+})
+
 test('bots, unmapped regions and missing background work record nothing', () => {
   const background = vi.fn()
-  const request = (cf: Record<string, string>) =>
-    Object.assign(new Request('https://example.test/'), { cf }) as Request
   const human = { id: 'member', workspaceId: 'ws-a', kind: 'human' as const }
-  rememberSearchIndexLocation(
-    request({ country: 'JP', continent: 'AS' }),
-    { ...human, kind: 'bot' },
-    background,
-  )
+  rememberSearchIndexLocation(japan, { ...human, kind: 'bot' }, { background })
   rememberSearchIndexLocation(
     request({ country: 'XX', continent: 'T1' }),
     human,
-    background,
+    { background },
   )
-  rememberSearchIndexLocation(
-    request({ country: 'JP', continent: 'AS' }),
-    human,
-    undefined,
-  )
+  rememberSearchIndexLocation(japan, human, { background: undefined })
   expect(background).not.toHaveBeenCalled()
 })
 
-test('a failure to start the background write does not fail the request', () => {
+test('a failed write or a refused waitUntil logs once and allows a retry', async () => {
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-  const request = Object.assign(new Request('https://example.test/'), {
-    cf: { country: 'JP', continent: 'AS' },
-  }) as Request
-  expect(() =>
-    rememberSearchIndexLocation(
-      request,
-      { id: 'member', workspaceId: 'ws-b', kind: 'human' },
-      () => {
-        throw new Error('no request context')
-      },
-    ),
-  ).not.toThrow()
+  const human = { id: 'member', workspaceId: 'ws-c', kind: 'human' as const }
+  let release: () => void = () => {}
+  const failing = () =>
+    new Promise<never>((_, reject) => {
+      release = () => reject(new Error('d1 unavailable'))
+    })
+  rememberSearchIndexLocation(japan, human, {
+    background: () => {
+      throw new Error('no request context')
+    },
+    open: failing,
+  })
+  // While the refused write still runs, the workspace is not retried.
+  const background = vi.fn()
+  rememberSearchIndexLocation(japan, human, { background, open: failing })
+  expect(background).not.toHaveBeenCalled()
+  release()
+  await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2))
   expect(String(error.mock.calls[0][0])).toContain('no request context')
+  expect(String(error.mock.calls[1][0])).toContain('d1 unavailable')
+  rememberSearchIndexLocation(japan, human, { background, open: failing })
+  expect(background).toHaveBeenCalledTimes(1)
   error.mockRestore()
 })
