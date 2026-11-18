@@ -640,8 +640,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // file is compared under the current one.
       const cursor =
         state.scan_format === INDEX_FORMAT_VERSION ? state.cursor : ''
+      // A stored cursor, even one from another format, keeps the scan due
+      // until a scan under the current format overwrites it.
       const scanDue =
-        Boolean(cursor) ||
+        Boolean(state.cursor) ||
         state.scanned_format !== INDEX_FORMAT_VERSION ||
         state.scanned_at + FULL_PASS_INTERVAL_MS <= readAt
       const sweepDue =

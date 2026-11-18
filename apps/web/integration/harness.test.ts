@@ -1178,7 +1178,10 @@ describe('Worker integration harness', () => {
       .bind(new Date(later - 1000).toISOString())
       .run()
     await probe.sync()
-    await settle()
+    // The walks take longer than the five-minute overlap. The next walk still
+    // reads from the mark saved when the previous walk started.
+    for (let step = 1; step <= 6; step++)
+      await probe.resumeAt(Date.now() + step * 10 * 60_000)
     expect(
       (await probe.search({ query: 'latecommitneedle' })).items.map(
         (row) => row.id,
