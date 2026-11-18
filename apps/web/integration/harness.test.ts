@@ -1031,6 +1031,35 @@ describe('Worker integration harness', () => {
     ).toEqual({ ready_at: expect.any(String) })
   }, 60_000)
 
+  test('a file that keeps failing does not keep its index busy', async () => {
+    const owner = {
+      workspaceId: 'ws-backoff',
+      userId: 'user-backoff',
+      email: 'backoff@example.test',
+      name: 'Backoff',
+      sessionToken: 'backoff-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('backoff-inbox',?,'inbox',?,?,'Inbox',?,?)",
+      ).bind(owner.workspaceId, owner.userId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('backoff-missing',?,?,'Missing','backoff-inbox','html_page','private','v-backoff-missing',?,?)",
+      ).bind(owner.workspaceId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-backoff-missing','backoff-missing','html_page','published','/index.html','artifacts/backoff/missing',100,'sha',?,?)",
+      ).bind(owner.userId, now),
+    ])
+    // The source object never exists, so every attempt fails.
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    const probe = searchProbe(owner.workspaceId)
+    // After a counted failure the index waits minutes, not a second.
+    expect(await probe.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
+  }, 60_000)
+
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
     const owner = {
       workspaceId: 'ws-search',

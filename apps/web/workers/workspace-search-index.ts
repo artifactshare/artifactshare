@@ -626,9 +626,19 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           scan.length === BATCH ? scan[scan.length - 1].id : '',
         )
         // Drain recent work before older pending rows; one corrupt object cannot block a pass.
+        // A run the index schedules for itself leaves an item whose last
+        // failure counted less than the spacing ago waiting, so a file that
+        // keeps failing is retried every few minutes rather than keeping the
+        // index busy (and its replies waiting) every second. A run started by
+        // a sync request (a notification or the scheduled dispatch) retries
+        // every pending item at once.
+        const retryBefore = state.dirty
+          ? Number.MAX_SAFE_INTEGER
+          : Date.now() - FAILURE_SPACING_MS
         const pending = this.ctx.storage.sql
           .exec<{ id: string }>(
-            'SELECT id FROM pending ORDER BY attempted, id LIMIT ?',
+            'SELECT id FROM pending WHERE failed_at <= ? ORDER BY attempted, id LIMIT ?',
+            retryBefore,
             BATCH,
           )
           .toArray()
@@ -638,7 +648,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .filter(
                 (row) =>
                   this.ctx.storage.sql
-                    .exec('SELECT id FROM pending WHERE id=?', row.id)
+                    .exec(
+                      'SELECT id FROM pending WHERE id=? AND failed_at <= ?',
+                      row.id,
+                      retryBefore,
+                    )
                     .toArray().length,
               )
               .map((row) => row.id),
@@ -732,7 +746,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
           .exec<{ count: number }>(
-            'SELECT ((SELECT count(*) FROM pending) + (SELECT count(*) FROM reclaims)) AS count',
+            'SELECT ((SELECT count(*) FROM pending WHERE failed_at <= ?) + (SELECT count(*) FROM reclaims)) AS count',
+            Date.now() - FAILURE_SPACING_MS,
           )
           .one().count
         if (
