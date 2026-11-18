@@ -1,3 +1,4 @@
+import { searchIndexName } from './search-index/names'
 import { env } from 'cloudflare:workers'
 import { withDb, type Db } from './db.server'
 import type { SearchIndex, SearchIndexes } from './search.server'
@@ -181,7 +182,7 @@ export function serverTiming(timings: SearchTimings, totalMs: number) {
 }
 
 const workspaceIndexes: SearchIndexes = (workspace) =>
-  env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`)
+  env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace))
 
 /**
  * Run one search request with timed D1 and index access. The breakdown is
@@ -247,6 +248,6 @@ export function probeIndexLocations(workspaceId: string): Promise<string[]> {
       locationHint: 'apac-ne',
     }),
     ping('probe-default', 'location-probe-default:0'),
-    ping('probe-workspace', `${workspaceId}:0`),
+    ping('probe-workspace', searchIndexName(workspaceId)),
   ])
 }

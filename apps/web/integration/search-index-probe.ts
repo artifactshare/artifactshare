@@ -1,3 +1,4 @@
+import { searchIndexName } from '../app/services/search-index/names'
 import { searchCliArtifacts } from '../app/services/cli-artifacts.server'
 import { createDb } from '../app/services/db.server'
 import {
@@ -14,6 +15,7 @@ import {
   katakanaRuns,
   INDEX_FORMAT_VERSION,
 } from '../app/services/search-index/normalize'
+import type { SearchIndexLocation } from '../app/services/search-index/names'
 import { WorkspaceSearchIndex as Index } from '../workers/workspace-search-index'
 
 export type SearchProbeDocument = {
@@ -324,8 +326,12 @@ export default {
       size: number
       warmup: number
       samples: number
+      name: string
+      location?: SearchIndexLocation
     }>()
-    const stub = env.WORKSPACE_SEARCH_INDEX.getByName(`${command.workspace}:0`)
+    const stub = env.WORKSPACE_SEARCH_INDEX.getByName(
+      searchIndexName(command.workspace),
+    )
     let result: unknown
     switch (command.action) {
       case 'seedDocuments':
@@ -343,7 +349,7 @@ export default {
           result = await searchCliArtifacts(
             db,
             (workspace) =>
-              env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+              env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace)),
             { id: 'search-reader' },
             {
               baseUrl: 'https://example.test',
@@ -399,6 +405,16 @@ export default {
         break
       case 'attemptSync':
         result = await stub.attemptSync(command.workspace)
+        break
+      case 'syncNamed':
+        // Sync an index object by explicit name to exercise its name check.
+        result = await env.WORKSPACE_SEARCH_INDEX.getByName(command.name)
+          .sync(command.workspace, command.location)
+          .then(
+            () => 'ok',
+            (error: unknown) =>
+              error instanceof Error ? error.message : String(error),
+          )
         break
       case 'resume':
         result = await stub.resume()

@@ -1,10 +1,53 @@
 import * as workers from 'cloudflare:workers'
 import { env } from 'cloudflare:workers'
-import type { Db } from '../db.server'
+import { withDb, type Db } from '../db.server'
 import type { WorkspaceSearchIndex } from '../../../workers/workspace-search-index'
+import {
+  isSearchIndexLocation,
+  placedSearchIndex,
+  searchIndexName,
+  type SearchIndexLocation,
+} from './names'
 
 export type SearchEnvironment = {
   WORKSPACE_SEARCH_INDEX?: DurableObjectNamespace<WorkspaceSearchIndex>
+}
+
+/**
+ * Sync a workspace's legacy index, then, once its location is known, the
+ * index placed there. The placed sync runs after the legacy one so it can
+ * reuse the legacy extraction of a new version. Each sync fails on its own.
+ */
+async function syncWorkspaceIndexes(
+  namespace: DurableObjectNamespace<WorkspaceSearchIndex>,
+  workspaceId: string,
+  location: Promise<SearchIndexLocation | undefined>,
+): Promise<void> {
+  const legacy = await Promise.allSettled([
+    Promise.resolve().then(() =>
+      namespace.getByName(searchIndexName(workspaceId)).sync(workspaceId),
+    ),
+  ])
+  // Deliberately after the legacy sync, so a new version's extraction exists.
+  // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
+  const placed = await Promise.allSettled([
+    location.then((value) =>
+      value
+        ? placedSearchIndex(namespace, workspaceId, value).sync(
+            workspaceId,
+            value,
+          )
+        : undefined,
+    ),
+  ])
+  const failure = [...legacy, ...placed].find(
+    (result) => result.status === 'rejected',
+  )
+  if (failure) throw failure.reason
+}
+
+function recordedLocation(value: string | null | undefined) {
+  return isSearchIndexLocation(value) ? value : undefined
 }
 
 /** A notification contains only identity; D1 supplies all content and metadata. */
@@ -14,15 +57,25 @@ export function scheduleWorkspaceSearch(
 ): void {
   if (!env.WORKSPACE_SEARCH_INDEX) return
   try {
-    const promise = Promise.resolve()
-      .then(() =>
-        env.WORKSPACE_SEARCH_INDEX.getByName(`${workspaceId}:0`).sync(
-          workspaceId,
-        ),
-      )
-      .catch(() => {
-        console.error('workspace_search_notification_failed')
-      })
+    // The legacy sync does not wait for the location read.
+    const location = withDb((db) =>
+      db
+        .selectFrom('search_index_workspaces')
+        .select('location_hint')
+        .where('workspace_id', '=', workspaceId)
+        .executeTakeFirst(),
+    ).then(
+      (row) => recordedLocation(row?.location_hint),
+      // An unreadable location syncs only the legacy index, as before.
+      () => undefined,
+    )
+    const promise = syncWorkspaceIndexes(
+      env.WORKSPACE_SEARCH_INDEX,
+      workspaceId,
+      location,
+    ).catch(() => {
+      console.error('workspace_search_notification_failed')
+    })
     ;(background ?? workers.waitUntil)(promise)
   } catch {
     console.error('workspace_search_notification_failed')
@@ -51,7 +104,7 @@ export async function dispatchWorkspaceSearch(
       .execute()
   const rows = await db
     .selectFrom('search_index_workspaces')
-    .select('workspace_id')
+    .select(['workspace_id', 'location_hint'])
     .orderBy('dispatched_at')
     .orderBy('workspace_id')
     .limit(50)
@@ -66,9 +119,11 @@ export async function dispatchWorkspaceSearch(
           .set({ dispatched_at: new Date().toISOString() })
           .where('workspace_id', '=', row.workspace_id)
           .execute()
-        await bindings
-          .WORKSPACE_SEARCH_INDEX!.getByName(`${row.workspace_id}:0`)
-          .sync(row.workspace_id)
+        await syncWorkspaceIndexes(
+          bindings.WORKSPACE_SEARCH_INDEX!,
+          row.workspace_id,
+          Promise.resolve(recordedLocation(row.location_hint)),
+        )
       } catch (error) {
         failures.push(error)
       }
