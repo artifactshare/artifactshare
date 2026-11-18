@@ -1,6 +1,6 @@
 import * as workers from 'cloudflare:workers'
 import { sql } from 'kysely'
-import { createDb, type Db } from '../db.server'
+import { withDb, type Db } from '../db.server'
 
 /** The Durable Object regions a workspace search index can be created in. */
 export type SearchIndexLocation =
@@ -115,13 +115,20 @@ export function searchIndexLocation(cf: {
 
 /**
  * Record the location once for a workspace, only when the user is one of
- * its active members and no location is recorded yet.
+ * its active members and no location is recorded yet. Returns whether the
+ * workspace has a recorded location afterwards.
  */
 export async function recordSearchIndexLocation(
   db: Db,
   input: { workspaceId: string; userId: string; location: SearchIndexLocation },
-) {
-  await sql`
+): Promise<boolean> {
+  const existing = await db
+    .selectFrom('search_index_workspaces')
+    .select('location_hint')
+    .where('workspace_id', '=', input.workspaceId)
+    .executeTakeFirst()
+  if (existing?.location_hint) return true
+  const written = await sql<{ location_hint: string }>`
     INSERT INTO search_index_workspaces(workspace_id, dispatched_at, location_hint)
     SELECT ${input.workspaceId}, '', ${input.location}
     WHERE EXISTS (
@@ -132,17 +139,22 @@ export async function recordSearchIndexLocation(
     )
     ON CONFLICT(workspace_id) DO UPDATE SET location_hint = excluded.location_hint
     WHERE search_index_workspaces.location_hint IS NULL
+    RETURNING location_hint
   `.execute(db)
+  return written.rows.length > 0
 }
 
-// Workspaces this isolate already tried to record; a recorded hint never
-// changes, so later requests skip the write.
-const attempted = new Set<string>()
-const ATTEMPT_LIMIT = 10_000
+// A recorded location never changes, so a workspace known to have one is
+// skipped for the rest of this isolate. A workspace whose request did not
+// record (not an active member) stays eligible for the next request.
+const recorded = new Set<string>()
+const inFlight = new Set<string>()
+const RECORDED_LIMIT = 10_000
 
 /**
  * After a signed-in request, record the workspace's search index location
- * from where the request came from, without delaying the response.
+ * from where the request came from, without delaying or failing the
+ * response.
  */
 export function rememberSearchIndexLocation(
   request: Request,
@@ -151,10 +163,12 @@ export function rememberSearchIndexLocation(
     | ((promise: Promise<unknown>) => void)
     | undefined = workers.waitUntil,
 ) {
+  const workspaceId = user.workspaceId
   if (
     typeof background !== 'function' ||
     user.kind !== 'human' ||
-    attempted.has(user.workspaceId)
+    recorded.has(workspaceId) ||
+    inFlight.has(workspaceId)
   )
     return
   const location = searchIndexLocation({
@@ -163,19 +177,38 @@ export function rememberSearchIndexLocation(
     longitude: request.cf?.longitude,
   })
   if (!location) return
-  if (attempted.size >= ATTEMPT_LIMIT) attempted.clear()
-  attempted.add(user.workspaceId)
-  const db = createDb()
-  background(
-    recordSearchIndexLocation(db, {
-      workspaceId: user.workspaceId,
-      userId: user.id,
-      location,
-    })
-      .catch(() => {
-        attempted.delete(user.workspaceId)
-        console.error('search_index_location_record_failed')
-      })
-      .finally(() => db.destroy()),
-  )
+  inFlight.add(workspaceId)
+  try {
+    background(
+      withDb((db) =>
+        recordSearchIndexLocation(db, {
+          workspaceId,
+          userId: user.id,
+          location,
+        }),
+      )
+        .then((done) => {
+          if (!done) return
+          if (recorded.size >= RECORDED_LIMIT) recorded.clear()
+          recorded.add(workspaceId)
+        })
+        .catch((error: unknown) => {
+          console.error(
+            JSON.stringify({
+              event: 'search_index_location_record_failed',
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          )
+        })
+        .finally(() => inFlight.delete(workspaceId)),
+    )
+  } catch (error) {
+    inFlight.delete(workspaceId)
+    console.error(
+      JSON.stringify({
+        event: 'search_index_location_record_failed',
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    )
+  }
 }

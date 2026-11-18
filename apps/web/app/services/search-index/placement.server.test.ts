@@ -66,12 +66,12 @@ test('only an active member records the location, and only once', async () => {
       userId,
       location,
     })
-  await record('removed', 'weur')
-  await record('outsider', 'weur')
+  expect(await record('removed', 'weur')).toBe(false)
+  expect(await record('outsider', 'weur')).toBe(false)
   expect(recorded()).toBeUndefined()
-  await record('member', 'apac-ne')
+  expect(await record('member', 'apac-ne')).toBe(true)
   expect(recorded()).toEqual({ location_hint: 'apac-ne' })
-  await record('member', 'weur')
+  expect(await record('member', 'weur')).toBe(true)
   expect(recorded()).toEqual({ location_hint: 'apac-ne' })
 })
 
@@ -114,4 +114,22 @@ test('bots, unmapped regions and missing background work record nothing', () => 
     undefined,
   )
   expect(background).not.toHaveBeenCalled()
+})
+
+test('a failure to start the background write does not fail the request', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const request = Object.assign(new Request('https://example.test/'), {
+    cf: { country: 'JP', continent: 'AS' },
+  }) as Request
+  expect(() =>
+    rememberSearchIndexLocation(
+      request,
+      { id: 'member', workspaceId: 'ws-b', kind: 'human' },
+      () => {
+        throw new Error('no request context')
+      },
+    ),
+  ).not.toThrow()
+  expect(String(error.mock.calls[0][0])).toContain('no request context')
+  error.mockRestore()
 })
