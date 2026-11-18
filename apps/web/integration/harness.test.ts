@@ -963,6 +963,61 @@ describe('Worker integration harness', () => {
     expect(await readyAt()).toBe(first)
   }, 60_000)
 
+  test('a placed index missing many files is not reported ready', async () => {
+    const owner = {
+      workspaceId: 'ws-unready',
+      userId: 'user-unready',
+      email: 'unready@example.test',
+      name: 'Unready',
+      sessionToken: 'unready-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.prepare(
+      "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('unready-inbox',?,'inbox',?,?,'Inbox',?,?)",
+    )
+      .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
+      .run()
+    // One page indexes; three never can, as during a long outage.
+    const ids = ['unready-good', 'unready-a', 'unready-b', 'unready-c']
+    for (const id of ids)
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES (?,?,?,?,'unready-inbox','html_page','private',?,?,?)",
+        ).bind(id, owner.workspaceId, owner.userId, id, `v-${id}`, now, now),
+        env.DB.prepare(
+          "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'html_page','published','/index.html',?,100,'sha',?,?)",
+        ).bind(`v-${id}`, id, `artifacts/unready/${id}`, owner.userId, now),
+      ])
+    await env.BUCKET.put('artifacts/unready/unready-good', '<p>good</p>')
+    await env.DB.prepare(
+      "INSERT INTO search_index_workspaces(workspace_id,dispatched_at,location_hint) VALUES(?,'','apac-ne')",
+    )
+      .bind(owner.workspaceId)
+      .run()
+    const placed = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-unready:0@apac-ne' },
+    )
+    for (let run = 0; run < 3; run++) {
+      await placed.exec('UPDATE pending SET failed_at=0')
+      await worker.scheduled({ cron: '*/5 * * * *' })
+    }
+    expect(
+      await placed.exec(
+        'SELECT count(*) AS count FROM pending WHERE failures >= 3',
+      ),
+    ).toEqual([{ count: 3 }])
+    expect(
+      await env.DB.prepare(
+        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
+      )
+        .bind(owner.workspaceId)
+        .first(),
+    ).toEqual({ ready_at: null })
+  }, 60_000)
+
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
     const owner = {
       workspaceId: 'ws-search',

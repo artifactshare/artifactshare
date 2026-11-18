@@ -112,15 +112,21 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
     )
-    // Thrown failures per pending item; budget yields do not count.
-    if (
-      !ctx.storage.sql
+    // Thrown failures per pending item and when the last one counted;
+    // budget yields do not count. Each column is added on its own.
+    const pendingColumns = new Set(
+      ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(pending)')
         .toArray()
-        .some((row) => row.name === 'failures')
+        .map((row) => row.name),
     )
+    if (!pendingColumns.has('failures'))
       ctx.storage.sql.exec(
-        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0; ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
+      )
+    if (!pendingColumns.has('failed_at'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // When a placed index reported its first full reconciliation as ready.
     ctx.storage.sql.exec(
@@ -480,33 +486,54 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async reportReady(db: Db, state: State): Promise<void> {
     const location = this.location()
     if (!location || state.cursor) return
-    const blocked = this.ctx.storage.sql
-      .exec<{ blocked: number }>(
+    const counts = this.ctx.storage.sql
+      .exec<{ blocked: number; failed: number; indexed: number }>(
         // An item that failed three times keeps its staging row while it
-        // retries; it no longer holds back readiness.
-        'SELECT (EXISTS(SELECT 1 FROM placement) OR EXISTS(SELECT 1 FROM pending WHERE failures < 3) OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3))) AS blocked',
+        // retries; it no longer holds back readiness on its own.
+        `SELECT
+          (EXISTS(SELECT 1 FROM placement)
+            OR EXISTS(SELECT 1 FROM pending WHERE failures < 3)
+            OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3))) AS blocked,
+          (SELECT count(*) FROM pending WHERE failures >= 3) AS failed,
+          (SELECT count(*) FROM active) AS indexed`,
       )
-      .one().blocked
-    if (blocked) return
-    await db
-      .updateTable('search_index_workspaces')
-      .set({ ready_at: new Date().toISOString() })
-      .where('workspace_id', '=', state.workspace)
-      .where('location_hint', '=', location)
-      .where('ready_at', 'is', null)
-      .execute()
-    // Stop reporting only once D1 holds the report for this location.
-    const recorded = await db
+      .one()
+    // A long outage can fail many items three times; an index missing more
+    // than a tenth of its files (at least two) is not ready.
+    if (
+      counts.blocked ||
+      counts.failed >
+        Math.max(2, Math.floor((counts.failed + counts.indexed) / 10))
+    )
+      return
+    const row = await db
       .selectFrom('search_index_workspaces')
-      .select('ready_at')
+      .select(['location_hint', 'ready_at'])
       .where('workspace_id', '=', state.workspace)
-      .where('location_hint', '=', location)
       .executeTakeFirst()
-    if (recorded?.ready_at)
+    // A workspace recorded for another location never uses this index.
+    if (row?.location_hint && row.location_hint !== location) {
       this.ctx.storage.sql.exec(
-        'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
-        recorded.ready_at,
+        "INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,'')",
       )
+      return
+    }
+    if (row?.location_hint !== location) return
+    let readyAt = row.ready_at
+    if (!readyAt) {
+      readyAt = new Date().toISOString()
+      await db
+        .updateTable('search_index_workspaces')
+        .set({ ready_at: readyAt })
+        .where('workspace_id', '=', state.workspace)
+        .where('location_hint', '=', location)
+        .where('ready_at', 'is', null)
+        .execute()
+    }
+    this.ctx.storage.sql.exec(
+      'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
+      readyAt,
+    )
   }
 
   /** location is set only for the index placed near the workspace's members. */

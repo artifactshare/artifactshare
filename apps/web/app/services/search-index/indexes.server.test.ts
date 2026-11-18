@@ -57,7 +57,10 @@ test('an unreadable choice falls back to the legacy index', async () => {
   const namespace = {
     getByName: (name: string) => {
       opened.push(name)
-      return { search: () => Promise.resolve({ items: [], nextCursor: null }) }
+      return {
+        search: () => Promise.resolve({ items: [], nextCursor: null }),
+        details: () => Promise.resolve([]),
+      }
     },
   } as never
   const failing = {
@@ -69,11 +72,11 @@ test('an unreadable choice falls back to the legacy index', async () => {
       }),
     }),
   } as never
-  await workspaceSearchIndexes(
-    failing,
-    namespace,
-  )('ready').search({
-    query: 'a',
-  })
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const indexes = workspaceSearchIndexes(failing, namespace)
+  await indexes('ready').search({ query: 'a' })
+  await indexes('ready').details({ query: 'a' }, [])
   expect(opened).toEqual(['ready:0'])
+  expect(warn).toHaveBeenCalledTimes(1)
+  warn.mockRestore()
 })

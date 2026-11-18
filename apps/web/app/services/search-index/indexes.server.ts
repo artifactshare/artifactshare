@@ -35,7 +35,15 @@ export function workspaceSearchIndexes(
               ? placedSearchIndex(namespace, workspaceId, row.location_hint)
               : namespace.getByName(searchIndexName(workspaceId)),
           // An unreadable choice falls back to the legacy index.
-          () => namespace.getByName(searchIndexName(workspaceId)),
+          (error: unknown) => {
+            console.warn(
+              JSON.stringify({
+                event: 'search_index_choice_failed',
+                message: error instanceof Error ? error.message : String(error),
+              }),
+            )
+            return namespace.getByName(searchIndexName(workspaceId))
+          },
         )
       chosen.set(workspaceId, index)
     }
