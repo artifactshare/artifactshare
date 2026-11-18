@@ -55,6 +55,11 @@ type State = {
   dirty: number
   recent_time: string
   recent_id: string
+  recent_mark: string
+  scanned_at: number
+  scanned_format: number
+  scan_format: number
+  swept_at: number
 }
 type Active = {
   id: string
@@ -66,6 +71,14 @@ type Active = {
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
 const GIVE_UP_AFTER_MS = 60 * 60_000
+// Rows compared with D1, or swept, in one pass step. A D1 lookup binds the
+// workspace and these ids, under its 100-parameter limit.
+const PASS_BATCH = 50
+// Full passes catch changes that sync notifications miss, and the sweep finds
+// deleted files. Twice a day keeps a deletion within the 24-hour bound.
+const FULL_PASS_INTERVAL_MS = 12 * 60 * 60_000
+// A change written with a slightly older clock than the mark is still found.
+const RECENT_OVERLAP_MS = 5 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
@@ -138,6 +151,25 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
       )
+    // Reconciliation progress: how far changes were compared (by updated_at),
+    // and when the last full scan and sweep finished.
+    const stateColumns = new Set(
+      ctx.storage.sql
+        .exec<{ name: string }>('PRAGMA table_info(state)')
+        .toArray()
+        .map((row) => row.name),
+    )
+    for (const [column, definition] of [
+      ['recent_mark', "TEXT NOT NULL DEFAULT ''"],
+      ['scanned_at', 'INTEGER NOT NULL DEFAULT 0'],
+      ['scanned_format', 'INTEGER NOT NULL DEFAULT 0'],
+      ['scan_format', 'INTEGER NOT NULL DEFAULT 0'],
+      ['swept_at', 'INTEGER NOT NULL DEFAULT 0'],
+    ] as const)
+      if (!stateColumns.has(column))
+        ctx.storage.sql.exec(
+          `ALTER TABLE state ADD COLUMN ${column} ${definition}`,
+        )
     // When a placed index reported its first full reconciliation as ready.
     ctx.storage.sql.exec(
       'CREATE TABLE IF NOT EXISTS placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
@@ -483,7 +515,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private state(): State | undefined {
     return this.ctx.storage.sql
       .exec<State>(
-        'SELECT workspace, cursor, sweep, dirty, recent_time, recent_id FROM state WHERE singleton=1',
+        'SELECT workspace, cursor, sweep, dirty, recent_time, recent_id, recent_mark, scanned_at, scanned_format, scan_format, swept_at FROM state WHERE singleton=1',
       )
       .toArray()[0]
   }
@@ -495,7 +527,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
    */
   private async reportReady(db: Db, state: State): Promise<void> {
     const location = this.location()
-    if (!location || state.cursor || this.#otherLocation) return
+    if (!location || state.cursor || !state.scanned_at || this.#otherLocation)
+      return
     // An item stops holding readiness back only after three counted
     // failures over at least an hour, so an outage that clears within the
     // hour cannot move searches to an incomplete index.
@@ -561,7 +594,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       throw new Error('search_partition_mismatch')
     this.#location = { value: location }
     this.ctx.storage.sql.exec(
-      'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=1',
+      'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
       workspace,
     )
     // A sync request retries every waiting item at once, so a transient
@@ -577,42 +610,82 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async run(): Promise<void> {
     if (this.running) return
     this.running = true
+    // Notifications this run has not consumed. Only ones that arrive while it
+    // runs need an early alarm; a failed run retries on its 30-second alarm.
+    let unconsumed = 0
     // An eviction or exception always leaves a durable continuation.
     try {
       await this.ctx.storage.setAlarm(Date.now() + 30_000)
       const state = this.state()
       if (!state) return
       const readAt = Date.now()
-      this.ctx.storage.sql.exec('UPDATE state SET dirty=0 WHERE singleton=1')
+      unconsumed = state.dirty
+      // An index without a change mark starts a full pass and compares later
+      // changes from now on. This also restarts indexes written before the
+      // mark existed, whose recent walk ran in the other direction.
+      if (!state.recent_mark) {
+        Object.assign(state, {
+          cursor: '',
+          recent_time: '',
+          recent_id: '',
+          recent_mark: new Date(readAt - RECENT_OVERLAP_MS).toISOString(),
+          scanned_at: 0,
+        })
+        this.ctx.storage.sql.exec(
+          "UPDATE state SET cursor='',recent_time='',recent_id='',recent_mark=?,scanned_at=0 WHERE singleton=1",
+          state.recent_mark,
+        )
+      }
+      // A scan started under another index format starts again, so every
+      // file is compared under the current one.
+      const cursor =
+        state.scan_format === INDEX_FORMAT_VERSION ? state.cursor : ''
+      // A stored cursor, even one from another format, keeps the scan due
+      // until a scan under the current format overwrites it.
+      const scanDue =
+        Boolean(state.cursor) ||
+        state.scanned_format !== INDEX_FORMAT_VERSION ||
+        state.scanned_at + FULL_PASS_INTERVAL_MS <= readAt
+      const sweepDue =
+        Boolean(state.sweep) || state.swept_at + FULL_PASS_INTERVAL_MS <= readAt
+      // Notifications received during a walk start another walk once it ends.
+      const walkStarts = Boolean(state.dirty) && !state.recent_time
       const db = createDb(this.env.DB)
       try {
-        await db
-          .insertInto('search_index_workspaces')
-          .values({ workspace_id: state.workspace, dispatched_at: '' })
-          .onConflict((oc) => oc.column('workspace_id').doNothing())
-          .execute()
-        // Recent changes are independent of the backfill cursor.
-        const recent = await inventory(db, state.workspace)
-          .$if(!state.dirty && Boolean(state.recent_time), (query) =>
-            query.where((eb) =>
+        if (scanDue && !cursor)
+          await db
+            .insertInto('search_index_workspaces')
+            .values({ workspace_id: state.workspace, dispatched_at: '' })
+            .onConflict((oc) => oc.column('workspace_id').doNothing())
+            .execute()
+        // A sync notification compares only rows changed since the mark, so
+        // an idle workspace costs one indexed D1 read per notification. Every
+        // row dated before the mark was compared by an earlier walk.
+        let recent: Source[] = []
+        if (walkStarts || state.recent_time) {
+          const [time, id] = state.recent_time
+            ? [state.recent_time, state.recent_id]
+            : [state.recent_mark, '']
+          recent = await inventory(db, state.workspace)
+            .where((eb) =>
               eb.or([
-                eb('s.updated_at', '<', state.recent_time),
-                eb.and([
-                  eb('s.updated_at', '=', state.recent_time),
-                  eb('s.id', '>', state.recent_id),
-                ]),
+                eb('s.updated_at', '>', time),
+                eb.and([eb('s.updated_at', '=', time), eb('s.id', '>', id)]),
               ]),
-            ),
-          )
-          .orderBy('s.updated_at', 'desc')
-          .orderBy('s.id')
-          .limit(BATCH)
-          .execute()
-        const scan = await inventory(db, state.workspace)
-          .where('s.id', '>', state.cursor)
-          .orderBy('s.id')
-          .limit(BATCH)
-          .execute()
+            )
+            .orderBy('s.updated_at', 'asc')
+            .orderBy('s.id', 'asc')
+            .limit(PASS_BATCH)
+            .execute()
+        }
+        // The full scan compares every row, for changes no notification named.
+        let scan: Source[] = []
+        if (scanDue)
+          scan = await inventory(db, state.workspace)
+            .where('s.id', '>', cursor)
+            .orderBy('s.id')
+            .limit(PASS_BATCH)
+            .execute()
         for (const row of [...recent, ...scan]) {
           const active = this.ctx.storage.sql
             .exec<Active>('SELECT * FROM active WHERE id=?', row.id)
@@ -627,17 +700,52 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               row.id,
             )
         }
-        const recentEnd =
-          recent.length === BATCH ? recent[recent.length - 1] : undefined
-        this.ctx.storage.sql.exec(
-          'UPDATE state SET recent_time=?,recent_id=? WHERE singleton=1',
-          recentEnd?.updated_at ?? '',
-          recentEnd?.id ?? '',
-        )
-        this.ctx.storage.sql.exec(
-          'UPDATE state SET cursor=? WHERE singleton=1',
-          scan.length === BATCH ? scan[scan.length - 1].id : '',
-        )
+        // Positions move only after the rows they passed are pending.
+        if (walkStarts || state.recent_time) {
+          // A new walk moves the mark to its start, less the overlap, since a
+          // row written with an older time can still be committing, and
+          // consumes the notifications counted when this step began.
+          const mark = walkStarts
+            ? new Date(
+                Math.max(
+                  Date.parse(state.recent_mark),
+                  readAt - RECENT_OVERLAP_MS,
+                ),
+              ).toISOString()
+            : state.recent_mark
+          const last = recent.at(-1)
+          const [time, id] =
+            recent.length === PASS_BATCH
+              ? [last!.updated_at, last!.id]
+              : ['', '']
+          if (
+            walkStarts ||
+            time !== state.recent_time ||
+            id !== state.recent_id
+          )
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET recent_time=?,recent_id=?,recent_mark=?,dirty=max(dirty-?,0) WHERE singleton=1',
+              time,
+              id,
+              mark,
+              walkStarts ? state.dirty : 0,
+            )
+          if (walkStarts) unconsumed = 0
+        }
+        if (scanDue) {
+          if (scan.length === PASS_BATCH)
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET cursor=?,scan_format=? WHERE singleton=1',
+              scan[scan.length - 1].id,
+              INDEX_FORMAT_VERSION,
+            )
+          else
+            this.ctx.storage.sql.exec(
+              "UPDATE state SET cursor='',scanned_at=?,scanned_format=? WHERE singleton=1",
+              readAt,
+              INDEX_FORMAT_VERSION,
+            )
+        }
         // Drain recent work before older pending rows; one corrupt object cannot block a pass.
         // A failed item waits until its retry time, so a file that keeps
         // failing is retried every few minutes rather than keeping the index
@@ -666,7 +774,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .map((row) => row.id),
             ...pending.map((row) => row.id),
           ]),
-        ]
+          // Recent rows can fill a whole pass step; work stays as before.
+        ].slice(0, 2 * BATCH)
         const sources = await Promise.all(
           ordered.map((id) =>
             inventory(db, state.workspace)
@@ -711,17 +820,28 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             console.error('workspace_search_item_failed')
           }
         }
-        // Paginate indexed identities as well as D1, including deleted rows and abandoned writes.
-        const cleanup = this.ctx.storage.sql
-          .exec<{ id: string }>(
-            'SELECT id FROM active WHERE id>? UNION SELECT shareable AS id FROM intentions WHERE shareable>? UNION SELECT id FROM reclaims WHERE id>? UNION SELECT id FROM cleanup WHERE id>? ORDER BY id LIMIT ?',
-            state.sweep,
-            state.sweep,
-            state.sweep,
-            state.sweep,
-            BATCH,
-          )
-          .toArray()
+        // A due sweep pages through indexed identities as well as D1,
+        // including deleted rows and abandoned writes. Between sweeps only
+        // abandoned writes and reclaims are cleaned.
+        const cleanup = sweepDue
+          ? this.ctx.storage.sql
+              .exec<{ id: string }>(
+                'SELECT id FROM active WHERE id>? UNION SELECT shareable AS id FROM intentions WHERE shareable>? UNION SELECT id FROM reclaims WHERE id>? UNION SELECT id FROM cleanup WHERE id>? ORDER BY id LIMIT ?',
+                state.sweep,
+                state.sweep,
+                state.sweep,
+                state.sweep,
+                PASS_BATCH,
+              )
+              .toArray()
+          : this.ctx.storage.sql
+              .exec<{ id: string }>(
+                // A staged file's objects wait for its replacement to finish,
+                // so only rows that can make progress are read here.
+                'SELECT shareable AS id FROM intentions WHERE shareable NOT IN (SELECT id FROM staging) UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup WHERE id NOT IN (SELECT id FROM staging) ORDER BY id LIMIT ?',
+                BATCH,
+              )
+              .toArray()
         const cleanupSources = cleanup.length
           ? await inventory(db, state.workspace)
               .where(
@@ -732,13 +852,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .execute()
           : []
         const sourcesById = new Map(cleanupSources.map((row) => [row.id, row]))
+        // Object deletions are slow, so one step does at most BATCH of them.
+        let cleaned = 0,
+          swept = state.sweep
         for (const row of cleanup) {
+          if (cleaned >= BATCH) break
           const source = sourcesById.get(row.id)
           // The persisted sweep cursor advances only after each prefix cleanup succeeds.
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop
-          if (!source) await this.remove(state.workspace, row.id)
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop
-          else if (
+          if (!source) {
+            cleaned++
+            // react-doctor-disable-next-line react-doctor/async-await-in-loop
+            await this.remove(state.workspace, row.id)
+          } else if (
             this.ctx.storage.sql
               .exec(
                 'SELECT shareable FROM intentions WHERE shareable=? UNION SELECT id FROM cleanup WHERE id=? UNION SELECT id FROM reclaims WHERE id=? LIMIT 1',
@@ -747,18 +872,26 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 row.id,
               )
               .toArray().length
-          )
+          ) {
+            cleaned++
+            // react-doctor-disable-next-line react-doctor/async-await-in-loop
             await this.cleanObjects(source)
+          }
           this.reclaim(row.id)
-          this.ctx.storage.sql.exec(
-            'UPDATE state SET sweep=? WHERE singleton=1',
-            row.id,
-          )
+          swept = row.id
         }
-        if (cleanup.length < BATCH)
-          this.ctx.storage.sql.exec(
-            "UPDATE state SET sweep='' WHERE singleton=1",
-          )
+        if (sweepDue) {
+          if (cleaned < BATCH && cleanup.length < PASS_BATCH)
+            this.ctx.storage.sql.exec(
+              "UPDATE state SET sweep='',swept_at=? WHERE singleton=1",
+              readAt,
+            )
+          else if (swept !== state.sweep)
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET sweep=? WHERE singleton=1',
+              swept,
+            )
+        }
         const more = this.state()!
         await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
@@ -794,6 +927,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             )
             .one().at
           if (!workspaceExists && unfinishedCleanup) {
+            // A deleted workspace is swept now rather than at the next pass.
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET swept_at=0 WHERE singleton=1',
+            )
             await this.ctx.storage.setAlarm(Date.now() + 1000)
           } else if (!workspaceExists && nextRetry !== null) {
             await this.ctx.storage.setAlarm(
@@ -805,7 +942,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .where('workspace_id', '=', state.workspace)
               .execute()
             await this.ctx.storage.deleteAlarm()
-          } else await this.ctx.storage.setAlarm(Date.now() + 5 * 60_000)
+          } else
+            // Sleep until the next full pass or retry; sync wakes it sooner.
+            await this.ctx.storage.setAlarm(
+              Math.max(
+                Date.now() + 1000,
+                Math.min(
+                  more.scanned_at + FULL_PASS_INTERVAL_MS,
+                  more.swept_at + FULL_PASS_INTERVAL_MS,
+                  nextRetry ?? Infinity,
+                ),
+              ),
+            )
         }
       } finally {
         await db.destroy()
@@ -814,7 +962,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // Signals received across any awaited operation belong to the next pass.
       // Recheck after idle scheduling so that it cannot overwrite their alarm.
       this.running = false
-      if (this.state()?.dirty)
+      if ((this.state()?.dirty ?? 0) > unconsumed)
         await this.ctx.storage.setAlarm(Date.now() + 1000)
     }
   }

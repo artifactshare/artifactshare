@@ -583,6 +583,13 @@ describe('Worker integration harness', () => {
       const stub = searchProbe('ws-signal')
       await stub.sync('ws-signal')
       expect(await stub.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
+      // The registry is written when a full pass starts, so make one due.
+      if (point === 'registry')
+        await (
+          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+            name: 'ws-signal:0',
+          })
+        ).exec('UPDATE state SET scanned_at=0')
       await stub.pause(point)
       const running = stub.resume()
       try {
@@ -1068,6 +1075,151 @@ describe('Worker integration harness', () => {
     ).toEqual(['backoff-missing'])
   }, 60_000)
 
+  test('an idle index reads only changed rows and sleeps until its next full pass', async () => {
+    const owner = {
+      workspaceId: 'ws-idle',
+      userId: 'user-idle',
+      email: 'idle@example.test',
+      name: 'Idle',
+      sessionToken: 'idle-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    // Written an hour ago, well before the change mark the first pass sets.
+    const now = new Date(Date.now() - 60 * 60_000).toISOString()
+    await env.DB.prepare(
+      "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('idle-inbox',?,'inbox',?,?,'Inbox',?,?)",
+    )
+      .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
+      .run()
+    // More rows than one pass step, so the first pass takes several steps.
+    for (let n = 0; n < 60; n++) {
+      const id = `idle-${String(n).padStart(2, '0')}`
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES (?,?,?,?,'idle-inbox','pdf','private',?,?,?)",
+        ).bind(id, owner.workspaceId, owner.userId, id, `v-${id}`, now, now),
+        env.DB.prepare(
+          "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'pdf','published','/file.pdf',?,1,'sha',?,?)",
+        ).bind(`v-${id}`, id, `artifacts/idle/${id}`, owner.userId, now),
+      ])
+    }
+    const probe = searchProbe(owner.workspaceId)
+    await probe.sync()
+    for (let step = 0; step < 50; step++) {
+      if ((await probe.nextAlarm())! > Date.now() + 60_000) break
+      await probe.resume()
+    }
+    const index = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-idle:0' },
+    )
+    expect(await index.exec('SELECT count(*) AS count FROM active')).toEqual([
+      { count: 60 },
+    ])
+    // Once the first pass is done, the index sleeps until the next one.
+    expect(await probe.nextAlarm()).toBeGreaterThan(
+      Date.now() + 11 * 60 * 60_000,
+    )
+    // A notification with nothing changed neither restarts a full pass nor
+    // keeps the index awake.
+    const before = await probe.queryState()
+    await probe.sync()
+    // The writes are the state row (notification, flag, change mark) and the
+    // three alarm settings.
+    expect(
+      (await probe.queryState()).changes - before.changes,
+    ).toBeLessThanOrEqual(6)
+    expect(
+      await index.exec('SELECT cursor, sweep, recent_time FROM state'),
+    ).toEqual([{ cursor: '', sweep: '', recent_time: '' }])
+    expect(await probe.nextAlarm()).toBeGreaterThan(
+      Date.now() + 11 * 60 * 60_000,
+    )
+    // A change written after the mark is found by the next notification.
+    await env.DB.prepare(
+      "UPDATE shareables SET description='idlechangedneedle',updated_at=? WHERE id='idle-42'",
+    )
+      .bind(new Date().toISOString())
+      .run()
+    await probe.sync()
+    expect(
+      (await probe.search({ query: 'idlechangedneedle' })).items.map(
+        (row) => row.id,
+      ),
+    ).toEqual(['idle-42'])
+    const settle = async () => {
+      for (let step = 0; step < 50; step++) {
+        if ((await probe.nextAlarm())! > Date.now() + 60_000) return
+        await probe.resume()
+      }
+      throw new Error('the index did not settle')
+    }
+    // A notification that arrives while a walk is under way starts another
+    // walk once it ends, so a write dated before the walk's position is found.
+    const later = Date.now()
+    for (let n = 0; n < 55; n++)
+      await env.DB.prepare(
+        'UPDATE shareables SET description=?,updated_at=? WHERE id=?',
+      )
+        .bind(
+          `bulk${n}`,
+          new Date(later + n).toISOString(),
+          `idle-${String(n).padStart(2, '0')}`,
+        )
+        .run()
+    await probe.sync()
+    expect(
+      (await index.exec('SELECT recent_time FROM state'))[0].recent_time,
+    ).not.toBe('')
+    await env.DB.prepare(
+      "UPDATE shareables SET description='latecommitneedle',updated_at=? WHERE id='idle-58'",
+    )
+      .bind(new Date(later - 1000).toISOString())
+      .run()
+    await probe.sync()
+    // The walks take longer than the five-minute overlap. The next walk still
+    // reads from the mark saved when the previous walk started.
+    for (let step = 1; step <= 6; step++)
+      await probe.resumeAt(Date.now() + step * 10 * 60_000)
+    expect(
+      (await probe.search({ query: 'latecommitneedle' })).items.map(
+        (row) => row.id,
+      ),
+    ).toEqual(['idle-58'])
+    // A scan started under another index format starts again from the first
+    // file, so files before its position are rebuilt too.
+    await index.exec(
+      "UPDATE state SET cursor='idle-20',scan_format=0,scanned_at=0",
+    )
+    await index.exec('UPDATE active SET format=0')
+    await probe.resume()
+    await settle()
+    expect(
+      await index.exec(
+        'SELECT count(*) AS count FROM active WHERE format=?',
+        INDEX_FORMAT_VERSION,
+      ),
+    ).toEqual([{ count: 60 }])
+    // Between sweeps, files whose objects wait on a staged replacement do
+    // not hold back other cleanup.
+    for (let n = 0; n < 5; n++) {
+      const id = `idle-0${n}`
+      await index.exec(
+        "INSERT INTO staging(id,generation,fingerprint,format) VALUES(?,'held','held',0)",
+        id,
+      )
+      await index.exec(
+        'INSERT INTO intentions(key,shareable) VALUES(?,?)',
+        `held/${id}`,
+        id,
+      )
+    }
+    await index.exec("INSERT INTO reclaims(id) VALUES('idle-59')")
+    await probe.sync()
+    expect(await index.exec('SELECT * FROM reclaims')).toEqual([])
+  }, 60_000)
+
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
     const owner = {
       workspaceId: 'ws-search',
@@ -1420,10 +1572,13 @@ describe('Worker integration harness', () => {
         await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
       ))!.version,
     ).toBe(original!.version)
-    // Description currently has no editing service; D1 is its authoritative input.
+    // Description currently has no editing service; D1 is its authoritative
+    // input. Like every application write, the change also moves updated_at.
     await env.DB.prepare(
-      "UPDATE shareables SET description='changeddescription' WHERE id='pdf'",
-    ).run()
+      "UPDATE shareables SET description='changeddescription',updated_at=? WHERE id='pdf'",
+    )
+      .bind(new Date().toISOString())
+      .run()
     await searchProbe('ws-search').sync()
     expect(
       await index.exec(
@@ -1454,8 +1609,10 @@ describe('Worker integration harness', () => {
       worker.scheduled({ cron: '*/5 * * * *' }),
     ).resolves.toMatchObject({ outcome: 'ok' })
     // A persisted sweep can be at its last batch after eviction. The next
-    // scheduled continuation must discover the deletion within the 24-hour bound.
-    await searchProbe('ws-search').resumeAt(Date.now() + 5 * 60_000)
+    // sweep, due twice a day, must discover the deletion within the 24-hour bound.
+    await searchProbe('ws-search').resumeAt(
+      Date.now() + 12 * 60 * 60_000 + 60_000,
+    )
     expect(
       await index.exec("SELECT * FROM serving_chunks WHERE shareable='html'"),
     ).toEqual([])
@@ -1774,6 +1931,17 @@ describe('Worker integration harness', () => {
         "SELECT normalized_title FROM documents d JOIN active a ON a.generation=d.generation WHERE d.shareable='backfill-00'",
       ),
     ).toEqual([{ normalized_title: 'backfill 00' }])
+    // A scheduled sync compares rows changed since the last mark; this write
+    // is dated before it, so only the next full pass finds it.
+    await expect(
+      worker.scheduled({ cron: '*/5 * * * *' }),
+    ).resolves.toMatchObject({ outcome: 'ok' })
+    expect(
+      await index.exec(
+        "SELECT normalized_title FROM documents d JOIN active a ON a.generation=d.generation WHERE d.shareable='backfill-00'",
+      ),
+    ).toEqual([{ normalized_title: 'backfill 00' }])
+    await index.exec('UPDATE state SET scanned_at=0')
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
     ).resolves.toMatchObject({ outcome: 'ok' })
@@ -1790,6 +1958,9 @@ describe('Worker integration harness', () => {
     )
     await index.exec('DROP TABLE search_runs')
     await index.exec('UPDATE active SET format=0')
+    // A format change ships as a new INDEX_FORMAT_VERSION, which no finished
+    // scan has used yet.
+    await index.exec('UPDATE state SET scanned_format=0')
     const servingBefore = await index.exec(
       'SELECT count(*) AS count FROM serving_chunks',
     )
@@ -1853,9 +2024,10 @@ describe('Worker integration harness', () => {
       env.DB.prepare(
         "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('replacement-version','backfill-00','html_page','published','/index.html','artifacts/backfill/replacement',300000,'next-sha',?,?)",
       ).bind(owner.userId, now),
+      // Publishing a version moves updated_at to the time of the write.
       env.DB.prepare(
-        "UPDATE shareables SET current_version_id='replacement-version',updated_at='2026-08-02' WHERE id='backfill-00'",
-      ),
+        "UPDATE shareables SET current_version_id='replacement-version',updated_at=? WHERE id='backfill-00'",
+      ).bind(new Date().toISOString()),
     ])
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
