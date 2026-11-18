@@ -29,10 +29,13 @@ export function workspaceSearchIndexes(
         .select(['location_hint', 'ready_at'])
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirst()
-        .then((row) =>
-          row?.ready_at && isSearchIndexLocation(row.location_hint)
-            ? placedSearchIndex(namespace, workspaceId, row.location_hint)
-            : namespace.getByName(searchIndexName(workspaceId)),
+        .then(
+          (row) =>
+            row?.ready_at && isSearchIndexLocation(row.location_hint)
+              ? placedSearchIndex(namespace, workspaceId, row.location_hint)
+              : namespace.getByName(searchIndexName(workspaceId)),
+          // An unreadable choice falls back to the legacy index.
+          () => namespace.getByName(searchIndexName(workspaceId)),
         )
       chosen.set(workspaceId, index)
     }

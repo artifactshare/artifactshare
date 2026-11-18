@@ -64,6 +64,7 @@ type Active = {
   format: number
 }
 const BATCH = 5
+const FAILURE_SPACING_MS = 5 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
@@ -119,7 +120,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .some((row) => row.name === 'failures')
     )
       ctx.storage.sql.exec(
-        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0; ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // When a placed index reported its first full reconciliation as ready.
     ctx.storage.sql.exec(
@@ -487,18 +488,25 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .one().blocked
     if (blocked) return
-    const readyAt = new Date().toISOString()
     await db
       .updateTable('search_index_workspaces')
-      .set({ ready_at: readyAt })
+      .set({ ready_at: new Date().toISOString() })
       .where('workspace_id', '=', state.workspace)
       .where('location_hint', '=', location)
       .where('ready_at', 'is', null)
       .execute()
-    this.ctx.storage.sql.exec(
-      'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
-      readyAt,
-    )
+    // Stop reporting only once D1 holds the report for this location.
+    const recorded = await db
+      .selectFrom('search_index_workspaces')
+      .select('ready_at')
+      .where('workspace_id', '=', state.workspace)
+      .where('location_hint', '=', location)
+      .executeTakeFirst()
+    if (recorded?.ready_at)
+      this.ctx.storage.sql.exec(
+        'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
+        recorded.ready_at,
+      )
   }
 
   /** location is set only for the index placed near the workspace's members. */
@@ -635,9 +643,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             else await this.remove(state.workspace, id)
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
+            // Count a failure at most every five minutes, so a brief outage
+            // cannot use up an item's attempts within seconds.
             this.ctx.storage.sql.exec(
-              'UPDATE pending SET failures=failures+1 WHERE id=?',
+              'UPDATE pending SET failures=failures+1, failed_at=? WHERE id=? AND failed_at <= ?',
+              Date.now(),
               id,
+              Date.now() - FAILURE_SPACING_MS,
             )
             console.error('workspace_search_item_failed')
           }

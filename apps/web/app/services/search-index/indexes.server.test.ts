@@ -51,3 +51,29 @@ test('searches use the placed index only once it is ready, deciding once per wor
   ])
   expect(reads).toBe(4)
 })
+
+test('an unreadable choice falls back to the legacy index', async () => {
+  const opened: string[] = []
+  const namespace = {
+    getByName: (name: string) => {
+      opened.push(name)
+      return { search: () => Promise.resolve({ items: [], nextCursor: null }) }
+    },
+  } as never
+  const failing = {
+    selectFrom: () => ({
+      select: () => ({
+        where: () => ({
+          executeTakeFirst: () => Promise.reject(new Error('d1 unavailable')),
+        }),
+      }),
+    }),
+  } as never
+  await workspaceSearchIndexes(
+    failing,
+    namespace,
+  )('ready').search({
+    query: 'a',
+  })
+  expect(opened).toEqual(['ready:0'])
+})

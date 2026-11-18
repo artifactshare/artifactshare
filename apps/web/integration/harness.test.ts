@@ -932,11 +932,20 @@ describe('Worker integration harness', () => {
           "SELECT failures FROM pending WHERE id='ready-missing'",
         )
       )[0]?.failures
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      await worker.scheduled({ cron: '*/5 * * * *' })
-      expect(await failures()).toBe(attempt)
-      expect(await readyAt()).toBeNull()
-    }
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await failures()).toBe(1)
+    // A retry within five minutes of the last counted failure is not counted.
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await failures()).toBe(1)
+    expect(await readyAt()).toBeNull()
+    // Make the last failure older than the spacing before each later run.
+    const age = () =>
+      placed.exec("UPDATE pending SET failed_at=0 WHERE id='ready-missing'")
+    await age()
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await failures()).toBe(2)
+    expect(await readyAt()).toBeNull()
+    await age()
     await worker.scheduled({ cron: '*/5 * * * *' })
     expect(await failures()).toBe(3)
     expect(await readyAt()).not.toBeNull()
