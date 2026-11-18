@@ -58,6 +58,7 @@ type State = {
   recent_mark: string
   scanned_at: number
   scanned_format: number
+  scan_format: number
   swept_at: number
 }
 type Active = {
@@ -162,6 +163,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       ['recent_mark', "TEXT NOT NULL DEFAULT ''"],
       ['scanned_at', 'INTEGER NOT NULL DEFAULT 0'],
       ['scanned_format', 'INTEGER NOT NULL DEFAULT 0'],
+      ['scan_format', 'INTEGER NOT NULL DEFAULT 0'],
       ['swept_at', 'INTEGER NOT NULL DEFAULT 0'],
     ] as const)
       if (!stateColumns.has(column))
@@ -513,7 +515,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private state(): State | undefined {
     return this.ctx.storage.sql
       .exec<State>(
-        'SELECT workspace, cursor, sweep, dirty, recent_time, recent_id, recent_mark, scanned_at, scanned_format, swept_at FROM state WHERE singleton=1',
+        'SELECT workspace, cursor, sweep, dirty, recent_time, recent_id, recent_mark, scanned_at, scanned_format, scan_format, swept_at FROM state WHERE singleton=1',
       )
       .toArray()[0]
   }
@@ -592,7 +594,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       throw new Error('search_partition_mismatch')
     this.#location = { value: location }
     this.ctx.storage.sql.exec(
-      'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=1',
+      'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
       workspace,
     )
     // A sync request retries every waiting item at once, so a transient
@@ -608,14 +610,16 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async run(): Promise<void> {
     if (this.running) return
     this.running = true
+    // Notifications this run has not consumed. Only ones that arrive while it
+    // runs need an early alarm; a failed run retries on its 30-second alarm.
+    let unconsumed = 0
     // An eviction or exception always leaves a durable continuation.
     try {
       await this.ctx.storage.setAlarm(Date.now() + 30_000)
       const state = this.state()
       if (!state) return
       const readAt = Date.now()
-      if (state.dirty)
-        this.ctx.storage.sql.exec('UPDATE state SET dirty=0 WHERE singleton=1')
+      unconsumed = state.dirty
       // An index without a change mark starts a full pass and compares later
       // changes from now on. This also restarts indexes written before the
       // mark existed, whose recent walk ran in the other direction.
@@ -632,15 +636,21 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           state.recent_mark,
         )
       }
+      // A scan started under another index format starts again, so every
+      // file is compared under the current one.
+      const cursor =
+        state.scan_format === INDEX_FORMAT_VERSION ? state.cursor : ''
       const scanDue =
-        Boolean(state.cursor) ||
+        Boolean(cursor) ||
         state.scanned_format !== INDEX_FORMAT_VERSION ||
         state.scanned_at + FULL_PASS_INTERVAL_MS <= readAt
       const sweepDue =
         Boolean(state.sweep) || state.swept_at + FULL_PASS_INTERVAL_MS <= readAt
+      // Notifications received during a walk start another walk once it ends.
+      const walkStarts = Boolean(state.dirty) && !state.recent_time
       const db = createDb(this.env.DB)
       try {
-        if (scanDue && !state.cursor)
+        if (scanDue && !cursor)
           await db
             .insertInto('search_index_workspaces')
             .values({ workspace_id: state.workspace, dispatched_at: '' })
@@ -650,7 +660,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         // an idle workspace costs one indexed D1 read per notification. Every
         // row dated before the mark was compared by an earlier walk.
         let recent: Source[] = []
-        if (state.dirty || state.recent_time) {
+        if (walkStarts || state.recent_time) {
           const [time, id] = state.recent_time
             ? [state.recent_time, state.recent_id]
             : [state.recent_mark, '']
@@ -665,51 +675,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             .orderBy('s.id', 'asc')
             .limit(PASS_BATCH)
             .execute()
-          // A new walk moves the mark to its start, less the overlap, since a
-          // row written with an older time can still be committing. The walk
-          // itself continues from its own position until it reaches the end.
-          const mark = state.recent_time
-            ? state.recent_mark
-            : new Date(
-                Math.max(
-                  Date.parse(state.recent_mark),
-                  readAt - RECENT_OVERLAP_MS,
-                ),
-              ).toISOString()
-          const last = recent.at(-1)
-          if (recent.length === PASS_BATCH)
-            this.ctx.storage.sql.exec(
-              'UPDATE state SET recent_time=?,recent_id=?,recent_mark=? WHERE singleton=1',
-              last!.updated_at,
-              last!.id,
-              mark,
-            )
-          else if (state.recent_time || mark !== state.recent_mark)
-            this.ctx.storage.sql.exec(
-              "UPDATE state SET recent_time='',recent_id='',recent_mark=? WHERE singleton=1",
-              mark,
-            )
         }
         // The full scan compares every row, for changes no notification named.
         let scan: Source[] = []
-        if (scanDue) {
+        if (scanDue)
           scan = await inventory(db, state.workspace)
-            .where('s.id', '>', state.cursor)
+            .where('s.id', '>', cursor)
             .orderBy('s.id')
             .limit(PASS_BATCH)
             .execute()
-          if (scan.length === PASS_BATCH)
-            this.ctx.storage.sql.exec(
-              'UPDATE state SET cursor=? WHERE singleton=1',
-              scan[scan.length - 1].id,
-            )
-          else
-            this.ctx.storage.sql.exec(
-              "UPDATE state SET cursor='',scanned_at=?,scanned_format=? WHERE singleton=1",
-              readAt,
-              INDEX_FORMAT_VERSION,
-            )
-        }
         for (const row of [...recent, ...scan]) {
           const active = this.ctx.storage.sql
             .exec<Active>('SELECT * FROM active WHERE id=?', row.id)
@@ -722,6 +696,52 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             this.ctx.storage.sql.exec(
               'INSERT OR IGNORE INTO pending(id) VALUES(?)',
               row.id,
+            )
+        }
+        // Positions move only after the rows they passed are pending.
+        if (walkStarts || state.recent_time) {
+          // A new walk moves the mark to its start, less the overlap, since a
+          // row written with an older time can still be committing, and
+          // consumes the notifications counted when this step began.
+          const mark = walkStarts
+            ? new Date(
+                Math.max(
+                  Date.parse(state.recent_mark),
+                  readAt - RECENT_OVERLAP_MS,
+                ),
+              ).toISOString()
+            : state.recent_mark
+          const last = recent.at(-1)
+          const [time, id] =
+            recent.length === PASS_BATCH
+              ? [last!.updated_at, last!.id]
+              : ['', '']
+          if (
+            walkStarts ||
+            time !== state.recent_time ||
+            id !== state.recent_id
+          )
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET recent_time=?,recent_id=?,recent_mark=?,dirty=max(dirty-?,0) WHERE singleton=1',
+              time,
+              id,
+              mark,
+              walkStarts ? state.dirty : 0,
+            )
+          if (walkStarts) unconsumed = 0
+        }
+        if (scanDue) {
+          if (scan.length === PASS_BATCH)
+            this.ctx.storage.sql.exec(
+              'UPDATE state SET cursor=?,scan_format=? WHERE singleton=1',
+              scan[scan.length - 1].id,
+              INDEX_FORMAT_VERSION,
+            )
+          else
+            this.ctx.storage.sql.exec(
+              "UPDATE state SET cursor='',scanned_at=?,scanned_format=? WHERE singleton=1",
+              readAt,
+              INDEX_FORMAT_VERSION,
             )
         }
         // Drain recent work before older pending rows; one corrupt object cannot block a pass.
@@ -814,7 +834,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .toArray()
           : this.ctx.storage.sql
               .exec<{ id: string }>(
-                'SELECT shareable AS id FROM intentions UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup ORDER BY id LIMIT ?',
+                // A staged file's objects wait for its replacement to finish,
+                // so only rows that can make progress are read here.
+                'SELECT shareable AS id FROM intentions WHERE shareable NOT IN (SELECT id FROM staging) UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup WHERE id NOT IN (SELECT id FROM staging) ORDER BY id LIMIT ?',
                 BATCH,
               )
               .toArray()
@@ -938,7 +960,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // Signals received across any awaited operation belong to the next pass.
       // Recheck after idle scheduling so that it cannot overwrite their alarm.
       this.running = false
-      if (this.state()?.dirty)
+      if ((this.state()?.dirty ?? 0) > unconsumed)
         await this.ctx.storage.setAlarm(Date.now() + 1000)
     }
   }

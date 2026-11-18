@@ -1148,6 +1148,73 @@ describe('Worker integration harness', () => {
         (row) => row.id,
       ),
     ).toEqual(['idle-42'])
+    const settle = async () => {
+      for (let step = 0; step < 50; step++) {
+        if ((await probe.nextAlarm())! > Date.now() + 60_000) return
+        await probe.resume()
+      }
+      throw new Error('the index did not settle')
+    }
+    // A notification that arrives while a walk is under way starts another
+    // walk once it ends, so a write dated before the walk's position is found.
+    const later = Date.now()
+    for (let n = 0; n < 55; n++)
+      await env.DB.prepare(
+        'UPDATE shareables SET description=?,updated_at=? WHERE id=?',
+      )
+        .bind(
+          `bulk${n}`,
+          new Date(later + n).toISOString(),
+          `idle-${String(n).padStart(2, '0')}`,
+        )
+        .run()
+    await probe.sync()
+    expect(
+      (await index.exec('SELECT recent_time FROM state'))[0].recent_time,
+    ).not.toBe('')
+    await env.DB.prepare(
+      "UPDATE shareables SET description='latecommitneedle',updated_at=? WHERE id='idle-58'",
+    )
+      .bind(new Date(later - 1000).toISOString())
+      .run()
+    await probe.sync()
+    await settle()
+    expect(
+      (await probe.search({ query: 'latecommitneedle' })).items.map(
+        (row) => row.id,
+      ),
+    ).toEqual(['idle-58'])
+    // A scan started under another index format starts again from the first
+    // file, so files before its position are rebuilt too.
+    await index.exec(
+      "UPDATE state SET cursor='idle-20',scan_format=0,scanned_at=0",
+    )
+    await index.exec('UPDATE active SET format=0')
+    await probe.resume()
+    await settle()
+    expect(
+      await index.exec(
+        'SELECT count(*) AS count FROM active WHERE format=?',
+        INDEX_FORMAT_VERSION,
+      ),
+    ).toEqual([{ count: 60 }])
+    // Between sweeps, files whose objects wait on a staged replacement do
+    // not hold back other cleanup.
+    for (let n = 0; n < 5; n++) {
+      const id = `idle-0${n}`
+      await index.exec(
+        "INSERT INTO staging(id,generation,fingerprint,format) VALUES(?,'held','held',0)",
+        id,
+      )
+      await index.exec(
+        'INSERT INTO intentions(key,shareable) VALUES(?,?)',
+        `held/${id}`,
+        id,
+      )
+    }
+    await index.exec("INSERT INTO reclaims(id) VALUES('idle-59')")
+    await probe.sync()
+    expect(await index.exec('SELECT * FROM reclaims')).toEqual([])
   }, 60_000)
 
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
