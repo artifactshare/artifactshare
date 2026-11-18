@@ -6,7 +6,7 @@ import { searchIndexName } from './names'
 import { searchTextKey, shareableSearchPrefix } from './keys'
 
 test('index names keep the partition and add the one location', () => {
-  expect(searchIndexName('ws')).toBe('ws:0@apac-ne')
+  expect(searchIndexName('ws', 'apac-ne')).toBe('ws:0@apac-ne')
   expect(searchIndexName('ws', 'weur')).toBe('ws:0@weur')
   expect(searchIndexName('ws', null)).toBe('ws:0')
 })

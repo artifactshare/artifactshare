@@ -558,7 +558,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     workspaceSearchPrefix(workspace)
     if (
       !this.ctx.id.equals(
-        this.env.WORKSPACE_SEARCH_INDEX.idFromName(searchIndexName(workspace)),
+        this.env.WORKSPACE_SEARCH_INDEX.idFromName(
+          searchIndexName(workspace, SEARCH_INDEX_LOCATION),
+        ),
       )
     )
       throw new Error('search_partition_mismatch')
@@ -1033,35 +1035,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         const fits = (object: R2ObjectBody | null) =>
           object?.customMetadata?.source === contentFingerprint(source) &&
           object.customMetadata.format === String(INDEX_FORMAT_VERSION)
-        let cached = reuse || resume ? await this.env.BUCKET.get(key) : null
-        let copied = false
-        if (!fits(cached) && location) {
-          // While indexes from before one location still exist, this index
-          // reads, never writes or deletes, their extraction of the same
-          // version.
-          const legacy = await this.env.BUCKET.get(
-            await searchTextKey(
-              source.workspace_id,
-              source.id,
-              source.current_version_id!,
-              page.path,
-            ),
-          )
-          if (fits(legacy)) {
-            cached = legacy
-            copied = true
-          }
-        }
+        const cached = reuse || resume ? await this.env.BUCKET.get(key) : null
         if (fits(cached)) {
           text = await cached!.json<ExtractedText>()
-          if (copied)
-            await this.env.BUCKET.put(key, JSON.stringify(text), {
-              customMetadata: {
-                source: contentFingerprint(source),
-                format: String(INDEX_FORMAT_VERSION),
-              },
-              httpMetadata: { contentType: 'application/json' },
-            })
         } else {
           if (
             source.artifact_kind === 'pdf' ||

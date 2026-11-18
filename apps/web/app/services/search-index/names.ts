@@ -25,7 +25,7 @@ export const SEARCH_INDEX_LOCATION = 'apac-ne' satisfies SearchIndexLocation
  */
 export function searchIndexName(
   workspaceId: string,
-  location: SearchIndexLocation | null = SEARCH_INDEX_LOCATION,
+  location: SearchIndexLocation | null,
 ): string {
   return location ? `${workspaceId}:0@${location}` : `${workspaceId}:0`
 }
@@ -37,7 +37,10 @@ export function workspaceSearchIndex<
   namespace: DurableObjectNamespace<T>,
   workspaceId: string,
 ): DurableObjectStub<T> {
-  return namespace.getByName(searchIndexName(workspaceId), {
-    locationHint: SEARCH_INDEX_LOCATION,
-  })
+  return namespace.getByName(
+    searchIndexName(workspaceId, SEARCH_INDEX_LOCATION),
+    {
+      locationHint: SEARCH_INDEX_LOCATION,
+    },
+  )
 }

@@ -1,4 +1,4 @@
-import { searchIndexName } from '../app/services/search-index/names'
+import { workspaceSearchIndex } from '../app/services/search-index/names'
 import { searchCliArtifacts } from '../app/services/cli-artifacts.server'
 import { createDb } from '../app/services/db.server'
 import {
@@ -333,8 +333,9 @@ export default {
       samples: number
       name: string
     }>()
-    const stub = env.WORKSPACE_SEARCH_INDEX.getByName(
-      searchIndexName(command.workspace),
+    const stub = workspaceSearchIndex(
+      env.WORKSPACE_SEARCH_INDEX,
+      command.workspace,
     )
     let result: unknown
     switch (command.action) {
@@ -353,7 +354,7 @@ export default {
           result = await searchCliArtifacts(
             db,
             (workspace) =>
-              env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace)),
+              workspaceSearchIndex(env.WORKSPACE_SEARCH_INDEX, workspace),
             { id: 'search-reader' },
             {
               baseUrl: 'https://example.test',
