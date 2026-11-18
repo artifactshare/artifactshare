@@ -320,6 +320,19 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
+  /**
+   * Temporary placement check: no index work, and the Cloudflare location
+   * this object runs in, read once from the trace endpoint.
+   */
+  #colo: Promise<string> | undefined
+  placement(): Promise<string> {
+    this.#colo ??= fetch('https://www.cloudflare.com/cdn-cgi/trace')
+      .then((response) => (response.ok ? response.text() : ''))
+      .then((text) => /^colo=(\w+)$/m.exec(text)?.[1] ?? 'unknown')
+      .catch(() => 'unknown')
+    return this.#colo
+  }
+
   details(
     input: IndexSearchInput,
     ids: string[],

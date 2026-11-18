@@ -224,10 +224,11 @@ export async function withSearchTiming<T, E = never>(
 }
 
 /**
- * Temporary location check: the round trip to two new, empty index objects,
- * one created with the apac-ne location hint and one without a hint, and to
- * the viewer's own workspace index with the same no-match call. The first
- * call wakes or creates each object, so the second call is the one reported.
+ * Temporary location check: the round trip of a call that does no index
+ * work, to two new, empty index objects (one created with the apac-ne
+ * location hint, one without) and to the viewer's own workspace index, with
+ * the Cloudflare location each object runs in. The first call wakes or
+ * creates each object and reads its location, so the second is timed.
  */
 export function probeIndexLocations(workspaceId: string): Promise<string[]> {
   const ping = async (
@@ -236,10 +237,10 @@ export function probeIndexLocations(workspaceId: string): Promise<string[]> {
     options?: DurableObjectNamespaceGetDurableObjectOptions,
   ) => {
     const index = env.WORKSPACE_SEARCH_INDEX.getByName(name, options)
-    await index.details({ query: 'probe' }, [])
+    const colo = await index.placement()
     const started = performance.now()
-    await index.details({ query: 'probe' }, [])
-    return `${label};dur=${Math.round(performance.now() - started)}`
+    await index.placement()
+    return `${label};dur=${Math.round(performance.now() - started)};desc="${colo}"`
   }
   return Promise.all([
     ping('probe-apac-ne', 'location-probe-apac-ne:0', {
