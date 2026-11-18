@@ -12,6 +12,7 @@ import {
 import { DurableObject } from 'cloudflare:workers'
 import {
   isSearchIndexLocation,
+  SEARCH_INDEX_LOCATIONS,
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
@@ -428,6 +429,26 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     })
   }
 
+  #location: { value: SearchIndexLocation | undefined } | undefined
+  /**
+   * The location this placed index was created for, or undefined for the
+   * legacy index. Derived from the object's own name, which sync() checks.
+   */
+  private location(): SearchIndexLocation | undefined {
+    if (this.#location) return this.#location.value
+    const workspace = this.state()?.workspace
+    if (!workspace) return undefined
+    const value = SEARCH_INDEX_LOCATIONS.find((location) =>
+      this.ctx.id.equals(
+        this.env.WORKSPACE_SEARCH_INDEX.idFromName(
+          searchIndexName(workspace, location),
+        ),
+      ),
+    )
+    this.#location = { value }
+    return value
+  }
+
   private state(): State | undefined {
     return this.ctx.storage.sql
       .exec<State>(
@@ -451,6 +472,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
     )
       throw new Error('search_partition_mismatch')
+    this.#location = { value: location }
     this.ctx.storage.sql.exec(
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=1',
       workspace,
@@ -685,6 +707,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       INDEX_FORMAT_VERSION,
     )
     this.reclaim(source.id)
+    const active = this.ctx.storage.sql
+      .exec<Active>('SELECT * FROM active WHERE id=?', source.id)
+      .toArray()[0]
+    const reuse =
+      active?.content === contentFingerprint(source) &&
+      active.format === INDEX_FORMAT_VERSION
+    const location = this.location()
     try {
       const files = await db
         .selectFrom('version_files')
@@ -727,6 +756,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           source.id,
           source.current_version_id!,
           page.path,
+          location,
         )
         // Persist BEFORE writing, including metadata-only repairs of missing extraction.
         this.ctx.storage.sql.exec(
@@ -735,15 +765,38 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           source.id,
         )
         let text: ExtractedText
-        // Another index of this workspace may have extracted the same
-        // version already; the metadata check below decides whether it fits.
-        const cached = await this.env.BUCKET.get(key)
-        if (
-          cached?.customMetadata?.source === contentFingerprint(source) &&
-          cached.customMetadata.format === String(INDEX_FORMAT_VERSION)
-        )
-          text = await cached.json<ExtractedText>()
-        else {
+        const fits = (object: R2ObjectBody | null) =>
+          object?.customMetadata?.source === contentFingerprint(source) &&
+          object.customMetadata.format === String(INDEX_FORMAT_VERSION)
+        let cached = reuse || resume ? await this.env.BUCKET.get(key) : null
+        let copied = false
+        if (!fits(cached) && location) {
+          // A placed index reads, never writes or deletes, the legacy
+          // index's extraction of the same version.
+          const legacy = await this.env.BUCKET.get(
+            await searchTextKey(
+              source.workspace_id,
+              source.id,
+              source.current_version_id!,
+              page.path,
+            ),
+          )
+          if (fits(legacy)) {
+            cached = legacy
+            copied = true
+          }
+        }
+        if (fits(cached)) {
+          text = await cached!.json<ExtractedText>()
+          if (copied)
+            await this.env.BUCKET.put(key, JSON.stringify(text), {
+              customMetadata: {
+                source: contentFingerprint(source),
+                format: String(INDEX_FORMAT_VERSION),
+              },
+              httpMetadata: { contentType: 'application/json' },
+            })
+        } else {
           if (
             source.artifact_kind === 'pdf' ||
             source.artifact_kind === 'video'
@@ -958,6 +1011,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               source.id,
               row.version,
               row.path,
+              this.location(),
             ),
           ),
       ),
@@ -967,7 +1021,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async remove(workspace: string, id: string): Promise<void> {
     this.ctx.storage.sql.exec(
       'INSERT OR IGNORE INTO intentions(key,shareable) VALUES(?,?)',
-      shareableSearchPrefix(workspace, id),
+      shareableSearchPrefix(workspace, id, this.location()),
       id,
     )
     this.ctx.storage.sql.exec('DELETE FROM staging WHERE id=?', id)
@@ -999,7 +1053,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .one().cursor ?? undefined
     do {
       const page = await this.env.BUCKET.list({
-        prefix: shareableSearchPrefix(workspace, id),
+        prefix: shareableSearchPrefix(workspace, id, this.location()),
         cursor,
         limit: 100,
       })

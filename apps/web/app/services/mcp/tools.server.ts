@@ -1,3 +1,4 @@
+import { searchIndexName } from '../search-index/names'
 import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import { validateCommentPageRequest } from '~/lib/comment-page'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -1169,7 +1170,7 @@ export function registerArtifactTools(
         ? await searchCliArtifacts(
             ctx.db,
             (workspace) =>
-              env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+              env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace)),
             mcpUserAsSessionUser(user),
             { ...parsed.data, baseUrl: ctx.baseUrl, source: 'mcp' },
           )

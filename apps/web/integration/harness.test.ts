@@ -847,6 +847,15 @@ describe('Worker integration harness', () => {
         'placedneedle',
       ),
     ).toEqual([{ shareable: 'placed-page' }])
+    // The placed index keeps its own copy, apart from the legacy area.
+    expect(
+      (await env.BUCKET.list({ prefix: 'search-text/@apac-ne/ws-placed/' }))
+        .objects.length,
+    ).toBe(1)
+    expect(
+      (await env.BUCKET.list({ prefix: 'search-text/ws-placed/' })).objects
+        .length,
+    ).toBe(1)
     // The name check accepts only this workspace's own names.
     const syncNamed = async (name: string, location?: string) => {
       const response = await worker.fetch('/__test/search-index', {

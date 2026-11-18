@@ -3,6 +3,7 @@ vi.mock('cloudflare:workers', () => ({ env: {}, waitUntil: undefined }))
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { dispatchWorkspaceSearch } from './schedule.server'
 import { searchIndexName, isSearchIndexLocation } from './names'
+import { searchTextKey, shareableSearchPrefix } from './keys'
 
 test('index names keep the partition and add a location for placed indexes', () => {
   expect(searchIndexName('ws')).toBe('ws:0')
@@ -10,6 +11,23 @@ test('index names keep the partition and add a location for placed indexes', () 
   expect(isSearchIndexLocation('apac-ne')).toBe(true)
   expect(isSearchIndexLocation('mars')).toBe(false)
   expect(isSearchIndexLocation(null)).toBe(false)
+})
+
+test("a placed index's extracted text sits outside the legacy cleanup prefix", async () => {
+  const legacy = shareableSearchPrefix('ws', 'file')
+  const placed = await searchTextKey(
+    'ws',
+    'file',
+    'v1',
+    '/index.html',
+    'apac-ne',
+  )
+  expect(placed.startsWith('search-text/@apac-ne/ws/file/')).toBe(true)
+  expect(placed.startsWith(legacy)).toBe(false)
+  // An encoded workspace id cannot collide with a location area.
+  expect(shareableSearchPrefix('@apac-ne', 'file')).toBe(
+    'search-text/%40apac-ne/file/',
+  )
 })
 
 let fixture: ReturnType<typeof createMigratedInMemoryDb>
@@ -61,6 +79,13 @@ test('dispatch syncs the legacy index and, with a recorded location, the placed 
     { name: 'ws-b:0', options: undefined, args: ['ws-b'] },
     { name: 'ws-c:0', options: undefined, args: ['ws-c'] },
   ])
+})
+
+test('the placed sync starts after the legacy sync settles', async () => {
+  const { calls, binding } = namespace()
+  await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
+  const names = calls.map((call) => call.name)
+  expect(names.indexOf('ws-a:0')).toBeLessThan(names.indexOf('ws-a:0@apac-ne'))
 })
 
 test('a failing legacy sync does not stop the placed sync', async () => {

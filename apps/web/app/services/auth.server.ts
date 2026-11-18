@@ -1,3 +1,4 @@
+import { searchIndexName } from './search-index/names'
 /*
  * better-auth wiring — Cloudflare Workers + D1. The auth instance is built once
  * per isolate (see `createAuth` at the bottom): the `cloudflare:workers` env and
@@ -1882,7 +1883,9 @@ export async function ensureDevSignInUser(
     )
   }
   if (scenario?.startsWith('search/')) {
-    const index = env.WORKSPACE_SEARCH_INDEX.getByName(`${workspaceId}:0`)
+    const index = env.WORKSPACE_SEARCH_INDEX.getByName(
+      searchIndexName(workspaceId),
+    )
     await index.sync(workspaceId)
     const ready = await index.search({ query: 'Quarterly' })
     if ('error' in ready || !ready.items.length)

@@ -1,3 +1,4 @@
+import { searchIndexName } from '../app/services/search-index/names'
 import { searchPalette } from '../app/services/search-palette.server'
 import type { SessionUser } from '../app/lib/user'
 import { sql } from 'kysely'
@@ -121,7 +122,7 @@ export async function measureSearchBenchmark(
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       result = await search(
         db,
-        (id) => env.WORKSPACE_SEARCH_INDEX.getByName(`${id}:0`),
+        (id) => env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(id)),
         `${workspace}-actor`,
         {
           query: query,
@@ -148,7 +149,7 @@ export async function measureSearchBenchmark(
     // react-doctor-disable-next-line react-doctor/async-await-in-loop
     await searchSuggestions(
       db,
-      (id) => env.WORKSPACE_SEARCH_INDEX.getByName(`${id}:0`),
+      (id) => env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(id)),
       user,
       { query: 'alpha', filters: {}, sort: 'relevance', pageSize: 6 },
     )

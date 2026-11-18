@@ -1,3 +1,4 @@
+import { searchIndexName } from '~/services/search-index/names'
 import { env } from 'cloudflare:workers'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
@@ -58,7 +59,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     if (isArtifactsSearch(queryParams.data)) {
       const result = await searchCliArtifacts(
         db,
-        (workspace) => env.WORKSPACE_SEARCH_INDEX.getByName(`${workspace}:0`),
+        (workspace) =>
+          env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace)),
         user,
         {
           ...queryParams.data,
