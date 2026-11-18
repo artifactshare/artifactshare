@@ -225,10 +225,11 @@ export async function withSearchTiming<T, E = never>(
 
 /**
  * Temporary location check: the round trip to two new, empty index objects,
- * one created with the apac-ne location hint and one without a hint. The
- * first call creates each object, so the second call is the one reported.
+ * one created with the apac-ne location hint and one without a hint, and to
+ * the viewer's own workspace index with the same no-match call. The first
+ * call wakes or creates each object, so the second call is the one reported.
  */
-export function probeIndexLocations(): Promise<string[]> {
+export function probeIndexLocations(workspaceId: string): Promise<string[]> {
   const ping = async (
     label: string,
     name: string,
@@ -245,5 +246,6 @@ export function probeIndexLocations(): Promise<string[]> {
       locationHint: 'apac-ne',
     }),
     ping('probe-default', 'location-probe-default:0'),
+    ping('probe-workspace', `${workspaceId}:0`),
   ])
 }
