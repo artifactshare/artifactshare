@@ -486,14 +486,16 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
 
+  /** Whether this object is the index named for the workspace. */
+  #isNamedIndex(workspace: string): boolean {
+    return this.ctx.id.equals(
+      this.env.WORKSPACE_SEARCH_INDEX.idFromName(searchIndexName(workspace)),
+    )
+  }
   /** Only the index named for this workspace accepts its sync. */
   async sync(workspace: string): Promise<void> {
     workspaceSearchPrefix(workspace)
-    if (
-      !this.ctx.id.equals(
-        this.env.WORKSPACE_SEARCH_INDEX.idFromName(searchIndexName(workspace)),
-      )
-    )
+    if (!this.#isNamedIndex(workspace))
       throw new Error('search_partition_mismatch')
     // Storage is created only for a sync this object accepts by name.
     this.ensureSchema()
@@ -533,13 +535,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // An object not named as its workspace's index (one left from before
       // every index moved to one location) only deletes its storage, so it
       // never writes into the index's text area.
-      if (
-        !this.ctx.id.equals(
-          this.env.WORKSPACE_SEARCH_INDEX.idFromName(
-            searchIndexName(state.workspace),
-          ),
-        )
-      ) {
+      if (!this.#isNamedIndex(state.workspace)) {
         await this.ctx.storage.deleteAlarm()
         await this.ctx.storage.deleteAll()
         this.#schemaReady = false

@@ -804,40 +804,52 @@ describe('Worker integration harness', () => {
   )
 
   test('an index object not named as its workspace index only deletes its storage', async () => {
-    const name = 'ws-leftover:0'
-    const storage = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name },
-    )
-    await storage.exec(
-      "CREATE TABLE state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1)",
-    )
-    await storage.exec(
-      "INSERT INTO state(singleton,workspace) VALUES(1,'ws-leftover')",
-    )
-    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
-    const response = await worker.fetch('/__test/search-index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workspace: 'ws-leftover',
-        action: 'resumeNamed',
-        name,
-      }),
-    })
-    expect(response.status, await response.clone().text()).toBe(200)
-    expect(
+    const env = await worker.getEnv()
+    const workspace = 'ws-leftover'
+    const named = async (action: string, name: string) => {
+      const response = await worker.fetch('/__test/search-index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace, action, name }),
+      })
+      expect(response.status, await response.clone().text()).toBe(200)
+      return response.json()
+    }
+    const tables = (name: string) =>
+      worker
+        .getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', { name })
+        .then((storage) =>
+          storage.exec(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
+          ),
+        )
+    // The workspace index's text must survive a leftover running.
+    await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
+    for (const name of [`${workspace}:0`, `${workspace}:0@weur`]) {
+      const storage = await worker.getDurableObjectStorage(
+        'WORKSPACE_SEARCH_INDEX',
+        { name },
+      )
       await storage.exec(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
-      ),
-    ).toEqual([])
+        "CREATE TABLE state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1)",
+      )
+      await storage.exec(
+        'INSERT INTO state(singleton,workspace) VALUES(1,?)',
+        workspace,
+      )
+      // A new instance starts from that storage, as a deployed one would.
+      await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
+      await named('resumeNamed', name)
+      expect(await tables(name)).toEqual([])
+      // It accepts no sync, which also creates no storage.
+      expect(await named('syncNamed', name)).toBe('search_partition_mismatch')
+      expect(await tables(name)).toEqual([])
+    }
     expect(
-      (
-        await (
-          await worker.getEnv()
-        ).BUCKET.list({ prefix: 'search-text/@apac-ne/ws-leftover/' })
-      ).objects,
-    ).toEqual([])
+      (await env.BUCKET.list({ prefix: `search-text/@apac-ne/${workspace}/` }))
+        .objects.length,
+    ).toBe(1)
+    expect(await named('syncNamed', `${workspace}:0@apac-ne`)).toBe('ok')
   }, 60_000)
 
   test('a file that keeps failing does not keep its index busy', async () => {
