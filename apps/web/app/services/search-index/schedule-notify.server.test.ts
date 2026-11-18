@@ -66,5 +66,7 @@ test('the legacy index is synced even when the location read fails', async () =>
   scheduleWorkspaceSearch('ws-a', (promise) => pending.push(promise))
   await Promise.all(pending)
   expect(synced).toEqual(['ws-a:0'])
+  // A failed location read is treated as no location, not as a failure.
+  expect(error).not.toHaveBeenCalled()
   error.mockRestore()
 })

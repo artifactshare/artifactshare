@@ -64,7 +64,11 @@ export function scheduleWorkspaceSearch(
         .select('location_hint')
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirst(),
-    ).then((row) => recordedLocation(row?.location_hint))
+    ).then(
+      (row) => recordedLocation(row?.location_hint),
+      // An unreadable location syncs only the legacy index, as before.
+      () => undefined,
+    )
     const promise = syncWorkspaceIndexes(
       env.WORKSPACE_SEARCH_INDEX,
       workspaceId,
