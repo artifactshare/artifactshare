@@ -792,6 +792,87 @@ describe('Worker integration harness', () => {
     60_000,
   )
 
+  test('a recorded location adds a placed index that reuses extracted text', async () => {
+    const owner = {
+      workspaceId: 'ws-placed',
+      userId: 'user-placed',
+      email: 'placed@example.test',
+      name: 'Placed',
+      sessionToken: 'placed-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('placed-inbox',?,'inbox',?,?,'Inbox',?,?)",
+      ).bind(owner.workspaceId, owner.userId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('placed-page',?,?,'Placed','placed-inbox','html_page','private','v-placed-page',?,?)",
+      ).bind(owner.workspaceId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-placed-page','placed-page','html_page','published','/index.html','artifacts/placed/page',100,'sha',?,?)",
+      ).bind(owner.userId, now),
+    ])
+    await env.BUCKET.put('artifacts/placed/page', '<p>placedneedle</p>')
+    // Without a location only the legacy index is synced.
+    await expect(
+      worker.scheduled({ cron: '*/5 * * * *' }),
+    ).resolves.toMatchObject({ outcome: 'ok' })
+    const legacy = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-placed:0' },
+    )
+    expect(await legacy.exec('SELECT count(*) AS count FROM active')).toEqual([
+      { count: 1 },
+    ])
+    // The placed index must take the text the legacy index extracted: the
+    // source is gone, so extracting again would fail.
+    await env.BUCKET.delete('artifacts/placed/page')
+    await env.DB.prepare(
+      "UPDATE search_index_workspaces SET location_hint='apac-ne', dispatched_at='' WHERE workspace_id=?",
+    )
+      .bind(owner.workspaceId)
+      .run()
+    await expect(
+      worker.scheduled({ cron: '*/5 * * * *' }),
+    ).resolves.toMatchObject({ outcome: 'ok' })
+    const placed = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-placed:0@apac-ne' },
+    )
+    expect(
+      await placed.exec(
+        'SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH ?',
+        'placedneedle',
+      ),
+    ).toEqual([{ shareable: 'placed-page' }])
+    // The name check accepts only this workspace's own names.
+    const syncNamed = async (name: string, location?: string) => {
+      const response = await worker.fetch('/__test/search-index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace: 'ws-placed',
+          action: 'syncNamed',
+          name,
+          location,
+        }),
+      })
+      return response.json()
+    }
+    expect(await syncNamed('ws-placed:0@apac-ne', 'apac-ne')).toBe('ok')
+    expect(await syncNamed('ws-placed:0@apac-ne', 'weur')).toBe(
+      'search_partition_mismatch',
+    )
+    expect(await syncNamed('ws-placed:0@apac-ne')).toBe(
+      'search_partition_mismatch',
+    )
+    expect(await syncNamed('ws-placed:0@apac-ne', 'mars')).toBe(
+      'search_partition_mismatch',
+    )
+  }, 60_000)
+
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
     const owner = {
       workspaceId: 'ws-search',

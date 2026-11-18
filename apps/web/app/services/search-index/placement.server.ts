@@ -2,19 +2,9 @@ import * as workers from 'cloudflare:workers'
 import { sql } from 'kysely'
 import { withDb, type Db } from '../db.server'
 
-/** The Durable Object regions a workspace search index can be created in. */
-export type SearchIndexLocation =
-  | 'wnam'
-  | 'enam'
-  | 'sam'
-  | 'weur'
-  | 'eeur'
-  | 'apac'
-  | 'apac-ne'
-  | 'apac-se'
-  | 'oc'
-  | 'afr'
-  | 'me'
+import type { SearchIndexLocation } from './names'
+
+export type { SearchIndexLocation }
 
 const NORTHEAST_ASIA = new Set(['JP', 'KR', 'KP', 'TW', 'HK', 'MO', 'CN', 'MN'])
 const SOUTHEAST_ASIA = new Set([

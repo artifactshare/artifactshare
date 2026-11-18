@@ -10,6 +10,11 @@ import {
   type SearchTier,
 } from '../app/services/search-index/query'
 import { DurableObject } from 'cloudflare:workers'
+import {
+  isSearchIndexLocation,
+  searchIndexName,
+  type SearchIndexLocation,
+} from '../app/services/search-index/names'
 import { createDb } from '../app/services/db.server'
 import {
   inventory,
@@ -430,14 +435,19 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .toArray()[0]
   }
-  async sync(workspace: string): Promise<void> {
+  /** location is set only for the index placed near the workspace's members. */
+  async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
     workspaceSearchPrefix(workspace)
+    if (location !== undefined && !isSearchIndexLocation(location))
+      throw new Error('search_partition_mismatch')
     const state = this.state()
     if (state && state.workspace !== workspace)
       throw new Error('search_workspace_mismatch')
     if (
       !this.ctx.id.equals(
-        this.env.WORKSPACE_SEARCH_INDEX.idFromName(`${workspace}:0`),
+        this.env.WORKSPACE_SEARCH_INDEX.idFromName(
+          searchIndexName(workspace, location),
+        ),
       )
     )
       throw new Error('search_partition_mismatch')
@@ -675,12 +685,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       INDEX_FORMAT_VERSION,
     )
     this.reclaim(source.id)
-    const active = this.ctx.storage.sql
-      .exec<Active>('SELECT * FROM active WHERE id=?', source.id)
-      .toArray()[0]
-    const reuse =
-      active?.content === contentFingerprint(source) &&
-      active.format === INDEX_FORMAT_VERSION
     try {
       const files = await db
         .selectFrom('version_files')
@@ -731,7 +735,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           source.id,
         )
         let text: ExtractedText
-        const cached = reuse || resume ? await this.env.BUCKET.get(key) : null
+        // Another index of this workspace may have extracted the same
+        // version already; the metadata check below decides whether it fits.
+        const cached = await this.env.BUCKET.get(key)
         if (
           cached?.customMetadata?.source === contentFingerprint(source) &&
           cached.customMetadata.format === String(INDEX_FORMAT_VERSION)
