@@ -1058,6 +1058,14 @@ describe('Worker integration harness', () => {
     const probe = searchProbe(owner.workspaceId)
     // After a counted failure the index waits minutes, not a second.
     expect(await probe.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
+    // Once the source is back, the next sync request retries at once.
+    await env.BUCKET.put('artifacts/backoff/missing', '<p>backoffneedle</p>')
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(
+      (await probe.search({ query: 'backoffneedle' })).items.map(
+        (row) => row.id,
+      ),
+    ).toEqual(['backoff-missing'])
   }, 60_000)
 
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {

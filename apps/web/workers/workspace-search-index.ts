@@ -129,6 +129,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
       )
+    // When a failed item may be tried again; 0 means now.
+    if (!pendingColumns.has('retry_at'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0',
+      )
     if (!pendingColumns.has('first_failed_at'))
       ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
@@ -556,6 +561,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=1',
       workspace,
     )
+    // A sync request retries every waiting item at once, so a transient
+    // failure recovers on the next notification or scheduled dispatch.
+    this.ctx.storage.sql.exec('UPDATE pending SET retry_at=0 WHERE retry_at>0')
     await this.ctx.storage.setAlarm(Date.now() + 1000)
     await this.run()
   }
@@ -626,19 +634,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           scan.length === BATCH ? scan[scan.length - 1].id : '',
         )
         // Drain recent work before older pending rows; one corrupt object cannot block a pass.
-        // A run the index schedules for itself leaves an item whose last
-        // failure counted less than the spacing ago waiting, so a file that
-        // keeps failing is retried every few minutes rather than keeping the
-        // index busy (and its replies waiting) every second. A run started by
-        // a sync request (a notification or the scheduled dispatch) retries
-        // every pending item at once.
-        const retryBefore = state.dirty
-          ? Number.MAX_SAFE_INTEGER
-          : Date.now() - FAILURE_SPACING_MS
+        // A failed item waits until its retry time, so a file that keeps
+        // failing is retried every few minutes rather than keeping the index
+        // busy (and its replies waiting) every second.
+        const now = Date.now()
         const pending = this.ctx.storage.sql
           .exec<{ id: string }>(
-            'SELECT id FROM pending WHERE failed_at <= ? ORDER BY attempted, id LIMIT ?',
-            retryBefore,
+            'SELECT id FROM pending WHERE retry_at <= ? ORDER BY attempted, id LIMIT ?',
+            now,
             BATCH,
           )
           .toArray()
@@ -649,9 +652,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 (row) =>
                   this.ctx.storage.sql
                     .exec(
-                      'SELECT id FROM pending WHERE id=? AND failed_at <= ?',
+                      'SELECT id FROM pending WHERE id=? AND retry_at <= ?',
                       row.id,
-                      retryBefore,
+                      now,
                     )
                     .toArray().length,
               )
@@ -677,7 +680,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
             if (source) {
               // react-doctor-disable-next-line react-doctor/async-await-in-loop
-              if (!(await this.replace(source))) continue
+              if (!(await this.replace(source))) {
+                // A partial pass made progress; continue without waiting.
+                this.ctx.storage.sql.exec(
+                  'UPDATE pending SET retry_at=0 WHERE id=?',
+                  id,
+                )
+                continue
+              }
             }
             // react-doctor-disable-next-line react-doctor/async-await-in-loop
             else await this.remove(state.workspace, id)
@@ -690,6 +700,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               Date.now(),
               id,
               Date.now() - FAILURE_SPACING_MS,
+            )
+            this.ctx.storage.sql.exec(
+              'UPDATE pending SET retry_at=? WHERE id=?',
+              Date.now() + FAILURE_SPACING_MS,
+              id,
             )
             console.error('workspace_search_item_failed')
           }
@@ -746,8 +761,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
           .exec<{ count: number }>(
-            'SELECT ((SELECT count(*) FROM pending WHERE failed_at <= ?) + (SELECT count(*) FROM reclaims)) AS count',
-            Date.now() - FAILURE_SPACING_MS,
+            'SELECT ((SELECT count(*) FROM pending WHERE retry_at <= ?) + (SELECT count(*) FROM reclaims)) AS count',
+            Date.now(),
           )
           .one().count
         if (
@@ -769,8 +784,19 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               'SELECT (EXISTS(SELECT 1 FROM active) OR EXISTS(SELECT 1 FROM intentions) OR EXISTS(SELECT 1 FROM staging) OR EXISTS(SELECT 1 FROM reclaims)) AS remaining',
             )
             .one().remaining
+          // Items waiting to retry keep a deleted workspace's cleanup alive
+          // until their retry time.
+          const nextRetry = this.ctx.storage.sql
+            .exec<{ at: number | null }>(
+              'SELECT min(retry_at) AS at FROM pending',
+            )
+            .one().at
           if (!workspaceExists && unfinishedCleanup) {
             await this.ctx.storage.setAlarm(Date.now() + 1000)
+          } else if (!workspaceExists && nextRetry !== null) {
+            await this.ctx.storage.setAlarm(
+              Math.max(Date.now() + 1000, nextRetry),
+            )
           } else if (!workspaceExists) {
             await db
               .deleteFrom('search_index_workspaces')
