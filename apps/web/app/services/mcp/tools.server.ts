@@ -1,4 +1,5 @@
-import { searchIndexName } from '../search-index/names'
+import { env } from 'cloudflare:workers'
+import { workspaceSearchIndexes } from '../search-index/indexes.server'
 import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import { validateCommentPageRequest } from '~/lib/comment-page'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -33,7 +34,6 @@ import {
   ProjectListEntrySchema,
   VisibilitySchema,
 } from '@artifactshare/contract'
-import { env } from 'cloudflare:workers'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
 import { APEX_HOST, isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
@@ -1169,8 +1169,7 @@ export function registerArtifactTools(
       const result = isArtifactsSearch(parsed.data)
         ? await searchCliArtifacts(
             ctx.db,
-            (workspace) =>
-              env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace)),
+            workspaceSearchIndexes(ctx.db),
             mcpUserAsSessionUser(user),
             { ...parsed.data, baseUrl: ctx.baseUrl, source: 'mcp' },
           )

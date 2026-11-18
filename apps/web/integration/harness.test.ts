@@ -882,6 +882,78 @@ describe('Worker integration harness', () => {
     )
   }, 60_000)
 
+  test('a placed index reports ready after its first pass, past items that keep failing', async () => {
+    const owner = {
+      workspaceId: 'ws-ready',
+      userId: 'user-ready',
+      email: 'ready@example.test',
+      name: 'Ready',
+      sessionToken: 'ready-session',
+    }
+    await seedRuntimeUser(owner)
+    const env = await worker.getEnv()
+    const now = '2026-07-30T00:00:00.000Z'
+    await env.DB.prepare(
+      "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('ready-inbox',?,'inbox',?,?,'Inbox',?,?)",
+    )
+      .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
+      .run()
+    for (const id of ['ready-good', 'ready-missing'])
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES (?,?,?,?,'ready-inbox','html_page','private',?,?,?)",
+        ).bind(id, owner.workspaceId, owner.userId, id, `v-${id}`, now, now),
+        env.DB.prepare(
+          "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'html_page','published','/index.html',?,100,'sha',?,?)",
+        ).bind(`v-${id}`, id, `artifacts/ready/${id}`, owner.userId, now),
+      ])
+    // Only the good page has a source; the other fails on every attempt.
+    await env.BUCKET.put('artifacts/ready/ready-good', '<p>readyneedle</p>')
+    await env.DB.prepare(
+      "INSERT INTO search_index_workspaces(workspace_id,dispatched_at,location_hint) VALUES(?,'','apac-ne')",
+    )
+      .bind(owner.workspaceId)
+      .run()
+    const readyAt = async () =>
+      (
+        await env.DB.prepare(
+          'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
+        )
+          .bind(owner.workspaceId)
+          .first<{ ready_at: string | null }>()
+      )?.ready_at ?? null
+    const placed = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-ready:0@apac-ne' },
+    )
+    const failures = async () =>
+      (
+        await placed.exec(
+          "SELECT failures FROM pending WHERE id='ready-missing'",
+        )
+      )[0]?.failures
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await worker.scheduled({ cron: '*/5 * * * *' })
+      expect(await failures()).toBe(attempt)
+      expect(await readyAt()).toBeNull()
+    }
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await failures()).toBe(3)
+    expect(await readyAt()).not.toBeNull()
+    // The legacy index never reports readiness.
+    const legacy = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: 'ws-ready:0' },
+    )
+    expect(
+      await legacy.exec('SELECT count(*) AS count FROM placement'),
+    ).toEqual([{ count: 0 }])
+    // A later sync keeps the report.
+    const first = await readyAt()
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await readyAt()).toBe(first)
+  }, 60_000)
+
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
     const owner = {
       workspaceId: 'ws-search',

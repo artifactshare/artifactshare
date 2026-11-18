@@ -1,3 +1,4 @@
+import { workspaceSearchIndexes } from './search-index/indexes.server'
 import { searchIndexName } from './search-index/names'
 import { env } from 'cloudflare:workers'
 import { withDb, type Db } from './db.server'
@@ -181,9 +182,6 @@ export function serverTiming(timings: SearchTimings, totalMs: number) {
   ].join(', ')
 }
 
-const workspaceIndexes: SearchIndexes = (workspace) =>
-  env.WORKSPACE_SEARCH_INDEX.getByName(searchIndexName(workspace))
-
 /**
  * Run one search request with timed D1 and index access. The breakdown is
  * returned for the Server-Timing header. `expected` turns a known outcome,
@@ -199,7 +197,7 @@ export async function withSearchTiming<T, E = never>(
     started = performance.now()
   try {
     const value = await withDb(
-      (db) => run(db, timeIndexes(workspaceIndexes, timings)),
+      (db) => run(db, timeIndexes(workspaceSearchIndexes(db), timings)),
       timeD1(env.DB, timings),
     )
     return {

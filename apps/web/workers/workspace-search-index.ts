@@ -16,7 +16,7 @@ import {
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
-import { createDb } from '../app/services/db.server'
+import { createDb, type Db } from '../app/services/db.server'
 import {
   inventory,
   fingerprint,
@@ -110,6 +110,20 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
     ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
+    )
+    // Thrown failures per pending item; budget yields do not count.
+    if (
+      !ctx.storage.sql
+        .exec<{ name: string }>('PRAGMA table_info(pending)')
+        .toArray()
+        .some((row) => row.name === 'failures')
+    )
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
+      )
+    // When a placed index reported its first full reconciliation as ready.
+    ctx.storage.sql.exec(
+      'CREATE TABLE IF NOT EXISTS placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
     )
     // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
@@ -456,6 +470,37 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .toArray()[0]
   }
+  /**
+   * A placed index reports once that its first full reconciliation finished:
+   * the D1 scan reached the end, nothing is staged, and every pending item
+   * has either finished or failed at least three times. Searches move to it
+   * then; the report is never withdrawn.
+   */
+  private async reportReady(db: Db, state: State): Promise<void> {
+    const location = this.location()
+    if (!location || state.cursor) return
+    const blocked = this.ctx.storage.sql
+      .exec<{ blocked: number }>(
+        // An item that failed three times keeps its staging row while it
+        // retries; it no longer holds back readiness.
+        'SELECT (EXISTS(SELECT 1 FROM placement) OR EXISTS(SELECT 1 FROM pending WHERE failures < 3) OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3))) AS blocked',
+      )
+      .one().blocked
+    if (blocked) return
+    const readyAt = new Date().toISOString()
+    await db
+      .updateTable('search_index_workspaces')
+      .set({ ready_at: readyAt })
+      .where('workspace_id', '=', state.workspace)
+      .where('location_hint', '=', location)
+      .where('ready_at', 'is', null)
+      .execute()
+    this.ctx.storage.sql.exec(
+      'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
+      readyAt,
+    )
+  }
+
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
     workspaceSearchPrefix(workspace)
@@ -590,6 +635,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             else await this.remove(state.workspace, id)
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
+            this.ctx.storage.sql.exec(
+              'UPDATE pending SET failures=failures+1 WHERE id=?',
+              id,
+            )
             console.error('workspace_search_item_failed')
           }
         }
@@ -642,6 +691,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             "UPDATE state SET sweep='' WHERE singleton=1",
           )
         const more = this.state()!
+        await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
           .exec<{ count: number }>(
             'SELECT ((SELECT count(*) FROM pending) + (SELECT count(*) FROM reclaims)) AS count',
