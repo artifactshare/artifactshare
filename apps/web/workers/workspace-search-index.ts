@@ -65,6 +65,7 @@ type Active = {
 }
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
+const GIVE_UP_AFTER_MS = 60 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
@@ -127,6 +128,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     if (!pendingColumns.has('failed_at'))
       ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
+      )
+    if (!pendingColumns.has('first_failed_at'))
+      ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // When a placed index reported its first full reconciliation as ready.
     ctx.storage.sql.exec(
@@ -485,27 +490,22 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
    */
   private async reportReady(db: Db, state: State): Promise<void> {
     const location = this.location()
-    if (!location || state.cursor) return
-    const counts = this.ctx.storage.sql
-      .exec<{ blocked: number; failed: number; indexed: number }>(
-        // An item that failed three times keeps its staging row while it
-        // retries; it no longer holds back readiness on its own.
-        `SELECT
-          (EXISTS(SELECT 1 FROM placement)
-            OR EXISTS(SELECT 1 FROM pending WHERE failures < 3)
-            OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3))) AS blocked,
-          (SELECT count(*) FROM pending WHERE failures >= 3) AS failed,
-          (SELECT count(*) FROM active) AS indexed`,
+    if (!location || state.cursor || this.#otherLocation) return
+    // An item stops holding readiness back only after three counted
+    // failures over at least an hour, so an outage that clears within the
+    // hour cannot move searches to an incomplete index.
+    const blocked = this.ctx.storage.sql
+      .exec<{ blocked: number }>(
+        `SELECT (
+          EXISTS(SELECT 1 FROM placement)
+          OR EXISTS(SELECT 1 FROM pending WHERE failures < 3 OR first_failed_at > ?1)
+          OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(
+            SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3 AND p.first_failed_at <= ?1))
+        ) AS blocked`,
+        Date.now() - GIVE_UP_AFTER_MS,
       )
-      .one()
-    // A long outage can fail many items three times; an index missing more
-    // than a tenth of its files (at least two) is not ready.
-    if (
-      counts.blocked ||
-      counts.failed >
-        Math.max(2, Math.floor((counts.failed + counts.indexed) / 10))
-    )
-      return
+      .one().blocked
+    if (blocked) return
     const row = await db
       .selectFrom('search_index_workspaces')
       .select(['location_hint', 'ready_at'])
@@ -513,9 +513,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       .executeTakeFirst()
     // A workspace recorded for another location never uses this index.
     if (row?.location_hint && row.location_hint !== location) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,'')",
-      )
+      this.#otherLocation = true
       return
     }
     if (row?.location_hint !== location) return
@@ -535,6 +533,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       readyAt,
     )
   }
+  #otherLocation = false
 
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
@@ -673,7 +672,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             // Count a failure at most every five minutes, so a brief outage
             // cannot use up an item's attempts within seconds.
             this.ctx.storage.sql.exec(
-              'UPDATE pending SET failures=failures+1, failed_at=? WHERE id=? AND failed_at <= ?',
+              'UPDATE pending SET failures=failures+1, failed_at=?1, first_failed_at=CASE WHEN first_failed_at=0 THEN ?1 ELSE first_failed_at END WHERE id=?2 AND failed_at <= ?3',
               Date.now(),
               id,
               Date.now() - FAILURE_SPACING_MS,

@@ -940,7 +940,9 @@ describe('Worker integration harness', () => {
     expect(await readyAt()).toBeNull()
     // Make the last failure older than the spacing before each later run.
     const age = () =>
-      placed.exec("UPDATE pending SET failed_at=0 WHERE id='ready-missing'")
+      placed.exec(
+        "UPDATE pending SET failed_at=0, first_failed_at=1 WHERE id='ready-missing'",
+      )
     await age()
     await worker.scheduled({ cron: '*/5 * * * *' })
     expect(await failures()).toBe(2)
@@ -963,7 +965,7 @@ describe('Worker integration harness', () => {
     expect(await readyAt()).toBe(first)
   }, 60_000)
 
-  test('a placed index missing many files is not reported ready', async () => {
+  test('a placed index is not reported ready while failures are under an hour old', async () => {
     const owner = {
       workspaceId: 'ws-unready',
       userId: 'user-unready',
@@ -979,7 +981,7 @@ describe('Worker integration harness', () => {
     )
       .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
       .run()
-    // One page indexes; three never can, as during a long outage.
+    // One page indexes; three fail, as during an outage.
     const ids = ['unready-good', 'unready-a', 'unready-b', 'unready-c']
     for (const id of ids)
       await env.DB.batch([
@@ -1000,6 +1002,7 @@ describe('Worker integration harness', () => {
       'WORKSPACE_SEARCH_INDEX',
       { name: 'ws-unready:0@apac-ne' },
     )
+    // Three counted failures, but the first was less than an hour ago.
     for (let run = 0; run < 3; run++) {
       await placed.exec('UPDATE pending SET failed_at=0')
       await worker.scheduled({ cron: '*/5 * * * *' })
@@ -1016,6 +1019,16 @@ describe('Worker integration harness', () => {
         .bind(owner.workspaceId)
         .first(),
     ).toEqual({ ready_at: null })
+    // Once the failures are more than an hour old, readiness is reported.
+    await placed.exec('UPDATE pending SET failed_at=0, first_failed_at=1')
+    await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(
+      await env.DB.prepare(
+        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
+      )
+        .bind(owner.workspaceId)
+        .first<{ ready_at: string | null }>(),
+    ).toEqual({ ready_at: expect.any(String) })
   }, 60_000)
 
   test('workspace search extracts all page kinds, isolates scripts and serves only complete generations', async () => {
