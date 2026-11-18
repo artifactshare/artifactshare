@@ -52,7 +52,7 @@ test('searches use the placed index only once it is ready, deciding once per wor
   expect(reads).toBe(4)
 })
 
-test('an unreadable choice fails the search instead of opening the legacy index', async () => {
+test('a choice read is retried once, then fails the search without opening the legacy index', async () => {
   const opened: string[] = []
   const namespace = {
     getByName: (name: string) => {
@@ -63,19 +63,32 @@ test('an unreadable choice fails the search instead of opening the legacy index'
       }
     },
   } as never
-  const failing = {
+  let reads = 0
+  let failures = 3
+  const flaky = {
     selectFrom: () => ({
       select: () => ({
         where: () => ({
-          executeTakeFirst: () => Promise.reject(new Error('d1 unavailable')),
+          executeTakeFirst: () => {
+            reads++
+            return failures-- > 0
+              ? Promise.reject(new Error('d1 unavailable'))
+              : Promise.resolve(undefined)
+          },
         }),
       }),
     }),
   } as never
-  const indexes = workspaceSearchIndexes(failing, namespace)
-  await expect(indexes('ready').search({ query: 'a' })).rejects.toThrow(
+  const indexes = workspaceSearchIndexes(flaky, namespace)
+  await expect(indexes('ws').search({ query: 'a' })).rejects.toThrow(
     'd1 unavailable',
   )
+  expect(reads).toBe(2)
   // A retired legacy index is not recreated by a failed choice.
   expect(opened).toEqual([])
+  // The failure is not kept: the next call reads again, and its retry
+  // succeeds.
+  await indexes('ws').search({ query: 'a' })
+  expect(reads).toBe(4)
+  expect(opened).toEqual(['ws:0'])
 })

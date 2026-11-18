@@ -7,6 +7,7 @@ import {
   readyPlacedLocation,
   searchIndexName,
 } from './names'
+import { readPlacement } from './placement.server'
 
 /**
  * The index each workspace's searches use in one request: the placed index
@@ -24,20 +25,20 @@ export function workspaceSearchIndexes(
   const choose = (workspaceId: string) => {
     let index = chosen.get(workspaceId)
     if (!index) {
-      index = db
-        .selectFrom('search_index_workspaces')
-        .select(['location_hint', 'ready_at'])
-        .where('workspace_id', '=', workspaceId)
-        .executeTakeFirst()
-        // An unreadable choice fails the search. Falling back to the
-        // legacy index would recreate one that already retired itself, and
-        // the search's own permission checks need D1 as well.
+      // A transient read failure is retried once. A failure after that fails
+      // the search and is not kept, so a later call reads again. Falling
+      // back to the legacy index would recreate one that already retired,
+      // and the search's own permission checks need D1 as well.
+      const read = () => readPlacement(db, workspaceId)
+      index = read()
+        .catch(read)
         .then((row) => {
           const location = readyPlacedLocation(row)
           return location
             ? placedSearchIndex(namespace, workspaceId, location)
             : namespace.getByName(searchIndexName(workspaceId))
         })
+      index.catch(() => chosen.delete(workspaceId))
       chosen.set(workspaceId, index)
     }
     return index

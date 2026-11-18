@@ -9,6 +9,7 @@ import {
   searchIndexName,
   type SearchIndexLocation,
 } from './names'
+import { readPlacement } from './placement.server'
 
 export type SearchEnvironment = {
   WORKSPACE_SEARCH_INDEX?: DurableObjectNamespace<WorkspaceSearchIndex>
@@ -69,13 +70,7 @@ export function scheduleWorkspaceSearch(
 ): void {
   if (!env.WORKSPACE_SEARCH_INDEX) return
   try {
-    const placement = withDb((db) =>
-      db
-        .selectFrom('search_index_workspaces')
-        .select(['location_hint', 'ready_at'])
-        .where('workspace_id', '=', workspaceId)
-        .executeTakeFirst(),
-    ).then(
+    const placement = withDb((db) => readPlacement(db, workspaceId)).then(
       recordedPlacement,
       // An unreadable location syncs only the legacy index, as before.
       (): Placement => ({ ready: false }),

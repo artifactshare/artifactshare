@@ -226,3 +226,12 @@ export function rememberSearchIndexLocation(
     logRecordFailure(error)
   }
 }
+
+/** A workspace's recorded index location and when its placed index reported ready. */
+export function readPlacement(db: Db, workspaceId: string) {
+  return db
+    .selectFrom('search_index_workspaces')
+    .select(['location_hint', 'ready_at'])
+    .where('workspace_id', '=', workspaceId)
+    .executeTakeFirst()
+}
