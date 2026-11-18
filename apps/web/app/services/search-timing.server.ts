@@ -196,7 +196,7 @@ export async function withSearchTiming<T, E = never>(
     started = performance.now()
   try {
     const value = await withDb(
-      (db) => run(db, timeIndexes(workspaceSearchIndexes(db), timings)),
+      (db) => run(db, timeIndexes(workspaceSearchIndexes(), timings)),
       timeD1(env.DB, timings),
     )
     return {

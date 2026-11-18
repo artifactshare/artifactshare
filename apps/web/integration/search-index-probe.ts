@@ -15,7 +15,6 @@ import {
   katakanaRuns,
   INDEX_FORMAT_VERSION,
 } from '../app/services/search-index/normalize'
-import type { SearchIndexLocation } from '../app/services/search-index/names'
 import { WorkspaceSearchIndex as Index } from '../workers/workspace-search-index'
 
 export type SearchProbeDocument = {
@@ -333,7 +332,6 @@ export default {
       warmup: number
       samples: number
       name: string
-      location?: SearchIndexLocation
     }>()
     const stub = env.WORKSPACE_SEARCH_INDEX.getByName(
       searchIndexName(command.workspace),
@@ -415,7 +413,7 @@ export default {
       case 'syncNamed':
         // Sync an index object by explicit name to exercise its name check.
         result = await env.WORKSPACE_SEARCH_INDEX.getByName(command.name)
-          .sync(command.workspace, command.location)
+          .sync(command.workspace)
           .then(
             () => 'ok',
             (error: unknown) =>
@@ -424,6 +422,12 @@ export default {
         break
       case 'resume':
         result = await stub.resume()
+        break
+      case 'resumeNamed':
+        // Run the alarm of an index object by explicit name.
+        result = await env.WORKSPACE_SEARCH_INDEX.getByName(
+          command.name,
+        ).resume()
         break
       case 'ensureSchema':
         result = await stub.createSchema()

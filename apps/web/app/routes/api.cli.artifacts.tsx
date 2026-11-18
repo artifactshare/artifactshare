@@ -58,7 +58,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     if (isArtifactsSearch(queryParams.data)) {
       const result = await searchCliArtifacts(
         db,
-        workspaceSearchIndexes(db),
+        workspaceSearchIndexes(),
         user,
         {
           ...queryParams.data,

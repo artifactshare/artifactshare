@@ -1,4 +1,4 @@
-/** The Durable Object regions a workspace search index can be created in. */
+/** The Durable Object regions a workspace search index was ever created in. */
 export const SEARCH_INDEX_LOCATIONS = [
   'wnam',
   'enam',
@@ -14,45 +14,30 @@ export const SEARCH_INDEX_LOCATIONS = [
 ] as const
 export type SearchIndexLocation = (typeof SEARCH_INDEX_LOCATIONS)[number]
 
-export function isSearchIndexLocation(
-  value: unknown,
-): value is SearchIndexLocation {
-  return SEARCH_INDEX_LOCATIONS.includes(value as SearchIndexLocation)
-}
+/** Where every workspace search index runs: Northeast Asia, near most members. */
+export const SEARCH_INDEX_LOCATION = 'apac-ne' satisfies SearchIndexLocation
 
 /**
- * The index object name for a workspace. `:0` is the partition. A placed
- * index adds its location, so it is a different object from the legacy one
- * and is created in that location.
+ * An index object name for a workspace. `:0` is the partition, and the
+ * suffix is the location the object was created in. With a null location it is
+ * the name of an index from before indexes were placed; that index, and any
+ * index placed elsewhere, deletes itself.
  */
 export function searchIndexName(
   workspaceId: string,
-  location?: SearchIndexLocation,
+  location: SearchIndexLocation | null = SEARCH_INDEX_LOCATION,
 ): string {
   return location ? `${workspaceId}:0@${location}` : `${workspaceId}:0`
 }
 
-/** The workspace index placed in a location, created there on first use. */
-export function placedSearchIndex<
+/** The workspace's search index, created in its location on first use. */
+export function workspaceSearchIndex<
   T extends Rpc.DurableObjectBranded | undefined,
 >(
   namespace: DurableObjectNamespace<T>,
   workspaceId: string,
-  location: SearchIndexLocation,
 ): DurableObjectStub<T> {
-  return namespace.getByName(searchIndexName(workspaceId, location), {
-    locationHint: location,
+  return namespace.getByName(searchIndexName(workspaceId), {
+    locationHint: SEARCH_INDEX_LOCATION,
   })
-}
-
-/**
- * The location whose placed index a workspace's searches use: recorded and
- * reported ready. Until then the legacy index is searched and synced.
- */
-export function readyPlacedLocation(
-  row: { location_hint: string | null; ready_at: string | null } | undefined,
-): SearchIndexLocation | undefined {
-  return row?.ready_at && isSearchIndexLocation(row.location_hint)
-    ? row.location_hint
-    : undefined
 }

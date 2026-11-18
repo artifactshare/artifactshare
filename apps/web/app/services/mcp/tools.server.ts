@@ -1169,7 +1169,7 @@ export function registerArtifactTools(
       const result = isArtifactsSearch(parsed.data)
         ? await searchCliArtifacts(
             ctx.db,
-            workspaceSearchIndexes(ctx.db),
+            workspaceSearchIndexes(),
             mcpUserAsSessionUser(user),
             { ...parsed.data, baseUrl: ctx.baseUrl, source: 'mcp' },
           )
