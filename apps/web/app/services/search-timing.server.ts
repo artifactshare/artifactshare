@@ -1,5 +1,4 @@
 import { workspaceSearchIndexes } from './search-index/indexes.server'
-import { searchIndexName } from './search-index/names'
 import { env } from 'cloudflare:workers'
 import { withDb, type Db } from './db.server'
 import type { SearchIndex, SearchIndexes } from './search.server'
@@ -220,32 +219,4 @@ export async function withSearchTiming<T, E = never>(
     )
     throw error
   }
-}
-
-/**
- * Temporary location check: the round trip of a call that does no index
- * work, to two new, empty index objects (one created with the apac-ne
- * location hint, one without) and to the viewer's own workspace index, with
- * the Cloudflare location each object runs in. The first call wakes or
- * creates each object and reads its location, so the second is timed.
- */
-export function probeIndexLocations(workspaceId: string): Promise<string[]> {
-  const ping = async (
-    label: string,
-    name: string,
-    options?: DurableObjectNamespaceGetDurableObjectOptions,
-  ) => {
-    const index = env.WORKSPACE_SEARCH_INDEX.getByName(name, options)
-    const colo = await index.placement()
-    const started = performance.now()
-    await index.placement()
-    return `${label};dur=${Math.round(performance.now() - started)};desc="${colo}"`
-  }
-  return Promise.all([
-    ping('probe-apac-ne', 'location-probe-apac-ne:0', {
-      locationHint: 'apac-ne',
-    }),
-    ping('probe-default', 'location-probe-default:0'),
-    ping('probe-workspace', searchIndexName(workspaceId)),
-  ])
 }

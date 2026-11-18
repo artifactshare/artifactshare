@@ -3,8 +3,8 @@ import type { Db } from '../db.server'
 import type { SearchIndexes } from '../search.server'
 import type { WorkspaceSearchIndex } from '../../../workers/workspace-search-index'
 import {
-  isSearchIndexLocation,
   placedSearchIndex,
+  readyPlacedLocation,
   searchIndexName,
 } from './names'
 
@@ -29,22 +29,15 @@ export function workspaceSearchIndexes(
         .select(['location_hint', 'ready_at'])
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirst()
-        .then(
-          (row) =>
-            row?.ready_at && isSearchIndexLocation(row.location_hint)
-              ? placedSearchIndex(namespace, workspaceId, row.location_hint)
-              : namespace.getByName(searchIndexName(workspaceId)),
-          // An unreadable choice falls back to the legacy index.
-          (error: unknown) => {
-            console.warn(
-              JSON.stringify({
-                event: 'search_index_choice_failed',
-                message: error instanceof Error ? error.message : String(error),
-              }),
-            )
-            return namespace.getByName(searchIndexName(workspaceId))
-          },
-        )
+        // An unreadable choice fails the search. Falling back to the
+        // legacy index would recreate one that already retired itself, and
+        // the search's own permission checks need D1 as well.
+        .then((row) => {
+          const location = readyPlacedLocation(row)
+          return location
+            ? placedSearchIndex(namespace, workspaceId, location)
+            : namespace.getByName(searchIndexName(workspaceId))
+        })
       chosen.set(workspaceId, index)
     }
     return index

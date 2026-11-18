@@ -5,10 +5,7 @@ import { requireUser } from '~/middleware/context'
 import { parseSearchQuery } from '~/lib/search-query'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { search } from '~/services/search.server'
-import {
-  probeIndexLocations,
-  withSearchTiming,
-} from '~/services/search-timing.server'
+import { withSearchTiming } from '~/services/search-timing.server'
 import { data, type HeadersFunction } from 'react-router'
 import { searchNoStoreMiddleware } from '~/services/search-response.server'
 import { SearchResults } from '~/components/app/search-results'
@@ -129,19 +126,6 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
       actor: user.id,
     }
-  // Temporary placement check, only when asked for: measured before the
-  // search so its round trips do not wait on search work.
-  const probes = url.searchParams.has('probe-index-location')
-    ? await probeIndexLocations(user.workspaceId).catch((error: unknown) => {
-        console.warn(
-          JSON.stringify({
-            event: 'search_index_probe_failed',
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        )
-        return []
-      })
-    : []
   const { value: result, serverTiming } = await withSearchTiming(
     'search',
     (db, indexes) => search(db, indexes, user.id, input, 'screen'),
@@ -180,7 +164,7 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
     { result, actor: user.id },
     {
       headers: {
-        'Server-Timing': [serverTiming, ...probes].join(', '),
+        'Server-Timing': serverTiming,
       },
     },
   )

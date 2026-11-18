@@ -52,7 +52,7 @@ test('searches use the placed index only once it is ready, deciding once per wor
   expect(reads).toBe(4)
 })
 
-test('an unreadable choice falls back to the legacy index', async () => {
+test('an unreadable choice fails the search instead of opening the legacy index', async () => {
   const opened: string[] = []
   const namespace = {
     getByName: (name: string) => {
@@ -72,11 +72,10 @@ test('an unreadable choice falls back to the legacy index', async () => {
       }),
     }),
   } as never
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   const indexes = workspaceSearchIndexes(failing, namespace)
-  await indexes('ready').search({ query: 'a' })
-  await indexes('ready').details({ query: 'a' }, [])
-  expect(opened).toEqual(['ready:0'])
-  expect(warn).toHaveBeenCalledTimes(1)
-  warn.mockRestore()
+  await expect(indexes('ready').search({ query: 'a' })).rejects.toThrow(
+    'd1 unavailable',
+  )
+  // A retired legacy index is not recreated by a failed choice.
+  expect(opened).toEqual([])
 })

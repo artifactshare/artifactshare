@@ -5,6 +5,7 @@ import type { WorkspaceSearchIndex } from '../../../workers/workspace-search-ind
 import {
   isSearchIndexLocation,
   placedSearchIndex,
+  readyPlacedLocation,
   searchIndexName,
   type SearchIndexLocation,
 } from './names'
@@ -58,7 +59,7 @@ function recordedPlacement(
   const location = isSearchIndexLocation(row?.location_hint)
     ? row.location_hint
     : undefined
-  return { location, ready: Boolean(location && row?.ready_at) }
+  return { location, ready: Boolean(readyPlacedLocation(row)) }
 }
 
 /** A notification contains only identity; D1 supplies all content and metadata. */

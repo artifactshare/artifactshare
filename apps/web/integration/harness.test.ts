@@ -948,8 +948,11 @@ describe('Worker integration harness', () => {
         .bind(owner.workspaceId)
         .first('ready_at'),
     ).not.toBeNull()
-    // Its next run deletes the legacy text and storage, not the placed copy.
-    await searchProbe(owner.workspaceId).resume()
+    // Its next wake is its next full pass, which deletes the legacy text
+    // and storage, not the placed copy.
+    await searchProbe(owner.workspaceId).resumeAt(
+      Date.now() + 12 * 60 * 60_000 + 60_000,
+    )
     expect(
       (await env.BUCKET.list({ prefix: 'search-text/ws-retire/' })).objects,
     ).toEqual([])

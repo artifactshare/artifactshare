@@ -13,6 +13,7 @@ import { DurableObject } from 'cloudflare:workers'
 import {
   isSearchIndexLocation,
   SEARCH_INDEX_LOCATIONS,
+  readyPlacedLocation,
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
@@ -389,19 +390,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
-  /**
-   * Temporary placement check: no index work, and the Cloudflare location
-   * this object runs in, read once from the trace endpoint.
-   */
-  #colo: Promise<string> | undefined
-  placement(): Promise<string> {
-    this.#colo ??= fetch('https://www.cloudflare.com/cdn-cgi/trace')
-      .then((response) => (response.ok ? response.text() : ''))
-      .then((text) => /^colo=(\w+)$/m.exec(text)?.[1] ?? 'unknown')
-      .catch(() => 'unknown')
-    return this.#colo
-  }
-
   details(
     input: IndexSearchInput,
     ids: string[],
@@ -675,16 +663,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       try {
         // Once searches use the placed index, the legacy one is no longer
         // synced; it deletes its extracted text and then its own storage.
-        if (this.location() === undefined) {
+        // Checked when a walk or a full pass starts: a retired workspace's
+        // legacy index gets no notifications, so its next wake is a pass.
+        if (
+          this.location() === undefined &&
+          (walkStarts || (scanDue && !cursor))
+        ) {
           const placement = await db
             .selectFrom('search_index_workspaces')
             .select(['location_hint', 'ready_at'])
             .where('workspace_id', '=', state.workspace)
             .executeTakeFirst()
-          if (
-            placement?.ready_at &&
-            isSearchIndexLocation(placement.location_hint)
-          ) {
+          if (readyPlacedLocation(placement)) {
             await this.retire(state.workspace)
             return
           }
