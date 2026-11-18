@@ -160,21 +160,7 @@ const harness = createTestHarness({
 const network = setupServer()
 if (typeof integrationConfig.name !== 'string')
   throw new Error('Main Worker config is missing its name')
-// Requests carry an empty country and continent unless a test sets cf (the
-// local runtime fills in the rest), so a workspace's search index location
-// is recorded only where a test asks for one.
-const primaryWorker = harness.getWorker(integrationConfig.name)
-const worker = new Proxy(primaryWorker, {
-  get(target, property, receiver) {
-    if (property === 'fetch')
-      return (
-        input: Parameters<typeof primaryWorker.fetch>[0],
-        init?: Parameters<typeof primaryWorker.fetch>[1],
-      ) => target.fetch(input, { cf: { country: '', continent: '' }, ...init })
-    const value: unknown = Reflect.get(target, property, receiver)
-    return typeof value === 'function' ? value.bind(target) : value
-  },
-})
+const worker = harness.getWorker(integrationConfig.name)
 const sandboxWorker = harness.getWorker(sandboxName)
 
 function searchProbe(workspace: string) {
@@ -562,7 +548,7 @@ describe('Worker integration harness', () => {
     const result = (await response.json()) as { id: string; versionId: string }
     const destination = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-project:0' },
+      { name: 'ws-project:0@apac-ne' },
     )
     await vi.waitFor(
       async () => {
@@ -578,7 +564,7 @@ describe('Worker integration harness', () => {
     expect(Date.now() - started).toBeLessThan(60_000)
     const source = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-poster:0' },
+      { name: 'ws-poster:0@apac-ne' },
     )
     // The source workspace's index was never synced, so it has no storage.
     expect(
@@ -605,7 +591,7 @@ describe('Worker integration harness', () => {
       if (point === 'registry')
         await (
           await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
-            name: 'ws-signal:0',
+            name: 'ws-signal:0@apac-ne',
           })
         ).exec('UPDATE state SET scanned_at=0')
       await stub.pause(point)
@@ -635,7 +621,7 @@ describe('Worker integration harness', () => {
       expect(await stub.nextAlarm()).toBeLessThan(Date.now() + 60_000)
       const index = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
-        { name: 'ws-signal:0' },
+        { name: 'ws-signal:0@apac-ne' },
       )
       await vi.waitFor(
         async () => {
@@ -692,7 +678,7 @@ describe('Worker integration harness', () => {
       await stub.sync('ws-race')
       const index = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
-        { name: 'ws-race:0' },
+        { name: 'ws-race:0@apac-ne' },
       )
       expect(await index.exec('SELECT count(*) AS count FROM active')).toEqual([
         { count: 2 },
@@ -709,7 +695,7 @@ describe('Worker integration harness', () => {
       // Force more than one cleanup page, including superseded and abandoned keys.
       for (let i = 0; i < 105; i++)
         await env.BUCKET.put(
-          `search-text/ws-race/changing/abandoned-${i}/index.html`,
+          `search-text/@apac-ne/ws-race/changing/abandoned-${i}/index.html`,
           'staged',
         )
       await stub.pause('put')
@@ -753,7 +739,7 @@ describe('Worker integration harness', () => {
         await index.exec("SELECT cursor FROM cleanup WHERE id='changing'"),
       ).toEqual([{ cursor: expect.any(String) }])
       await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-        name: 'ws-race:0',
+        name: 'ws-race:0@apac-ne',
       })
       const recoveredAt = removedAt + 23 * 60 * 60_000
       await stub.resumeAt(recoveredAt)
@@ -768,7 +754,7 @@ describe('Worker integration harness', () => {
           const keys: string[] = []
           do {
             const page = await env.BUCKET.list({
-              prefix: 'search-text/ws-race/changing/',
+              prefix: 'search-text/@apac-ne/ws-race/changing/',
               limit: 25,
               cursor,
             })
@@ -791,11 +777,11 @@ describe('Worker integration harness', () => {
       expect(await env.BUCKET.head('artifacts/race/changing')).not.toBeNull()
       if (operation === 'move') {
         await env.WORKSPACE_SEARCH_INDEX.getByName(
-          'ws-race-destination:0',
+          'ws-race-destination:0@apac-ne',
         ).sync('ws-race-destination')
         const moved = await worker.getDurableObjectStorage(
           'WORKSPACE_SEARCH_INDEX',
-          { name: 'ws-race-destination:0' },
+          { name: 'ws-race-destination:0@apac-ne' },
         )
         expect(
           await moved.exec(
@@ -809,6 +795,7 @@ describe('Worker integration harness', () => {
               'changing',
               'race-next',
               '/index.html',
+              'apac-ne',
             ),
           ),
         ).not.toBeNull()
@@ -817,344 +804,75 @@ describe('Worker integration harness', () => {
     60_000,
   )
 
-  test('a recorded location adds a placed index that reuses extracted text', async () => {
-    const owner = {
-      workspaceId: 'ws-placed',
-      userId: 'user-placed',
-      email: 'placed@example.test',
-      name: 'Placed',
-      sessionToken: 'placed-session',
-    }
-    await seedRuntimeUser(owner)
+  test('an index from before one location, or placed elsewhere, deletes itself', async () => {
     const env = await worker.getEnv()
-    const now = '2026-07-30T00:00:00.000Z'
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('placed-inbox',?,'inbox',?,?,'Inbox',?,?)",
-      ).bind(owner.workspaceId, owner.userId, owner.userId, now, now),
-      env.DB.prepare(
-        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('placed-page',?,?,'Placed','placed-inbox','html_page','private','v-placed-page',?,?)",
-      ).bind(owner.workspaceId, owner.userId, now, now),
-      env.DB.prepare(
-        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-placed-page','placed-page','html_page','published','/index.html','artifacts/placed/page',100,'sha',?,?)",
-      ).bind(owner.userId, now),
-    ])
-    await env.BUCKET.put('artifacts/placed/page', '<p>placedneedle</p>')
-    // Without a location only the legacy index is synced.
-    await expect(
-      worker.scheduled({ cron: '*/5 * * * *' }),
-    ).resolves.toMatchObject({ outcome: 'ok' })
-    const legacy = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-placed:0' },
-    )
-    expect(await legacy.exec('SELECT count(*) AS count FROM active')).toEqual([
-      { count: 1 },
-    ])
-    // The placed index must take the text the legacy index extracted: the
-    // source is gone, so extracting again would fail.
-    await env.BUCKET.delete('artifacts/placed/page')
-    await env.DB.prepare(
-      "UPDATE search_index_workspaces SET location_hint='apac-ne', dispatched_at='' WHERE workspace_id=?",
-    )
-      .bind(owner.workspaceId)
-      .run()
-    await expect(
-      worker.scheduled({ cron: '*/5 * * * *' }),
-    ).resolves.toMatchObject({ outcome: 'ok' })
-    const placed = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-placed:0@apac-ne' },
-    )
-    expect(
-      await placed.exec(
-        'SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH ?',
-        'placedneedle',
-      ),
-    ).toEqual([{ shareable: 'placed-page' }])
-    // The placed index keeps its own copy, apart from the legacy area.
-    expect(
-      (await env.BUCKET.list({ prefix: 'search-text/@apac-ne/ws-placed/' }))
-        .objects.length,
-    ).toBe(1)
-    expect(
-      (await env.BUCKET.list({ prefix: 'search-text/ws-placed/' })).objects
-        .length,
-    ).toBe(1)
-    // The name check accepts only this workspace's own names.
-    const syncNamed = async (name: string, location?: string) => {
-      const response = await worker.fetch('/__test/search-index', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspace: 'ws-placed',
-          action: 'syncNamed',
-          name,
-          location,
-        }),
-      })
-      return response.json()
-    }
-    expect(await syncNamed('ws-placed:0@apac-ne', 'apac-ne')).toBe('ok')
-    expect(await syncNamed('ws-placed:0@apac-ne', 'weur')).toBe(
-      'search_partition_mismatch',
-    )
-    expect(await syncNamed('ws-placed:0@apac-ne')).toBe(
-      'search_partition_mismatch',
-    )
-    expect(await syncNamed('ws-placed:0@apac-ne', 'mars')).toBe(
-      'search_partition_mismatch',
-    )
-  }, 60_000)
-
-  test('a legacy index stops syncing and deletes itself once the placed index is ready', async () => {
-    const owner = {
-      workspaceId: 'ws-retire',
-      userId: 'user-retire',
-      email: 'retire@example.test',
-      name: 'Retire',
-      sessionToken: 'retire-session',
-    }
-    await seedRuntimeUser(owner)
-    const env = await worker.getEnv()
-    const now = '2026-07-30T00:00:00.000Z'
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('retire-inbox',?,'inbox',?,?,'Inbox',?,?)",
-      ).bind(owner.workspaceId, owner.userId, owner.userId, now, now),
-      env.DB.prepare(
-        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('retire-page',?,?,'Retire','retire-inbox','html_page','private','v-retire-page',?,?)",
-      ).bind(owner.workspaceId, owner.userId, now, now),
-      env.DB.prepare(
-        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-retire-page','retire-page','html_page','published','/index.html','artifacts/retire/page',100,'sha',?,?)",
-      ).bind(owner.userId, now),
-    ])
-    await env.BUCKET.put('artifacts/retire/page', '<p>retireneedle</p>')
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    const legacy = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-retire:0' },
-    )
-    expect(await legacy.exec('SELECT count(*) AS count FROM active')).toEqual([
-      { count: 1 },
-    ])
-    // A recorded location builds the placed index, which reports ready.
-    await env.DB.prepare(
-      "UPDATE search_index_workspaces SET location_hint='apac-ne', dispatched_at='' WHERE workspace_id=?",
-    )
-      .bind(owner.workspaceId)
-      .run()
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(
-      await env.DB.prepare(
-        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
+    const workspace = 'ws-old'
+    // Indexes created before every index moved to one location kept their
+    // state and text under their own name and area.
+    for (const name of [`${workspace}:0`, `${workspace}:0@weur`]) {
+      const storage = await worker.getDurableObjectStorage(
+        'WORKSPACE_SEARCH_INDEX',
+        { name },
       )
-        .bind(owner.workspaceId)
-        .first('ready_at'),
-    ).not.toBeNull()
+      await storage.exec(
+        "CREATE TABLE state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1)",
+      )
+      await storage.exec(
+        'INSERT INTO state(singleton,workspace) VALUES(1,?)',
+        workspace,
+      )
+      // A new instance starts from that storage, as a deployed one would.
+      await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
+    }
     // More legacy text than one listing page is deleted in the same run.
     await Promise.all(
       Array.from({ length: 1005 }, (_, n) =>
-        env.BUCKET.put(`search-text/ws-retire/extra/${n}`, 'legacy'),
+        env.BUCKET.put(`search-text/${workspace}/file/${n}`, 'legacy'),
       ),
     )
-    // A legacy index that keeps working for other reasons rechecks within
-    // minutes, then deletes the legacy text and storage, not the placed copy.
-    await searchProbe(owner.workspaceId).resumeAt(Date.now() + 6 * 60_000)
+    await env.BUCKET.put(`search-text/@weur/${workspace}/file/x`, 'weur')
+    await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
+    const named = async (action: string, name: string) => {
+      const response = await worker.fetch('/__test/search-index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace, action, name }),
+      })
+      return response.json()
+    }
+    for (const [name, prefix] of [
+      [`${workspace}:0`, `search-text/${workspace}/`],
+      [`${workspace}:0@weur`, `search-text/@weur/${workspace}/`],
+    ]) {
+      expect(await named('resumeNamed', name)).toBeNull()
+      expect((await env.BUCKET.list({ prefix })).objects).toEqual([])
+      expect(
+        await (
+          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+            name,
+          })
+        ).exec(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
+        ),
+      ).toEqual([])
+      // They accept no sync, which also creates no storage.
+      expect(await named('syncNamed', name)).toBe('search_partition_mismatch')
+      expect(
+        await (
+          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+            name,
+          })
+        ).exec(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
+        ),
+      ).toEqual([])
+    }
+    // The text of the index in the one location stays.
     expect(
-      (await env.BUCKET.list({ prefix: 'search-text/ws-retire/' })).objects,
-    ).toEqual([])
-    expect(
-      (await env.BUCKET.list({ prefix: 'search-text/@apac-ne/ws-retire/' }))
+      (await env.BUCKET.list({ prefix: `search-text/@apac-ne/${workspace}/` }))
         .objects.length,
     ).toBe(1)
-    expect(
-      await legacy.exec("SELECT name FROM sqlite_master WHERE name='state'"),
-    ).toEqual([])
-    // A search that chose the legacy index just before it retired finds
-    // nothing and creates no storage.
-    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: 'ws-retire:0',
-    })
-    expect(
-      (await searchProbe(owner.workspaceId).search({ query: 'retireneedle' }))
-        .items,
-    ).toEqual([])
-    expect(
-      await legacy.exec(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
-      ),
-    ).toEqual([])
-    // Later notifications reach only the placed index.
-    await env.DB.prepare(
-      "UPDATE search_index_workspaces SET dispatched_at='' WHERE workspace_id=?",
-    )
-      .bind(owner.workspaceId)
-      .run()
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(
-      await legacy.exec("SELECT name FROM sqlite_master WHERE name='state'"),
-    ).toEqual([])
-    const placed = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-retire:0@apac-ne' },
-    )
-    expect(
-      await placed.exec(
-        'SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH ?',
-        'retireneedle',
-      ),
-    ).toEqual([{ shareable: 'retire-page' }])
-  }, 60_000)
-
-  test('a placed index reports ready after its first pass, past items that keep failing', async () => {
-    const owner = {
-      workspaceId: 'ws-ready',
-      userId: 'user-ready',
-      email: 'ready@example.test',
-      name: 'Ready',
-      sessionToken: 'ready-session',
-    }
-    await seedRuntimeUser(owner)
-    const env = await worker.getEnv()
-    const now = '2026-07-30T00:00:00.000Z'
-    await env.DB.prepare(
-      "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('ready-inbox',?,'inbox',?,?,'Inbox',?,?)",
-    )
-      .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
-      .run()
-    for (const id of ['ready-good', 'ready-missing'])
-      await env.DB.batch([
-        env.DB.prepare(
-          "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES (?,?,?,?,'ready-inbox','html_page','private',?,?,?)",
-        ).bind(id, owner.workspaceId, owner.userId, id, `v-${id}`, now, now),
-        env.DB.prepare(
-          "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'html_page','published','/index.html',?,100,'sha',?,?)",
-        ).bind(`v-${id}`, id, `artifacts/ready/${id}`, owner.userId, now),
-      ])
-    // Only the good page has a source; the other fails on every attempt.
-    await env.BUCKET.put('artifacts/ready/ready-good', '<p>readyneedle</p>')
-    await env.DB.prepare(
-      "INSERT INTO search_index_workspaces(workspace_id,dispatched_at,location_hint) VALUES(?,'','apac-ne')",
-    )
-      .bind(owner.workspaceId)
-      .run()
-    const readyAt = async () =>
-      (
-        await env.DB.prepare(
-          'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
-        )
-          .bind(owner.workspaceId)
-          .first<{ ready_at: string | null }>()
-      )?.ready_at ?? null
-    const placed = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-ready:0@apac-ne' },
-    )
-    const failures = async () =>
-      (
-        await placed.exec(
-          "SELECT failures FROM pending WHERE id='ready-missing'",
-        )
-      )[0]?.failures
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(await failures()).toBe(1)
-    // A retry within five minutes of the last counted failure is not counted.
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(await failures()).toBe(1)
-    expect(await readyAt()).toBeNull()
-    // Make the last failure older than the spacing before each later run.
-    const age = () =>
-      placed.exec(
-        "UPDATE pending SET failed_at=0, first_failed_at=1 WHERE id='ready-missing'",
-      )
-    await age()
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(await failures()).toBe(2)
-    expect(await readyAt()).toBeNull()
-    await age()
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(await failures()).toBe(3)
-    expect(await readyAt()).not.toBeNull()
-    // The legacy index never reports readiness.
-    const legacy = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-ready:0' },
-    )
-    expect(
-      await legacy.exec('SELECT count(*) AS count FROM placement'),
-    ).toEqual([{ count: 0 }])
-    // A later sync keeps the report.
-    const first = await readyAt()
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(await readyAt()).toBe(first)
-  }, 60_000)
-
-  test('a placed index is not reported ready while failures are under an hour old', async () => {
-    const owner = {
-      workspaceId: 'ws-unready',
-      userId: 'user-unready',
-      email: 'unready@example.test',
-      name: 'Unready',
-      sessionToken: 'unready-session',
-    }
-    await seedRuntimeUser(owner)
-    const env = await worker.getEnv()
-    const now = '2026-07-30T00:00:00.000Z'
-    await env.DB.prepare(
-      "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('unready-inbox',?,'inbox',?,?,'Inbox',?,?)",
-    )
-      .bind(owner.workspaceId, owner.userId, owner.userId, now, now)
-      .run()
-    // One page indexes; three fail, as during an outage.
-    const ids = ['unready-good', 'unready-a', 'unready-b', 'unready-c']
-    for (const id of ids)
-      await env.DB.batch([
-        env.DB.prepare(
-          "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES (?,?,?,?,'unready-inbox','html_page','private',?,?,?)",
-        ).bind(id, owner.workspaceId, owner.userId, id, `v-${id}`, now, now),
-        env.DB.prepare(
-          "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'html_page','published','/index.html',?,100,'sha',?,?)",
-        ).bind(`v-${id}`, id, `artifacts/unready/${id}`, owner.userId, now),
-      ])
-    await env.BUCKET.put('artifacts/unready/unready-good', '<p>good</p>')
-    await env.DB.prepare(
-      "INSERT INTO search_index_workspaces(workspace_id,dispatched_at,location_hint) VALUES(?,'','apac-ne')",
-    )
-      .bind(owner.workspaceId)
-      .run()
-    const placed = await worker.getDurableObjectStorage(
-      'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-unready:0@apac-ne' },
-    )
-    // Three counted failures, but the first was less than an hour ago.
-    for (let run = 0; run < 3; run++) {
-      // The first scheduled sync creates the placed index's storage.
-      if (run) await placed.exec('UPDATE pending SET failed_at=0')
-      await worker.scheduled({ cron: '*/5 * * * *' })
-    }
-    expect(
-      await placed.exec(
-        'SELECT count(*) AS count FROM pending WHERE failures >= 3',
-      ),
-    ).toEqual([{ count: 3 }])
-    expect(
-      await env.DB.prepare(
-        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
-      )
-        .bind(owner.workspaceId)
-        .first(),
-    ).toEqual({ ready_at: null })
-    // Once the failures are more than an hour old, readiness is reported.
-    await placed.exec('UPDATE pending SET failed_at=0, first_failed_at=1')
-    await worker.scheduled({ cron: '*/5 * * * *' })
-    expect(
-      await env.DB.prepare(
-        'SELECT ready_at FROM search_index_workspaces WHERE workspace_id=?',
-      )
-        .bind(owner.workspaceId)
-        .first<{ ready_at: string | null }>(),
-    ).toEqual({ ready_at: expect.any(String) })
+    expect(await named('syncNamed', `${workspace}:0@apac-ne`)).toBe('ok')
   }, 60_000)
 
   test('a file that keeps failing does not keep its index busy', async () => {
@@ -1231,7 +949,7 @@ describe('Worker integration harness', () => {
     }
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-idle:0' },
+      { name: 'ws-idle:0@apac-ne' },
     )
     expect(await index.exec('SELECT count(*) AS count FROM active')).toEqual([
       { count: 60 },
@@ -1464,7 +1182,7 @@ describe('Worker integration harness', () => {
     ).resolves.toMatchObject({ outcome: 'ok' })
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-search:0' },
+      { name: 'ws-search:0@apac-ne' },
     )
     expect(await index.exec('SELECT count(*) AS count FROM active')).toEqual([
       { count: 5 },
@@ -1479,7 +1197,13 @@ describe('Worker integration harness', () => {
       { path: '/secondary.markdown' },
       { path: longPath },
     ])
-    const longKey = await searchTextKey('ws-search', 'site', 'v-site', longPath)
+    const longKey = await searchTextKey(
+      'ws-search',
+      'site',
+      'v-site',
+      longPath,
+      'apac-ne',
+    )
     expect(new TextEncoder().encode(longKey).byteLength).toBeLessThan(1024)
     expect(await (await env.BUCKET.get(longKey))!.json()).toMatchObject({
       body: 'longpathneedle',
@@ -1491,7 +1215,13 @@ describe('Worker integration harness', () => {
       ),
     ).toEqual([{ path: longPath }])
     const html = await env.BUCKET.get(
-      await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
+      await searchTextKey(
+        'ws-search',
+        'html',
+        'v-html',
+        '/index.html',
+        'apac-ne',
+      ),
     )
     expect(await html!.json()).toEqual({
       format: INDEX_FORMAT_VERSION,
@@ -1525,7 +1255,13 @@ describe('Worker integration harness', () => {
       ).toEqual([])
     }
     const md = await env.BUCKET.get(
-      await searchTextKey('ws-search', 'markdown', 'v-markdown', '/note.txt'),
+      await searchTextKey(
+        'ws-search',
+        'markdown',
+        'v-markdown',
+        '/note.txt',
+        'apac-ne',
+      ),
     )
     expect(await md!.json()).toMatchObject({
       body: expect.stringContaining(
@@ -1534,7 +1270,13 @@ describe('Worker integration harness', () => {
     })
     expect(
       await (await env.BUCKET.get(
-        await searchTextKey('ws-search', 'site', 'v-site', '/other.html'),
+        await searchTextKey(
+          'ws-search',
+          'site',
+          'v-site',
+          '/other.html',
+          'apac-ne',
+        ),
       ))!.json(),
     ).toEqual({
       format: INDEX_FORMAT_VERSION,
@@ -1548,11 +1290,18 @@ describe('Worker integration harness', () => {
           'site',
           'v-site',
           '/secondary.markdown',
+          'apac-ne',
         ),
       ))!.json(),
     ).toMatchObject({ body: 'Secondary markdown' })
     const site = await env.BUCKET.get(
-      await searchTextKey('ws-search', 'site', 'v-site', '/index.md'),
+      await searchTextKey(
+        'ws-search',
+        'site',
+        'v-site',
+        '/index.md',
+        'apac-ne',
+      ),
     )
     const sitePayload = await site!.json<{ body: string; script: string }>()
     expect(sitePayload).toMatchObject({
@@ -1565,7 +1314,7 @@ describe('Worker integration harness', () => {
     for (const id of ['pdf', 'video']) {
       const file = fixtures.find((fixture) => fixture.id === id)!
       const object = await env.BUCKET.get(
-        await searchTextKey('ws-search', id, `v-${id}`, file.path),
+        await searchTextKey('ws-search', id, `v-${id}`, file.path, 'apac-ne'),
       )
       expect(await object!.json()).toEqual({
         format: INDEX_FORMAT_VERSION,
@@ -1588,7 +1337,13 @@ describe('Worker integration harness', () => {
     expect(lists).toBeGreaterThan(0) // Activation still cleans abandoned versions.
     const before = await index.exec('SELECT * FROM active ORDER BY id')
     const original = await env.BUCKET.head(
-      await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
+      await searchTextKey(
+        'ws-search',
+        'html',
+        'v-html',
+        '/index.html',
+        'apac-ne',
+      ),
     )
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
@@ -1600,7 +1355,13 @@ describe('Worker integration harness', () => {
     expect(await index.exec('SELECT * FROM active ORDER BY id')).toEqual(before)
     expect(
       (await env.BUCKET.head(
-        await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
+        await searchTextKey(
+          'ws-search',
+          'html',
+          'v-html',
+          '/index.html',
+          'apac-ne',
+        ),
       ))!.version,
     ).toBe(original!.version)
     const patch = await worker.fetch('/api/shareables/html', {
@@ -1688,7 +1449,13 @@ describe('Worker integration harness', () => {
     }
     expect(
       (await env.BUCKET.head(
-        await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
+        await searchTextKey(
+          'ws-search',
+          'html',
+          'v-html',
+          '/index.html',
+          'apac-ne',
+        ),
       ))!.version,
     ).toBe(original!.version)
     // Description currently has no editing service; D1 is its authoritative
@@ -1717,11 +1484,17 @@ describe('Worker integration harness', () => {
         /\b(visibility|grants|memberships|link_expires_at|credentials)\b/iu,
       )
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: 'ws-search:0',
+      name: 'ws-search:0@apac-ne',
     })
     await env.DB.prepare("DELETE FROM shareables WHERE id='html'").run()
     await env.BUCKET.put(
-      await searchTextKey('ws-search', 'html', 'staged', '/index.html'),
+      await searchTextKey(
+        'ws-search',
+        'html',
+        'staged',
+        '/index.html',
+        'apac-ne',
+      ),
       'staged',
     )
     await expect(
@@ -1736,8 +1509,11 @@ describe('Worker integration harness', () => {
       await index.exec("SELECT * FROM serving_chunks WHERE shareable='html'"),
     ).toEqual([])
     expect(
-      (await env.BUCKET.list({ prefix: 'search-text/ws-search/html/' }))
-        .objects,
+      (
+        await env.BUCKET.list({
+          prefix: 'search-text/@apac-ne/ws-search/html/',
+        })
+      ).objects,
     ).toEqual([])
     expect(await env.BUCKET.head('artifacts/search/html')).not.toBeNull()
   }, 60_000)
@@ -1800,7 +1576,7 @@ describe('Worker integration harness', () => {
       const env = await worker.getEnv()
       const index = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
-        { name: `${owner.workspaceId}:0` },
+        { name: `${owner.workspaceId}:0@apac-ne` },
       )
       await vi.waitFor(
         async () => {
@@ -1832,6 +1608,7 @@ describe('Worker integration harness', () => {
               created.id,
               created.versionId,
               `/index.${extension}`,
+              'apac-ne',
             ),
           )
           expect(await object?.json()).toMatchObject({
@@ -1893,6 +1670,7 @@ describe('Worker integration harness', () => {
               created.id,
               version.versionId,
               `/index.${extension}`,
+              'apac-ne',
             ),
           )
           expect(await object?.json()).toMatchObject({
@@ -1902,7 +1680,7 @@ describe('Worker integration harness', () => {
           expect(
             (
               await env.BUCKET.list({
-                prefix: `search-text/${owner.workspaceId}/${created.id}/${created.versionId}/`,
+                prefix: `search-text/@apac-ne/${owner.workspaceId}/${created.id}/${created.versionId}/`,
               })
             ).objects,
           ).toEqual([])
@@ -1966,7 +1744,7 @@ describe('Worker integration harness', () => {
     }
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-backfill:0' },
+      { name: 'ws-backfill:0@apac-ne' },
     )
     // The pause trigger needs the tables a first sync creates.
     await searchProbe('ws-backfill').ensureSchema()
@@ -1978,7 +1756,7 @@ describe('Worker integration harness', () => {
       worker.scheduled({ cron: '*/5 * * * *' }),
     ).resolves.toMatchObject({ outcome: 'ok' })
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: 'ws-backfill:0',
+      name: 'ws-backfill:0@apac-ne',
     })
     expect(
       await index.exec("SELECT * FROM active WHERE id='backfill-11'"),
@@ -2086,7 +1864,7 @@ describe('Worker integration harness', () => {
       'SELECT count(*) AS count FROM serving_chunks',
     )
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: 'ws-backfill:0',
+      name: 'ws-backfill:0@apac-ne',
     })
     expect(
       await index.exec('SELECT count(*) AS count FROM serving_chunks'),
@@ -2164,7 +1942,7 @@ describe('Worker integration harness', () => {
       ),
     ).toEqual([{ count: 1 }])
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: 'ws-backfill:0',
+      name: 'ws-backfill:0@apac-ne',
     })
     expect(
       await index.exec(
@@ -2188,7 +1966,7 @@ describe('Worker integration harness', () => {
     // More than one R2 listing page includes abandoned and superseded extraction.
     for (let n = 0; n < 105; n++)
       await env.BUCKET.put(
-        `search-text/ws-backfill/backfill-00/staged-${n}/index.html`,
+        `search-text/@apac-ne/ws-backfill/backfill-00/staged-${n}/index.html`,
         'abandoned',
       )
     await env.DB.batch([
@@ -2216,14 +1994,17 @@ describe('Worker integration harness', () => {
     ).resolves.toMatchObject({ outcome: 'ok' })
     const destination = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-destination:0' },
+      { name: 'ws-destination:0@apac-ne' },
     )
     await vi.waitFor(
       async () => {
         expect(await index.exec('SELECT * FROM active')).toEqual([])
         expect(
-          (await env.BUCKET.list({ prefix: 'search-text/ws-backfill/' }))
-            .objects,
+          (
+            await env.BUCKET.list({
+              prefix: 'search-text/@apac-ne/ws-backfill/',
+            })
+          ).objects,
         ).toEqual([])
         expect(
           await destination.exec('SELECT count(*) AS count FROM active'),
@@ -2303,7 +2084,7 @@ describe('Worker integration harness', () => {
       ])
       const index = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
-        { name: 'ws-bridge-search:0' },
+        { name: 'ws-bridge-search:0@apac-ne' },
       )
       let artifactId: string | undefined
       const operations =
@@ -2489,12 +2270,12 @@ describe('Worker integration harness', () => {
         .run()
     }
 
-    await env.WORKSPACE_SEARCH_INDEX.getByName('ws-search-large:0').sync(
-      'ws-search-large',
-    )
+    await env.WORKSPACE_SEARCH_INDEX.getByName(
+      'ws-search-large:0@apac-ne',
+    ).sync('ws-search-large')
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: 'ws-search-large:0' },
+      { name: 'ws-search-large:0@apac-ne' },
     )
     await vi.waitFor(
       async () => {
@@ -2563,7 +2344,13 @@ describe('Worker integration harness', () => {
       ),
     ).toEqual([{ count: 200000 }])
     const extracted = await env.BUCKET.get(
-      await searchTextKey('ws-search-large', 'large', 'v-large', '/index.html'),
+      await searchTextKey(
+        'ws-search-large',
+        'large',
+        'v-large',
+        '/index.html',
+        'apac-ne',
+      ),
     )
     const payload = await extracted!.json<{ body: string; script: string }>()
     expect(createHash('sha256').update(payload.body).digest('hex')).toBe(
@@ -2761,7 +2548,7 @@ describe('Worker integration harness', () => {
     expect(uploaded.visibility).toBe('private')
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: `${owner.workspaceId}:0` },
+      { name: `${owner.workspaceId}:0@apac-ne` },
     )
     await vi.waitFor(
       async () => {
@@ -4395,7 +4182,7 @@ test('previous-format construction leaves segmented FTS untouched with constant 
     const probe = searchProbe(workspace)
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
-      { name: `${workspace}:0` },
+      { name: `${workspace}:0@apac-ne` },
     )
     await probe.seedDocuments(
       Array.from({ length: count }, (_, i) => ({
@@ -4410,7 +4197,7 @@ test('previous-format construction leaves segmented FTS untouched with constant 
       "SELECT sql FROM sqlite_master WHERE name='search'",
     )
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
-      name: `${workspace}:0`,
+      name: `${workspace}:0@apac-ne`,
     })
     writes.push((await probe.queryState()).constructorChanges)
     expect(

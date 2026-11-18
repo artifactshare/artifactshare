@@ -2,15 +2,13 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: {}, waitUntil: undefined }))
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { dispatchWorkspaceSearch } from './schedule.server'
-import { searchIndexName, isSearchIndexLocation } from './names'
+import { searchIndexName } from './names'
 import { searchTextKey, shareableSearchPrefix } from './keys'
 
-test('index names keep the partition and add a location for placed indexes', () => {
-  expect(searchIndexName('ws')).toBe('ws:0')
+test('index names keep the partition and add the one location', () => {
   expect(searchIndexName('ws', 'apac-ne')).toBe('ws:0@apac-ne')
-  expect(isSearchIndexLocation('apac-ne')).toBe(true)
-  expect(isSearchIndexLocation('mars')).toBe(false)
-  expect(isSearchIndexLocation(null)).toBe(false)
+  expect(searchIndexName('ws', 'weur')).toBe('ws:0@weur')
+  expect(searchIndexName('ws', null)).toBe('ws:0')
 })
 
 test("a placed index's extracted text sits outside the legacy cleanup prefix", async () => {
@@ -66,48 +64,36 @@ function namespace(fail = new Set<string>()) {
   }
 }
 
-test('dispatch syncs the legacy index and, with a recorded location, the placed one', async () => {
+test('dispatch syncs each workspace index in its one location', async () => {
   const { calls, binding } = namespace()
   await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
   expect(calls.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
-    { name: 'ws-a:0', options: undefined, args: ['ws-a'] },
     {
       name: 'ws-a:0@apac-ne',
       options: { locationHint: 'apac-ne' },
-      args: ['ws-a', 'apac-ne'],
+      args: ['ws-a'],
     },
-    { name: 'ws-b:0', options: undefined, args: ['ws-b'] },
-    { name: 'ws-c:0', options: undefined, args: ['ws-c'] },
+    {
+      name: 'ws-b:0@apac-ne',
+      options: { locationHint: 'apac-ne' },
+      args: ['ws-b'],
+    },
+    {
+      name: 'ws-c:0@apac-ne',
+      options: { locationHint: 'apac-ne' },
+      args: ['ws-c'],
+    },
   ])
 })
 
-test('the placed sync starts after the legacy sync settles', async () => {
-  const { calls, binding } = namespace()
-  await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
-  const names = calls.map((call) => call.name)
-  expect(names.indexOf('ws-a:0')).toBeLessThan(names.indexOf('ws-a:0@apac-ne'))
-})
-
-test('a failing legacy sync does not stop the placed sync', async () => {
-  const { calls, binding } = namespace(new Set(['ws-a:0']))
+test('a failing workspace does not stop the others', async () => {
+  const { calls, binding } = namespace(new Set(['ws-a:0@apac-ne']))
   await expect(
     dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding }),
   ).rejects.toThrow('workspace_search_dispatch_failed')
-  expect(calls.map((call) => call.name)).toContain('ws-a:0@apac-ne')
-})
-
-test('once the placed index is ready, dispatch syncs only the placed index', async () => {
-  fixture.sqlite.exec(
-    "UPDATE search_index_workspaces SET ready_at='" +
-      now +
-      "' WHERE workspace_id IN ('ws-a','ws-b')",
-  )
-  const { calls, binding } = namespace()
-  await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
-  // ws-b has no location, so its legacy index is still the one searched.
   expect(calls.map((call) => call.name).sort()).toEqual([
     'ws-a:0@apac-ne',
-    'ws-b:0',
-    'ws-c:0',
+    'ws-b:0@apac-ne',
+    'ws-c:0@apac-ne',
   ])
 })

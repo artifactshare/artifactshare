@@ -11,14 +11,12 @@ import {
 } from '../app/services/search-index/query'
 import { DurableObject } from 'cloudflare:workers'
 import {
-  isSearchIndexLocation,
+  SEARCH_INDEX_LOCATION,
   SEARCH_INDEX_LOCATIONS,
-  readyPlacedLocation,
   searchIndexName,
   type SearchIndexLocation,
 } from '../app/services/search-index/names'
-import { createDb, type Db } from '../app/services/db.server'
-import { readPlacement } from '../app/services/search-index/placement.server'
+import { createDb } from '../app/services/db.server'
 import {
   inventory,
   fingerprint,
@@ -72,7 +70,6 @@ type Active = {
 }
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
-const GIVE_UP_AFTER_MS = 60 * 60_000
 // Rows compared with D1, or swept, in one pass step. A D1 lookup binds the
 // workspace and these ids, under its 100-parameter limit.
 const PASS_BATCH = 50
@@ -81,7 +78,6 @@ const PASS_BATCH = 50
 const FULL_PASS_INTERVAL_MS = 12 * 60 * 60_000
 // A change written with a slightly older clock than the mark is still found.
 const RECENT_OVERLAP_MS = 5 * 60_000
-const PLACEMENT_CHECK_MS = 5 * 60_000
 
 /** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
@@ -89,7 +85,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env)
     // Storage is created by the first sync, never by a read: a read can
-    // reach an index that was never synced, or a legacy index that retired.
+    // reach an index that was never synced, or an old index that retired.
     if (
       ctx.storage.sql
         .exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'")
@@ -190,10 +186,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         this.ctx.storage.sql.exec(
           `ALTER TABLE state ADD COLUMN ${column} ${definition}`,
         )
-    // When a placed index reported its first full reconciliation as ready.
-    this.ctx.storage.sql.exec(
-      'CREATE TABLE IF NOT EXISTS placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
-    )
+    // Remove the readiness record of indexes from before one location.
+    this.ctx.storage.sql.exec('DROP TABLE IF EXISTS placement')
     // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
       for (const event of ['INSERT', 'UPDATE', 'DELETE'])
@@ -504,8 +498,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
 
   #location: { value: SearchIndexLocation | undefined } | undefined
   /**
-   * The location this placed index was created for, or undefined for the
-   * legacy index. Derived from the object's own name, which sync() checks.
+   * The location this index was created in, or undefined for an index from
+   * before indexes were placed. Derived from the object's own name. Only an
+   * index in SEARCH_INDEX_LOCATION is synced and searched; any other deletes
+   * itself on its next run.
    */
   private location(): SearchIndexLocation | undefined {
     if (this.#location) return this.#location.value
@@ -530,66 +526,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       .toArray()[0]
   }
   /**
-   * A placed index reports once that its first full reconciliation finished:
-   * the D1 scan reached the end, nothing is staged, and every pending item
-   * has either finished or failed at least three times. Searches move to it
-   * then; the report is never withdrawn.
+   * Delete a retired index's extracted text, every page in this run, then
+   * its alarm and storage. Each location keeps its text under its own area.
    */
-  private async reportReady(db: Db, state: State): Promise<void> {
-    const location = this.location()
-    if (!location || state.cursor || !state.scanned_at || this.#otherLocation)
-      return
-    // An item stops holding readiness back only after three counted
-    // failures over at least an hour, so an outage that clears within the
-    // hour cannot move searches to an incomplete index.
-    const blocked = this.ctx.storage.sql
-      .exec<{ blocked: number }>(
-        `SELECT (
-          EXISTS(SELECT 1 FROM placement)
-          OR EXISTS(SELECT 1 FROM pending WHERE failures < 3 OR first_failed_at > ?1)
-          OR EXISTS(SELECT 1 FROM staging s WHERE NOT EXISTS(
-            SELECT 1 FROM pending p WHERE p.id=s.id AND p.failures >= 3 AND p.first_failed_at <= ?1))
-        ) AS blocked`,
-        Date.now() - GIVE_UP_AFTER_MS,
-      )
-      .one().blocked
-    if (blocked) return
-    const row = await readPlacement(db, state.workspace)
-    // A workspace recorded for another location never uses this index.
-    if (row?.location_hint && row.location_hint !== location) {
-      this.#otherLocation = true
-      return
-    }
-    if (row?.location_hint !== location) return
-    let readyAt = row.ready_at
-    if (!readyAt) {
-      readyAt = new Date().toISOString()
-      await db
-        .updateTable('search_index_workspaces')
-        .set({ ready_at: readyAt })
-        .where('workspace_id', '=', state.workspace)
-        .where('location_hint', '=', location)
-        .where('ready_at', 'is', null)
-        .execute()
-    }
-    this.ctx.storage.sql.exec(
-      'INSERT OR IGNORE INTO placement(singleton,ready_at) VALUES(1,?)',
-      readyAt,
-    )
-  }
-  #otherLocation = false
-  // When this legacy instance last read whether its workspace moved on.
-  #placementCheckedAt = 0
-  /**
-   * Delete a legacy index's extracted text, every page in this run, then its
-   * alarm and storage. A placed index keeps its text under its own area.
-   */
-  private async retire(workspace: string): Promise<void> {
+  private async retire(
+    workspace: string,
+    location: SearchIndexLocation | undefined,
+  ): Promise<void> {
     let truncated = true
     while (truncated) {
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const page = await this.env.BUCKET.list({
-        prefix: workspaceSearchPrefix(workspace),
+        prefix: workspaceSearchPrefix(workspace, location),
         limit: 1000,
       })
       const keys = page.objects.map((object) => object.key)
@@ -605,15 +553,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
 
-  /** location is set only for the index placed near the workspace's members. */
-  async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
+  /** Only the workspace's index in SEARCH_INDEX_LOCATION accepts a sync. */
+  async sync(workspace: string): Promise<void> {
     workspaceSearchPrefix(workspace)
-    if (location !== undefined && !isSearchIndexLocation(location))
-      throw new Error('search_partition_mismatch')
     if (
       !this.ctx.id.equals(
         this.env.WORKSPACE_SEARCH_INDEX.idFromName(
-          searchIndexName(workspace, location),
+          searchIndexName(workspace, SEARCH_INDEX_LOCATION),
         ),
       )
     )
@@ -623,7 +569,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     const state = this.state()
     if (state && state.workspace !== workspace)
       throw new Error('search_workspace_mismatch')
-    this.#location = { value: location }
+    this.#location = { value: SEARCH_INDEX_LOCATION }
     this.ctx.storage.sql.exec(
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
       workspace,
@@ -654,6 +600,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       }
       const state = this.state()
       if (!state) return
+      // An index created before every index moved to one location, or in
+      // another location, is no longer synced or searched.
+      const location = this.location()
+      if (location !== SEARCH_INDEX_LOCATION) {
+        await this.retire(state.workspace, location)
+        return
+      }
       const readAt = Date.now()
       unconsumed = state.dirty
       // An index without a change mark starts a full pass and compares later
@@ -688,23 +641,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       const walkStarts = Boolean(state.dirty) && !state.recent_time
       const db = createDb(this.env.DB)
       try {
-        // Once searches use the placed index, the legacy one is no longer
-        // synced; it deletes its extracted text and then its own storage.
-        // Checked when a walk or a full pass starts, and at least every few
-        // minutes while the legacy index keeps working for other reasons.
-        if (
-          this.location() === undefined &&
-          (walkStarts ||
-            (scanDue && !cursor) ||
-            readAt - this.#placementCheckedAt >= PLACEMENT_CHECK_MS)
-        ) {
-          this.#placementCheckedAt = readAt
-          const placement = await readPlacement(db, state.workspace)
-          if (readyPlacedLocation(placement)) {
-            await this.retire(state.workspace)
-            return
-          }
-        }
         if (scanDue && !cursor)
           await db
             .insertInto('search_index_workspaces')
@@ -946,7 +882,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             )
         }
         const more = this.state()!
-        await this.reportReady(db, more)
         const pendingCount = this.ctx.storage.sql
           .exec<{ count: number }>(
             'SELECT ((SELECT count(*) FROM pending WHERE retry_at <= ?) + (SELECT count(*) FROM reclaims)) AS count',
@@ -1100,34 +1035,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         const fits = (object: R2ObjectBody | null) =>
           object?.customMetadata?.source === contentFingerprint(source) &&
           object.customMetadata.format === String(INDEX_FORMAT_VERSION)
-        let cached = reuse || resume ? await this.env.BUCKET.get(key) : null
-        let copied = false
-        if (!fits(cached) && location) {
-          // A placed index reads, never writes or deletes, the legacy
-          // index's extraction of the same version.
-          const legacy = await this.env.BUCKET.get(
-            await searchTextKey(
-              source.workspace_id,
-              source.id,
-              source.current_version_id!,
-              page.path,
-            ),
-          )
-          if (fits(legacy)) {
-            cached = legacy
-            copied = true
-          }
-        }
+        const cached = reuse || resume ? await this.env.BUCKET.get(key) : null
         if (fits(cached)) {
           text = await cached!.json<ExtractedText>()
-          if (copied)
-            await this.env.BUCKET.put(key, JSON.stringify(text), {
-              customMetadata: {
-                source: contentFingerprint(source),
-                format: String(INDEX_FORMAT_VERSION),
-              },
-              httpMetadata: { contentType: 'application/json' },
-            })
         } else {
           if (
             source.artifact_kind === 'pdf' ||
