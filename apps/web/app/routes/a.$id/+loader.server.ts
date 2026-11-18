@@ -1367,32 +1367,37 @@ function viewFollowUps({
   currentCommentCreatedAt: string | null
 }): { recencyWrite: Promise<void>; followUps: Promise<unknown>[] } {
   const followUps: Promise<unknown>[] = []
+  let nameWrite: Promise<unknown> = Promise.resolve()
   if (nameStale) {
-    followUps.push(
-      db
-        .updateTable('shareables')
-        .set({
-          name: fileName,
+    nameWrite = db
+      .updateTable('shareables')
+      .set({
+        name: fileName,
+      })
+      .where('id', '=', shareableId)
+      .execute()
+      .catch((err) => {
+        console.error('shareable_name_snapshot_write_failed', {
+          shareable_id: shareableId,
+          err,
         })
-        .where('id', '=', shareableId)
-        .execute()
-        .catch((err) => {
-          console.error('shareable_name_snapshot_write_failed', {
-            shareable_id: shareableId,
-            err,
-          })
-        }),
-    )
+      })
+    followUps.push(nameWrite)
   }
-  const recencyWrite = recordViewerRecency(db, shareableId, user.id, {
-    versionSeenThroughAt: currentPublishedAt,
-    commentSeenThroughAt: currentCommentCreatedAt,
-  }).catch((err) => {
-    console.error('view_recency_write_failed', {
-      shareable_id: shareableId,
-      err,
+  // The recency row copies the file name, so it waits for the name update.
+  const recencyWrite = nameWrite
+    .then(() =>
+      recordViewerRecency(db, shareableId, user.id, {
+        versionSeenThroughAt: currentPublishedAt,
+        commentSeenThroughAt: currentCommentCreatedAt,
+      }),
+    )
+    .catch((err) => {
+      console.error('view_recency_write_failed', {
+        shareable_id: shareableId,
+        err,
+      })
     })
-  })
   const view = recencyWrite.then(() =>
     recordViewAndNotifyViewCount(
       db,
