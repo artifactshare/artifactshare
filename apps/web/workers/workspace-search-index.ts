@@ -581,19 +581,21 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   // When this legacy instance last read whether its workspace moved on.
   #placementCheckedAt = 0
   /**
-   * Delete a legacy index's extracted text, a page per step, then its
+   * Delete a legacy index's extracted text, every page in this run, then its
    * alarm and storage. A placed index keeps its text under its own area.
    */
   private async retire(workspace: string): Promise<void> {
-    const page = await this.env.BUCKET.list({
-      prefix: workspaceSearchPrefix(workspace),
-      limit: 1000,
-    })
-    const keys = page.objects.map((object) => object.key)
-    if (keys.length) await this.env.BUCKET.delete(keys)
-    if (page.truncated) {
-      await this.ctx.storage.setAlarm(Date.now() + 1000)
-      return
+    let truncated = true
+    while (truncated) {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      const page = await this.env.BUCKET.list({
+        prefix: workspaceSearchPrefix(workspace),
+        limit: 1000,
+      })
+      const keys = page.objects.map((object) => object.key)
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      if (keys.length) await this.env.BUCKET.delete(keys)
+      truncated = page.truncated
     }
     await this.ctx.storage.deleteAlarm()
     await this.ctx.storage.deleteAll()
@@ -605,13 +607,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
 
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
-    this.ensureSchema()
     workspaceSearchPrefix(workspace)
     if (location !== undefined && !isSearchIndexLocation(location))
       throw new Error('search_partition_mismatch')
-    const state = this.state()
-    if (state && state.workspace !== workspace)
-      throw new Error('search_workspace_mismatch')
     if (
       !this.ctx.id.equals(
         this.env.WORKSPACE_SEARCH_INDEX.idFromName(
@@ -620,6 +618,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
     )
       throw new Error('search_partition_mismatch')
+    // Storage is created only for a sync this object accepts by name.
+    this.ensureSchema()
+    const state = this.state()
+    if (state && state.workspace !== workspace)
+      throw new Error('search_workspace_mismatch')
     this.#location = { value: location }
     this.ctx.storage.sql.exec(
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',

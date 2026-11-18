@@ -952,6 +952,12 @@ describe('Worker integration harness', () => {
         .bind(owner.workspaceId)
         .first('ready_at'),
     ).not.toBeNull()
+    // More legacy text than one listing page is deleted in the same run.
+    await Promise.all(
+      Array.from({ length: 1005 }, (_, n) =>
+        env.BUCKET.put(`search-text/ws-retire/extra/${n}`, 'legacy'),
+      ),
+    )
     // A legacy index that keeps working for other reasons rechecks within
     // minutes, then deletes the legacy text and storage, not the placed copy.
     await searchProbe(owner.workspaceId).resumeAt(Date.now() + 6 * 60_000)
