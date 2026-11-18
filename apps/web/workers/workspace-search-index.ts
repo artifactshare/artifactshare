@@ -539,9 +539,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   #otherLocation = false
-  // Sync requests received by this instance, so an attempt that fails after
-  // a sync arrived does not postpone the retry that sync asked for.
-  #syncs = 0
+  // When this instance last received a sync request, so a failure based on
+  // data read before it does not postpone the retry that sync asked for.
+  #syncedAt = 0
 
   /** location is set only for the index placed near the workspace's members. */
   async sync(workspace: string, location?: SearchIndexLocation): Promise<void> {
@@ -566,7 +566,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
     // A sync request retries every waiting item at once, so a transient
     // failure recovers on the next notification or scheduled dispatch.
-    this.#syncs++
+    this.#syncedAt = Date.now()
     this.ctx.storage.sql.exec('UPDATE pending SET retry_at=0 WHERE retry_at>0')
     await this.ctx.storage.setAlarm(Date.now() + 1000)
     await this.run()
@@ -582,6 +582,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       await this.ctx.storage.setAlarm(Date.now() + 30_000)
       const state = this.state()
       if (!state) return
+      const readAt = Date.now()
       this.ctx.storage.sql.exec('UPDATE state SET dirty=0 WHERE singleton=1')
       const db = createDb(this.env.DB)
       try {
@@ -673,7 +674,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               .executeTakeFirst(),
           ),
         )
-        const syncsAtStart = this.#syncs
         for (const [position, id] of ordered.entries()) {
           this.ctx.storage.sql.exec(
             'UPDATE pending SET attempted=? WHERE id=?',
@@ -692,7 +692,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
             // Count a failure at most every five minutes and wait before the
-            // next try, unless a sync request arrived during this attempt.
+            // next try, unless a sync request arrived after this run began
+            // reading D1, since the failure may come from what it read.
             const failedAt = Date.now()
             this.ctx.storage.sql.exec(
               `UPDATE pending SET
@@ -704,7 +705,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               failedAt,
               failedAt - FAILURE_SPACING_MS,
               id,
-              this.#syncs === syncsAtStart ? 1 : 0,
+              this.#syncedAt <= readAt ? 1 : 0,
               FAILURE_SPACING_MS,
             )
             console.error('workspace_search_item_failed')
