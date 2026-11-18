@@ -10,12 +10,7 @@ import {
   type SearchTier,
 } from '../app/services/search-index/query'
 import { DurableObject } from 'cloudflare:workers'
-import {
-  SEARCH_INDEX_LOCATION,
-  SEARCH_INDEX_LOCATIONS,
-  searchIndexName,
-  type SearchIndexLocation,
-} from '../app/services/search-index/names'
+import { searchIndexName } from '../app/services/search-index/names'
 import { createDb } from '../app/services/db.server'
 import {
   inventory,
@@ -85,7 +80,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env)
     // Storage is created by the first sync, never by a read: a read can
-    // reach an index that was never synced, or an old index that retired.
+    // reach an index that was never synced.
     if (
       ctx.storage.sql
         .exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'")
@@ -94,7 +89,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       this.#initSchema()
   }
   // Whether this instance has its tables; false before the first sync and
-  // after a retired index deleted its storage.
+  // after an object not named as its workspace's index deleted its storage.
   #schemaReady = false
   protected ensureSchema(): void {
     if (!this.#schemaReady) this.#initSchema()
@@ -142,30 +137,16 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
     )
-    // Thrown failures per pending item and when the last one counted;
-    // budget yields do not count. Each column is added on its own.
     const pendingColumns = new Set(
       this.ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(pending)')
         .toArray()
         .map((row) => row.name),
     )
-    if (!pendingColumns.has('failures'))
-      this.ctx.storage.sql.exec(
-        'ALTER TABLE pending ADD COLUMN failures INTEGER NOT NULL DEFAULT 0',
-      )
-    if (!pendingColumns.has('failed_at'))
-      this.ctx.storage.sql.exec(
-        'ALTER TABLE pending ADD COLUMN failed_at INTEGER NOT NULL DEFAULT 0',
-      )
     // When a failed item may be tried again; 0 means now.
     if (!pendingColumns.has('retry_at'))
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0',
-      )
-    if (!pendingColumns.has('first_failed_at'))
-      this.ctx.storage.sql.exec(
-        'ALTER TABLE pending ADD COLUMN first_failed_at INTEGER NOT NULL DEFAULT 0',
       )
     // Reconciliation progress: how far changes were compared (by updated_at),
     // and when the last full scan and sweep finished.
@@ -186,8 +167,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         this.ctx.storage.sql.exec(
           `ALTER TABLE state ADD COLUMN ${column} ${definition}`,
         )
-    // Remove the readiness record of indexes from before one location.
-    this.ctx.storage.sql.exec('DROP TABLE IF EXISTS placement')
     // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
       for (const event of ['INSERT', 'UPDATE', 'DELETE'])
@@ -496,28 +475,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     })
   }
 
-  #location: { value: SearchIndexLocation | undefined } | undefined
-  /**
-   * The location this index was created in, or undefined for an index from
-   * before indexes were placed. Derived from the object's own name. Only an
-   * index in SEARCH_INDEX_LOCATION is synced and searched; any other deletes
-   * itself on its next run.
-   */
-  private location(): SearchIndexLocation | undefined {
-    if (this.#location) return this.#location.value
-    const workspace = this.state()?.workspace
-    if (!workspace) return undefined
-    const value = SEARCH_INDEX_LOCATIONS.find((location) =>
-      this.ctx.id.equals(
-        this.env.WORKSPACE_SEARCH_INDEX.idFromName(
-          searchIndexName(workspace, location),
-        ),
-      ),
-    )
-    this.#location = { value }
-    return value
-  }
-
   private state(): State | undefined {
     return this.ctx.storage.sql
       .exec<State>(
@@ -525,42 +482,16 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       )
       .toArray()[0]
   }
-  /**
-   * Delete a retired index's extracted text, every page in this run, then
-   * its alarm and storage. Each location keeps its text under its own area.
-   */
-  private async retire(
-    workspace: string,
-    location: SearchIndexLocation | undefined,
-  ): Promise<void> {
-    let truncated = true
-    while (truncated) {
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop
-      const page = await this.env.BUCKET.list({
-        prefix: workspaceSearchPrefix(workspace, location),
-        limit: 1000,
-      })
-      const keys = page.objects.map((object) => object.key)
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop
-      if (keys.length) await this.env.BUCKET.delete(keys)
-      truncated = page.truncated
-    }
-    await this.ctx.storage.deleteAlarm()
-    await this.ctx.storage.deleteAll()
-    this.#schemaReady = false
-  }
   // When this instance last received a sync request, so a failure based on
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
 
-  /** Only the workspace's index in SEARCH_INDEX_LOCATION accepts a sync. */
+  /** Only the index named for this workspace accepts its sync. */
   async sync(workspace: string): Promise<void> {
     workspaceSearchPrefix(workspace)
     if (
       !this.ctx.id.equals(
-        this.env.WORKSPACE_SEARCH_INDEX.idFromName(
-          searchIndexName(workspace, SEARCH_INDEX_LOCATION),
-        ),
+        this.env.WORKSPACE_SEARCH_INDEX.idFromName(searchIndexName(workspace)),
       )
     )
       throw new Error('search_partition_mismatch')
@@ -569,7 +500,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     const state = this.state()
     if (state && state.workspace !== workspace)
       throw new Error('search_workspace_mismatch')
-    this.#location = { value: SEARCH_INDEX_LOCATION }
     this.ctx.storage.sql.exec(
       'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
       workspace,
@@ -600,11 +530,19 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       }
       const state = this.state()
       if (!state) return
-      // An index created before every index moved to one location, or in
-      // another location, is no longer synced or searched.
-      const location = this.location()
-      if (location !== SEARCH_INDEX_LOCATION) {
-        await this.retire(state.workspace, location)
+      // An object not named as its workspace's index (one left from before
+      // every index moved to one location) only deletes its storage, so it
+      // never writes into the index's text area.
+      if (
+        !this.ctx.id.equals(
+          this.env.WORKSPACE_SEARCH_INDEX.idFromName(
+            searchIndexName(state.workspace),
+          ),
+        )
+      ) {
+        await this.ctx.storage.deleteAlarm()
+        await this.ctx.storage.deleteAll()
+        this.#schemaReady = false
         return
       }
       const readAt = Date.now()
@@ -789,23 +727,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             else await this.remove(state.workspace, id)
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch {
-            // Count a failure at most every five minutes and wait before the
-            // next try, unless a sync request arrived after this run began
-            // reading D1, since the failure may come from what it read.
-            const failedAt = Date.now()
-            this.ctx.storage.sql.exec(
-              `UPDATE pending SET
-                failures = failures + (failed_at <= ?2),
-                first_failed_at = CASE WHEN failed_at <= ?2 AND first_failed_at = 0 THEN ?1 ELSE first_failed_at END,
-                failed_at = CASE WHEN failed_at <= ?2 THEN ?1 ELSE failed_at END,
-                retry_at = CASE WHEN ?4 THEN ?1 + ?5 ELSE retry_at END
-              WHERE id = ?3`,
-              failedAt,
-              failedAt - FAILURE_SPACING_MS,
-              id,
-              this.#syncedAt <= readAt ? 1 : 0,
-              FAILURE_SPACING_MS,
-            )
+            // Wait five minutes before the next try, unless a sync request
+            // arrived after this run began reading D1, since the failure may
+            // come from what it read.
+            if (this.#syncedAt <= readAt)
+              this.ctx.storage.sql.exec(
+                'UPDATE pending SET retry_at=? WHERE id=?',
+                Date.now() + FAILURE_SPACING_MS,
+                id,
+              )
             console.error('workspace_search_item_failed')
           }
         }
@@ -980,7 +910,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     const reuse =
       active?.content === contentFingerprint(source) &&
       active.format === INDEX_FORMAT_VERSION
-    const location = this.location()
     try {
       const files = await db
         .selectFrom('version_files')
@@ -1023,7 +952,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           source.id,
           source.current_version_id!,
           page.path,
-          location,
         )
         // Persist BEFORE writing, including metadata-only repairs of missing extraction.
         this.ctx.storage.sql.exec(
@@ -1253,7 +1181,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               source.id,
               row.version,
               row.path,
-              this.location(),
             ),
           ),
       ),
@@ -1263,7 +1190,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async remove(workspace: string, id: string): Promise<void> {
     this.ctx.storage.sql.exec(
       'INSERT OR IGNORE INTO intentions(key,shareable) VALUES(?,?)',
-      shareableSearchPrefix(workspace, id, this.location()),
+      shareableSearchPrefix(workspace, id),
       id,
     )
     this.ctx.storage.sql.exec('DELETE FROM staging WHERE id=?', id)
@@ -1295,7 +1222,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .one().cursor ?? undefined
     do {
       const page = await this.env.BUCKET.list({
-        prefix: shareableSearchPrefix(workspace, id, this.location()),
+        prefix: shareableSearchPrefix(workspace, id),
         cursor,
         limit: 100,
       })

@@ -411,16 +411,6 @@ export default {
       case 'attemptSync':
         result = await stub.attemptSync(command.workspace)
         break
-      case 'syncNamed':
-        // Sync an index object by explicit name to exercise its name check.
-        result = await env.WORKSPACE_SEARCH_INDEX.getByName(command.name)
-          .sync(command.workspace)
-          .then(
-            () => 'ok',
-            (error: unknown) =>
-              error instanceof Error ? error.message : String(error),
-          )
-        break
       case 'resume':
         result = await stub.resume()
         break

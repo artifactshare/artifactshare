@@ -5,26 +5,17 @@ import { dispatchWorkspaceSearch } from './schedule.server'
 import { searchIndexName } from './names'
 import { searchTextKey, shareableSearchPrefix } from './keys'
 
-test('index names keep the partition and add the one location', () => {
-  expect(searchIndexName('ws', 'apac-ne')).toBe('ws:0@apac-ne')
-  expect(searchIndexName('ws', 'weur')).toBe('ws:0@weur')
-  expect(searchIndexName('ws', null)).toBe('ws:0')
+test('index names keep the partition and the one location', () => {
+  expect(searchIndexName('ws')).toBe('ws:0@apac-ne')
 })
 
-test("a placed index's extracted text sits outside the legacy cleanup prefix", async () => {
-  const legacy = shareableSearchPrefix('ws', 'file')
-  const placed = await searchTextKey(
-    'ws',
-    'file',
-    'v1',
-    '/index.html',
-    'apac-ne',
-  )
-  expect(placed.startsWith('search-text/@apac-ne/ws/file/')).toBe(true)
-  expect(placed.startsWith(legacy)).toBe(false)
+test('extracted text sits in the location area, apart from any workspace', async () => {
+  const key = await searchTextKey('ws', 'file', 'v1', '/index.html')
+  expect(key.startsWith(shareableSearchPrefix('ws', 'file'))).toBe(true)
+  expect(key.startsWith('search-text/@apac-ne/ws/file/')).toBe(true)
   // An encoded workspace id cannot collide with a location area.
   expect(shareableSearchPrefix('@apac-ne', 'file')).toBe(
-    'search-text/%40apac-ne/file/',
+    'search-text/@apac-ne/%40apac-ne/file/',
   )
 })
 
@@ -35,8 +26,8 @@ beforeEach(() => {
   fixture.sqlite.exec(`
     INSERT INTO workspaces(id,name,created_at) VALUES
       ('ws-a','A','${now}'),('ws-b','B','${now}'),('ws-c','C','${now}');
-    INSERT INTO search_index_workspaces(workspace_id,dispatched_at,location_hint) VALUES
-      ('ws-a','','apac-ne'),('ws-b','',NULL),('ws-c','','mars');
+    INSERT INTO search_index_workspaces(workspace_id,dispatched_at) VALUES
+      ('ws-a',''),('ws-b',''),('ws-c','');
   `)
 })
 afterEach(async () => {
