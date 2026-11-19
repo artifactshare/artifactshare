@@ -162,7 +162,7 @@ const baselineHtmlCsp = [
   `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources} ${socialEmbedScriptCspSources}`,
   `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
   "img-src 'self' data: https: blob:",
-  "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+  "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
   "media-src 'self' https: data: blob:",
   `connect-src ${externalCspSources} ${socialEmbedConnectCspSources}`,
   `frame-src ${embedFrameCspSources}`,
@@ -191,7 +191,7 @@ const staticSiteResourceDirectives = [
   ],
   [
     "font-src 'self' data: https://fonts.gstatic.com",
-    "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+    "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
   ],
 ] as const
 
@@ -209,10 +209,16 @@ function expectStaticSiteCsp(csp: string, ancestor = 'https://localhost:5173') {
     expect(cspDirective(csp, name)).not.toContain('https://esm.sh')
     expect(cspDirective(csp, name)).not.toContain('https://cdn.tailwindcss.com')
   }
-  expect(cspDirective(csp, 'font-src')).not.toContain(
-    'https://cdnjs.cloudflare.com',
-  )
-  expect(cspDirective(csp, 'font-src')).not.toContain('https://unpkg.com')
+  for (const name of ['style-src', 'style-src-elem']) {
+    for (const source of [
+      'https://cdn.jsdelivr.net',
+      'https://cdnjs.cloudflare.com',
+      'https://unpkg.com',
+    ]) {
+      expect(cspDirective(csp, name)).toContain(source)
+      expect(cspDirective(csp, 'font-src')).toContain(source)
+    }
+  }
   expect(csp.replace(` ${extensionOrigin}`, '')).toBe(
     expected.replace(
       'frame-ancestors https://localhost:5173',
@@ -2456,7 +2462,7 @@ describe('handleArtifactSandboxRequest', () => {
       `style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
-      "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+      "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
     )
     expect(
       cspDirective(

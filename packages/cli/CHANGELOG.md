@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Update bundled skill guidance: shared HTML and folder shares now load font files from cdnjs and unpkg as well as jsDelivr, so icon and font packages served from those CDNs display. Update the bundled skill to version 70.
+
 - Search artifact body text with `artifacts list --q`, owner/project/period filters, grouped counts and excerpts. Restricted credentials retain their read scope; empty searches suggest rephrasing.
 
 - Let local Preview comments rewrite the wording. Clicking a heading or paragraph made only of text edits it right on the page (Enter adds, Esc cancels, Tab moves to an optional comment); keys typed there never reach the document's own handlers, and the page returns to its original text when editing ends. Other elements and selected text show the current wording in the editor, ready to change. `preview next` returns `rewrite: {original, proposed}` for the agent to apply, `preview history` keeps it, and the comment list shows before and after. The browser never writes the file. Update the bundled skill to version 68.

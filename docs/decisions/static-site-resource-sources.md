@@ -4,9 +4,12 @@ Folder shares use the same external image, stylesheet, and font sources as
 single-file HTML. Images allow HTTPS alongside self, data, and blob sources.
 Both static-site style directives allow jsDelivr, cdnjs, and unpkg alongside
 self, inline styles, and Google Fonts stylesheets. The social embed style source
-remains only in `style-src-elem`. Font files allow jsDelivr alongside self, data,
-and `fonts.gstatic.com`; cdnjs and unpkg are not permitted font-file sources.
-Single-file HTML and Markdown policies remain unchanged.
+remains only in `style-src-elem`. Font files allow the same three stylesheet
+CDNs (jsDelivr, cdnjs, and unpkg) alongside self, data, and `fonts.gstatic.com`,
+because icon and font packages served from those CDNs reference font files on
+the same CDN. Single-file HTML uses the same font sources. Image sources already
+allow any HTTPS origin, so these font sources add no new outbound request path.
+The Markdown policy remains unchanged.
 
 The static-site policy controls script origins and does not claim to block
 outbound HTTPS GET. Existing open paths include HTTPS media through `media-src`,
