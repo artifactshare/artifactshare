@@ -2,7 +2,7 @@ import {
   evidenceVersion,
   validateWalkthroughEvidence,
 } from './walkthrough-evidence.mjs'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,6 +17,7 @@ import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 import { critiqueRecord, writeCritiqueRecord } from './task-critique-state.mjs'
 import { gitCommonDir } from './review-rounds.mjs'
 import { writeText } from './implementation-review-gate.mjs'
+import { runProvider } from './provider-process.mjs'
 import {
   codexShellSandboxArgs,
   withShellTemporaryDirectory,
@@ -540,6 +541,9 @@ function invocation(layer, prompt, input = {}, shell = {}) {
         // directory where the shell writes temporary files such as
         // here-documents.
         ...codexShellSandboxArgs('critique', shell.writableDirectory),
+        // Set explicitly so a maintainer's Codex configuration cannot open it.
+        '-c',
+        'permissions.critique.network.enabled=false',
         ...imageArgs,
         '-',
       ],
@@ -607,12 +611,24 @@ function resultText(layer, result) {
   return raw
 }
 
+// Unlike spawnSync, this keeps the event loop running: on SIGINT or SIGTERM
+// it stops the provider and rejects, so the caller's cleanup (such as removing
+// the Codex shell directory) runs before the process exits.
+async function runCritiqueProvider(command, args, { cwd, input, timeout }) {
+  const result = await runProvider(command, args, {
+    cwd,
+    input,
+    timeoutMs: timeout,
+  })
+  return { status: result.code, stdout: result.stdout, stderr: result.stderr }
+}
+
 // `run` may be spawnSync or an async runner with the same result shape, so a
 // caller can measure each provider invocation without changing the prompt.
 async function runLayer(
   layer,
   input,
-  { run = spawnSync, repo = process.cwd() } = {},
+  { run = runCritiqueProvider, repo = process.cwd() } = {},
 ) {
   const prompt = promptFor(layer, input)
   const launch = (shell) => {
@@ -658,7 +674,7 @@ function cleanHead(exec, repo) {
 async function main({
   argv = process.argv.slice(2),
   repo = process.cwd(),
-  run = spawnSync,
+  run = runCritiqueProvider,
   exec = execFileSync,
   stdout = process.stdout,
   stderr = process.stderr,

@@ -760,12 +760,15 @@ test('selects one Codex layer with every validated PNG as an image argument', ()
       'shell_environment_policy.set.TMPDIR="/private/tmp/critique-1"',
       '-c',
       'shell_environment_policy.set.TMPPREFIX="/private/tmp/critique-1/zsh"',
+      '-c',
+      'permissions.critique.network.enabled=false',
     ],
   )
-  assert.equal(
-    request.args.some((arg) => arg.includes('network')),
-    false,
+  assert.deepEqual(
+    request.args.filter((arg) => arg.includes('network')),
+    ['permissions.critique.network.enabled=false'],
   )
+  assert.equal(request.args.includes('web_search="live"'), false)
   assert.throws(
     () =>
       invocation(
@@ -856,13 +859,59 @@ test('removes the Codex shell directory when the reviewer fails', async () => {
           )
           shellDirectory = JSON.parse(tmpdirArg.split('=').slice(1).join('='))
           writeFileSync(join(shellDirectory, 'heredoc'), 'x')
-          if (failure === 'throw') return Promise.reject(new Error('spawn failed'))
+          if (failure === 'throw')
+            return Promise.reject(new Error('spawn failed'))
           return { status: 1, stdout: '', stderr: 'codex failed' }
         },
       }),
       failure === 'throw' ? /spawn failed/u : /codex failed/u,
     )
     assert.equal(existsSync(shellDirectory), false)
+  }
+})
+
+test('a process signal stops the Codex critique and removes its shell directory', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'critique-fake-codex-'))
+  const argsFile = join(bin, 'args')
+  writeFileSync(
+    join(bin, 'codex'),
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nexec sleep 30\n`,
+    { mode: 0o755 },
+  )
+  const path = process.env.PATH
+  process.env.PATH = `${bin}:${path}`
+  try {
+    const pending = runLayer(
+      { id: 'combined', provider: 'codex', ...uiCritique.codex },
+      {
+        selected: ['task'],
+        evidencePaths: ['evidence.json'],
+        imagePaths: [],
+        screenImagePaths: [],
+        sourcePaths: ['source.tsx'],
+      },
+      { repo: process.cwd() },
+    )
+    const started = Date.now()
+    while (!existsSync(argsFile) || !readFileSync(argsFile, 'utf8')) {
+      if (Date.now() - started > 10_000) assert.fail('fake codex did not start')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    const shellDirectory = JSON.parse(
+      readFileSync(argsFile, 'utf8')
+        .split('\n')
+        .find((arg) => arg.startsWith('shell_environment_policy.set.TMPDIR='))
+        .split('=')
+        .slice(1)
+        .join('='),
+    )
+    assert.equal(existsSync(shellDirectory), true)
+    process.emit('SIGTERM', 'SIGTERM')
+    await assert.rejects(pending, /interrupted by a process signal/u)
+    assert.equal(existsSync(shellDirectory), false)
+  } finally {
+    process.env.PATH = path
+    rmSync(bin, { recursive: true, force: true })
   }
 })
 

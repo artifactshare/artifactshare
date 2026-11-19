@@ -99,6 +99,7 @@
     "scripts/claude-review.test.mjs",
     "scripts/codex-review.mjs",
     "scripts/codex-review.test.mjs",
+    "scripts/codex-shell-sandbox.mjs",
     "scripts/cursor-review.mjs",
     "scripts/cursor-review.test.mjs",
     "scripts/implementation-review-gate.mjs",
