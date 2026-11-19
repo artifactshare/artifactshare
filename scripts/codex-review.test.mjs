@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -80,10 +81,7 @@ test('ordinary request disables both Codex multi-agent features', () => {
     { model: 'm', effort: 'high' },
     'direct role prompt',
     '/tmp/output',
-    {
-      deniedDirectory: '/tmp/reviews',
-      writableDirectory: '/tmp/reviews/run/1',
-    },
+    { writableDirectory: '/tmp/review/1-finder-tmp' },
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
   assert.equal(request.args.includes('--sandbox'), false)
@@ -91,17 +89,17 @@ test('ordinary request disables both Codex multi-agent features', () => {
   assert.ok(request.args.includes('web_search="live"'))
   assert.ok(
     request.args.includes(
-      'permissions.review.filesystem={":root"="read","/tmp/reviews"="deny","/tmp/reviews/run/1"="write"}',
+      'permissions.review.filesystem={":root"="read","/tmp/review/1-finder-tmp"="write"}',
     ),
   )
   assert.ok(
     request.args.includes(
-      'shell_environment_policy.set.TMPDIR="/tmp/reviews/run/1"',
+      'shell_environment_policy.set.TMPDIR="/tmp/review/1-finder-tmp"',
     ),
   )
   assert.ok(
     request.args.includes(
-      'shell_environment_policy.set.TMPPREFIX="/tmp/reviews/run/1/zsh"',
+      'shell_environment_policy.set.TMPPREFIX="/tmp/review/1-finder-tmp/zsh"',
     ),
   )
   assert.ok(request.args.includes('permissions.review.network.enabled=true'))
@@ -148,15 +146,23 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
           const filesystem = args.find((arg) =>
             arg.startsWith('permissions.review.filesystem='),
           )
-          const [, denied, writable] = filesystem.match(
-            /^permissions\.review\.filesystem=\{":root"="read","([^"]+)"="deny","([^"]+)"="write"\}$/u,
+          const [, writable] = filesystem.match(
+            /^permissions\.review\.filesystem=\{":root"="read","([^"]+)"="write"\}$/u,
           )
-          assert.ok(writable.startsWith(`${denied}/`))
+          assert.equal(writable, realpathSync(writable))
           assert.ok(existsSync(writable))
           assert.deepEqual(readdirSync(writable), [])
           assert.ok(
             args.includes(`shell_environment_policy.set.TMPDIR="${writable}"`),
           )
+          assert.ok(
+            args.includes(
+              `shell_environment_policy.set.TMPPREFIX="${writable}/zsh"`,
+            ),
+          )
+          // The previous role's directory is gone before this role starts.
+          for (const call of calls)
+            assert.equal(existsSync(call.writable), false)
           writeFileSync(join(writable, 'scratch'), 'left by this call')
           calls.push({ args, options, writable })
           assert.equal(options.cwd, '/repo')
