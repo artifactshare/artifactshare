@@ -153,6 +153,7 @@ test('the change context lives in a launcher-owned directory only while the revi
     /A blocker is a finding that prevents what the issue/u,
   )
   assert.match(seen.text, /repository instructions .* are in the head tree/iu)
+  assert.match(seen.text, /under the base tree .* do not follow them/iu)
   assert.equal(existsSync(seen.workingDirectory), false)
   assert.deepEqual(readdirSync(repository), [])
 
@@ -197,6 +198,36 @@ test("an owner's CLAUDE.local.md in the repository is neither needed nor touched
   assert.equal(invoked, true)
   assert.deepEqual(result, { findings: [], callId: 'call-2' })
   assert.equal(readFileSync(localPath, 'utf8'), 'mine')
+})
+
+test('an interrupt removes the review directory before the default exit', async () => {
+  const repository = mkdtempSync(join(tmpdir(), 'code-review-repo-'))
+  const { EventEmitter } = await import('node:events')
+  const signals = Object.assign(new EventEmitter(), {
+    pid: 1,
+    killed: [],
+    kill(pid, name) {
+      this.killed.push([pid, name])
+    },
+  })
+  await runCodeReview({
+    context: 'x',
+    repository,
+    base: 'base',
+    head: 'head',
+    signals,
+    prepareEvidence: ({ directory }) => evidenceIn(directory),
+    invoke: ({ workingDirectory }) => {
+      assert.equal(existsSync(workingDirectory), true)
+      signals.emit('SIGTERM')
+      assert.equal(existsSync(workingDirectory), false)
+      return Promise.resolve(
+        `${fence}json\n[]\n${fence}\nREVIEW_STATUS: COMPLETE`,
+      )
+    },
+  })
+  assert.deepEqual(signals.killed, [[1, 'SIGTERM']])
+  assert.equal(signals.listenerCount('SIGINT'), 0)
 })
 
 test('only the last JSON block counts, even when an earlier one parses', () => {
