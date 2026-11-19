@@ -1,9 +1,9 @@
 ## Static-site scripts and data
 
 Folder shares load external HTTPS images, stylesheets from jsDelivr, cdnjs,
-unpkg, and Google Fonts (`fonts.googleapis.com`), and font files from jsDelivr
-and Google Fonts (`fonts.gstatic.com`). Load icon/font packages from jsDelivr
-or bundle the font files because cdnjs and unpkg font files are blocked.
+unpkg, and Google Fonts (`fonts.googleapis.com`), and font files from the same
+jsDelivr, cdnjs, and unpkg CDNs and Google Fonts (`fonts.gstatic.com`), so
+icon/font packages from those CDNs work as-is.
 JavaScript `eval` and `new Function` remain blocked.
 
 Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.

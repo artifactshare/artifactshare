@@ -23,10 +23,10 @@ const EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES =
     .join(' ')
 export const PERMISSIONS_POLICY = `fullscreen=(self ${EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES}), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=(), language-model=(self), summarizer=(self), translator=(self), language-detector=(self)`
 const IMAGE_CSP_SOURCES = "'self' data: https: blob:"
-const FONT_CSP_SOURCES =
-  "'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net"
 const STYLESHEET_CDN_CSP_SOURCES =
   'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com'
+// Stylesheets from these CDNs reference font files on the same CDN.
+const FONT_CSP_SOURCES = `'self' data: https://fonts.gstatic.com ${STYLESHEET_CDN_CSP_SOURCES}`
 const MEDIA_CSP_SOURCES = "'self' https: data: blob:"
 
 export function artifactContentSecurityPolicy(
