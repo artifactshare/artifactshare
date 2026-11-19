@@ -26,6 +26,7 @@ import {
   runUnderActivityLock,
 } from './worktree-activity-lock.mjs'
 import { boundedProviderDiagnostic, runProvider } from './provider-process.mjs'
+import { codexShellSandboxArgs } from './codex-shell-sandbox.mjs'
 
 const defaultModel = finalReviews.codex.model
 const defaultBase = 'origin/main'
@@ -155,7 +156,6 @@ function resolveBaseSha(exec, base) {
 function reviewRequest(options, prompt, lastMessageFile, shell) {
   if (!shell?.writableDirectory)
     throw new Error('Codex review requires a shell temporary directory.')
-  const writable = JSON.stringify(shell.writableDirectory)
   return {
     args: [
       'exec',
@@ -167,26 +167,13 @@ function reviewRequest(options, prompt, lastMessageFile, shell) {
       'multi_agent',
       '--disable',
       'multi_agent_v2',
-      // `--sandbox read-only` has no network. This profile keeps the local
-      // filesystem read-only and opens the network without limits, so a
-      // reviewer can fetch package versions and advisories.
-      '-c',
-      'default_permissions="review"',
-      // A shell here-document needs a temporary file (zsh writes it under
-      // TMPPREFIX, /tmp/zsh by default), which a read-only filesystem
-      // refuses. The reviewer may write only to its own invocation's empty
-      // directory, where its shell's temporary files go; the launcher removes
-      // it when the invocation ends, before the next role starts. No path is
-      // denied: a denied ancestor also refuses the lstat that resolving
-      // TMPDIR needs (for example Node's fs.realpathSync).
-      '-c',
-      `permissions.review.filesystem={":root"="read",${writable}="write"}`,
-      // Dotted keys keep any other shell_environment_policy.set entries from
-      // the maintainer's Codex configuration.
-      '-c',
-      `shell_environment_policy.set.TMPDIR=${writable}`,
-      '-c',
-      `shell_environment_policy.set.TMPPREFIX=${JSON.stringify(join(shell.writableDirectory, 'zsh'))}`,
+      // `--sandbox read-only` has no network and refuses a shell
+      // here-document. This profile keeps the local filesystem read-only
+      // except for the invocation's own empty directory, which the launcher
+      // removes when the invocation ends, before the next role starts, and
+      // opens the network without limits, so a reviewer can fetch package
+      // versions and advisories.
+      ...codexShellSandboxArgs('review', shell.writableDirectory),
       '-c',
       'permissions.review.network.enabled=true',
       '-c',

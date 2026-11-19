@@ -17,8 +17,15 @@ import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 import { critiqueRecord, writeCritiqueRecord } from './task-critique-state.mjs'
 import { gitCommonDir } from './review-rounds.mjs'
 import { writeText } from './implementation-review-gate.mjs'
+import {
+  codexShellSandboxArgs,
+  withShellTemporaryDirectory,
+} from './codex-shell-sandbox.mjs'
 
 const timeoutMs = 1_800_000
+// A dry run creates nothing; its Codex request names this placeholder for
+// the per-invocation directory a real run creates.
+const dryRunShellDirectory = '<invocation temporary directory>'
 const claudeLayers = [
   { id: 'visual', provider: 'claude', ...uiCritique.claude.visual },
   { id: 'task', provider: 'claude', ...uiCritique.claude.task },
@@ -514,7 +521,7 @@ function promptFor(layer, input) {
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
 }
 
-function invocation(layer, prompt, input = {}) {
+function invocation(layer, prompt, input = {}, shell = {}) {
   if (layer.provider === 'codex') {
     const imageArgs = [
       ...(input.imagePaths ?? []),
@@ -528,8 +535,11 @@ function invocation(layer, prompt, input = {}) {
         layer.model,
         '-c',
         `model_reasoning_effort=${JSON.stringify(layer.effort)}`,
-        '--sandbox',
-        'read-only',
+        // The filesystem is read-only and the network closed, as with
+        // `--sandbox read-only`, except for the invocation's own empty
+        // directory where the shell writes temporary files such as
+        // here-documents.
+        ...codexShellSandboxArgs('critique', shell.writableDirectory),
         ...imageArgs,
         '-',
       ],
@@ -604,14 +614,26 @@ async function runLayer(
   input,
   { run = spawnSync, repo = process.cwd() } = {},
 ) {
-  const request = invocation(layer, promptFor(layer, input), input)
-  const result = await run(request.command, request.args, {
-    cwd: repo,
-    encoding: 'utf8',
-    input: request.input,
-    maxBuffer: 32 * 1024 * 1024,
-    timeout: timeoutMs,
-  })
+  const prompt = promptFor(layer, input)
+  const launch = (shell) => {
+    const request = invocation(layer, prompt, input, shell)
+    return run(request.command, request.args, {
+      cwd: repo,
+      encoding: 'utf8',
+      input: request.input,
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: timeoutMs,
+    })
+  }
+  // Codex gets an empty directory for its shell's temporary files, removed
+  // when the invocation ends.
+  const result =
+    layer.provider === 'codex'
+      ? await withShellTemporaryDirectory(
+          'artifactshare-critique-',
+          (writableDirectory) => launch({ writableDirectory }),
+        )
+      : await launch()
   if (result.error) throw result.error
   if (result.status !== 0)
     throw new Error(
@@ -672,7 +694,9 @@ async function main({
       `${JSON.stringify(
         selectedLayers.map((layer) => ({
           layer: layer.id,
-          ...invocation(layer, promptFor(layer, input), input),
+          ...invocation(layer, promptFor(layer, input), input, {
+            writableDirectory: dryRunShellDirectory,
+          }),
         })),
         null,
         2,
