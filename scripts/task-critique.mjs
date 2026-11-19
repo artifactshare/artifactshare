@@ -2,7 +2,7 @@ import {
   evidenceVersion,
   validateWalkthroughEvidence,
 } from './walkthrough-evidence.mjs'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,8 +17,16 @@ import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
 import { critiqueRecord, writeCritiqueRecord } from './task-critique-state.mjs'
 import { gitCommonDir } from './review-rounds.mjs'
 import { writeText } from './implementation-review-gate.mjs'
+import { runProvider } from './provider-process.mjs'
+import {
+  codexShellSandboxArgs,
+  withShellTemporaryDirectory,
+} from './codex-shell-sandbox.mjs'
 
 const timeoutMs = 1_800_000
+// A dry run creates nothing; its Codex request names this placeholder for
+// the per-invocation directory a real run creates.
+const dryRunShellDirectory = '<invocation temporary directory>'
 const claudeLayers = [
   { id: 'visual', provider: 'claude', ...uiCritique.claude.visual },
   { id: 'task', provider: 'claude', ...uiCritique.claude.task },
@@ -514,7 +522,7 @@ function promptFor(layer, input) {
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
 }
 
-function invocation(layer, prompt, input = {}) {
+function invocation(layer, prompt, input = {}, shell = {}) {
   if (layer.provider === 'codex') {
     const imageArgs = [
       ...(input.imagePaths ?? []),
@@ -528,8 +536,18 @@ function invocation(layer, prompt, input = {}) {
         layer.model,
         '-c',
         `model_reasoning_effort=${JSON.stringify(layer.effort)}`,
-        '--sandbox',
-        'read-only',
+        // The filesystem is read-only and the network closed, as with
+        // `--sandbox read-only`, except for the invocation's own empty
+        // directory where the shell writes temporary files such as
+        // here-documents.
+        ...codexShellSandboxArgs('critique', shell.writableDirectory),
+        // Set explicitly so a maintainer's Codex configuration cannot open the
+        // network or enable web search, which the model calls outside the
+        // sandbox.
+        '-c',
+        'permissions.critique.network.enabled=false',
+        '-c',
+        'web_search="disabled"',
         ...imageArgs,
         '-',
       ],
@@ -597,21 +615,46 @@ function resultText(layer, result) {
   return raw
 }
 
-// `run` may be spawnSync or an async runner with the same result shape, so a
-// caller can measure each provider invocation without changing the prompt.
+// Unlike spawnSync, this keeps the event loop running: on SIGINT or SIGTERM
+// it stops the provider and rejects, so the caller's cleanup (such as removing
+// the Codex shell directory) runs before the process exits.
+async function runCritiqueProvider(command, args, { cwd, input, timeout }) {
+  const result = await runProvider(command, args, {
+    cwd,
+    input,
+    timeoutMs: timeout,
+  })
+  return { status: result.code, stdout: result.stdout, stderr: result.stderr }
+}
+
+// A caller may pass an async runner with the same result shape, to measure
+// each provider invocation without changing the prompt. It must keep the
+// event loop running and settle on SIGINT or SIGTERM, as runCritiqueProvider
+// does; spawnSync would let a signal end the process before the Codex shell
+// directory is removed.
 async function runLayer(
   layer,
   input,
-  { run = spawnSync, repo = process.cwd() } = {},
+  { run = runCritiqueProvider, repo = process.cwd() } = {},
 ) {
-  const request = invocation(layer, promptFor(layer, input), input)
-  const result = await run(request.command, request.args, {
-    cwd: repo,
-    encoding: 'utf8',
-    input: request.input,
-    maxBuffer: 32 * 1024 * 1024,
-    timeout: timeoutMs,
-  })
+  const prompt = promptFor(layer, input)
+  const launch = (shell) => {
+    const request = invocation(layer, prompt, input, shell)
+    return run(request.command, request.args, {
+      cwd: repo,
+      input: request.input,
+      timeout: timeoutMs,
+    })
+  }
+  // Codex gets an empty directory for its shell's temporary files, removed
+  // when the invocation ends.
+  const result =
+    layer.provider === 'codex'
+      ? await withShellTemporaryDirectory(
+          'artifactshare-critique-',
+          (writableDirectory) => launch({ writableDirectory }),
+        )
+      : await launch()
   if (result.error) throw result.error
   if (result.status !== 0)
     throw new Error(
@@ -636,7 +679,7 @@ function cleanHead(exec, repo) {
 async function main({
   argv = process.argv.slice(2),
   repo = process.cwd(),
-  run = spawnSync,
+  run = runCritiqueProvider,
   exec = execFileSync,
   stdout = process.stdout,
   stderr = process.stderr,
@@ -672,7 +715,9 @@ async function main({
       `${JSON.stringify(
         selectedLayers.map((layer) => ({
           layer: layer.id,
-          ...invocation(layer, promptFor(layer, input), input),
+          ...invocation(layer, promptFor(layer, input), input, {
+            writableDirectory: dryRunShellDirectory,
+          }),
         })),
         null,
         2,

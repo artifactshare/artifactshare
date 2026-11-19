@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -739,8 +742,43 @@ test('selects one Codex layer with every validated PNG as an image argument', ()
     { id: 'combined', provider: 'codex', ...uiCritique.codex },
     prompt,
     input,
+    { writableDirectory: '/private/tmp/critique-1' },
   )
   assert.equal(request.command, 'codex')
+  assert.equal(request.args.includes('--sandbox'), false)
+  assert.deepEqual(
+    request.args.slice(
+      request.args.indexOf('default_permissions="critique"') - 1,
+      request.args.indexOf('--image'),
+    ),
+    [
+      '-c',
+      'default_permissions="critique"',
+      '-c',
+      'permissions.critique.filesystem={":root"="read","/private/tmp/critique-1"="write"}',
+      '-c',
+      'shell_environment_policy.set.TMPDIR="/private/tmp/critique-1"',
+      '-c',
+      'shell_environment_policy.set.TMPPREFIX="/private/tmp/critique-1/zsh"',
+      '-c',
+      'permissions.critique.network.enabled=false',
+      '-c',
+      'web_search="disabled"',
+    ],
+  )
+  assert.deepEqual(
+    request.args.filter((arg) => arg.includes('network')),
+    ['permissions.critique.network.enabled=false'],
+  )
+  assert.throws(
+    () =>
+      invocation(
+        { id: 'combined', provider: 'codex', ...uiCritique.codex },
+        prompt,
+        input,
+      ),
+    /shell temporary directory/u,
+  )
   assert.deepEqual(
     request.args.slice(
       request.args.indexOf('--image'),
@@ -775,10 +813,23 @@ test('passes the Codex combined prompt to the reviewer stdin', async () => {
     sourcePaths: ['source.tsx'],
   }
   let capturedInvocation
+  let shellDirectory
   const result = await runLayer(layer, input, {
     repo: '/repo',
     run: (command, args, options) => {
       capturedInvocation = { command, args, options }
+      const tmpdirArg = args.find((arg) =>
+        arg.startsWith('shell_environment_policy.set.TMPDIR='),
+      )
+      shellDirectory = JSON.parse(tmpdirArg.split('=').slice(1).join('='))
+      assert.equal(shellDirectory, realpathSync(shellDirectory))
+      assert.deepEqual(readdirSync(shellDirectory), [])
+      assert.equal(statSync(shellDirectory).mode & 0o777, 0o700)
+      assert.ok(
+        args.includes(
+          `shell_environment_policy.set.TMPPREFIX=${JSON.stringify(join(shellDirectory, 'zsh'))}`,
+        ),
+      )
       return { status: 0, stdout: 'No findings', stderr: '' }
     },
   })
@@ -786,6 +837,112 @@ test('passes the Codex combined prompt to the reviewer stdin', async () => {
   assert.equal(capturedInvocation.command, 'codex')
   assert.equal(capturedInvocation.args.at(-1), '-')
   assert.equal(capturedInvocation.options.input, promptFor(layer, input))
+  assert.equal(existsSync(shellDirectory), false)
+})
+
+test('removes the Codex shell directory when the reviewer fails', async () => {
+  const layer = { id: 'combined', provider: 'codex', ...uiCritique.codex }
+  const input = {
+    selected: ['task'],
+    evidencePaths: ['evidence.json'],
+    imagePaths: [],
+    screenImagePaths: [],
+    sourcePaths: ['source.tsx'],
+  }
+  for (const failure of ['exit', 'throw']) {
+    let shellDirectory
+    await assert.rejects(
+      runLayer(layer, input, {
+        repo: '/repo',
+        run: (_command, args) => {
+          const tmpdirArg = args.find((arg) =>
+            arg.startsWith('shell_environment_policy.set.TMPDIR='),
+          )
+          shellDirectory = JSON.parse(tmpdirArg.split('=').slice(1).join('='))
+          writeFileSync(join(shellDirectory, 'heredoc'), 'x')
+          if (failure === 'throw')
+            return Promise.reject(new Error('spawn failed'))
+          return { status: 1, stdout: '', stderr: 'codex failed' }
+        },
+      }),
+      failure === 'throw' ? /spawn failed/u : /codex failed/u,
+    )
+    assert.equal(existsSync(shellDirectory), false)
+  }
+})
+
+test('a process signal stops the Codex critique and removes its shell directory', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'critique-fake-codex-'))
+  const argsFile = join(bin, 'args')
+  writeFileSync(
+    join(bin, 'codex'),
+    // Renamed into place so the test never reads a partly written file.
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}.tmp'\nmv '${argsFile}.tmp' '${argsFile}'\nexec sleep 30\n`,
+    { mode: 0o755 },
+  )
+  const path = process.env.PATH
+  process.env.PATH = `${bin}:${path}`
+  try {
+    const pending = runLayer(
+      { id: 'combined', provider: 'codex', ...uiCritique.codex },
+      {
+        selected: ['task'],
+        evidencePaths: ['evidence.json'],
+        imagePaths: [],
+        screenImagePaths: [],
+        sourcePaths: ['source.tsx'],
+      },
+      { repo: process.cwd() },
+    )
+    const started = Date.now()
+    while (!existsSync(argsFile)) {
+      if (Date.now() - started > 10_000) assert.fail('fake codex did not start')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    const shellDirectory = JSON.parse(
+      readFileSync(argsFile, 'utf8')
+        .split('\n')
+        .find((arg) => arg.startsWith('shell_environment_policy.set.TMPDIR='))
+        .split('=')
+        .slice(1)
+        .join('='),
+    )
+    assert.equal(existsSync(shellDirectory), true)
+    process.emit('SIGTERM', 'SIGTERM')
+    await assert.rejects(pending, /interrupted by a process signal/u)
+    assert.equal(existsSync(shellDirectory), false)
+  } finally {
+    process.env.PATH = path
+    rmSync(bin, { recursive: true, force: true })
+  }
+})
+
+test('the Claude critique gets no shell directory', async () => {
+  let capturedArgs
+  await runLayer(
+    { id: 'task', provider: 'claude', model: 'fable', effort: 'low' },
+    { selected: [], evidencePaths: [], imagePaths: [], sourcePaths: [] },
+    {
+      repo: process.cwd(),
+      run: (_command, args) => {
+        capturedArgs = args
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            is_error: false,
+            subtype: 'success',
+            result: 'No findings',
+            permission_denials: [],
+          }),
+          stderr: '',
+        }
+      },
+    },
+  )
+  assert.equal(
+    capturedArgs.some((arg) => arg.includes('shell_environment_policy')),
+    false,
+  )
 })
 
 test('unwraps a successful reviewer result', async () => {
