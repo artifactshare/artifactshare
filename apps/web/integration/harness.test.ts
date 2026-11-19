@@ -849,6 +849,7 @@ describe('Worker integration harness', () => {
       // Tables without a recorded workspace, as a read created them before
       // storage waited for the first sync.
       [`${workspace}:0@apac`, 'syncNamed', false],
+      [`${workspace}:0@apac-se`, 'resumeNamed', false],
     ] as const) {
       await seed(name, recorded)
       await named(trigger, name)
@@ -860,7 +861,22 @@ describe('Worker integration harness', () => {
       (await env.BUCKET.list({ prefix: `search-text/@apac-ne/${workspace}/` }))
         .objects.length,
     ).toBe(1)
+    // The workspace's own index with tables but no recorded workspace starts
+    // over on its sync: the old tables are deleted and created again.
+    await seed(`${workspace}:0@apac-ne`, false)
+    const own = await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+      name: `${workspace}:0@apac-ne`,
+    })
+    await own.exec('CREATE TABLE stale_marker (id INTEGER)')
+    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
+      name: `${workspace}:0@apac-ne`,
+    })
     expect(await named('syncNamed', `${workspace}:0@apac-ne`)).toBe('ok')
+    expect(
+      await own.exec(
+        "SELECT name FROM sqlite_master WHERE name='stale_marker'",
+      ),
+    ).toEqual([])
     // A sync misrouted to a real index is refused and deletes nothing.
     const response = await worker.fetch('/__test/search-index', {
       method: 'POST',

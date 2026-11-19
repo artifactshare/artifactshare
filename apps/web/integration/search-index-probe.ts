@@ -286,9 +286,13 @@ export class WorkspaceSearchIndex extends Index {
       return { error: error instanceof Error ? error.message : String(error) }
     }
   }
-  /** Create the tables a first sync would, for tests that prepare them. */
-  createSchema(): void {
+  /** Create the tables and workspace record a first sync would, for tests that prepare them. */
+  createSchema(workspace: string): void {
     this.ensureSchema()
+    this.ctx.storage.sql.exec(
+      'INSERT OR IGNORE INTO state(singleton,workspace) VALUES(1,?)',
+      workspace,
+    )
   }
   resume(): Promise<void> {
     return super.alarm()
@@ -431,7 +435,7 @@ export default {
         ).resume()
         break
       case 'ensureSchema':
-        result = await stub.createSchema()
+        result = await stub.createSchema(command.workspace)
         break
       case 'resumeAt':
         result = await stub.resumeAt(command.now)
