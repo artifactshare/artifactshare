@@ -9,8 +9,7 @@ packages:
 overrides:
   # Keep transitive tooling dependencies on the patched minimatch major.
   'minimatch@>=10.0.0 <11.0.0': 11.0.8
-  'vite-plus@<1.1.0': 1.6.0
-  '@vitest/mocker@4.1.11': 4.1.12
+  'vite-plus@<1.1.0': 1.7.0
   # Keep Vite within its ~1.2.18 Rolldown range; 1.3 produces invalid imports.
   # Rolldown 1.2.15 previously failed Vite sourcemapPathTransform.
   'vite@8.3.8>rolldown': 1.2.19
@@ -30,19 +29,6 @@ allowBuilds:
 # Explicitly requested current releases that pass the install supply-chain checks.
 # Keep exceptions exact and remove versions no longer resolved in the lockfile.
 minimumReleaseAgeExclude:
-  - 'better-auth@1.7.22'
-  - '@better-auth/core@1.7.22'
-  - '@better-auth/oauth-provider@1.7.22'
-  - '@better-auth/drizzle-adapter@1.7.22'
-  - '@better-auth/kysely-adapter@1.7.22'
-  - '@better-auth/memory-adapter@1.7.22'
-  - '@better-auth/mongo-adapter@1.7.22'
-  - '@better-auth/prisma-adapter@1.7.22'
-  - '@better-auth/telemetry@1.7.22'
   - 'yaml@2.9.1'
   - 'better-call@1.4.5'
-  - '@cloudflare/vite-plugin@1.69.1'
-  - '@cloudflare/workers-types@5.20261112.1'
   - 'kysely@0.29.9'
-  - 'miniflare@5.20261110.2-beta'
-  - 'wrangler@4.161.0'
