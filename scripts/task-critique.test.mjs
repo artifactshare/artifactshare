@@ -762,13 +762,14 @@ test('selects one Codex layer with every validated PNG as an image argument', ()
       'shell_environment_policy.set.TMPPREFIX="/private/tmp/critique-1/zsh"',
       '-c',
       'permissions.critique.network.enabled=false',
+      '-c',
+      'web_search="disabled"',
     ],
   )
   assert.deepEqual(
     request.args.filter((arg) => arg.includes('network')),
     ['permissions.critique.network.enabled=false'],
   )
-  assert.equal(request.args.includes('web_search="live"'), false)
   assert.throws(
     () =>
       invocation(
@@ -875,7 +876,8 @@ test('a process signal stops the Codex critique and removes its shell directory'
   const argsFile = join(bin, 'args')
   writeFileSync(
     join(bin, 'codex'),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nexec sleep 30\n`,
+    // Renamed into place so the test never reads a partly written file.
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}.tmp'\nmv '${argsFile}.tmp' '${argsFile}'\nexec sleep 30\n`,
     { mode: 0o755 },
   )
   const path = process.env.PATH
@@ -893,7 +895,7 @@ test('a process signal stops the Codex critique and removes its shell directory'
       { repo: process.cwd() },
     )
     const started = Date.now()
-    while (!existsSync(argsFile) || !readFileSync(argsFile, 'utf8')) {
+    while (!existsSync(argsFile)) {
       if (Date.now() - started > 10_000) assert.fail('fake codex did not start')
       await new Promise((resolve) => setTimeout(resolve, 20))
     }

@@ -541,9 +541,13 @@ function invocation(layer, prompt, input = {}, shell = {}) {
         // directory where the shell writes temporary files such as
         // here-documents.
         ...codexShellSandboxArgs('critique', shell.writableDirectory),
-        // Set explicitly so a maintainer's Codex configuration cannot open it.
+        // Set explicitly so a maintainer's Codex configuration cannot open the
+        // network or enable web search, which the model calls outside the
+        // sandbox.
         '-c',
         'permissions.critique.network.enabled=false',
+        '-c',
+        'web_search="disabled"',
         ...imageArgs,
         '-',
       ],
@@ -623,8 +627,11 @@ async function runCritiqueProvider(command, args, { cwd, input, timeout }) {
   return { status: result.code, stdout: result.stdout, stderr: result.stderr }
 }
 
-// `run` may be spawnSync or an async runner with the same result shape, so a
-// caller can measure each provider invocation without changing the prompt.
+// A caller may pass an async runner with the same result shape, to measure
+// each provider invocation without changing the prompt. It must keep the
+// event loop running and settle on SIGINT or SIGTERM, as runCritiqueProvider
+// does; spawnSync would let a signal end the process before the Codex shell
+// directory is removed.
 async function runLayer(
   layer,
   input,
@@ -635,9 +642,7 @@ async function runLayer(
     const request = invocation(layer, prompt, input, shell)
     return run(request.command, request.args, {
       cwd: repo,
-      encoding: 'utf8',
       input: request.input,
-      maxBuffer: 32 * 1024 * 1024,
       timeout: timeoutMs,
     })
   }
