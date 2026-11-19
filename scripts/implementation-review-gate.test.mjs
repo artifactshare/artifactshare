@@ -1354,7 +1354,7 @@ test('the round-cap consultation runs as an interruptible asynchronous provider'
   assert.equal(calls.length, 1)
   assert.equal(calls[0].command, 'claude')
   // The gate's signal and the 30-minute bound reach the provider runner, which
-  // also stops the child process group on SIGINT/SIGTERM.
+  // also stops the child process group on SIGINT/SIGTERM/SIGHUP.
   assert.equal(calls[0].options.signal, controller.signal)
   assert.equal(calls[0].options.timeoutMs, 1_800_000)
   // A stopped provider rejects, and nothing is returned for recording.

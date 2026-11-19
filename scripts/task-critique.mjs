@@ -615,8 +615,8 @@ function resultText(layer, result) {
   return raw
 }
 
-// Unlike spawnSync, this keeps the event loop running: on SIGINT or SIGTERM
-// it stops the provider and rejects, so the caller's cleanup (such as removing
+// Unlike spawnSync, this keeps the event loop running: on SIGINT, SIGTERM or
+// SIGHUP it stops the provider and rejects, so the caller's cleanup (such as removing
 // the Codex shell directory) runs before the process exits.
 async function runCritiqueProvider(command, args, { cwd, input, timeout }) {
   const result = await runProvider(command, args, {
@@ -629,8 +629,8 @@ async function runCritiqueProvider(command, args, { cwd, input, timeout }) {
 
 // A caller may pass an async runner with the same result shape, to measure
 // each provider invocation without changing the prompt. It must keep the
-// event loop running and settle on SIGINT or SIGTERM, as runCritiqueProvider
-// does; spawnSync would let a signal end the process before the Codex shell
+// event loop running and settle on SIGINT, SIGTERM or SIGHUP, as
+// runCritiqueProvider does; spawnSync would let a signal end the process before the Codex shell
 // directory is removed.
 async function runLayer(
   layer,

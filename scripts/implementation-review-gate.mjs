@@ -274,7 +274,7 @@ function consultationDecision(text) {
 
 /** Runs the round-cap consultation with the configured Claude profile and
  * returns its text. The provider runs as an asynchronous child process group
- * that is stopped on SIGINT/SIGTERM, an aborted `signal`, or the timeout. */
+ * that is stopped on SIGINT/SIGTERM/SIGHUP, an aborted `signal`, or the timeout. */
 async function runRoundCapConsultation(
   prompt,
   { evidenceDirectory, signal, provider = runProvider } = {},
