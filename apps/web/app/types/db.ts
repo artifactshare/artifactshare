@@ -36,8 +36,6 @@ export interface DB {
   search_index_workspaces: {
     workspace_id: string
     dispatched_at: string
-    location_hint: Generated<string | null>
-    ready_at: Generated<string | null>
   }
   security_deception_signals: SecurityDeceptionSignalsTable
   security_deception_delivery_control: {

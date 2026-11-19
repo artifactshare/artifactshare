@@ -6,11 +6,11 @@ test('keeps extraction keys within unambiguous workspace/shareable/version prefi
   expect(
     await searchTextKey('workspace', 'artifact', 'version', '/sub/日本.md'),
   ).toBe(
-    'search-text/workspace/artifact/version/' +
+    'search-text/@apac-ne/workspace/artifact/version/' +
       createHash('sha256').update('/sub/日本.md').digest('hex'),
   )
   expect(await searchTextKey('a/b', 'artifact', 'version', '/index.html')).toBe(
-    'search-text/a%2Fb/artifact/version/' +
+    'search-text/@apac-ne/a%2Fb/artifact/version/' +
       createHash('sha256').update('/index.html').digest('hex'),
   )
   for (const path of ['/../secret', '/a/../secret', '/a//b', '/./b'])

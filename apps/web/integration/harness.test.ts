@@ -795,7 +795,6 @@ describe('Worker integration harness', () => {
               'changing',
               'race-next',
               '/index.html',
-              'apac-ne',
             ),
           ),
         ).not.toBeNull()
@@ -804,11 +803,28 @@ describe('Worker integration harness', () => {
     60_000,
   )
 
-  test('an index from before one location, or placed elsewhere, deletes itself', async () => {
+  test('an index object not named as its workspace index only deletes its storage', async () => {
     const env = await worker.getEnv()
-    const workspace = 'ws-old'
-    // Indexes created before every index moved to one location kept their
-    // state and text under their own name and area.
+    const workspace = 'ws-leftover'
+    const named = async (action: string, name: string) => {
+      const response = await worker.fetch('/__test/search-index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace, action, name }),
+      })
+      expect(response.status, await response.clone().text()).toBe(200)
+      return response.json()
+    }
+    const tables = (name: string) =>
+      worker
+        .getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', { name })
+        .then((storage) =>
+          storage.exec(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
+          ),
+        )
+    // The workspace index's text must survive a leftover running.
+    await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
     for (const name of [`${workspace}:0`, `${workspace}:0@weur`]) {
       const storage = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
@@ -823,51 +839,12 @@ describe('Worker integration harness', () => {
       )
       // A new instance starts from that storage, as a deployed one would.
       await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
-    }
-    // More legacy text than one listing page is deleted in the same run.
-    await Promise.all(
-      Array.from({ length: 1005 }, (_, n) =>
-        env.BUCKET.put(`search-text/${workspace}/file/${n}`, 'legacy'),
-      ),
-    )
-    await env.BUCKET.put(`search-text/@weur/${workspace}/file/x`, 'weur')
-    await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
-    const named = async (action: string, name: string) => {
-      const response = await worker.fetch('/__test/search-index', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace, action, name }),
-      })
-      return response.json()
-    }
-    for (const [name, prefix] of [
-      [`${workspace}:0`, `search-text/${workspace}/`],
-      [`${workspace}:0@weur`, `search-text/@weur/${workspace}/`],
-    ]) {
-      expect(await named('resumeNamed', name)).toBeNull()
-      expect((await env.BUCKET.list({ prefix })).objects).toEqual([])
-      expect(
-        await (
-          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
-            name,
-          })
-        ).exec(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
-        ),
-      ).toEqual([])
-      // They accept no sync, which also creates no storage.
+      await named('resumeNamed', name)
+      expect(await tables(name)).toEqual([])
+      // It accepts no sync, which also creates no storage.
       expect(await named('syncNamed', name)).toBe('search_partition_mismatch')
-      expect(
-        await (
-          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
-            name,
-          })
-        ).exec(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name!='__miniflare_do_name'",
-        ),
-      ).toEqual([])
+      expect(await tables(name)).toEqual([])
     }
-    // The text of the index in the one location stays.
     expect(
       (await env.BUCKET.list({ prefix: `search-text/@apac-ne/${workspace}/` }))
         .objects.length,
@@ -1197,13 +1174,7 @@ describe('Worker integration harness', () => {
       { path: '/secondary.markdown' },
       { path: longPath },
     ])
-    const longKey = await searchTextKey(
-      'ws-search',
-      'site',
-      'v-site',
-      longPath,
-      'apac-ne',
-    )
+    const longKey = await searchTextKey('ws-search', 'site', 'v-site', longPath)
     expect(new TextEncoder().encode(longKey).byteLength).toBeLessThan(1024)
     expect(await (await env.BUCKET.get(longKey))!.json()).toMatchObject({
       body: 'longpathneedle',
@@ -1215,13 +1186,7 @@ describe('Worker integration harness', () => {
       ),
     ).toEqual([{ path: longPath }])
     const html = await env.BUCKET.get(
-      await searchTextKey(
-        'ws-search',
-        'html',
-        'v-html',
-        '/index.html',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
     )
     expect(await html!.json()).toEqual({
       format: INDEX_FORMAT_VERSION,
@@ -1255,13 +1220,7 @@ describe('Worker integration harness', () => {
       ).toEqual([])
     }
     const md = await env.BUCKET.get(
-      await searchTextKey(
-        'ws-search',
-        'markdown',
-        'v-markdown',
-        '/note.txt',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search', 'markdown', 'v-markdown', '/note.txt'),
     )
     expect(await md!.json()).toMatchObject({
       body: expect.stringContaining(
@@ -1270,13 +1229,7 @@ describe('Worker integration harness', () => {
     })
     expect(
       await (await env.BUCKET.get(
-        await searchTextKey(
-          'ws-search',
-          'site',
-          'v-site',
-          '/other.html',
-          'apac-ne',
-        ),
+        await searchTextKey('ws-search', 'site', 'v-site', '/other.html'),
       ))!.json(),
     ).toEqual({
       format: INDEX_FORMAT_VERSION,
@@ -1290,18 +1243,11 @@ describe('Worker integration harness', () => {
           'site',
           'v-site',
           '/secondary.markdown',
-          'apac-ne',
         ),
       ))!.json(),
     ).toMatchObject({ body: 'Secondary markdown' })
     const site = await env.BUCKET.get(
-      await searchTextKey(
-        'ws-search',
-        'site',
-        'v-site',
-        '/index.md',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search', 'site', 'v-site', '/index.md'),
     )
     const sitePayload = await site!.json<{ body: string; script: string }>()
     expect(sitePayload).toMatchObject({
@@ -1314,7 +1260,7 @@ describe('Worker integration harness', () => {
     for (const id of ['pdf', 'video']) {
       const file = fixtures.find((fixture) => fixture.id === id)!
       const object = await env.BUCKET.get(
-        await searchTextKey('ws-search', id, `v-${id}`, file.path, 'apac-ne'),
+        await searchTextKey('ws-search', id, `v-${id}`, file.path),
       )
       expect(await object!.json()).toEqual({
         format: INDEX_FORMAT_VERSION,
@@ -1337,13 +1283,7 @@ describe('Worker integration harness', () => {
     expect(lists).toBeGreaterThan(0) // Activation still cleans abandoned versions.
     const before = await index.exec('SELECT * FROM active ORDER BY id')
     const original = await env.BUCKET.head(
-      await searchTextKey(
-        'ws-search',
-        'html',
-        'v-html',
-        '/index.html',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
     )
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
@@ -1355,13 +1295,7 @@ describe('Worker integration harness', () => {
     expect(await index.exec('SELECT * FROM active ORDER BY id')).toEqual(before)
     expect(
       (await env.BUCKET.head(
-        await searchTextKey(
-          'ws-search',
-          'html',
-          'v-html',
-          '/index.html',
-          'apac-ne',
-        ),
+        await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
       ))!.version,
     ).toBe(original!.version)
     const patch = await worker.fetch('/api/shareables/html', {
@@ -1449,13 +1383,7 @@ describe('Worker integration harness', () => {
     }
     expect(
       (await env.BUCKET.head(
-        await searchTextKey(
-          'ws-search',
-          'html',
-          'v-html',
-          '/index.html',
-          'apac-ne',
-        ),
+        await searchTextKey('ws-search', 'html', 'v-html', '/index.html'),
       ))!.version,
     ).toBe(original!.version)
     // Description currently has no editing service; D1 is its authoritative
@@ -1488,13 +1416,7 @@ describe('Worker integration harness', () => {
     })
     await env.DB.prepare("DELETE FROM shareables WHERE id='html'").run()
     await env.BUCKET.put(
-      await searchTextKey(
-        'ws-search',
-        'html',
-        'staged',
-        '/index.html',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search', 'html', 'staged', '/index.html'),
       'staged',
     )
     await expect(
@@ -1608,7 +1530,6 @@ describe('Worker integration harness', () => {
               created.id,
               created.versionId,
               `/index.${extension}`,
-              'apac-ne',
             ),
           )
           expect(await object?.json()).toMatchObject({
@@ -1670,7 +1591,6 @@ describe('Worker integration harness', () => {
               created.id,
               version.versionId,
               `/index.${extension}`,
-              'apac-ne',
             ),
           )
           expect(await object?.json()).toMatchObject({
@@ -2344,13 +2264,7 @@ describe('Worker integration harness', () => {
       ),
     ).toEqual([{ count: 200000 }])
     const extracted = await env.BUCKET.get(
-      await searchTextKey(
-        'ws-search-large',
-        'large',
-        'v-large',
-        '/index.html',
-        'apac-ne',
-      ),
+      await searchTextKey('ws-search-large', 'large', 'v-large', '/index.html'),
     )
     const payload = await extracted!.json<{ body: string; script: string }>()
     expect(createHash('sha256').update(payload.body).digest('hex')).toBe(
