@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -74,7 +80,10 @@ test('ordinary request disables both Codex multi-agent features', () => {
     { model: 'm', effort: 'high' },
     'direct role prompt',
     '/tmp/output',
-    '/tmp/review-shell',
+    {
+      deniedDirectory: '/tmp/reviews',
+      writableDirectory: '/tmp/reviews/run/1',
+    },
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
   assert.equal(request.args.includes('--sandbox'), false)
@@ -82,17 +91,18 @@ test('ordinary request disables both Codex multi-agent features', () => {
   assert.ok(request.args.includes('web_search="live"'))
   assert.ok(
     request.args.includes(
-      'permissions.review.filesystem={":root"="read","/tmp/review-shell"="write"}',
+      'permissions.review.filesystem={":root"="read","/tmp/reviews"="deny","/tmp/reviews/run/1"="write"}',
     ),
   )
   assert.ok(
     request.args.includes(
-      'shell_environment_policy.set={TMPDIR="/tmp/review-shell",TMPPREFIX="/tmp/review-shell/zsh"}',
+      'shell_environment_policy.set.TMPDIR="/tmp/reviews/run/1"',
     ),
   )
-  assert.throws(
-    () => reviewRequest({ model: 'm', effort: 'high' }, 'prompt', '/tmp/out'),
-    /shell temporary directory/u,
+  assert.ok(
+    request.args.includes(
+      'shell_environment_policy.set.TMPPREFIX="/tmp/reviews/run/1/zsh"',
+    ),
   )
   assert.ok(request.args.includes('permissions.review.network.enabled=true'))
   assert.match(request.args.join(' '), /--disable multi_agent/u)
@@ -100,6 +110,13 @@ test('ordinary request disables both Codex multi-agent features', () => {
   assert.equal(request.args.includes('review'), false)
   assert.equal(request.args.at(-1), '-')
   assert.equal(request.input, 'direct role prompt')
+})
+
+test('request requires a shell temporary directory', () => {
+  assert.throws(
+    () => reviewRequest({ model: 'm', effort: 'high' }, 'prompt', '/tmp/out'),
+    /shell temporary directory/u,
+  )
 })
 
 test('launcher runs one finder and one fresh verifier against a fixed clean target', async () => {
@@ -128,7 +145,20 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
         exec: git,
         prepareEvidence: fakeEvidence,
         provider: (_command, args, options) => {
-          calls.push({ args, options })
+          const filesystem = args.find((arg) =>
+            arg.startsWith('permissions.review.filesystem='),
+          )
+          const [, denied, writable] = filesystem.match(
+            /^permissions\.review\.filesystem=\{":root"="read","([^"]+)"="deny","([^"]+)"="write"\}$/u,
+          )
+          assert.ok(writable.startsWith(`${denied}/`))
+          assert.ok(existsSync(writable))
+          assert.deepEqual(readdirSync(writable), [])
+          assert.ok(
+            args.includes(`shell_environment_policy.set.TMPDIR="${writable}"`),
+          )
+          writeFileSync(join(writable, 'scratch'), 'left by this call')
+          calls.push({ args, options, writable })
           assert.equal(options.cwd, '/repo')
           assert.equal(options.stdoutMode, 'tail')
           assert.equal(args.includes('review'), false)
@@ -172,6 +202,8 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
       },
     )
     assert.equal(calls.length, 2)
+    assert.notEqual(calls[0].writable, calls[1].writable)
+    for (const call of calls) assert.equal(existsSync(call.writable), false)
     assert.match(result.stdout, /REFUTED/u)
     assert.match(result.stdout, /Caller decides/u)
   } finally {
