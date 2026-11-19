@@ -218,6 +218,53 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
   }
 })
 
+test('launcher removes the invocation directory when the provider fails', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-review-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  let writable
+  try {
+    await assert.rejects(
+      launchCodexReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--expected-head',
+          head,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          exec: git,
+          prepareEvidence: fakeEvidence,
+          provider: (_command, args) => {
+            writable = args
+              .find((arg) =>
+                arg.startsWith('shell_environment_policy.set.TMPDIR='),
+              )
+              .match(/="([^"]+)"$/u)[1]
+            writeFileSync(join(writable, 'scratch'), 'left by this call')
+            return Promise.reject(new Error('provider timed out'))
+          },
+        },
+      ),
+      /provider timed out/u,
+    )
+    assert.ok(writable)
+    assert.equal(existsSync(writable), false)
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('launcher rejects a stale expected HEAD before provider work', async () => {
   const lock = await capability()
   try {
