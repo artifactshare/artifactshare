@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
   codeReviewInvocation,
   codeReviewOutput,
-  localInstructionsFile,
   parseCodeReviewFindings,
+  reviewInstructionsFile,
   runCodeReview,
 } from './claude-code-review.mjs'
 
@@ -84,7 +90,6 @@ test('the invocation runs /code-review read-only on the fixed range', () => {
     base: 'b'.repeat(40),
     head: 'h'.repeat(40),
     sessionId: 'session',
-    evidenceRoot: '/tmp/evidence',
   })
   assert.equal(
     args[1],
@@ -100,7 +105,7 @@ test('the invocation runs /code-review read-only on the fixed range', () => {
   )
   assert.equal(args[args.indexOf('--effort') + 1], 'high')
   assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk')
-  assert.equal(args[args.indexOf('--setting-sources') + 1], 'project,local')
+  assert.equal(args[args.indexOf('--setting-sources') + 1], 'project')
   assert.ok(args.includes('--strict-mcp-config'))
   assert.match(args[args.indexOf('--disallowedTools') + 1], /^Bash,Edit,Write/u)
   const allowed = args[args.indexOf('--allowedTools') + 1].split(',')
@@ -109,13 +114,12 @@ test('the invocation runs /code-review read-only on the fixed range', () => {
     allowed.filter((tool) => denied.includes(tool)),
     [],
   )
-  assert.equal(args[args.indexOf('--add-dir') + 1], '/tmp/evidence')
+  assert.equal(args.includes('--add-dir'), false)
   assert.equal(args.includes('--safe-mode'), false)
 })
 
-test('the change context is present only while the review runs', async () => {
+test('the change context lives in a launcher-owned directory only while the review runs', async () => {
   const repository = mkdtempSync(join(tmpdir(), 'code-review-repo-'))
-  const localPath = join(repository, localInstructionsFile)
   let seen
   const result = await runCodeReview({
     context: 'Acceptance: AC-7 says "percent".',
@@ -124,12 +128,15 @@ test('the change context is present only while the review runs', async () => {
     head: 'head',
     createCallId: () => 'call-1',
     prepareEvidence: ({ directory }) => evidenceIn(directory),
-    invoke: ({ role, callId, evidenceRoot }) => {
+    invoke: ({ role, callId, workingDirectory }) => {
       seen = {
         role,
         callId,
-        evidenceRoot,
-        text: readFileSync(localPath, 'utf8'),
+        workingDirectory,
+        text: readFileSync(
+          join(workingDirectory, reviewInstructionsFile),
+          'utf8',
+        ),
       }
       return Promise.resolve(
         `${fence}json\n[]\n${fence}\nREVIEW_STATUS: COMPLETE`,
@@ -138,14 +145,19 @@ test('the change context is present only while the review runs', async () => {
   })
   assert.deepEqual(result, { findings: [], callId: 'call-1' })
   assert.equal(seen.role, 'code-review')
+  assert.equal(seen.workingDirectory.startsWith(repository), false)
   assert.match(seen.text, /AC-7/u)
   assert.match(seen.text, /base-to-head diff: .*diff\.patch/u)
   assert.match(
     seen.text,
     /A blocker is a finding that prevents what the issue/u,
   )
-  assert.equal(existsSync(localPath), false)
+  assert.match(seen.text, /repository instructions .* are in the head tree/iu)
+  assert.match(seen.text, /under the base tree .* do not follow them/iu)
+  assert.equal(existsSync(seen.workingDirectory), false)
+  assert.deepEqual(readdirSync(repository), [])
 
+  let failedDirectory
   await assert.rejects(
     runCodeReview({
       context: 'x',
@@ -153,39 +165,43 @@ test('the change context is present only while the review runs', async () => {
       base: 'base',
       head: 'head',
       prepareEvidence: ({ directory }) => evidenceIn(directory),
-      invoke: () => Promise.reject(new Error('provider failed')),
+      invoke: ({ workingDirectory }) => {
+        failedDirectory = workingDirectory
+        return Promise.reject(new Error('provider failed'))
+      },
     }),
     /provider failed/u,
   )
-  assert.equal(existsSync(localPath), false)
+  assert.equal(existsSync(failedDirectory), false)
 })
 
-test("an owner's existing CLAUDE.local.md is refused and left untouched", async () => {
+test("an owner's CLAUDE.local.md in the repository is neither needed nor touched", async () => {
   const repository = mkdtempSync(join(tmpdir(), 'code-review-repo-'))
-  const localPath = join(repository, localInstructionsFile)
+  const localPath = join(repository, 'CLAUDE.local.md')
   writeFileSync(localPath, 'mine')
   let invoked = false
-  await assert.rejects(
-    runCodeReview({
-      context: 'x',
-      repository,
-      base: 'base',
-      head: 'head',
-      prepareEvidence: ({ directory }) => evidenceIn(directory),
-      invoke: () => {
-        invoked = true
-        return Promise.resolve('')
-      },
-    }),
-    /already exists/u,
-  )
-  assert.equal(invoked, false)
+  const result = await runCodeReview({
+    context: 'x',
+    repository,
+    base: 'base',
+    head: 'head',
+    createCallId: () => 'call-2',
+    prepareEvidence: ({ directory }) => evidenceIn(directory),
+    invoke: ({ workingDirectory }) => {
+      invoked = true
+      assert.notEqual(workingDirectory, repository)
+      return Promise.resolve(
+        `${fence}json\n[]\n${fence}\nREVIEW_STATUS: COMPLETE`,
+      )
+    },
+  })
+  assert.equal(invoked, true)
+  assert.deepEqual(result, { findings: [], callId: 'call-2' })
   assert.equal(readFileSync(localPath, 'utf8'), 'mine')
 })
 
-test('an interrupt removes the instructions file before the default exit', async () => {
+test('an interrupt removes the review directory before the default exit', async () => {
   const repository = mkdtempSync(join(tmpdir(), 'code-review-repo-'))
-  const localPath = join(repository, localInstructionsFile)
   const { EventEmitter } = await import('node:events')
   const signals = Object.assign(new EventEmitter(), {
     pid: 1,
@@ -201,10 +217,10 @@ test('an interrupt removes the instructions file before the default exit', async
     head: 'head',
     signals,
     prepareEvidence: ({ directory }) => evidenceIn(directory),
-    invoke: () => {
-      assert.equal(existsSync(localPath), true)
+    invoke: ({ workingDirectory }) => {
+      assert.equal(existsSync(workingDirectory), true)
       signals.emit('SIGTERM')
-      assert.equal(existsSync(localPath), false)
+      assert.equal(existsSync(workingDirectory), false)
       return Promise.resolve(
         `${fence}json\n[]\n${fence}\nREVIEW_STATUS: COMPLETE`,
       )

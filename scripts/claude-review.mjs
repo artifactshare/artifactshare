@@ -502,7 +502,12 @@ async function launchClaudeCodeReview(
     now,
     createCallId,
     prepareEvidence,
-    invoke: async ({ role, callId: invocationId, evidenceRoot, timeoutMs }) => {
+    invoke: async ({
+      role,
+      callId: invocationId,
+      workingDirectory,
+      timeoutMs,
+    }) => {
       const startedAt = now()
       const commonEvent = {
         schema_version: 1,
@@ -556,9 +561,8 @@ async function launchClaudeCodeReview(
             base: parsed.base,
             head,
             sessionId: invocationId,
-            evidenceRoot,
           }),
-          { cwd: repository, signal, timeoutMs },
+          { cwd: workingDirectory, signal, timeoutMs },
         )
       } catch (error) {
         try {
