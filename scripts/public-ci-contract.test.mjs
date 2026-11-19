@@ -904,7 +904,7 @@ test('visual gate uses exact Linux Compose baselines', () => {
       ].map(([source, target]) => ({ type: 'volume', source, target })),
     ])
     assert.deepEqual(service.command, [
-      'npm install --global --prefix /opt/toolchain node@24.22.3 pnpm@12.18.0 && ' +
+      'npm install --global --prefix /opt/toolchain node@24.22.3 pnpm@12.21.0 && ' +
         'export PATH=/opt/toolchain/bin:$$PATH && node --version && pnpm --version && ' +
         'pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile --ignore-scripts && ' +
         'pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run ' +
@@ -1401,7 +1401,7 @@ test('only browser jobs use the canonical image with matching locked Playwright'
   assert.ok(lock.packages[`playwright-core@${version}`])
   assert.equal(
     JSON.parse(fs.readFileSync('package.json', 'utf8')).packageManager,
-    'pnpm@12.18.0',
+    'pnpm@12.21.0',
   )
   for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
     if (!browserJobNames.includes(name)) {

@@ -7,7 +7,7 @@
     "node": ">=24",
     "pnpm": ">=12"
   },
-  "packageManager": "pnpm@12.18.0",
+  "packageManager": "pnpm@12.21.0",
   "scripts": {
     "check:public-development-guard": "node scripts/public-development-guard.mjs --check",
     "review:codex": "node scripts/codex-review.mjs",
@@ -92,10 +92,10 @@
   },
   "devDependencies": {
     "@tanstack/markdown": "1.2.0",
-    "oxc-parser": "0.158.0",
-    "react-doctor": "0.9.22",
-    "vite-plus": "1.6.0",
-    "wrangler": "4.161.0",
+    "oxc-parser": "0.159.0",
+    "react-doctor": "0.9.23",
+    "vite-plus": "1.7.0",
+    "wrangler": "4.163.0",
     "yaml": "2.9.1"
   }
 }
