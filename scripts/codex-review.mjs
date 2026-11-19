@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -146,7 +152,10 @@ function resolveBaseSha(exec, base) {
   return resolved
 }
 
-function reviewRequest(options, prompt, lastMessageFile) {
+function reviewRequest(options, prompt, lastMessageFile, shell) {
+  if (!shell?.writableDirectory)
+    throw new Error('Codex review requires a shell temporary directory.')
+  const writable = JSON.stringify(shell.writableDirectory)
   return {
     args: [
       'exec',
@@ -163,8 +172,21 @@ function reviewRequest(options, prompt, lastMessageFile) {
       // reviewer can fetch package versions and advisories.
       '-c',
       'default_permissions="review"',
+      // A shell here-document needs a temporary file (zsh writes it under
+      // TMPPREFIX, /tmp/zsh by default), which a read-only filesystem
+      // refuses. The reviewer may write only to its own invocation's empty
+      // directory, where its shell's temporary files go; the launcher removes
+      // it when the invocation ends, before the next role starts. No path is
+      // denied: a denied ancestor also refuses the lstat that resolving
+      // TMPDIR needs (for example Node's fs.realpathSync).
       '-c',
-      'permissions.review.filesystem={":root"="read"}',
+      `permissions.review.filesystem={":root"="read",${writable}="write"}`,
+      // Dotted keys keep any other shell_environment_policy.set entries from
+      // the maintainer's Codex configuration.
+      '-c',
+      `shell_environment_policy.set.TMPDIR=${writable}`,
+      '-c',
+      `shell_environment_policy.set.TMPPREFIX=${JSON.stringify(join(shell.writableDirectory, 'zsh'))}`,
       '-c',
       'permissions.review.network.enabled=true',
       '-c',
@@ -249,7 +271,11 @@ async function launchCodexReview(
   const repository = gitOutput(exec, ['rev-parse', '--show-toplevel'])
   const prepared = reviewContext(parsed, exec, repository, head)
   const started = now()
-  const directory = mkdtempSync(join(tmpdir(), 'artifactshare-codex-review-'))
+  // Resolved so the sandbox rule names the same path the kernel checks
+  // (macOS tmpdir() is under the /var symlink).
+  const directory = mkdtempSync(
+    join(realpathSync(tmpdir()), 'artifactshare-codex-review-'),
+  )
   let call = 0
   try {
     const controlled = await controlledRunner({
@@ -262,7 +288,11 @@ async function launchCodexReview(
       prepareEvidence,
       invoke: async (prompt, { role, timeoutMs }) => {
         const outputPath = join(directory, `${++call}-${role}.txt`)
-        const request = reviewRequest(parsed, prompt, outputPath)
+        const shellTemporaryDirectory = join(directory, `${call}-${role}-tmp`)
+        mkdirSync(shellTemporaryDirectory, { mode: 0o700 })
+        const request = reviewRequest(parsed, prompt, outputPath, {
+          writableDirectory: shellTemporaryDirectory,
+        })
         let result
         try {
           result = await provider('codex', request.args, {
@@ -280,6 +310,8 @@ async function launchCodexReview(
             `${error.message}${diagnostic ? `\n${diagnostic.trim()}` : ''}`,
             { cause: error },
           )
+        } finally {
+          rmSync(shellTemporaryDirectory, { recursive: true, force: true })
         }
         if (result.code !== 0)
           throw new Error(

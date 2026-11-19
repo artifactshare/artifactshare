@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -74,13 +81,26 @@ test('ordinary request disables both Codex multi-agent features', () => {
     { model: 'm', effort: 'high' },
     'direct role prompt',
     '/tmp/output',
+    { writableDirectory: '/tmp/review/1-finder-tmp' },
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
   assert.equal(request.args.includes('--sandbox'), false)
   assert.ok(request.args.includes('default_permissions="review"'))
   assert.ok(request.args.includes('web_search="live"'))
   assert.ok(
-    request.args.includes('permissions.review.filesystem={":root"="read"}'),
+    request.args.includes(
+      'permissions.review.filesystem={":root"="read","/tmp/review/1-finder-tmp"="write"}',
+    ),
+  )
+  assert.ok(
+    request.args.includes(
+      'shell_environment_policy.set.TMPDIR="/tmp/review/1-finder-tmp"',
+    ),
+  )
+  assert.ok(
+    request.args.includes(
+      'shell_environment_policy.set.TMPPREFIX="/tmp/review/1-finder-tmp/zsh"',
+    ),
   )
   assert.ok(request.args.includes('permissions.review.network.enabled=true'))
   assert.match(request.args.join(' '), /--disable multi_agent/u)
@@ -88,6 +108,13 @@ test('ordinary request disables both Codex multi-agent features', () => {
   assert.equal(request.args.includes('review'), false)
   assert.equal(request.args.at(-1), '-')
   assert.equal(request.input, 'direct role prompt')
+})
+
+test('request requires a shell temporary directory', () => {
+  assert.throws(
+    () => reviewRequest({ model: 'm', effort: 'high' }, 'prompt', '/tmp/out'),
+    /shell temporary directory/u,
+  )
 })
 
 test('launcher runs one finder and one fresh verifier against a fixed clean target', async () => {
@@ -116,7 +143,28 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
         exec: git,
         prepareEvidence: fakeEvidence,
         provider: (_command, args, options) => {
-          calls.push({ args, options })
+          const filesystem = args.find((arg) =>
+            arg.startsWith('permissions.review.filesystem='),
+          )
+          const [, writable] = filesystem.match(
+            /^permissions\.review\.filesystem=\{":root"="read","([^"]+)"="write"\}$/u,
+          )
+          assert.equal(writable, realpathSync(writable))
+          assert.ok(existsSync(writable))
+          assert.deepEqual(readdirSync(writable), [])
+          assert.ok(
+            args.includes(`shell_environment_policy.set.TMPDIR="${writable}"`),
+          )
+          assert.ok(
+            args.includes(
+              `shell_environment_policy.set.TMPPREFIX="${writable}/zsh"`,
+            ),
+          )
+          // The previous role's directory is gone before this role starts.
+          for (const call of calls)
+            assert.equal(existsSync(call.writable), false)
+          writeFileSync(join(writable, 'scratch'), 'left by this call')
+          calls.push({ args, options, writable })
           assert.equal(options.cwd, '/repo')
           assert.equal(options.stdoutMode, 'tail')
           assert.equal(args.includes('review'), false)
@@ -160,8 +208,57 @@ test('launcher runs one finder and one fresh verifier against a fixed clean targ
       },
     )
     assert.equal(calls.length, 2)
+    assert.notEqual(calls[0].writable, calls[1].writable)
+    for (const call of calls) assert.equal(existsSync(call.writable), false)
     assert.match(result.stdout, /REFUTED/u)
     assert.match(result.stdout, /Caller decides/u)
+  } finally {
+    await lock()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('launcher removes the invocation directory when the provider fails', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-review-test-'))
+  const contextFile = join(directory, 'context.md')
+  writeFileSync(
+    contextFile,
+    'Purpose: review.\n\n## Dispositions\n\nNone yet\n',
+  )
+  const lock = await capability()
+  let writable
+  try {
+    await assert.rejects(
+      launchCodexReview(
+        parseArgs([
+          '--phase',
+          'implementation',
+          '--base',
+          base,
+          '--expected-head',
+          head,
+          '--context-file',
+          contextFile,
+        ]),
+        lock,
+        {
+          exec: git,
+          prepareEvidence: fakeEvidence,
+          provider: (_command, args) => {
+            writable = args
+              .find((arg) =>
+                arg.startsWith('shell_environment_policy.set.TMPDIR='),
+              )
+              .match(/="([^"]+)"$/u)[1]
+            writeFileSync(join(writable, 'scratch'), 'left by this call')
+            return Promise.reject(new Error('provider timed out'))
+          },
+        },
+      ),
+      /provider timed out/u,
+    )
+    assert.ok(writable)
+    assert.equal(existsSync(writable), false)
   } finally {
     await lock()
     rmSync(directory, { recursive: true, force: true })
