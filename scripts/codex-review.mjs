@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -146,7 +146,14 @@ function resolveBaseSha(exec, base) {
   return resolved
 }
 
-function reviewRequest(options, prompt, lastMessageFile) {
+function reviewRequest(
+  options,
+  prompt,
+  lastMessageFile,
+  shellTemporaryDirectory,
+) {
+  if (!shellTemporaryDirectory)
+    throw new Error('Codex review requires a shell temporary directory.')
   return {
     args: [
       'exec',
@@ -163,8 +170,14 @@ function reviewRequest(options, prompt, lastMessageFile) {
       // reviewer can fetch package versions and advisories.
       '-c',
       'default_permissions="review"',
+      // A shell here-document needs a temporary file (zsh writes it under
+      // TMPPREFIX, /tmp/zsh by default), which a read-only filesystem
+      // refuses. The reviewer may write only to this invocation's own empty
+      // directory, and the shell's temporary files go there.
       '-c',
-      'permissions.review.filesystem={":root"="read"}',
+      `permissions.review.filesystem={":root"="read",${JSON.stringify(shellTemporaryDirectory)}="write"}`,
+      '-c',
+      `shell_environment_policy.set={TMPDIR=${JSON.stringify(shellTemporaryDirectory)},TMPPREFIX=${JSON.stringify(join(shellTemporaryDirectory, 'zsh'))}}`,
       '-c',
       'permissions.review.network.enabled=true',
       '-c',
@@ -262,7 +275,14 @@ async function launchCodexReview(
       prepareEvidence,
       invoke: async (prompt, { role, timeoutMs }) => {
         const outputPath = join(directory, `${++call}-${role}.txt`)
-        const request = reviewRequest(parsed, prompt, outputPath)
+        const shellTemporaryDirectory = join(directory, `${call}-${role}-tmp`)
+        mkdirSync(shellTemporaryDirectory, { mode: 0o700 })
+        const request = reviewRequest(
+          parsed,
+          prompt,
+          outputPath,
+          shellTemporaryDirectory,
+        )
         let result
         try {
           result = await provider('codex', request.args, {

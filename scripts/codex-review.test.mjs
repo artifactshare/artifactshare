@@ -74,13 +74,25 @@ test('ordinary request disables both Codex multi-agent features', () => {
     { model: 'm', effort: 'high' },
     'direct role prompt',
     '/tmp/output',
+    '/tmp/review-shell',
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
   assert.equal(request.args.includes('--sandbox'), false)
   assert.ok(request.args.includes('default_permissions="review"'))
   assert.ok(request.args.includes('web_search="live"'))
   assert.ok(
-    request.args.includes('permissions.review.filesystem={":root"="read"}'),
+    request.args.includes(
+      'permissions.review.filesystem={":root"="read","/tmp/review-shell"="write"}',
+    ),
+  )
+  assert.ok(
+    request.args.includes(
+      'shell_environment_policy.set={TMPDIR="/tmp/review-shell",TMPPREFIX="/tmp/review-shell/zsh"}',
+    ),
+  )
+  assert.throws(
+    () => reviewRequest({ model: 'm', effort: 'high' }, 'prompt', '/tmp/out'),
+    /shell temporary directory/u,
   )
   assert.ok(request.args.includes('permissions.review.network.enabled=true'))
   assert.match(request.args.join(' '), /--disable multi_agent/u)
