@@ -494,12 +494,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   /**
    * Delete the storage of an object that is not named as the index of the
    * workspace it recorded (one left from before every index moved to one
-   * location). Returns whether it did.
+   * location), or that has tables but never recorded a workspace (created by
+   * a read before storage waited for the first sync). A real index records
+   * its workspace in the sync that creates its tables. Returns whether it
+   * deleted.
    */
   async #dropIfLeftover(): Promise<boolean> {
     if (!this.#schemaReady) return false
     const workspace = this.state()?.workspace
-    if (!workspace || this.#isNamedIndex(workspace)) return false
+    if (workspace && this.#isNamedIndex(workspace)) return false
     await this.ctx.storage.deleteAlarm()
     await this.ctx.storage.deleteAll()
     this.#schemaReady = false
@@ -553,12 +556,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         await this.ctx.storage.deleteAlarm()
         return
       }
+      // A leftover object only deletes its storage, so it never writes into
+      // an index's text area.
+      if (await this.#dropIfLeftover()) return
       const state = this.state()
       if (!state) return
-      // An object not named as its workspace's index (one left from before
-      // every index moved to one location) only deletes its storage, so it
-      // never writes into the index's text area.
-      if (await this.#dropIfLeftover()) return
       const readAt = Date.now()
       unconsumed = state.dirty
       // An index without a change mark starts a full pass and compares later
