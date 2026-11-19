@@ -89,7 +89,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       this.#initSchema()
   }
   // Whether this instance has its tables; false before the first sync and
-  // after an object not named as its workspace's index deleted its storage.
+  // after a leftover object (not named as its recorded workspace's index, or
+  // with no recorded workspace) deleted its storage.
   #schemaReady = false
   protected ensureSchema(): void {
     if (!this.#schemaReady) this.#initSchema()
@@ -494,12 +495,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   /**
    * Delete the storage of an object that is not named as the index of the
    * workspace it recorded (one left from before every index moved to one
-   * location). Returns whether it did.
+   * location), or that has tables but never recorded a workspace (created by
+   * a read before storage waited for the first sync). A real index records
+   * its workspace in the sync that creates its tables. Returns whether it
+   * deleted.
    */
   async #dropIfLeftover(): Promise<boolean> {
     if (!this.#schemaReady) return false
     const workspace = this.state()?.workspace
-    if (!workspace || this.#isNamedIndex(workspace)) return false
+    if (workspace && this.#isNamedIndex(workspace)) return false
     await this.ctx.storage.deleteAlarm()
     await this.ctx.storage.deleteAll()
     this.#schemaReady = false
@@ -515,11 +519,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   async sync(workspace: string): Promise<void> {
     workspaceSearchPrefix(workspace)
     if (!this.#isNamedIndex(workspace)) {
-      // A leftover object, judged by the workspace it recorded itself, drops
-      // its storage when asked; a misrouted sync never touches a real index.
+      // A leftover object, judged by the workspace it recorded itself or by
+      // having recorded none, drops its storage when asked; a misrouted sync
+      // never touches a real index.
       await this.#dropIfLeftover()
       throw new Error('search_partition_mismatch')
     }
+    // Tables without a recorded workspace were created by a read before
+    // storage waited for the first sync; they start over here.
+    await this.#dropIfLeftover()
     // Storage is created only for a sync this object accepts by name.
     this.ensureSchema()
     const state = this.state()
@@ -553,12 +561,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         await this.ctx.storage.deleteAlarm()
         return
       }
+      // A leftover object only deletes its storage, so it never writes into
+      // an index's text area.
+      if (await this.#dropIfLeftover()) return
       const state = this.state()
       if (!state) return
-      // An object not named as its workspace's index (one left from before
-      // every index moved to one location) only deletes its storage, so it
-      // never writes into the index's text area.
-      if (await this.#dropIfLeftover()) return
       const readAt = Date.now()
       unconsumed = state.dirty
       // An index without a change mark starts a full pass and compares later

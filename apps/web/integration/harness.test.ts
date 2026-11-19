@@ -825,7 +825,7 @@ describe('Worker integration harness', () => {
         )
     // The workspace index's text must survive a leftover running.
     await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
-    const seed = async (name: string) => {
+    const seed = async (name: string, recorded: boolean) => {
       const storage = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
         { name },
@@ -833,20 +833,25 @@ describe('Worker integration harness', () => {
       await storage.exec(
         "CREATE TABLE state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1)",
       )
-      await storage.exec(
-        'INSERT INTO state(singleton,workspace) VALUES(1,?)',
-        workspace,
-      )
+      if (recorded)
+        await storage.exec(
+          'INSERT INTO state(singleton,workspace) VALUES(1,?)',
+          workspace,
+        )
       // A new instance starts from that storage, as a deployed one would.
       await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
     }
     // A leftover deletes its storage when it runs, and when it is asked to
     // sync, which it refuses.
-    for (const [name, trigger] of [
-      [`${workspace}:0`, 'resumeNamed'],
-      [`${workspace}:0@weur`, 'syncNamed'],
-    ]) {
-      await seed(name)
+    for (const [name, trigger, recorded] of [
+      [`${workspace}:0`, 'resumeNamed', true],
+      [`${workspace}:0@weur`, 'syncNamed', true],
+      // Tables without a recorded workspace, as a read created them before
+      // storage waited for the first sync.
+      [`${workspace}:0@apac`, 'syncNamed', false],
+      [`${workspace}:0@apac-se`, 'resumeNamed', false],
+    ] as const) {
+      await seed(name, recorded)
       await named(trigger, name)
       expect(await tables(name)).toEqual([])
       expect(await named('syncNamed', name)).toBe('search_partition_mismatch')
@@ -856,7 +861,22 @@ describe('Worker integration harness', () => {
       (await env.BUCKET.list({ prefix: `search-text/@apac-ne/${workspace}/` }))
         .objects.length,
     ).toBe(1)
+    // The workspace's own index with tables but no recorded workspace starts
+    // over on its sync: the old tables are deleted and created again.
+    await seed(`${workspace}:0@apac-ne`, false)
+    const own = await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+      name: `${workspace}:0@apac-ne`,
+    })
+    await own.exec('CREATE TABLE stale_marker (id INTEGER)')
+    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
+      name: `${workspace}:0@apac-ne`,
+    })
     expect(await named('syncNamed', `${workspace}:0@apac-ne`)).toBe('ok')
+    expect(
+      await own.exec(
+        "SELECT name FROM sqlite_master WHERE name='stale_marker'",
+      ),
+    ).toEqual([])
     // A sync misrouted to a real index is refused and deletes nothing.
     const response = await worker.fetch('/__test/search-index', {
       method: 'POST',
