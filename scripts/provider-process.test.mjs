@@ -62,6 +62,26 @@ test('retains signal handlers until an interrupted provider is reaped', async ()
   assert.equal(process.listenerCount('SIGINT'), before)
 })
 
+test('SIGHUP stops the provider like SIGINT and SIGTERM', async () => {
+  const before = Object.fromEntries(
+    ['SIGINT', 'SIGTERM', 'SIGHUP'].map((name) => [
+      name,
+      process.listenerCount(name),
+    ]),
+  )
+  const running = runProvider(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)'],
+    { terminateTimeoutMs: 40 },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(process.listenerCount('SIGHUP'), before.SIGHUP + 1)
+  process.emit('SIGHUP')
+  await assert.rejects(running, /interrupted by a process signal/u)
+  for (const [name, count] of Object.entries(before))
+    assert.equal(process.listenerCount(name), count)
+})
+
 test('retains only a bounded UTF-8-safe stderr tail', async () => {
   const result = await runProvider(process.execPath, [
     '-e',

@@ -4,6 +4,11 @@ export const PROVIDER_TIMEOUT_MS = 1_800_000
 export const PROVIDER_TERMINATE_TIMEOUT_MS = 1_000
 const MAX_STDOUT_BYTES = 16 * 1024 * 1024
 const MAX_STDERR_BYTES = 8 * 1024
+// The provider runs in its own process group, so a signal to the launcher's
+// group does not reach it. SIGHUP (a closed terminal) is handled like SIGINT
+// and SIGTERM: without a listener the launcher would exit at once, leaving the
+// provider running and skipping the caller's cleanup.
+const interruptSignals = ['SIGINT', 'SIGTERM', 'SIGHUP']
 
 function appendTail(buffer, chunk, limit) {
   const combined = Buffer.concat([buffer, Buffer.from(chunk)])
@@ -78,8 +83,7 @@ export function runProvider(
       clearTimeout(terminateTimer)
       clearTimeout(forceTimer)
       signal?.removeEventListener('abort', abort)
-      process.off('SIGINT', interrupt)
-      process.off('SIGTERM', interrupt)
+      for (const name of interruptSignals) process.off(name, interrupt)
       if (!error) {
         resolve(result(code))
         return
@@ -126,8 +130,7 @@ export function runProvider(
       timeoutMs,
     )
     signal?.addEventListener('abort', abort, { once: true })
-    process.on('SIGINT', interrupt)
-    process.on('SIGTERM', interrupt)
+    for (const name of interruptSignals) process.on(name, interrupt)
     if (signal?.aborted) queueMicrotask(abort)
     child.stdout.on('data', (chunk) => {
       if (stdoutMode === 'none') return
