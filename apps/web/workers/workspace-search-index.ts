@@ -143,6 +143,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .toArray()
         .map((row) => row.name),
     )
+    // Failure counts and the readiness record of earlier versions are unused.
+    for (const column of ['failures', 'failed_at', 'first_failed_at'])
+      if (pendingColumns.has(column))
+        this.ctx.storage.sql.exec(`ALTER TABLE pending DROP COLUMN ${column}`)
+    this.ctx.storage.sql.exec('DROP TABLE IF EXISTS placement')
     // When a failed item may be tried again; 0 means now.
     if (!pendingColumns.has('retry_at'))
       this.ctx.storage.sql.exec(
@@ -486,6 +491,20 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
 
+  /**
+   * Delete the storage of an object that is not named as the index of the
+   * workspace it recorded (one left from before every index moved to one
+   * location). Returns whether it did.
+   */
+  async #dropIfLeftover(): Promise<boolean> {
+    if (!this.#schemaReady) return false
+    const workspace = this.state()?.workspace
+    if (!workspace || this.#isNamedIndex(workspace)) return false
+    await this.ctx.storage.deleteAlarm()
+    await this.ctx.storage.deleteAll()
+    this.#schemaReady = false
+    return true
+  }
   /** Whether this object is the index named for the workspace. */
   #isNamedIndex(workspace: string): boolean {
     return this.ctx.id.equals(
@@ -495,8 +514,12 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   /** Only the index named for this workspace accepts its sync. */
   async sync(workspace: string): Promise<void> {
     workspaceSearchPrefix(workspace)
-    if (!this.#isNamedIndex(workspace))
+    if (!this.#isNamedIndex(workspace)) {
+      // A leftover object, judged by the workspace it recorded itself, drops
+      // its storage when asked; a misrouted sync never touches a real index.
+      await this.#dropIfLeftover()
       throw new Error('search_partition_mismatch')
+    }
     // Storage is created only for a sync this object accepts by name.
     this.ensureSchema()
     const state = this.state()
@@ -535,12 +558,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       // An object not named as its workspace's index (one left from before
       // every index moved to one location) only deletes its storage, so it
       // never writes into the index's text area.
-      if (!this.#isNamedIndex(state.workspace)) {
-        await this.ctx.storage.deleteAlarm()
-        await this.ctx.storage.deleteAll()
-        this.#schemaReady = false
-        return
-      }
+      if (await this.#dropIfLeftover()) return
       const readAt = Date.now()
       unconsumed = state.dirty
       // An index without a change mark starts a full pass and compares later

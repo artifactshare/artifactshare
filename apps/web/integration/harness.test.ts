@@ -825,7 +825,7 @@ describe('Worker integration harness', () => {
         )
     // The workspace index's text must survive a leftover running.
     await env.BUCKET.put(`search-text/@apac-ne/${workspace}/file/x`, 'current')
-    for (const name of [`${workspace}:0`, `${workspace}:0@weur`]) {
+    const seed = async (name: string) => {
       const storage = await worker.getDurableObjectStorage(
         'WORKSPACE_SEARCH_INDEX',
         { name },
@@ -839,9 +839,16 @@ describe('Worker integration harness', () => {
       )
       // A new instance starts from that storage, as a deployed one would.
       await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
-      await named('resumeNamed', name)
+    }
+    // A leftover deletes its storage when it runs, and when it is asked to
+    // sync, which it refuses.
+    for (const [name, trigger] of [
+      [`${workspace}:0`, 'resumeNamed'],
+      [`${workspace}:0@weur`, 'syncNamed'],
+    ]) {
+      await seed(name)
+      await named(trigger, name)
       expect(await tables(name)).toEqual([])
-      // It accepts no sync, which also creates no storage.
       expect(await named('syncNamed', name)).toBe('search_partition_mismatch')
       expect(await tables(name)).toEqual([])
     }
@@ -850,6 +857,53 @@ describe('Worker integration harness', () => {
         .objects.length,
     ).toBe(1)
     expect(await named('syncNamed', `${workspace}:0@apac-ne`)).toBe('ok')
+    // A sync misrouted to a real index is refused and deletes nothing.
+    const response = await worker.fetch('/__test/search-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspace: 'ws-other',
+        action: 'syncNamed',
+        name: `${workspace}:0@apac-ne`,
+      }),
+    })
+    expect(await response.json()).toBe('search_partition_mismatch')
+    expect(
+      await (
+        await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
+          name: `${workspace}:0@apac-ne`,
+        })
+      ).exec('SELECT workspace FROM state'),
+    ).toEqual([{ workspace }])
+  }, 60_000)
+
+  test('an index drops the failure counts and readiness record of earlier versions', async () => {
+    const name = 'ws-columns:0@apac-ne'
+    const storage = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name },
+    )
+    await storage.exec(
+      "CREATE TABLE state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1)",
+    )
+    await storage.exec(
+      'CREATE TABLE pending (id TEXT PRIMARY KEY, attempted INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0, failed_at INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, first_failed_at INTEGER NOT NULL DEFAULT 0)',
+    )
+    await storage.exec(
+      'CREATE TABLE placement (singleton INTEGER PRIMARY KEY CHECK(singleton=1), ready_at TEXT NOT NULL)',
+    )
+    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', { name })
+    await searchProbe('ws-columns').nextAlarm()
+    expect(
+      (await storage.exec('PRAGMA table_info(pending)')).map(
+        (column: { name: string }) => column.name,
+      ),
+    ).toEqual(['id', 'attempted', 'retry_at'])
+    expect(
+      await storage.exec(
+        "SELECT name FROM sqlite_master WHERE name='placement'",
+      ),
+    ).toEqual([])
   }, 60_000)
 
   test('a file that keeps failing does not keep its index busy', async () => {
