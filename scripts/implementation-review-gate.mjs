@@ -2,7 +2,6 @@
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
-  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -19,7 +18,6 @@ import {
   parseArgs as parseCodexArgs,
   reviewReminder,
 } from './codex-review.mjs'
-import { localInstructionsFile } from './claude-code-review.mjs'
 import {
   launchClaudeReview,
   parseArgs as parseClaudeArgs,
@@ -208,12 +206,6 @@ function completedPairRounds({ run = commandOutput } = {}) {
 /** HEAD of the branch's most recently completed pair, if any. */
 function lastCompletedPairHead({ run = commandOutput } = {}) {
   return branchCompletedPairs({ run }).at(-1)?.head
-}
-
-function localInstructionsPresent(run = commandOutput) {
-  return existsSync(
-    join(run('git', ['rev-parse', '--show-toplevel']), localInstructionsFile),
-  )
 }
 
 function roundCapResult(rounds) {
@@ -435,8 +427,6 @@ async function main({
   readLastPairHead = () => lastCompletedPairHead({ run }),
   consult = runRoundCapConsultation,
   recordConsultation = recordConsultationDecision,
-  localInstructionsPresent: hasLocalInstructions = () =>
-    localInstructionsPresent(run),
   acquireLock = acquireActivityLock,
   acquireScopeLock = acquireTaskScopeLock,
   getBranch = currentTaskBranch,
@@ -460,13 +450,6 @@ async function main({
     const head = readCleanHead()
     const branch = getBranch(run)
     releaseScope = await acquireScopeLock(branch, { run })
-    // An owner's CLAUDE.local.md would stop the Claude side only after the
-    // Codex side had run, and would reach the round-cap consultation's Claude
-    // session too; refuse before any provider starts.
-    if (hasLocalInstructions())
-      throw new Error(
-        `${localInstructionsFile} already exists at the repository root; move it aside before the implementation gate.`,
-      )
     // Counted under the branch lock so two gates cannot both pass the cap.
     const rounds = countRounds()
     if (rounds >= implementationRoundCap) {

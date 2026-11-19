@@ -966,7 +966,7 @@ test('implementation review runs /code-review with the change context and report
           const text = await options.invoke({
             role: 'code-review',
             callId: 'code-review-call',
-            evidenceRoot: '/tmp/evidence',
+            workingDirectory: '/tmp/review',
             timeoutMs: 1000,
           })
           calls.push(options.context)
@@ -977,8 +977,9 @@ test('implementation review runs /code-review with the change context and report
             callId: 'code-review-call',
           }
         },
-        provider: (command, args) => {
+        provider: (command, args, options) => {
           calls.push([command, args[1]])
+          assert.equal(options.cwd, '/tmp/review')
           return Promise.resolve({ stdout, stderr: '', code: 0 })
         },
       },
