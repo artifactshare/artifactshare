@@ -1,3 +1,4 @@
+import { searchVisibilitySources } from './search-visibility.server'
 import { admitSearch, meterSearchIndexes } from './search-quota.server'
 import { createHash } from 'node:crypto'
 import {
@@ -10,11 +11,8 @@ import type { Db } from './db.server'
 import type { SessionUser } from '~/lib/user'
 import {
   discoverCandidates,
-  enumerateDiscoverableIds,
-  enumerateMemberDiscoverableIds,
   loadDiscoveryViewer,
   suggestionOwners,
-  resolveSearchSelections,
   discoverSuggestionCandidates,
   enumerateSuggestionIds,
   type DiscoveryFilters,
@@ -61,7 +59,11 @@ async function indexPage(
   input: IndexSearchInput,
 ): Promise<IndexPage> {
   const result = await index.search(input)
-  if ('error' in result) throw new SearchCapacityError()
+  if (
+    'error' in result ||
+    (input.visibility && result.visibilityProtocol !== 1)
+  )
+    throw new SearchCapacityError()
   return result
 }
 export type SearchIndexes = (workspaceId: string) => SearchIndex
@@ -173,56 +175,19 @@ const asViewer = (actor: SearchActor) => ({
   viewerUserId: actor.id,
   viewer: actor.viewer,
 })
-async function universe(
-  db: Db,
-  actor: SearchActor,
-  filters: DiscoveryFilters,
-  now: string,
-) {
-  const [sparse, member] = await Promise.all([
-    enumerateDiscoverableIds(db, { ...filters, ...asViewer(actor), now }),
-    enumerateMemberDiscoverableIds(db, {
-      ...filters,
-      ...asViewer(actor),
-      now,
-    }),
-  ])
-  const groups = new Map<string, Set<string>>()
-  for (const { workspaceId, ids } of sparse)
-    groups.set(workspaceId, new Set(ids))
-  for (const row of member) {
-    const ids = groups.get(row.workspaceId) ?? new Set<string>()
-    ids.add(row.id)
-    groups.set(row.workspaceId, ids)
-  }
-  return [...groups]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([workspaceId, ids]) => ({ workspaceId, ids: [...ids] }))
-}
-async function indexInput(
-  db: Db,
-  input: SearchInput,
-  workspaceId: string,
-  any: boolean,
-): Promise<IndexSearchInput> {
+function indexInput(input: SearchInput, any: boolean): IndexSearchInput {
   let containerIds: string[] | undefined
-  if (input.filters.location?.kind === 'project')
+  if (input.filters.containerId) containerIds = [input.filters.containerId]
+  else if (input.filters.location?.kind === 'project')
     containerIds = [input.filters.location.id]
-  else if (input.filters.location?.kind === 'home')
-    containerIds = (
-      await db
-        .selectFrom('artifact_containers')
-        .select('id')
-        .where('workspace_id', '=', workspaceId)
-        .where('kind', '=', 'inbox')
-        .execute()
-    ).map((row) => row.id)
   return {
     query: input.query,
     sort: input.sort,
-    ownerUserIds: input.filters.ownerUserIds
-      ? [...input.filters.ownerUserIds]
-      : undefined,
+    ownerUserIds: input.filters.ownerUserId
+      ? [input.filters.ownerUserId]
+      : input.filters.ownerUserIds
+        ? [...input.filters.ownerUserIds]
+        : undefined,
     containerIds,
     updated:
       input.filters.date?.field === 'updated'
@@ -261,28 +226,18 @@ async function collect(
   any = false,
   includeActiveDocumentCount = false,
 ) {
-  const ownWorkspace =
-    !any && actor.viewer?.member_status === 'active'
-      ? actor.viewer?.workspace_id
-      : undefined
-  const sources = ownWorkspace
-    ? await enumerateDiscoverableIds(db, {
-        ...input.filters,
-        ...asViewer(actor),
-        now,
-        excludeWorkspaceId: ownWorkspace,
-      })
-    : await universe(db, actor, input.filters, now)
+  const sources = await searchVisibilitySources(
+    db,
+    actor.id,
+    input.filters,
+    now,
+    actor.viewer,
+  )
   const hits: Hit[] = []
   const metas = new Map<string, Metadata>()
-  let incomplete = false,
-    passedCount = 0,
-    activeDocumentCount: number | null = null
-  let method: 'candidates' | 'allowed' = ownWorkspace ? 'candidates' : 'allowed'
-  let discoverableCount = sources.reduce(
-    (sum, source) => sum + source.ids.length,
-    0,
-  )
+  let incomplete = false
+  let activeDocumentCount: number | null = null
+  const method = 'candidates' as const
   // Metadata is read alongside the live discovery check and kept only for
   // the rows that check accepts.
   const check = async (rows: Hit[]) => {
@@ -305,90 +260,51 @@ async function collect(
     for (const row of rowsMetadata) if (ids.has(row.id)) metas.set(row.id, row)
     return visible
   }
-  const remember = async (rows: Hit[]) => keep(await check(rows))
-  if (ownWorkspace) {
-    const stub = indexes(ownWorkspace)
-    const request = await indexInput(db, input, ownWorkspace, any)
-    const keys = new Set<string>()
-    const rememberPage = async (page: IndexPage) => {
-      activeDocumentCount ??= page.activeDocumentCount ?? null
-      const visible = await remember(
-        page.items.map((row) => ({ ...row, workspaceId: ownWorkspace })),
-      )
-      passedCount += visible.length
-      for (const row of visible) {
-        const meta = metas.get(row.id)
-        if (meta) keys.add(groupKey(meta.title))
-      }
-      return visible.length
-    }
-    let cursor: number | undefined
-    let exhausted = false
-    for (
-      let fetch = 0;
-      fetch < 5 && !exhausted && keys.size < Math.max(1001, input.pageSize);
-      fetch++
-    ) {
-      const page = await indexPage(stub, {
-        ...request,
-        cursor,
-        includeActiveDocumentCount: includeActiveDocumentCount && fetch === 0,
-      })
-      const passed = await rememberPage(page)
-      if (
-        fetch === 0 &&
-        page.items.length &&
-        passed / page.items.length < 0.2
-      ) {
-        const ids = (
-          await enumerateMemberDiscoverableIds(db, {
-            ...input.filters,
-            ...asViewer(actor),
-            now,
-          })
-        ).map((row) => row.id)
-        sources.push({ workspaceId: ownWorkspace, ids })
-        discoverableCount += ids.length
-        // Allowed mode reranks the full live set; candidate ranks are no longer used.
-        hits.length = 0
-        metas.clear()
-        method = 'allowed'
-        exhausted = true
-        break
-      }
-      exhausted = page.nextCursor === null
-      cursor = page.nextCursor ?? undefined
-    }
-    incomplete = !exhausted
-  }
-
-  // Each workspace's index is read side by side; results are kept in the
-  // workspaces' order so ranking stays the same as reading them in turn.
   const checked = await Promise.all(
     sources.map(async (source) => {
-      const request = await indexInput(db, input, source.workspaceId, any)
       const pages: Array<Awaited<ReturnType<typeof check>>> = []
+      const request = indexInput(input, any)
       let cursor: number | undefined
-      do {
+      let exhausted = false
+      const keys = new Set<string>()
+      for (let fetch = 0; fetch < 5; fetch++) {
         const page = await indexPage(indexes(source.workspaceId), {
           ...request,
-          allowedIds: source.ids,
+          visibility: source.visibility,
           cursor,
+          includeActiveDocumentCount:
+            includeActiveDocumentCount &&
+            fetch === 0 &&
+            actor.viewer?.member_status === 'active' &&
+            source.workspaceId === actor.viewer.workspace_id,
         })
-        pages.push(
-          await check(
-            page.items.map((row) => ({
-              ...row,
-              workspaceId: source.workspaceId,
-            })),
-          ),
+        if (
+          actor.viewer?.member_status === 'active' &&
+          source.workspaceId === actor.viewer.workspace_id
         )
+          activeDocumentCount ??= page.activeDocumentCount ?? null
+        const checkedPage = await check(
+          page.items.map((row) => ({
+            ...row,
+            workspaceId: source.workspaceId,
+          })),
+        )
+        pages.push(checkedPage)
+        const ids = new Set(checkedPage.visible.map((row) => row.id))
+        for (const row of checkedPage.rowsMetadata)
+          if (ids.has(row.id)) keys.add(groupKey(row.title))
+        exhausted = page.nextCursor === null && !page.incomplete
+        if (exhausted || keys.size >= Math.max(1001, input.pageSize)) break
+        if (page.nextCursor === null) break
         cursor = page.nextCursor ?? undefined
-      } while (cursor !== undefined)
-      return pages
+      }
+      return { pages, exhausted }
     }),
   )
-  for (const pages of checked) for (const page of pages) keep(page)
+  for (const source of checked) {
+    incomplete ||= !source.exhausted
+    for (const page of source.pages) keep(page)
+  }
   const merged = mergeSearchHits(
     [...new Map(hits.map((row) => [row.id, row])).values()],
     input.sort === 'newest' || !input.query.trim(),
@@ -403,17 +319,9 @@ async function collect(
     incomplete,
     method,
     activeDocumentCount,
-    discoverableCount:
-      method === 'candidates'
-        ? passedCount + discoverableCount
-        : discoverableCount,
-    allowedSources: sources,
-    workspaces: [
-      ...new Set([
-        ...(ownWorkspace ? [ownWorkspace] : []),
-        ...sources.map((source) => source.workspaceId),
-      ]),
-    ],
+    discoverableCount: rows.length,
+    candidateSources: sources,
+    workspaces: sources.map((source) => source.workspaceId),
   }
 }
 
@@ -426,27 +334,33 @@ async function completePageGroups(
   any: boolean,
   workspaces: string[],
   keys: string[],
-  allowedSources: Array<{ workspaceId: string; ids: string[] }>,
+  candidateSources: Awaited<ReturnType<typeof searchVisibilitySources>>,
   knownHits: Array<Hit & Metadata>,
 ) {
   const members = new Map(keys.map((key) => [key, new Set<string>()]))
   const incomplete = new Set<string>()
+  const workspaceById = new Map(
+    knownHits.map((row) => [row.id, row.workspaceId]),
+  )
   for (const row of knownHits) members.get(groupKey(row.title))?.add(row.id)
+  const visibilityByWorkspace = new Map(
+    candidateSources.map((source) => [source.workspaceId, source.visibility]),
+  )
   for (const workspace of workspaces) {
-    const request = await indexInput(db, input, workspace, any)
-    // Allowed streams were drained completely and checked with discovery already.
-    if (allowedSources.some((source) => source.workspaceId === workspace))
-      continue
+    const request = indexInput(input, any)
+    const visibility = visibilityByWorkspace.get(workspace)
     for (const key of keys)
       if (members.get(key)!.size >= 1000) incomplete.add(key)
     let pending = keys.filter((key) => members.get(key)!.size < 1000)
     let cursor = 0
     for (let fetch = 0; fetch < 5 && pending.length; fetch++) {
       const page = await indexes(workspace).groupMembers(
-        { ...request, cursor },
+        { ...request, visibility, cursor },
         pending,
       )
-      if ('error' in page) throw new SearchCapacityError()
+      if ('error' in page || page.visibilityProtocol !== 1)
+        throw new SearchCapacityError()
+      if (page.incomplete) for (const key of pending) incomplete.add(key)
       for (let offset = 0; offset < page.items.length; offset += 2000) {
         const rows = page.items
           .slice(offset, offset + 2000)
@@ -461,6 +375,7 @@ async function completePageGroups(
           ),
         ])
         const ids = new Set(visible.map((row) => row.id))
+        for (const row of visible) workspaceById.set(row.id, workspace)
         for (const row of rowsMetadata)
           if (ids.has(row.id)) members.get(groupKey(row.title))?.add(row.id)
       }
@@ -476,11 +391,77 @@ async function completePageGroups(
     }
     for (const key of pending) incomplete.add(key)
   }
-  return new Map(
-    [...members].map(([key, ids]) => [
-      key,
-      cappedTotal(ids.size, incomplete.has(key)),
-    ]),
+  return { members, incomplete, workspaceById }
+}
+
+/** One final ID-leading check after all index awaits, including details. */
+async function finalVisibleIds(
+  db: Db,
+  actor: SearchActor,
+  filters: DiscoveryFilters,
+  now: string,
+  workspaceById: Map<string, string>,
+) {
+  const workspaces = new Map<string, string[]>()
+  for (const [id, workspace] of workspaceById) {
+    const ids = workspaces.get(workspace) ?? []
+    ids.push(id)
+    workspaces.set(workspace, ids)
+  }
+  const visible = await Promise.all(
+    [...workspaces].map(async ([workspaceId, ids]) => {
+      const acceptedIds: string[] = []
+      for (let offset = 0; offset < ids.length; offset += 2000) {
+        // Bound response memory and outstanding D1 work to one candidate batch per workspace.
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop
+        const rows = await discoverCandidates(db, {
+          ...filters,
+          ...asViewer(actor),
+          now,
+          workspaceId,
+          candidateIds: ids.slice(offset, offset + 2000),
+        })
+        acceptedIds.push(...rows.map((row) => row.id))
+      }
+      return acceptedIds
+    }),
+  )
+  return new Set(visible.flat())
+}
+function selectionWitnesses(
+  db: Db,
+  indexes: SearchIndexes,
+  actor: SearchActor,
+  input: SearchInput,
+  now: string,
+) {
+  const selections = [
+    ...(input.filters.ownerUserIds ?? []).map((id) => ({
+      kind: 'owner' as const,
+      id,
+    })),
+    ...(input.filters.location?.kind === 'project'
+      ? [{ kind: 'project' as const, id: input.filters.location.id }]
+      : []),
+  ]
+  return Promise.all(
+    selections.map(async (selection) => {
+      const filters: DiscoveryFilters = {
+        includeArchived: true,
+        credentialScope: input.filters.credentialScope,
+        ...(selection.kind === 'owner'
+          ? { ownerUserId: selection.id }
+          : { containerId: selection.id }),
+      }
+      const found = await collect(
+        db,
+        indexes,
+        actor,
+        { query: '', filters, sort: 'newest', pageSize: 1 },
+        now,
+      )
+      return { selection, filters, rows: found.knownHits }
+    }),
   )
 }
 
@@ -540,6 +521,11 @@ export async function search(
   }
   let result = await collect(db, indexes, searchActor, input, now, false, true)
   let any = false
+  const relaxedWitnesses: Array<{
+    filter: string
+    filters: DiscoveryFilters
+    found: Awaited<ReturnType<typeof collect>>
+  }> = []
   const relaxations: Array<{
     filter: string
     total: ReturnType<typeof cappedTotal>
@@ -576,15 +562,16 @@ export async function search(
     )
     dimensions.forEach((dimension, index) => {
       const found = relaxedResults[index]
-      if (found.groups.length)
-        relaxations.push({
-          filter: dimension,
-          total: cappedTotal(found.groups.length, found.incomplete),
-        })
+      const relaxed = { ...input.filters }
+      if (dimension === 'owners') delete relaxed.ownerUserIds
+      if (dimension === 'location') delete relaxed.location
+      if (dimension === 'archive') relaxed.includeArchived = true
+      if (dimension === 'date') delete relaxed.date
+      relaxedWitnesses.push({ filter: dimension, filters: relaxed, found })
     })
   }
-  const total = cappedTotal(result.groups.length, result.incomplete)
-  const tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
+  let total = cappedTotal(result.groups.length, result.incomplete)
+  let tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
   const selected = result.groups.slice(
     position,
     Math.min(1000, position + input.pageSize),
@@ -600,10 +587,14 @@ export async function search(
         any,
         result.workspaces,
         selected.map((row) => groupKey(row.title)),
-        result.allowedSources,
+        result.candidateSources,
         result.knownHits,
       )
-    : Promise.resolve(new Map<string, ReturnType<typeof cappedTotal>>())
+    : Promise.resolve({
+        members: new Map<string, Set<string>>(),
+        incomplete: new Set<string>(),
+        workspaceById: new Map<string, string>(),
+      })
   const items: Array<
     Metadata & {
       path: string
@@ -623,18 +614,10 @@ export async function search(
   const pagesPending = Promise.all(
     [...new Set(selected.map((row) => row.workspaceId))].map(
       async (workspace) => {
-        const visible = await accepted(
-          db,
-          searchActor,
-          input.filters,
-          now,
-          selected.filter((row) => row.workspaceId === workspace),
-        )
+        const visible = selected.filter((row) => row.workspaceId === workspace)
         const ids = visible.map((row) => row.id)
         const [details, current] = await Promise.all([
-          indexInput(db, input, workspace, any).then((request) =>
-            indexes(workspace).details(request, ids),
-          ),
+          indexes(workspace).details(indexInput(input, any), ids),
           metadata(db, ids, actor),
         ])
         return {
@@ -645,9 +628,92 @@ export async function search(
       },
     ),
   )
-  const [sizes, pages] = await Promise.all([sizesPending, pagesPending])
+  const [completion, pages, witnesses] = await Promise.all([
+    sizesPending,
+    pagesPending,
+    input.cursor
+      ? []
+      : selectionWitnesses(db, indexes, searchActor, input, now),
+  ])
+  const finalDomain = new Map(
+    result.knownHits.map((row) => [row.id, row.workspaceId]),
+  )
+  for (const [id, workspace] of completion.workspaceById)
+    finalDomain.set(id, workspace)
+  const [finalIds, selectedRows] = await Promise.all([
+    finalVisibleIds(db, searchActor, input.filters, now, finalDomain),
+    Promise.all(
+      witnesses.map(async (witness) => {
+        const ids = await finalVisibleIds(
+          db,
+          searchActor,
+          witness.filters,
+          now,
+          new Map(witness.rows.map((r) => [r.id, r.workspaceId])),
+        )
+        return { ...witness, row: witness.rows.find((r) => ids.has(r.id)) }
+      }),
+    ),
+    ...relaxedWitnesses.map(async (witness) => {
+      const ids = await finalVisibleIds(
+        db,
+        searchActor,
+        witness.filters,
+        now,
+        new Map(witness.found.knownHits.map((r) => [r.id, r.workspaceId])),
+      )
+      witness.found.knownHits = witness.found.knownHits.filter((r) =>
+        ids.has(r.id),
+      )
+      witness.found.groups = groupSearchHits(witness.found.knownHits)
+    }),
+  ])
+  result.knownHits = result.knownHits.filter((row) => finalIds.has(row.id))
+  result.groups = groupSearchHits(result.knownHits)
+  tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
+  const finalSelected = result.groups.slice(
+    position,
+    Math.min(1000, position + input.pageSize),
+  )
+  displayedRanks.clear()
+  finalSelected.forEach((row, index) =>
+    displayedRanks.set(row.id, position + index + 1),
+  )
+  result.discoverableCount = result.knownHits.length
+  total = cappedTotal(result.groups.length, result.incomplete)
+  for (const witness of relaxedWitnesses)
+    if (witness.found.groups.length)
+      relaxations.push({
+        filter: witness.filter,
+        total: cappedTotal(
+          witness.found.groups.length,
+          witness.found.incomplete,
+        ),
+      })
+  const selectedScope = input.cursor
+    ? undefined
+    : {
+        owners: selectedRows.flatMap(({ selection, row }) =>
+          selection.kind === 'owner' && row
+            ? [{ id: selection.id, name: row.ownerName }]
+            : [],
+        ),
+        projects: selectedRows.flatMap(({ selection, row }) =>
+          selection.kind === 'project' && row?.project ? [row.project] : [],
+        ),
+      }
+  const sizes = new Map(
+    [...completion.members].map(([key, ids]) => [
+      key,
+      cappedTotal(
+        [...ids].filter((id) => finalIds.has(id)).length,
+        completion.incomplete.has(key),
+      ),
+    ]),
+  )
   for (const { visible, details, current } of pages) {
     for (const row of visible) {
+      if (!finalIds.has(row.id) || !displayedRanks.has(row.id)) continue
       const detail = details.get(row.id),
         meta = current.get(row.id)
       if (detail && meta) {
@@ -666,7 +732,8 @@ export async function search(
     }
   }
   items.sort((a, b) => a.rank - b.rank)
-  // The log row and the selected names are independent reads and writes.
+  // Candidate work is live-accepted files, not an enumerated inventory.
+  // active_document_count remains diagnostic and never supplies UI counts.
   let logged: Promise<unknown> = Promise.resolve()
   if (!searchLogId) {
     searchLogId = crypto.randomUUID()
@@ -697,31 +764,18 @@ export async function search(
       rank: item.rank,
     })
   let nextCursor: string | null = null
-  if (position + selected.length < Math.min(1000, result.groups.length)) {
+  if (position + finalSelected.length < Math.min(1000, result.groups.length)) {
     nextCursor = sealSearchToken(searchLogId, tokenKey, {
       kind: 'cursor',
-      rank: position + selected.length,
+      rank: position + finalSelected.length,
     })
   }
 
   const facets = input.cursor
     ? undefined
     : searchFacets(result.knownHits, actor, total.relation === 'eq')
-  const [, selectedScope] = await Promise.all([
-    logged,
-    input.cursor
-      ? undefined
-      : resolveSearchSelections(
-          db,
-          actor,
-          [...(input.filters.ownerUserIds ?? [])],
-          input.filters.location?.kind === 'project'
-            ? [input.filters.location.id]
-            : [],
-          input.filters.credentialScope,
-          searchActor.viewer,
-        ),
-  ])
+  await logged
+
   return {
     items,
     total,
@@ -774,7 +828,7 @@ export async function searchSuggestions(
       (
         await Promise.all(
           sources.map(async ({ workspaceId, ids }) => {
-            const request = await indexInput(db, input, workspaceId, false)
+            const request = indexInput(input, false)
             const page = await indexPage(indexes(workspaceId), {
               ...request,
               allowedIds: ids,
@@ -809,9 +863,9 @@ export async function searchSuggestions(
     (
       await Promise.all(
         [...new Set(selected.map((hit) => hit.workspaceId))].map(
-          async (workspaceId) =>
+          (workspaceId) =>
             indexes(workspaceId).details(
-              await indexInput(db, input, workspaceId, false),
+              indexInput(input, false),
               selected
                 .filter((hit) => hit.workspaceId === workspaceId)
                 .map((hit) => hit.id),
@@ -1001,7 +1055,7 @@ export async function searchGroup(
   await admitSearch(db, actor, now)
   indexes = meterSearchIndexes(db, indexes, now)
   const [sources, collected] = await Promise.all([
-    universe(db, searchActor, input.filters, now),
+    searchVisibilitySources(db, actor, input.filters, now, searchActor.viewer),
     collect(db, indexes, searchActor, input, now, handle.log.tier === 'any'),
   ])
   const members = new Map<string, Metadata>(
@@ -1010,19 +1064,20 @@ export async function searchGroup(
       .map((row) => [row.id, row]),
   )
   let incomplete = false
+  const workspaceById = new Map(
+    collected.knownHits.map((row) => [row.id, row.workspaceId]),
+  )
+  workspaceById.set(representative.id, representative.workspace_id)
   for (const source of sources) {
-    const request = await indexInput(
-      db,
-      input,
-      source.workspaceId,
-      handle.log.tier === 'any',
-    )
+    const request = indexInput(input, handle.log.tier === 'any')
     for (let offset = 0; offset < 10000; offset += 2000) {
       const page = await indexes(source.workspaceId).groupMembers(
-        { ...request, allowedIds: source.ids, cursor: offset },
+        { ...request, visibility: source.visibility, cursor: offset },
         [key],
       )
-      if ('error' in page) throw new SearchCapacityError()
+      if ('error' in page || page.visibilityProtocol !== 1)
+        throw new SearchCapacityError()
+      incomplete ||= Boolean(page.incomplete)
       const acceptedRows = await accepted(
         db,
         searchActor,
@@ -1030,6 +1085,8 @@ export async function searchGroup(
         now,
         page.items.map((row) => ({ ...row, workspaceId: source.workspaceId })),
       )
+      for (const row of acceptedRows)
+        workspaceById.set(row.id, source.workspaceId)
       for (const row of await metadata(
         db,
         acceptedRows.map((candidate) => candidate.id),
@@ -1040,8 +1097,16 @@ export async function searchGroup(
       if (offset === 8000) incomplete = true
     }
   }
+  const finalIds = await finalVisibleIds(
+    db,
+    searchActor,
+    input.filters,
+    now,
+    workspaceById,
+  )
+  if (!finalIds.has(representative.id)) return invalidCursor
   const rows = [...members.values()]
-    .filter((row) => row.id !== representative.id)
+    .filter((row) => row.id !== representative.id && finalIds.has(row.id))
     .sort(
       (a, b) =>
         b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id),

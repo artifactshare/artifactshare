@@ -1478,8 +1478,26 @@ describe('Worker integration harness', () => {
     )
     for (const table of tables)
       expect(table.sql).not.toMatch(
-        /\b(visibility|grants|memberships|link_expires_at|credentials)\b/iu,
+        /\b(grants|memberships|link_expires_at|credentials)\b/iu,
       )
+    for (const [table, columns] of Object.entries({
+      file_policy: [
+        'id',
+        'owner',
+        'container',
+        'visibility',
+        'expires',
+        'suspended',
+      ],
+      container_policy: ['id', 'kind', 'base', 'creator', 'archived'],
+      workspace_policy: ['singleton', 'links'],
+    })) {
+      expect(
+        (await index.exec(`PRAGMA table_info(${table})`)).map(
+          (row) => row.name,
+        ),
+      ).toEqual(columns)
+    }
     await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
       name: 'ws-search:0@apac-ne',
     })
@@ -3888,6 +3906,35 @@ test('workspace search RPC ranks active pages, cross-chunk evidence and literal 
   ).toEqual(['title'])
 })
 
+test('cold workspace search and group pages are exhausted with visibility protocol 1', async () => {
+  const probe = searchProbe(`cold-visibility-${crypto.randomUUID()}`)
+  const input: IndexSearchInput = {
+    query: 'alpha',
+    visibility: {
+      protocol: 1,
+      actor: 'reader',
+      ownWorkspace: true,
+      identity: true,
+      grants: [],
+      defaults: [],
+      memberships: [],
+      recency: [],
+      now: '2026-11-20T00:00:00.000Z',
+    },
+  }
+  for (const page of [
+    await probe.search(input),
+    await probe.groupMembers(input, ['alpha']),
+  ]) {
+    expect(page).toEqual({
+      items: [],
+      nextCursor: null,
+      visibilityProtocol: 1,
+      incomplete: false,
+    })
+  }
+})
+
 test('search cookie routes reject anonymous callers and return the authenticated result shape', async () => {
   for (const path of [
     '/api/search',
@@ -4286,4 +4333,147 @@ test('workspace search bounds each page group and counts active documents only o
   expect(tail.incompleteGroupKeys).toEqual([])
   expect(groups.nextCursor).toBeNull()
   expect(groups).not.toHaveProperty('activeDocumentCount')
+})
+
+// Actual production search requests, after setup, against the same sparse actor/workspace.
+// The large fixture includes 99,999 stronger private title matches ahead of a body-only grant.
+test('caller visibility bounds real D1 reads at 100,000 files with a failing bypass control', async () => {
+  const workspace = `visibility-${crypto.randomUUID()}`
+  type Measurement = {
+    rowsRead: number
+    rowsWritten: number
+    statements: number
+    liveCandidates: number
+    method: string
+    result: {
+      items: Array<{ id: string; rank: number; groupSize: number }>
+      total: { value: number; relation: string }
+    }
+  }
+  const invoke = async <T = Measurement>(
+    action: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    const response = await worker.fetch('/__test/search-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, workspace, ...extra }),
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return response.json() as Promise<T>
+  }
+  expect(await invoke('seedVisibilitySearch', { size: 64 })).toMatchObject({
+    fileCount: 64,
+    indexedFiles: 64,
+    policyRows: 64,
+  })
+  const small = await invoke('measureVisibilitySearch')
+  const smallBypass = await invoke('measureVisibilitySearch', { bypass: true })
+  expect(
+    await invoke('seedVisibilitySearch', { size: 100_000, offset: 64 }),
+  ).toMatchObject({
+    fileCount: 100_000,
+    indexedFiles: 100_000,
+    policyRows: 100_000,
+  })
+  const large = await invoke('measureVisibilitySearch')
+  const largeBypass = await invoke('measureVisibilitySearch', { bypass: true })
+  const healthy = (measurement: Measurement) => {
+    expect(measurement.result.items).toMatchObject([
+      { id: `${workspace}-0`, rank: 1, groupSize: 1 },
+    ])
+    expect(measurement.result.total).toEqual({ value: 1, relation: 'eq' })
+    expect(measurement.liveCandidates).toBe(1)
+    expect(measurement.method).toBe('candidates')
+    expect(measurement.statements).toBeGreaterThan(0)
+    expect(measurement.rowsWritten).toBeGreaterThan(0)
+  }
+  healthy(small)
+  healthy(large)
+  healthy(smallBypass)
+  const bound = small.rowsRead + Math.max(100, small.rowsRead * 0.05)
+  expect(large.rowsRead).toBeLessThanOrEqual(bound)
+  const bypassBound =
+    smallBypass.rowsRead + Math.max(100, smallBypass.rowsRead * 0.05)
+  expect(
+    largeBypass.rowsRead > bypassBound ||
+      !largeBypass.result.items.some((row) => row.id === `${workspace}-0`),
+  ).toBe(true)
+  expect(largeBypass.result.total.relation).toBe('gte')
+  console.info(
+    'search_visibility_d1_witness',
+    JSON.stringify({ small, large, smallBypass, largeBypass }),
+  )
+}, 120_000)
+
+test('caller policy preserves the allowed-ID ranking and group oracle, with conservative old rows', async () => {
+  const workspace = `visibility-rank-${crypto.randomUUID()}`
+  const probe = searchProbe(workspace)
+  await probe.seedDocuments([
+    {
+      id: 'visible-a',
+      title: 'Alpha 1',
+      chunks: [{ body: 'alpha partner' }],
+      policy: { owner: 'reader', container: 'home', visibility: 'private' },
+    },
+    {
+      id: 'visible-b',
+      title: 'Alpha 2',
+      chunks: [{ body: 'alpha' }],
+      policy: { owner: 'reader', container: 'home', visibility: 'private' },
+    },
+    {
+      id: 'hidden',
+      title: 'Alpha',
+      chunks: [{ body: 'alpha partner' }],
+      policy: { owner: 'other', container: 'home', visibility: 'private' },
+    },
+  ])
+  const visibility: NonNullable<IndexSearchInput['visibility']> = {
+    protocol: 1,
+    actor: 'reader',
+    ownWorkspace: true,
+    identity: true,
+    grants: [],
+    defaults: [],
+    memberships: [],
+    recency: [],
+    now: '2026-09-15T00:00:00.000Z',
+  }
+  for (const any of [false, true])
+    for (const sort of ['relevance', 'newest'] as const) {
+      const request = { query: 'alpha partner', any, sort }
+      const actual = await probe.search({ ...request, visibility })
+      const oracle = await probe.search({
+        ...request,
+        allowedIds: ['visible-a', 'visible-b'],
+      })
+      expect(actual.items).toEqual(oracle.items)
+      expect(actual.nextCursor).toBe(oracle.nextCursor)
+      const groups = await probe.groupMembers({ ...request, visibility }, [
+        'alpha ',
+      ])
+      const groupOracle = await probe.groupMembers(
+        { ...request, allowedIds: ['visible-a', 'visible-b'] },
+        ['alpha '],
+      )
+      expect(groups.items).toEqual(groupOracle.items)
+      expect(groups.incompleteGroupKeys).toEqual(
+        groupOracle.incompleteGroupKeys,
+      )
+    }
+  const storage = await worker.getDurableObjectStorage(
+    'WORKSPACE_SEARCH_INDEX',
+    { name: `${workspace}:0@apac-ne` },
+  )
+  await storage.exec("DELETE FROM file_policy WHERE id='hidden'")
+  expect(
+    (await probe.search({ query: 'alpha', visibility })).items.map((r) => r.id),
+  ).toContain('hidden')
+  expect(
+    await probe.searchResult({
+      query: 'alpha',
+      visibility: { ...visibility, protocol: 2 as 1 },
+    }),
+  ).toEqual({ error: { code: 'search_capacity_exceeded' } })
 })

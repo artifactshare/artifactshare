@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: {}, waitUntil: undefined }))
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { dispatchWorkspaceSearch } from './schedule.server'
+import { INDEX_FORMAT_VERSION } from './normalize'
 import { searchIndexName } from './names'
 import { searchTextKey, shareableSearchPrefix } from './keys'
 
@@ -106,17 +107,24 @@ test('a failed seed write preserves its cursor, dispatches unrelated ready work 
       }),
     ],
   })
-  expect(calls.map((call) => call.args)).toEqual([['deleted-ready', false]])
+  expect(calls.map((call) => call.args)).toEqual([
+    ['deleted-ready', false],
+    ['ws-a', false],
+    ['ws-b', false],
+    ['ws-c', false],
+  ])
   expect(
     fixture.sqlite
-      .prepare('SELECT phase,cursor FROM search_index_rebuilds')
+      .prepare(
+        'SELECT phase,cursor FROM search_index_rebuilds ORDER BY target DESC LIMIT 1',
+      )
       .all(),
   ).toEqual([{ phase: 'live', cursor: '' }])
 })
 
 test('a retained newer target prevents dispatch even when its seeding is complete', async () => {
   fixture.sqlite.exec(`
-    UPDATE search_index_rebuilds SET target=target+1,phase='done';
+    INSERT INTO search_index_rebuilds(target,phase) VALUES(${INDEX_FORMAT_VERSION + 1},'done');
     INSERT INTO search_index_ready(workspace_id) VALUES('deleted-ready');
   `)
   const { calls, binding } = namespace()

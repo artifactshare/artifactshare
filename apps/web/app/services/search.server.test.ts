@@ -54,6 +54,7 @@ function index(): SearchIndex {
           rank: ids.indexOf(id) + 1,
           activityAt: now,
         })),
+      visibilityProtocol: 1,
       nextCursor: null,
       activeDocumentCount: 4,
     })),
@@ -84,6 +85,7 @@ function index(): SearchIndex {
         items: [...groups.values()].flatMap((group) =>
           group.slice(request.cursor ?? 0, (request.cursor ?? 0) + 2000),
         ),
+        visibilityProtocol: 1,
         nextCursor: null,
         incompleteGroupKeys: [...groups]
           .filter(([, group]) => group.length > (request.cursor ?? 0) + 2000)
@@ -184,6 +186,7 @@ test.each(['old title', ''])(
             activityAt: now,
           }))
         : [],
+      visibilityProtocol: 1,
       nextCursor: null,
     }))
     const result = await search(fixture.db, () => stub, 'viewer', input)
@@ -212,6 +215,7 @@ test.each(['old title', ''])(
         tier: 'all',
         activityAt: now,
       })),
+      visibilityProtocol: 1,
       nextCursor: null,
     })
     expect(await search(fixture.db, () => stub, 'viewer', input)).toMatchObject(
@@ -260,7 +264,7 @@ test('retention keeps the exact cutoff and cascades opens', async () => {
 })
 
 test.each([399, 400])(
-  'first-batch acceptance of %i/2000 selects the correct retrieval mode',
+  'first-batch acceptance of %i/2000 stays bounded without enumeration',
   async (count) => {
     fixture.sqlite
       .prepare(`WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<1999)
@@ -274,13 +278,18 @@ test.each([399, 400])(
       activityAt: now,
     }))
     const stub: SearchIndex = {
-      groupMembers: async () => ({ items: candidate, nextCursor: null }),
+      groupMembers: async () => ({
+        items: candidate,
+        visibilityProtocol: 1,
+        nextCursor: null,
+      }),
       search: vi.fn<SearchIndex['search']>(async (request) => ({
         items: request.allowedIds
           ? candidate.filter((row) => request.allowedIds!.includes(row.id))
           : request.cursor
             ? []
             : candidate,
+        visibilityProtocol: 1,
         nextCursor: request.allowedIds || request.cursor ? null : 2000,
       })),
       details: vi.fn<SearchIndex['details']>(async (_request, selected) =>
@@ -295,10 +304,11 @@ test.each([399, 400])(
     const requests = vi
       .mocked(stub.search)
       .mock.calls.map(([request]) => request)
-    expect(requests.filter((request) => !request.allowedIds)).toHaveLength(
-      count === 399 ? 1 : 2,
-    )
-    expect(requests.some((request) => request.allowedIds)).toBe(count === 399)
+    expect(requests.filter((request) => !request.allowedIds)).toHaveLength(2)
+    expect(requests.some((request) => request.allowedIds)).toBe(false)
+    expect(
+      requests.every((request) => request.visibility?.protocol === 1),
+    ).toBe(true)
   },
 )
 
@@ -322,6 +332,7 @@ test('five-fetch windows replay deterministically alongside an external workspac
     const offset = request.cursor ?? 0
     return {
       items: candidates.slice(offset, offset + 2000),
+      visibilityProtocol: 1,
       nextCursor: offset + 2000 < candidates.length ? offset + 2000 : null,
       ...(request.includeActiveDocumentCount
         ? { activeDocumentCount: 10001 }
@@ -331,6 +342,7 @@ test('five-fetch windows replay deterministically alongside an external workspac
   const external = index()
   vi.mocked(external.search).mockResolvedValue({
     items: [{ id: 'external', tier: 'all', rank: 1, activityAt: now }],
+    visibilityProtocol: 1,
     nextCursor: null,
   })
   const indexes = (workspace: string) => (workspace === 'ws' ? own : external)
@@ -379,6 +391,7 @@ test('five-fetch windows replay deterministically alongside an external workspac
   // A continuation that advances beyond the original window loses the pending group.
   vi.mocked(own.search).mockResolvedValue({
     items: candidates.slice(10000),
+    visibilityProtocol: 1,
     nextCursor: null,
   })
   const faulty = await search(fixture.db, indexes, 'viewer', {
@@ -404,7 +417,11 @@ test('single-keyword empty results offer only relaxations with authorized matche
     /Denied Title|Secret Snippet|Secret Owner/,
   )
 
-  vi.mocked(stub.search).mockResolvedValue({ items: [], nextCursor: null })
+  vi.mocked(stub.search).mockResolvedValue({
+    items: [],
+    visibilityProtocol: 1,
+    nextCursor: null,
+  })
   const missing = await search(fixture.db, () => stub, 'viewer', filtered)
   expect(missing).toMatchObject({ items: [], relaxations: [] })
 })
@@ -424,6 +441,7 @@ test('hidden all-term matches cannot suppress visible any-term results and date 
           rank: i + 1,
           activityAt: now,
         })),
+      visibilityProtocol: 1,
       nextCursor: null,
     })),
     details: vi.fn<SearchIndex['details']>(async (_request, selected) =>
@@ -619,6 +637,7 @@ test('returned groups include duplicates after the count witness and beyond cand
       const offset = request.cursor ?? 0
       return {
         items: rows.slice(offset, offset + 2000),
+        visibilityProtocol: 1,
         nextCursor: offset + 2000 < rows.length ? offset + 2000 : null,
       }
     }),
@@ -635,10 +654,7 @@ test('returned groups include duplicates after the count witness and beyond cand
   const sparse = vi.spyOn(discovery, 'enumerateDiscoverableIds')
   const result = await search(fixture.db, () => stub, 'viewer', input)
   expect(enumeration).not.toHaveBeenCalled()
-  expect(sparse).toHaveBeenCalledExactlyOnceWith(
-    fixture.db,
-    expect.objectContaining({ excludeWorkspaceId: 'ws' }),
-  )
+  expect(sparse).not.toHaveBeenCalled()
   sparse.mockRestore()
   expect(
     vi.mocked(stub.search).mock.calls.some(([request]) => request.allowedIds),
@@ -665,6 +681,7 @@ test('returned groups include duplicates after the count witness and beyond cand
   // A completion adapter that stops at the ranking witness loses both tail duplicates.
   vi.mocked(stub.groupMembers).mockResolvedValue({
     items: [candidates[0]],
+    visibilityProtocol: 1,
     nextCursor: null,
   })
   const faulty = await search(fixture.db, () => stub, 'viewer', input)
@@ -691,6 +708,7 @@ test('revocation while candidate retrieval is pending excludes the row before de
     await released
     return {
       items: [{ id: 'a', tier: 'all', rank: 1, activityAt: now }],
+      visibilityProtocol: 1,
       nextCursor: null,
     }
   })
@@ -898,12 +916,12 @@ test('log reads cap opens across the entire request while keeping each log bound
   expect(logs.find((row) => row.id === 'bounded-log-0')?.opens).toEqual([])
 })
 
-test.each(['candidates', 'allowed'] as const)(
+test.each(['member', 'without membership'] as const)(
   'denied same-title rows cannot change group-size relation in %s mode',
   async (mode) => {
     const stub = index()
     fixture.sqlite.exec("UPDATE shareables SET name='Other' WHERE id='c'")
-    if (mode === 'allowed')
+    if (mode === 'without membership')
       fixture.sqlite.exec(
         "DELETE FROM workspace_members WHERE user_id='viewer'",
       )
@@ -925,13 +943,11 @@ test.each(['candidates', 'allowed'] as const)(
       INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
       SELECT 'duplicate-'||x,'ws','owner','Alpha '||x,'html_page','private','home','${now}','${now}','${now}' FROM n`)
     await check()
-    if (mode === 'candidates')
-      expect(stub.groupMembers).toHaveBeenCalledWith(
-        expect.objectContaining({ cursor: 4000 }),
-        ['alpha '],
-      )
-    else expect(stub.groupMembers).not.toHaveBeenCalled()
-    if (mode === 'candidates') {
+    expect(stub.groupMembers).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 4000 }),
+      ['alpha '],
+    )
+    {
       const bypass = vi
         .spyOn(discovery, 'discoverCandidates')
         .mockImplementation(async (_db, request) =>
@@ -1024,6 +1040,7 @@ test('top-level cursors stop at 1000 while exact and lower-bound totals remain d
       rank: i + 1,
       activityAt: now,
     })),
+    visibilityProtocol: 1,
     nextCursor: null,
   })
   const first = await search(fixture.db, () => stub, 'viewer', {
@@ -1129,7 +1146,11 @@ test('video and PDF descriptions stay searchable without claiming indexed body c
 
 test('zero results and history resolve selected scope only from currently discoverable files', async () => {
   const stub = index()
-  stub.search = async () => ({ items: [], nextCursor: null })
+  const originalSearch = stub.search
+  stub.search = async (request) =>
+    request.query
+      ? { items: [], visibilityProtocol: 1, nextCursor: null }
+      : originalSearch(request)
   const result = await search(fixture.db, () => stub, 'viewer', {
     ...input,
     filters: { ownerUserIds: ['viewer', 'owner'] },
@@ -1597,7 +1618,12 @@ test('list adapter labels any-term fallback and distinguishes capacity from empt
   stub.search = vi.fn(async (request) =>
     request.any
       ? healthySearch(request)
-      : { items: [], nextCursor: null, activeDocumentCount: 4 },
+      : {
+          items: [],
+          visibilityProtocol: 1,
+          nextCursor: null,
+          activeDocumentCount: 4,
+        },
   )
   const args = {
     baseUrl: 'https://example.test',
@@ -1716,6 +1742,7 @@ test('other workspaces are searched side by side and keep their order', async ()
         release.set(workspace, () =>
           resolve({
             items: [{ id, tier: 'all', rank: 1, activityAt: now }],
+            visibilityProtocol: 1,
             nextCursor: null,
           }),
         ),
@@ -1753,7 +1780,11 @@ test('other workspaces are searched side by side and keep their order', async ()
     { workspace_id: 'xa', requests: 1 },
     { workspace_id: 'xb', requests: 1 },
   ])
-  indexes.xa.search = async () => ({ items: [], nextCursor: null })
+  indexes.xa.search = async () => ({
+    items: [],
+    visibilityProtocol: 1,
+    nextCursor: null,
+  })
   indexes.xb.search = async () => {
     throw new Error('synthetic fan-out failure')
   }
@@ -1863,7 +1894,11 @@ test('denied suggestions skip discovery and name queries; storage failures fail 
 
 test('workspace measurement counts zero hits and failures once despite relaxation', async () => {
   const stub = index()
-  vi.mocked(stub.search).mockResolvedValue({ items: [], nextCursor: null })
+  vi.mocked(stub.search).mockResolvedValue({
+    items: [],
+    visibilityProtocol: 1,
+    nextCursor: null,
+  })
   await search(fixture.db, () => stub, 'viewer', input)
   expect(
     fixture.sqlite
@@ -1983,7 +2018,7 @@ test.each([false, true])(
     vi.mocked(stub.search).mockImplementation(async () => {
       await gate
       if (indexFails) throw indexError
-      return { items: [], nextCursor: null }
+      return { items: [], visibilityProtocol: 1, nextCursor: null }
     })
     try {
       fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
@@ -2010,3 +2045,85 @@ test.each([false, true])(
     }
   },
 )
+
+test.each(['search', 'groupMembers', 'details'] as const)(
+  'stale verified email after %s cannot leak a granted sentinel or counts',
+  async (phase) => {
+    fixture.sqlite.exec(
+      `INSERT INTO shareable_grants VALUES('denied','VIEWER@example.com','${now}','owner')`,
+    )
+    const stub = index()
+    const original = stub[phase]
+    let changed = false
+    // Each hook returns a formerly valid candidate snapshot after revoking its email ground.
+    if (phase === 'details')
+      stub.details = async (...args) => {
+        const rows = await (original as SearchIndex['details'])(...args)
+        fixture.sqlite.exec(
+          "UPDATE users SET email='new@example.test' WHERE id='viewer'",
+        )
+        return rows
+      }
+    else if (phase === 'search')
+      stub.search = async (...args) => {
+        const rows = await (original as SearchIndex['search'])(...args)
+        fixture.sqlite.exec(
+          "UPDATE users SET email_verified=0 WHERE id='viewer'",
+        )
+        return rows
+      }
+    else
+      stub.groupMembers = async (...args) => {
+        const rows = await (original as SearchIndex['groupMembers'])(...args)
+        if (!changed)
+          fixture.sqlite.exec(
+            "UPDATE users SET email='new@example.test' WHERE id='viewer'",
+          )
+        changed = true
+        return rows
+      }
+    const result = await search(fixture.db, () => stub, 'viewer', {
+      ...input,
+      pageSize: 20,
+    })
+    expect(result).toMatchObject({
+      total: { value: 2, relation: 'eq' },
+      items: [
+        { id: 'a', rank: 1, groupSize: 2 },
+        { id: 'b', rank: 2, groupSize: 1 },
+      ],
+    })
+    expect(JSON.stringify(result)).not.toMatch(
+      /Denied Title|Secret Owner|Secret Snippet|"denied"/,
+    )
+    expect(
+      await fixture.db
+        .selectFrom('search_logs')
+        .select(['discoverable_count', 'search_method', 'result_count'])
+        .executeTakeFirst(),
+    ).toEqual({
+      discoverable_count: 3,
+      search_method: 'candidates',
+      result_count: 2,
+    })
+  },
+)
+
+test('unsupported candidate reader fails with capacity; unfinished cutover never reports exact zero', async () => {
+  const stub = index()
+  stub.search = async () => ({ items: [], nextCursor: null })
+  await expect(search(fixture.db, () => stub, 'viewer', input)).rejects.toThrow(
+    'search_capacity_exceeded',
+  )
+  stub.search = async () => ({
+    items: [],
+    nextCursor: null,
+    visibilityProtocol: 1,
+    incomplete: true,
+  })
+  const result = await search(fixture.db, () => stub, 'viewer', input)
+  expect(result).toMatchObject({
+    total: { value: 0, relation: 'gte' },
+    items: [],
+  })
+})

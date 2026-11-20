@@ -109,6 +109,7 @@ beforeEach(() => {
         (row) => !request.allowedIds || request.allowedIds.includes(row.id),
       )
       .slice(0, request.limit ?? 2000),
+    visibilityProtocol: 1,
     nextCursor: null,
   }))
   rpc.groupMembers.mockImplementation(async (request) => rpc.search(request))
@@ -258,6 +259,7 @@ test.each(['owned', 'shared'])(
         !request.allowedIds || request.allowedIds.includes('file-0')
           ? [{ id: 'file-0', rank: 1, tier: 'all', activityAt: now }]
           : [],
+      visibilityProtocol: 1,
       nextCursor: null,
     }))
     const url = new URL('https://example.com/api/search-suggestions?q=' + term)
@@ -353,6 +355,7 @@ test('suggestions rank within the eligible domain so denied and unseen prefixes 
         request.cursor ?? 0,
         (request.cursor ?? 0) + (request.limit ?? 2000),
       ),
+    visibilityProtocol: 1,
     nextCursor:
       (request.cursor ?? 0) + (request.limit ?? 2000) < ranked.length
         ? (request.cursor ?? 0) + (request.limit ?? 2000)

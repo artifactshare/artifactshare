@@ -10,6 +10,18 @@ import type {
 } from '~/lib/shareable-types'
 
 export interface DB {
+  search_owner_workspaces: {
+    actor_id: string
+    workspace_id: string
+    file_count: number
+  }
+  search_index_policy_changes: {
+    id: Generated<number>
+    workspace_id: string
+    kind: 'container' | 'workspace'
+    policy_key: string
+  }
+
   search_actor_daily_usage: { actor_id: string; day: string; requests: number }
   search_workspace_daily_usage: {
     workspace_id: string

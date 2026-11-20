@@ -9,6 +9,7 @@ import {
 import {
   seedSearchBenchmark,
   measureSearchBenchmark,
+  measureVisibilitySearch,
 } from './search-benchmark-worker'
 import {
   normalizeSearchText,
@@ -25,6 +26,11 @@ export type SearchProbeDocument = {
   generation?: string
   active?: boolean
   activityAt?: string
+  policy?: {
+    owner: string
+    container: string
+    visibility: 'private' | 'workspace' | 'project' | 'link'
+  }
 }
 type Point = 'registry' | 'idle' | 'put' | 'cleanup'
 
@@ -149,6 +155,13 @@ export class WorkspaceSearchIndex extends Index {
         .one().n,
     }
   }
+  fixtureCounts() {
+    return this.ctx.storage.sql
+      .exec<{ indexedFiles: number; policyRows: number }>(
+        'SELECT (SELECT count(*) FROM active) AS indexedFiles,(SELECT count(*) FROM file_policy) AS policyRows',
+      )
+      .one()
+  }
   seedDocuments(documents: SearchProbeDocument[]): void {
     this.ensureSchema()
     this.ctx.storage.transactionSync(() => {
@@ -161,8 +174,8 @@ export class WorkspaceSearchIndex extends Index {
             'version',
             row.path ?? 'index.html',
             generation,
-            'owner',
-            'home',
+            row.policy?.owner ?? 'owner',
+            row.policy?.container ?? 'home',
             '2026-09-15T00:00:00.000Z',
             normalizeSearchText(row.title),
             literalKey(row.title),
@@ -179,6 +192,23 @@ export class WorkspaceSearchIndex extends Index {
             'seed',
             INDEX_FORMAT_VERSION,
           )
+        if (row.policy) {
+          this.ctx.storage.sql.exec(
+            'INSERT INTO file_policy(id,owner,container,visibility) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,container=excluded.container,visibility=excluded.visibility',
+            row.id,
+            row.policy.owner,
+            row.policy.container,
+            row.policy.visibility,
+          )
+          this.ctx.storage.sql.exec(
+            "INSERT INTO container_policy(id,kind,creator) VALUES(?,'inbox',?) ON CONFLICT(id) DO NOTHING",
+            row.policy.container,
+            row.policy.owner,
+          )
+          this.ctx.storage.sql.exec(
+            'INSERT INTO workspace_policy(singleton,links) VALUES(1,1) ON CONFLICT(singleton) DO NOTHING',
+          )
+        }
         const columns = [
           [normalizeSearchText(row.title)],
           row.chunks.map((text) => normalizeSearchText(text.body)),
@@ -339,6 +369,8 @@ export default {
       size: number
       warmup: number
       samples: number
+      bypass?: boolean
+      offset?: number
       name: string
     }>()
     const stub = workspaceSearchIndex(
@@ -391,6 +423,64 @@ export default {
         break
       case 'details':
         result = await stub.details(command.input, command.ids)
+        break
+      case 'seedVisibilitySearch':
+        await seedSearchBenchmark(
+          env,
+          command.workspace,
+          command.size,
+          true,
+          command.offset ?? 0,
+        )
+        for (
+          let offset = command.offset ?? 0;
+          offset < command.size;
+          offset += 500
+        ) {
+          const documents = Array.from(
+            { length: Math.min(500, command.size - offset) },
+            (_, n) => {
+              const index = offset + n
+              return {
+                id: `${command.workspace}-${index}`,
+                title: index === 0 ? 'Visible target' : 'visibilityneedle',
+                chunks: [{ body: 'visibilityneedle' }],
+                policy: {
+                  owner: `${command.workspace}-owner`,
+                  container: `${command.workspace}-home`,
+                  visibility: 'private' as const,
+                },
+              }
+            },
+          )
+          // Only one bounded write batch may be in flight on this single index.
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await stub.seedDocuments(documents)
+        }
+        {
+          const db = createDb(env.DB)
+          try {
+            const count = await db
+              .selectFrom('shareables')
+              .select(db.fn.countAll<number>().as('files'))
+              .where('workspace_id', '=', command.workspace)
+              .executeTakeFirstOrThrow()
+            result = {
+              size: command.size,
+              fileCount: Number(count.files),
+              ...(await stub.fixtureCounts()),
+            }
+          } finally {
+            await db.destroy()
+          }
+        }
+        break
+      case 'measureVisibilitySearch':
+        result = await measureVisibilitySearch(
+          env,
+          command.workspace,
+          command.bypass,
+        )
         break
       case 'seedSearch':
         await seedSearchBenchmark(env, command.workspace, command.size)

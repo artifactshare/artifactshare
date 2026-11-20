@@ -10,54 +10,58 @@ export async function seedSearchBenchmark(
   env: Cloudflare.Env,
   workspace: string,
   size: number,
+  sparse = false,
+  start = 0,
 ) {
   const db = createDb(env.DB)
   const now = '2026-09-15T00:00:00.000Z'
   const actor = `${workspace}-actor`,
     owner = `${workspace}-owner`,
     home = `${workspace}-home`
-  await db
-    .insertInto('workspaces')
-    .values({ id: workspace, name: 'Search benchmark', created_at: now })
-    .execute()
-  for (const id of [actor, owner])
+  if (start === 0) {
     await db
-      .insertInto('users')
+      .insertInto('workspaces')
+      .values({ id: workspace, name: 'Search benchmark', created_at: now })
+      .execute()
+    for (const id of [actor, owner])
+      await db
+        .insertInto('users')
+        .values({
+          id,
+          email: `${id}@example.com`,
+          email_verified: 1,
+          name: id,
+          workspace_id: workspace,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+    await db
+      .insertInto('workspace_members')
       .values({
-        id,
-        email: `${id}@example.com`,
-        email_verified: 1,
-        name: id,
         workspace_id: workspace,
+        user_id: actor,
+        role: 'member',
+        status: 'active',
         created_at: now,
         updated_at: now,
       })
       .execute()
-  await db
-    .insertInto('workspace_members')
-    .values({
-      workspace_id: workspace,
-      user_id: actor,
-      role: 'member',
-      status: 'active',
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  await db
-    .insertInto('artifact_containers')
-    .values({
-      id: home,
-      workspace_id: workspace,
-      kind: 'inbox',
-      name: 'Home',
-      owner_user_id: actor,
-      created_by_id: actor,
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  for (let offset = 0; offset < size; offset += 500) {
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: home,
+        workspace_id: workspace,
+        kind: 'inbox',
+        name: 'Home',
+        owner_user_id: actor,
+        created_by_id: actor,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+  }
+  for (let offset = start; offset < size; offset += 500) {
     const rows = Array.from(
       { length: Math.min(500, size - offset) },
       (_, i) => {
@@ -70,8 +74,12 @@ export async function seedSearchBenchmark(
           )
         return {
           id: `${workspace}-${index}`,
-          title: `alpha ${key}`,
-          owner: index === size - 1 ? owner : actor,
+          title: sparse
+            ? index === 0
+              ? 'Visible target'
+              : 'visibilityneedle'
+            : `alpha ${key}`,
+          owner: sparse || index === size - 1 ? owner : actor,
         }
       },
     )
@@ -80,6 +88,16 @@ export async function seedSearchBenchmark(
       db,
     )
   }
+  if (sparse && start === 0)
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: `${workspace}-0`,
+        granted_email: `${actor}@example.com`,
+        granted_at: now,
+        granted_by: owner,
+      })
+      .execute()
   await db.destroy()
 }
 export async function measureSearchBenchmark(
@@ -169,5 +187,94 @@ export async function measureSearchBenchmark(
     suggestionDurations,
     paletteDurations,
     p95: durations[Math.ceil(durations.length * 0.95) - 1],
+  }
+}
+
+/** Count real metadata for every Kysely execution, including admission and log writes. */
+export async function measureVisibilitySearch(
+  env: Cloudflare.Env,
+  workspace: string,
+  bypass = false,
+) {
+  const statements: Array<{ rowsRead: number; rowsWritten: number }> = []
+  const database = new Proxy(env.DB, {
+    get(target, property) {
+      if (property === 'prepare')
+        return (query: string) => {
+          const wrap = (statement: D1PreparedStatement): D1PreparedStatement =>
+            new Proxy(statement, {
+              get(prepared, method) {
+                if (method === 'bind')
+                  return (...args: unknown[]) => wrap(prepared.bind(...args))
+                if (method === 'all')
+                  return async () => {
+                    const result = await prepared.all()
+                    if (
+                      !Number.isFinite(result.meta.rows_read) ||
+                      !Number.isFinite(result.meta.rows_written)
+                    )
+                      throw new Error('Missing actual D1 metadata')
+                    statements.push({
+                      rowsRead: result.meta.rows_read,
+                      rowsWritten: result.meta.rows_written,
+                    })
+                    return result
+                  }
+                const value = Reflect.get(prepared, method)
+                return typeof value === 'function'
+                  ? value.bind(prepared)
+                  : value
+              },
+            })
+          return wrap(target.prepare(query))
+        }
+      const value = Reflect.get(target, property)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const db = createDb(database)
+  try {
+    const result = await search(
+      db,
+      (id) => {
+        const index = workspaceSearchIndex(env.WORKSPACE_SEARCH_INDEX, id)
+        return {
+          search: (input) =>
+            index.search(bypass ? { ...input, visibility: undefined } : input),
+          groupMembers: (input, keys) =>
+            index.groupMembers(
+              bypass ? { ...input, visibility: undefined } : input,
+              keys,
+            ),
+          details: (input, ids) => index.details(input, ids),
+        }
+      },
+      `${workspace}-actor`,
+      {
+        query: 'visibilityneedle',
+        filters: {},
+        sort: 'relevance',
+        pageSize: 20,
+      },
+    )
+    const measured = statements.slice()
+    const log =
+      'searchLogId' in result
+        ? await db
+            .selectFrom('search_logs')
+            .select(['discoverable_count', 'search_method'])
+            .where('id', '=', result.searchLogId)
+            .executeTakeFirst()
+        : undefined
+    return {
+      result,
+      statements: measured.length,
+      rowsRead: measured.reduce((n, s) => n + s.rowsRead, 0),
+      rowsWritten: measured.reduce((n, s) => n + s.rowsWritten, 0),
+      liveCandidates: log?.discoverable_count,
+      method: log?.search_method,
+    }
+  } finally {
+    await db.destroy()
   }
 }

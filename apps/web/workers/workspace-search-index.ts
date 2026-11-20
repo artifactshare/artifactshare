@@ -1,4 +1,8 @@
 import {
+  visibilityPredicate,
+  LOCAL_VISIBILITY_SCHEMA,
+} from '../app/services/search-index/visibility'
+import {
   prepareQuery,
   bindAllowedIds,
   SearchCapacityError,
@@ -56,6 +60,11 @@ type Active = {
 }
 class SearchCleanupError extends Error {}
 
+// Format 13 changes only candidate policy, not extraction or document ranking.
+const compatibleContentFormat = (format: number | string) =>
+  Number(format) === INDEX_FORMAT_VERSION ||
+  (INDEX_FORMAT_VERSION === 13 && Number(format) === 12)
+
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
 // Rows compared with D1, or swept, in one pass step. A D1 lookup binds the
@@ -88,6 +97,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       CREATE TABLE IF NOT EXISTS state (singleton INTEGER PRIMARY KEY CHECK(singleton=1), workspace TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', recent_time TEXT NOT NULL DEFAULT '', recent_id TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 1);
       CREATE TABLE IF NOT EXISTS active (id TEXT PRIMARY KEY, generation TEXT NOT NULL, fingerprint TEXT NOT NULL, content TEXT NOT NULL, format INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS rebuild (singleton INTEGER PRIMARY KEY CHECK(singleton=1), target INTEGER NOT NULL, cursor TEXT NOT NULL DEFAULT '', sweep TEXT NOT NULL DEFAULT '', scanned INTEGER NOT NULL DEFAULT 0, swept INTEGER NOT NULL DEFAULT 0);
+      ${LOCAL_VISIBILITY_SCHEMA}
+      CREATE TABLE IF NOT EXISTS policy_pending (kind TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY(kind,key));
       CREATE TABLE IF NOT EXISTS pending (id TEXT PRIMARY KEY, attempted INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS staging (id TEXT PRIMARY KEY, generation TEXT NOT NULL, fingerprint TEXT NOT NULL, format INTEGER NOT NULL, expected_documents INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS cleanup (id TEXT PRIMARY KEY, cursor TEXT, generation TEXT NOT NULL);
@@ -173,9 +184,22 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   }
   /** Build one SQL ranking over the requested document set, never JS-wide row arrays. */
   #matchingPages(input: IndexSearchInput, details = false, titleOnly = false) {
+    if (
+      input.visibility &&
+      this.ctx.storage.sql
+        .exec<{ target: number }>('SELECT target FROM rebuild')
+        .toArray()
+        .some((row) => row.target > INDEX_FORMAT_VERSION)
+    )
+      throw new SearchCapacityError()
     const query = prepareQuery(input.query)
     const filters: string[] = []
     const bindings: Array<string | number> = []
+    if (input.visibility) {
+      const policy = visibilityPredicate(input.visibility)
+      filters.push('(' + policy.sql + ')')
+      bindings.push(...policy.bindings)
+    }
     if (titleOnly) {
       filters.push('instr(d.title_key,?)>0')
       bindings.push(query.literal)
@@ -279,8 +303,27 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
+  private policyRebuilding(): boolean {
+    return (
+      this.ctx.storage.sql
+        .exec(
+          'SELECT 1 FROM rebuild WHERE target=? AND EXISTS(SELECT 1 FROM state WHERE scanned_format<?)',
+          INDEX_FORMAT_VERSION,
+          INDEX_FORMAT_VERSION,
+        )
+        .toArray().length > 0
+    )
+  }
   search(input: IndexSearchInput): IndexSearchResult {
-    if (!this.#schemaReady) return { items: [], nextCursor: null }
+    if (input.visibility && input.visibility.protocol !== 1)
+      return { error: { code: 'search_capacity_exceeded' } }
+    if (!this.#schemaReady)
+      return {
+        items: [],
+        nextCursor: null,
+        visibilityProtocol: 1,
+        incomplete: false,
+      }
     try {
       return this.searchPage(input)
     } catch (error) {
@@ -319,6 +362,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         : []
     const rows = titles.length > limit ? titles : read(false)
     return {
+      visibilityProtocol: 1 as const,
+      incomplete: Boolean(input.visibility && this.policyRebuilding()),
       items: rows.slice(0, limit),
       nextCursor: rows.length > limit ? cursor + limit : null,
       ...(input.includeActiveDocumentCount
@@ -332,7 +377,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   }
 
   groupMembers(input: IndexSearchInput, keys: string[]): IndexSearchResult {
-    if (!this.#schemaReady) return { items: [], nextCursor: null }
+    if (input.visibility && input.visibility.protocol !== 1)
+      return { error: { code: 'search_capacity_exceeded' } }
+    if (!this.#schemaReady)
+      return {
+        items: [],
+        nextCursor: null,
+        visibilityProtocol: 1,
+        incomplete: false,
+      }
     try {
       const query = this.#matchingPages({ ...input, groupKeys: keys })
       const cursor = Math.max(0, input.cursor ?? 0)
@@ -354,6 +407,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         )
         .toArray()
       return {
+        visibilityProtocol: 1 as const,
+        incomplete: Boolean(input.visibility && this.policyRebuilding()),
         items: rows
           .filter((row) => row.groupRank <= end)
           .map(({ id, tier, rank, activityAt }) => ({
@@ -624,6 +679,21 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             [...changes, ...oldest].map((row) => [row.id, row]),
           ).values(),
         ]
+        const policyChanges = await db
+          .selectFrom('search_index_policy_changes')
+          .selectAll()
+          .where('workspace_id', '=', state.workspace)
+          .orderBy('id')
+          .limit(PASS_BATCH)
+          .execute()
+        this.ctx.storage.transactionSync(() => {
+          for (const row of policyChanges)
+            this.ctx.storage.sql.exec(
+              'INSERT INTO policy_pending(kind,key) VALUES(?,?) ON CONFLICT(kind,key) DO NOTHING',
+              row.kind,
+              row.policy_key,
+            )
+        })
         // The continuation alarm is already durable. Persist the handoff before exact-ID acknowledgement.
         this.ctx.storage.transactionSync(() => {
           for (const row of received)
@@ -659,6 +729,43 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               ),
             )
             .execute()
+        if (policyChanges.length)
+          await db
+            .deleteFrom('search_index_policy_changes')
+            .where('workspace_id', '=', state.workspace)
+            .where(
+              'id',
+              'in',
+              policyChanges.map((r) => r.id),
+            )
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('search_index_rebuilds')
+                    .select('target')
+                    .where('target', '>', INDEX_FORMAT_VERSION),
+                ),
+              ),
+            )
+            .execute()
+        // Replayed work reloads policy by key; no container mutation visits child files.
+        const policies = this.ctx.storage.sql
+          .exec<{ kind: 'container' | 'workspace'; key: string }>(
+            'SELECT kind,key FROM policy_pending ORDER BY kind,key LIMIT ?',
+            PASS_BATCH,
+          )
+          .toArray()
+        for (const row of policies) {
+          // A failure must leave subsequent durable keys untouched for the next alarm.
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await this.refreshPolicy(db, state.workspace, row.kind, row.key)
+          this.ctx.storage.sql.exec(
+            'DELETE FROM policy_pending WHERE kind=? AND key=?',
+            row.kind,
+            row.key,
+          )
+        }
         if (rebuild?.target === INDEX_FORMAT_VERSION && !rebuild.scanned) {
           const scan = await inventory(db, state.workspace)
             .where('s.id', '>', rebuild.cursor)
@@ -764,13 +871,22 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             const source = sources[position]
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
             if (source) {
+              // Policy and the following generation replacement share the serial item budget.
+              // react-doctor-disable-next-line react-doctor/async-await-in-loop
+              await this.refreshFilePolicy(db, state.workspace, id)
               const active = this.ctx.storage.sql
                 .exec<Active>('SELECT * FROM active WHERE id=?', id)
                 .toArray()[0]
               if (
                 active?.fingerprint === fingerprint(source) &&
-                active.format === INDEX_FORMAT_VERSION
+                compatibleContentFormat(active.format)
               ) {
+                // Format 13 adds policy only: retain the already indexed text generation.
+                this.ctx.storage.sql.exec(
+                  'UPDATE active SET format=? WHERE id=?',
+                  INDEX_FORMAT_VERSION,
+                  id,
+                )
                 this.ctx.storage.sql.exec('DELETE FROM staging WHERE id=?', id)
                 this.reclaim(id)
                 // react-doctor-disable-next-line react-doctor/async-await-in-loop
@@ -778,7 +894,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               } else if (!(await this.replace(source))) continue
             }
             // react-doctor-disable-next-line react-doctor/async-await-in-loop
-            else await this.remove(state.workspace, id)
+            else {
+              this.ctx.storage.sql.exec(
+                'DELETE FROM file_policy WHERE id=?',
+                id,
+              )
+              await this.remove(state.workspace, id)
+            }
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch (error) {
             // Report cleanup failures after scheduling their durable retry. The
@@ -796,6 +918,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             console.error('workspace_search_item_failed')
           }
         }
+        const policyPending =
+          this.ctx.storage.sql
+            .exec('SELECT 1 FROM policy_pending LIMIT 1')
+            .toArray().length > 0
         const remaining = this.ctx.storage.sql
           .exec<{
             pending: number
@@ -813,6 +939,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           obligation &&
           obligation.target === INDEX_FORMAT_VERSION &&
           !obligation.completed &&
+          !policyPending &&
           !remaining.pending &&
           !remaining.cleanup &&
           !remaining.rebuild
@@ -824,9 +951,21 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             .where('target', '=', obligation.target)
             .execute()
         }
+        if (
+          !policyPending &&
+          !remaining.pending &&
+          !remaining.cleanup &&
+          !remaining.rebuild
+        )
+          this.ctx.storage.sql.exec(
+            'UPDATE state SET scanned_format=? WHERE EXISTS(SELECT 1 FROM rebuild WHERE target=? AND scanned=1 AND swept=1)',
+            INDEX_FORMAT_VERSION,
+            INDEX_FORMAT_VERSION,
+          )
         // Delete only after both local and D1 work drain. The D1 predicates
         // also protect a concurrent source insert or migration target.
         if (
+          !policyPending &&
           !remaining.pending &&
           !remaining.cleanup &&
           !remaining.rebuild &&
@@ -835,6 +974,16 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           await db
             .deleteFrom('search_index_ready')
             .where('workspace_id', '=', state.workspace)
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('search_index_policy_changes')
+                    .select('id')
+                    .where('workspace_id', '=', state.workspace),
+                ),
+              ),
+            )
             .where((eb) =>
               eb.not(
                 eb.exists(
@@ -873,7 +1022,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           .where('workspace_id', '=', state.workspace)
           .limit(1)
           .executeTakeFirst()
+        const policyFeed = await db
+          .selectFrom('search_index_policy_changes')
+          .select('id')
+          .where('workspace_id', '=', state.workspace)
+          .limit(1)
+          .executeTakeFirst()
         if (
+          policyFeed ||
+          policyPending ||
           feed ||
           this.state()!.dirty ||
           remaining.due ||
@@ -897,6 +1054,85 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       if (this.#schemaReady && (this.state()?.dirty ?? 0) > unconsumed)
         await this.ctx.storage.setAlarm(Date.now() + 1000)
     }
+  }
+  private async refreshPolicy(
+    db: ReturnType<typeof createDb>,
+    workspace: string,
+    kind: 'container' | 'workspace',
+    key: string,
+  ) {
+    if (kind === 'workspace') {
+      const row = await db
+        .selectFrom('workspaces')
+        .select('link_sharing_enabled')
+        .where('id', '=', workspace)
+        .executeTakeFirst()
+      this.ctx.storage.sql.exec(
+        'INSERT INTO workspace_policy(singleton,links) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET links=excluded.links',
+        row?.link_sharing_enabled ?? 0,
+      )
+    } else {
+      const row = await db
+        .selectFrom('artifact_containers')
+        .select([
+          'id',
+          'kind',
+          'base_visibility',
+          'created_by_id',
+          'archived_at',
+        ])
+        .where('id', '=', key)
+        .where('workspace_id', '=', workspace)
+        .executeTakeFirst()
+      if (row)
+        this.ctx.storage.sql.exec(
+          'INSERT INTO container_policy(id,kind,base,creator,archived) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,base=excluded.base,creator=excluded.creator,archived=excluded.archived',
+          row.id,
+          row.kind,
+          row.base_visibility,
+          row.created_by_id,
+          row.archived_at,
+        )
+      else
+        this.ctx.storage.sql.exec(
+          'DELETE FROM container_policy WHERE id=?',
+          key,
+        )
+    }
+  }
+  private async refreshFilePolicy(
+    db: ReturnType<typeof createDb>,
+    workspace: string,
+    id: string,
+  ) {
+    const row = await db
+      .selectFrom('shareables')
+      .select([
+        'owner_user_id',
+        'container_id',
+        'visibility',
+        'link_expires_at',
+        'link_suspended_at',
+      ])
+      .where('id', '=', id)
+      .where('workspace_id', '=', workspace)
+      .executeTakeFirst()
+    if (!row) {
+      this.ctx.storage.sql.exec('DELETE FROM file_policy WHERE id=?', id)
+      return
+    }
+    this.ctx.storage.sql.exec(
+      'INSERT INTO file_policy(id,owner,container,visibility,expires,suspended) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,container=excluded.container,visibility=excluded.visibility,expires=excluded.expires,suspended=excluded.suspended',
+      id,
+      row.owner_user_id,
+      row.container_id,
+      row.visibility,
+      row.link_expires_at,
+      row.link_suspended_at,
+    )
+    if (row.container_id)
+      await this.refreshPolicy(db, workspace, 'container', row.container_id)
+    await this.refreshPolicy(db, workspace, 'workspace', workspace)
   }
   private async replace(source: Source): Promise<boolean> {
     const db = createDb(this.env.DB)
@@ -923,7 +1159,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       .toArray()[0]
     const reuse =
       active?.content === contentFingerprint(source) &&
-      active.format === INDEX_FORMAT_VERSION
+      compatibleContentFormat(active.format)
     try {
       const files = await db
         .selectFrom('version_files')
@@ -976,7 +1212,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         let text: ExtractedText
         const fits = (object: R2ObjectBody | null) =>
           object?.customMetadata?.source === contentFingerprint(source) &&
-          object.customMetadata.format === String(INDEX_FORMAT_VERSION)
+          compatibleContentFormat(object.customMetadata.format ?? '')
         const cached = reuse || resume ? await this.env.BUCKET.get(key) : null
         if (fits(cached)) {
           text = await cached!.json<ExtractedText>()
@@ -1202,6 +1438,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     await this.deleteObjects(source.workspace_id, source.id, keep)
   }
   private async remove(workspace: string, id: string): Promise<void> {
+    this.ctx.storage.sql.exec('DELETE FROM file_policy WHERE id=?', id)
     this.ctx.storage.sql.exec(
       'INSERT OR IGNORE INTO intentions(key,shareable) VALUES(?,?)',
       shareableSearchPrefix(workspace, id),

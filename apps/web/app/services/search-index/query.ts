@@ -1,8 +1,10 @@
+import type { SearchVisibility } from './visibility'
 import { normalizeSearchText } from './normalize'
 
 export type SearchTier = 'title' | 'phrase' | 'all' | 'any'
 export type IndexSearchInput = {
   query: string
+  visibility?: SearchVisibility
   includeActiveDocumentCount?: boolean
   ownerUserIds?: string[]
   containerIds?: string[]
@@ -24,6 +26,8 @@ export type IndexHit = {
   activityAt: string
 }
 export type IndexPage = {
+  visibilityProtocol?: number
+  incomplete?: boolean
   items: IndexHit[]
   nextCursor: number | null
   activeDocumentCount?: number
