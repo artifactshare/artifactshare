@@ -2681,11 +2681,13 @@ describe('headless publish wiring', () => {
         },
       ],
       nextCursor: null,
+      visibilityProtocol: 1,
       activeDocumentCount: 1,
     })
     searchIndexMock.groupMembers.mockResolvedValue({
       items: [],
       nextCursor: null,
+      visibilityProtocol: 1,
     })
     searchIndexMock.details.mockResolvedValue([
       { id: artifact.id, path: 'index.html', excerpt: 'body needle' },
@@ -2720,6 +2722,7 @@ describe('headless publish wiring', () => {
     searchIndexMock.search.mockResolvedValue({
       items: [],
       nextCursor: null,
+      visibilityProtocol: 1,
       activeDocumentCount: 1,
     })
     const empty = await callTool(db, 'list_artifacts', { q: 'absent' })

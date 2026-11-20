@@ -1584,6 +1584,7 @@ export async function updateProjectContainer(
       .where('workspace_id', '=', workspaceId)
       .where('kind', '=', 'project')
       .where('archived_at', 'is', null)
+      .returning('id')
       .executeTakeFirst()
   } catch (error) {
     if (
@@ -1594,7 +1595,7 @@ export async function updateProjectContainer(
     }
     throw error
   }
-  if (Number(result.numUpdatedRows ?? 0n) !== 1) return { kind: 'not-found' }
+  if (result?.id !== projectId) return { kind: 'not-found' }
   const project = await findWorkspaceProject(db, workspaceId, projectId)
   return project ? { kind: 'ok', project } : { kind: 'not-found' }
 }

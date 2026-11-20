@@ -1,3 +1,8 @@
+import { searchVisibilitySources } from './search-visibility.server'
+import {
+  LOCAL_VISIBILITY_SCHEMA,
+  visibilityPredicate,
+} from './search-index/visibility'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 import { search, type SearchIndex } from './search.server'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -165,6 +170,26 @@ test.each([
   async (_name, setup, allowed) => {
     fixture.sqlite.exec(setup)
     const rows = await discoverCandidates(fixture.db, input)
+    fixture.sqlite.exec(
+      LOCAL_VISIBILITY_SCHEMA +
+        `
+      INSERT INTO file_policy SELECT id,owner_user_id,container_id,visibility,link_expires_at,link_suspended_at FROM shareables;
+      INSERT INTO container_policy SELECT id,kind,base_visibility,created_by_id,archived_at FROM artifact_containers;
+      INSERT INTO workspace_policy SELECT 1,link_sharing_enabled FROM workspaces WHERE id='source';
+    `,
+    )
+    const sources = await searchVisibilitySources(fixture.db, 'viewer', {}, now)
+    const source = sources.find((row) => row.workspaceId === 'source')
+    const predicate = source && visibilityPredicate(source.visibility)
+    const local = predicate
+      ? fixture.sqlite
+          .prepare(
+            `SELECT d.shareable FROM (SELECT id AS shareable FROM shareables WHERE workspace_id='source') d WHERE (${predicate.sql})`,
+          )
+          .all(...predicate.bindings)
+      : []
+    expect(local.map((row) => row.shareable)).toEqual(allowed ? ['file'] : [])
+
     expect(rows).toEqual(allowed ? [{ id: 'file', workspaceId: 'source' }] : [])
     if (allowed) {
       const access = await facts(fixture.db, {
@@ -206,6 +231,7 @@ test.each([
             activityAt: now,
           },
         ],
+        visibilityProtocol: 1,
         nextCursor: null,
       }),
       groupMembers: async (request) => indexes(workspace).search(request),
@@ -772,3 +798,69 @@ test('owner suggestions require currently discoverable files and omit counts', a
   fixture.sqlite.exec("DELETE FROM shareable_grants WHERE shareable_id='file'")
   expect(await read()).toEqual([])
 })
+
+test('candidate authority refreshes a changed email snapshot with the existing normalization', async () => {
+  fixture.sqlite.exec(
+    grant +
+      `
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    VALUES('healthy','source','owner','Healthy','html_page','private','project','${now}','${now}','${now}');
+    INSERT INTO shareable_grants VALUES('healthy','ö@example.test','${now}','owner');
+  `,
+  )
+  const viewer = await loadDiscoveryViewer(fixture.db, 'viewer')
+  fixture.sqlite.exec(
+    "UPDATE users SET email='Ö@example.test' WHERE id='viewer'",
+  )
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...input,
+      viewer,
+      candidateIds: ['file', 'healthy'],
+    }),
+  ).toEqual([{ id: 'healthy', workspaceId: 'source' }])
+  fixture.sqlite.exec("UPDATE users SET email_verified=0 WHERE id='viewer'")
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...input,
+      viewer,
+      candidateIds: ['file', 'healthy'],
+    }),
+  ).toEqual([])
+})
+
+test('historical ownership routes through keyed counts without enumerating 100,000 revoked files', async () => {
+  fixture.sqlite.exec(
+    `
+    WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<99999)
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at)
+    SELECT 'owned-'||x,'source','viewer','Owned','html_page','private','project','${now}','${now}' FROM n;
+  ` +
+      removed +
+      grant,
+  )
+  let returnedRows = 0
+  const counted = fixture.db.withPlugin({
+    transformQuery: ({ node }) => node,
+    transformResult: ({ result }) => {
+      returnedRows += result.rows.length
+      return Promise.resolve(result)
+    },
+  })
+  const sources = await searchVisibilitySources(counted, 'viewer', {}, now)
+  expect(sources).toMatchObject([
+    {
+      workspaceId: 'source',
+      visibility: { identity: false, grants: ['file'] },
+    },
+  ])
+  expect(returnedRows).toBeLessThanOrEqual(5)
+  expect(JSON.stringify(sources)).not.toContain('owned-')
+  expect(
+    fixture.sqlite
+      .prepare(
+        "SELECT file_count FROM search_owner_workspaces WHERE actor_id='viewer' AND workspace_id='source'",
+      )
+      .get(),
+  ).toEqual({ file_count: 100_000 })
+}, 15_000)
