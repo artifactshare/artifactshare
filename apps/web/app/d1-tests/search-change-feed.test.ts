@@ -630,7 +630,16 @@ test('a file that keeps failing for an hour stops blocking rebuild completion an
   await invoke('giveup')
   for (let i = 0; i < 3; i++) await invoke('giveup', 'alarm')
   const index = await storage('giveup')
-  // Failures inside the first hour still hold everything back.
+  // Failures inside the first hour still hold everything back, however many.
+  await index.exec(
+    `UPDATE pending SET failed_count=5, failing_since=${Date.now() - 30 * 60_000}, retry_at=0 WHERE id='giveup-000'`,
+  )
+  await invoke('giveup', 'alarm')
+  expect(
+    await index.exec(
+      "SELECT failed_count,given_up FROM pending WHERE id='giveup-000'",
+    ),
+  ).toEqual([{ failed_count: 6, given_up: 0 }])
   expect(
     await rows(
       "SELECT completed FROM search_index_workspace_rebuilds WHERE workspace_id='giveup'",
