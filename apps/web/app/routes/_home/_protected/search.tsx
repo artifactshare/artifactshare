@@ -46,13 +46,13 @@ export const screen = {
       setup: {
         scenario: 'search/palette-daily-limit',
         query: '?q=Quarterly',
-        ready: {
-          selector:
-            '[role="dialog"] [role="status"]:has-text("Daily search limit reached")',
-          description: 'Daily suggestions limit with UTC reset',
-        },
         interactions: [
-          { action: 'click', selector: 'header [data-search-trigger]' },
+          {
+            action: 'click',
+            selector: 'header [data-search-trigger]',
+            readySelector:
+              '[role="status"]:has-text("Daily search limit reached")',
+          },
         ],
       },
     },
