@@ -176,7 +176,7 @@ Each run:
    fails the run instead. It waits until they are gone, then removes its
    runtime directory.
 
-Ports are chosen automatically from free loopback ports, never 5173–5175, so a
+Ports are chosen automatically from free loopback ports in 20000–32767, never 5173–5175, so a
 developer's `pnpm dev` and any other listener keep running; the command never
 connects to them. Set `LOCAL_CAPTURE_APP_PORT`, `LOCAL_CAPTURE_SANDBOX_PORT` or
 `LOCAL_CAPTURE_OG_IMAGE_PORT` to choose a port; each must be a distinct port
@@ -184,7 +184,12 @@ from 1024 to 65535 that is free on both loopback families, or the command
 stops before starting anything (a port such as 443 would disappear from the
 `https://localhost` URLs). Inspector ports are chosen the same way. If another process takes a
 chosen port before a service binds it, the run fails rather than moving to a
-different URL.
+different URL. The automatic range sits below the default ephemeral ranges
+(Linux 32768 and up, macOS and Windows 49152 and up), so outgoing connections
+and kernel-chosen listeners of other checks cannot take a chosen port. On a
+host whose ephemeral range is widened into 20000–32767 (for example a Linux
+`net.ipv4.ip_local_port_range` of `1024 65535`), set the `LOCAL_CAPTURE_*_PORT`
+variables to ports outside it.
 
 Every service and setup step receives one temporary runtime directory created
 outside every registered worktree: its dev registry

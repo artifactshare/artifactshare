@@ -126,12 +126,19 @@ export async function portIsFree(port, hosts = LOOPBACK_HOSTS) {
   return true
 }
 
-/** A kernel-chosen free port on IPv6 loopback; `portIsFree` checks IPv4. */
-export async function ephemeralPort() {
-  const server = await listen(0, '::1')
-  const { port } = server.address()
-  await closeServer(server)
-  return port
+/**
+ * Automatic ports come from below every common ephemeral range (Linux starts
+ * at 32768, macOS and Windows at 49152). The services bind their ports only
+ * after selection; a port from an ephemeral range can be taken in between by
+ * any outgoing connection or kernel-chosen listener on the machine, such as a
+ * check running next to the capture.
+ */
+export const AUTOMATIC_PORT_RANGE = { first: 20000, last: 32767 }
+
+/** A candidate port from `AUTOMATIC_PORT_RANGE`; `selectPorts` checks it. */
+export function automaticPort(random = Math.random) {
+  const { first, last } = AUTOMATIC_PORT_RANGE
+  return first + Math.floor(random() * (last - first + 1))
 }
 
 /**
@@ -142,7 +149,7 @@ export async function ephemeralPort() {
 export async function selectPorts({
   env = process.env,
   isFree = portIsFree,
-  nextPort = ephemeralPort,
+  nextPort = automaticPort,
   excluded = DEFAULT_DEV_PORTS,
   attempts = 50,
 } = {}) {
