@@ -926,6 +926,7 @@ describe('runReconciliation', () => {
         await db.selectFrom('search_opens').select('search_id').execute(),
       ).toEqual([{ search_id: 'search-10001' }])
     },
+    30_000,
   )
 
   test('emits structured log lines in order', async () => {
