@@ -119,13 +119,18 @@ export async function continueReturnedSearch<
     const response = await fetch(`/api/search?${api}`, {
       signal: request.signal,
     })
-    // A refusal (the daily limit, capacity) is shown as the page's error,
-    // not retried as a second, counted search.
-    if (!response.ok && response.status !== 429 && response.status !== 503)
-      return serverLoader()
-    const { actor, ...body } = (await response.json()) as {
-      actor?: string
-    }
+    // Signing in again is the server loader's job.
+    if (response.status === 401) return serverLoader()
+    // Any other failure is shown as the page's error, never retried as a
+    // second, counted search.
+    const payload = (
+      response.ok
+        ? await response.json()
+        : ((await response.json().catch(() => null)) ?? {
+            error: { code: 'search_failed' },
+          })
+    ) as { actor?: string }
+    const { actor, ...body } = payload
     return {
       result: body as T['result'],
       actor: actor ?? returned.actor,
