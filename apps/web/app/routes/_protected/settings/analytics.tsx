@@ -43,7 +43,7 @@ export default function AnalyticsPage() {
         <div className="flex gap-2">
           <Button
             type="button"
-            variant={on ? 'secondary' : 'outline'}
+            variant={on ? 'default' : 'outline'}
             size="sm"
             disabled={pending}
             aria-pressed={on}
@@ -53,7 +53,7 @@ export default function AnalyticsPage() {
           </Button>
           <Button
             type="button"
-            variant={on ? 'outline' : 'secondary'}
+            variant={on ? 'outline' : 'default'}
             size="sm"
             disabled={pending}
             aria-pressed={!on}

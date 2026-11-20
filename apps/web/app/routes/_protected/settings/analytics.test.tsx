@@ -21,6 +21,16 @@ test.each(['en', 'ja'] as const)(
       expect(
         [...html.matchAll(/aria-pressed="(true|false)"/g)].map((m) => m[1]),
       ).toEqual([String(on), String(!on)])
+      const buttons = [...html.matchAll(/<button[^>]+>/g)].map(
+        (match) => match[0],
+      )
+      for (const button of buttons) {
+        expect(button).toContain(
+          button.includes('aria-pressed="true"')
+            ? 'data-variant="default"'
+            : 'data-variant="outline"',
+        )
+      }
       expect(html).toContain(
         bindI18n(locale).t('analyticsConsent.settings.title'),
       )

@@ -4,6 +4,7 @@ import {
   IconChartBar,
   IconCreditCard,
   IconPlug,
+  IconTerminal2,
   IconRobot,
   IconShare2,
   IconSettings,
@@ -37,7 +38,11 @@ const GROUPS: {
   {
     label: 'settings.group.your',
     items: [
-      { to: '/settings/tokens', label: 'settings.connections', icon: IconPlug },
+      {
+        to: '/settings/tokens',
+        label: 'settings.connections',
+        icon: IconTerminal2,
+      },
       {
         to: '/settings/analytics',
         label: 'settings.analytics',

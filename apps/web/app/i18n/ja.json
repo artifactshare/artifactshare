@@ -216,7 +216,7 @@
   "team.usage.storageUsed": "使用中の容量",
   "team.usage.nearLimit": "保存容量の上限が近づいています",
   "team.usage.nearLimitDetails": "{limit} 中 {used} を使用中です。残りは {remaining} です。",
-  "team.usage.nearLimitAdmin": "上限を増やすには請求設定を確認してください。",
+  "team.usage.nearLimitAdmin": "上限を増やすには、このページのプランから選んでください。",
   "team.usage.nearLimitMember": "ワークスペースのオーナーに保存容量の上限を確認してもらってください。",
   "team.usage.nearLimitSupport": "保存容量の上限についてはサポートにお問い合わせください。",
   "team.usage.storageLimit": "容量上限",

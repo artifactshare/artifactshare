@@ -22,6 +22,12 @@ test.each(['en', 'ja'] as const)(
           </SettingsNav>
         </MemoryRouter>,
       )
+      expect(html).toMatch(
+        /href="\/settings\/tokens"[^>]*><svg[^>]*tabler-icon-terminal-2/,
+      )
+      expect(html).toMatch(
+        /href="\/settings\/integrations"[^>]*><svg[^>]*tabler-icon-plug/,
+      )
       const paths = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])
       expect(paths).toEqual([
         '/settings/tokens',

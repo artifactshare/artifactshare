@@ -216,7 +216,7 @@
   "team.usage.storageUsed": "Storage used",
   "team.usage.nearLimit": "Storage is almost full",
   "team.usage.nearLimitDetails": "Used {used} of {limit}; {remaining} remaining.",
-  "team.usage.nearLimitAdmin": "Review your billing settings to increase the limit.",
+  "team.usage.nearLimitAdmin": "Choose a plan from the options on this page to increase the limit.",
   "team.usage.nearLimitMember": "Ask the workspace owner to review the storage limit.",
   "team.usage.nearLimitSupport": "Contact support to review the storage limit.",
   "team.usage.storageLimit": "Storage limit",

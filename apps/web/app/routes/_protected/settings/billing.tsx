@@ -471,6 +471,7 @@ function BillingStorageSection({
     | 'storageQuotaBytes'
     | 'monthlyEstimate'
     | 'canManage'
+    | 'billingConfigured'
   >
   presentation: ReturnType<typeof billingPresentation>
 }) {
@@ -496,15 +497,11 @@ function BillingStorageSection({
               ),
             })}
           </p>
-          <p>
-            {t(
-              !loaderData.canManage
-                ? 'team.usage.nearLimitMember'
-                : presentation === 'team-without-subscription'
-                  ? 'team.usage.nearLimitSupport'
-                  : 'team.usage.nearLimitAdmin',
-            )}
-          </p>
+          <NearLimitNextStep
+            canManage={loaderData.canManage}
+            billingConfigured={loaderData.billingConfigured}
+            presentation={presentation}
+          />
         </SettingsBanner>
       ) : null}
       <UsageStats columns={2}>
@@ -545,6 +542,31 @@ function BillingStorageSection({
       </UsageStats>
     </SettingsSubsection>
   )
+}
+
+function NearLimitNextStep({
+  canManage,
+  billingConfigured,
+  presentation,
+}: Pick<BillingLoaderData, 'canManage' | 'billingConfigured'> & {
+  presentation: ReturnType<typeof billingPresentation>
+}) {
+  const { t } = useT()
+  if (!canManage) return <p>{t('team.usage.nearLimitMember')}</p>
+  if (presentation === 'team-without-subscription')
+    return (
+      <p>
+        <a
+          className={inlineLinkClassName}
+          href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"
+        >
+          {t('team.usage.nearLimitSupport')}
+        </a>
+      </p>
+    )
+  if (billingConfigured && presentation === 'purchase')
+    return <p>{t('team.usage.nearLimitAdmin')}</p>
+  return null
 }
 
 function ReadOnlyNotice() {

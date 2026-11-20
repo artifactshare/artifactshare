@@ -286,7 +286,9 @@ test.each([true, false])(
     expect(banner).toContain(
       'ワークスペースのオーナーに保存容量の上限を確認してもらってください。',
     )
-    expect(banner).not.toContain('上限を増やすには請求設定を確認してください。')
+    expect(banner).not.toContain(
+      '上限を増やすには、このページのプランから選んでください。',
+    )
     expect(banner).not.toContain('href=')
   },
 )
@@ -302,8 +304,12 @@ test('near-limit Team owner without a subscription gets support guidance without
   expect(banner).toContain(
     '保存容量の上限についてはサポートにお問い合わせください。',
   )
-  expect(banner).not.toContain('上限を増やすには請求設定を確認してください。')
-  expect(banner).not.toContain('href=')
+  expect(banner).not.toContain(
+    '上限を増やすには、このページのプランから選んでください。',
+  )
+  expect(banner).toContain(
+    'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"',
+  )
   expect(html).not.toContain('value="checkout"')
 })
 
@@ -313,7 +319,22 @@ test('near-limit Free owner keeps billing guidance and checkout without a self-l
     storageQuotaBytes: 100,
   })
   const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-  expect(banner).toContain('上限を増やすには請求設定を確認してください。')
+  expect(banner).toContain(
+    '上限を増やすには、このページのプランから選んでください。',
+  )
   expect(banner).not.toContain('href=')
   expect(html).toContain('value="checkout"')
+})
+
+test('near-limit owner gets no billing next step when billing is unavailable', () => {
+  const html = renderBillingPage(1, null, {
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+    billingConfigured: false,
+  })
+  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+  expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
+  expect(banner).not.toContain('上限を増やすには')
+  expect(banner).not.toContain('href=')
+  expect(html).not.toContain('value="checkout"')
 })
