@@ -18,6 +18,23 @@ test('keeps only the leading D1 or SQLite code', () => {
   )
 })
 
+test('keeps a trailing SQLite code from Durable Object storage', () => {
+  expect(
+    searchFailureReason(
+      new Error('UNIQUE constraint failed: documents.path: SQLITE_CONSTRAINT'),
+    ),
+  ).toBe('Error:SQLITE_CONSTRAINT')
+})
+
+test('reports a named error subclass by its name', () => {
+  class SearchCleanupError extends Error {
+    override name = 'SearchCleanupError'
+  }
+  expect(
+    searchFailureReason(new SearchCleanupError('Network connection lost')),
+  ).toBe('SearchCleanupError')
+})
+
 test('drops messages that can quote file contents', () => {
   let parseError: unknown
   try {

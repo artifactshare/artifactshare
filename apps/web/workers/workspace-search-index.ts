@@ -59,7 +59,9 @@ type Active = {
   content: string
   format: number
 }
-class SearchCleanupError extends Error {}
+class SearchCleanupError extends Error {
+  override name = 'SearchCleanupError'
+}
 
 // Format 13 changes only candidate policy, not extraction or document ranking.
 const compatibleContentFormat = (format: number | string) =>
