@@ -350,9 +350,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   async search(input: IndexSearchInput): Promise<IndexSearchResult> {
-    const incomplete = await this.visibilityPending(input)
     if (input.visibility && input.visibility.protocol !== 1)
       return { error: { code: 'search_capacity_exceeded' } }
+    const incomplete = await this.visibilityPending(input)
     if (!this.#schemaReady)
       return {
         items: [],
@@ -415,9 +415,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     input: IndexSearchInput,
     keys: string[],
   ): Promise<IndexSearchResult> {
-    const incomplete = await this.visibilityPending(input)
     if (input.visibility && input.visibility.protocol !== 1)
       return { error: { code: 'search_capacity_exceeded' } }
+    const incomplete = await this.visibilityPending(input)
     if (!this.#schemaReady)
       return {
         items: [],
