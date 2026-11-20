@@ -616,6 +616,7 @@ export async function previewWorkspaceExternalAccessPolicy(
   const cutoff = shorteningCutoff(resolved.current, resolved.next, at)
   return {
     kind: 'preview' as const,
+    previousMaximumDays: resolved.current.linkExpiryMaxDays,
     maximumDays: resolved.next.linkExpiryMaxDays,
     shortenedLinkCount: await countShortenedLinks(
       db,

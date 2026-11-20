@@ -272,6 +272,8 @@ export default function IntegrationsPage({
   const [searchParams] = useSearchParams()
   const actionData = useActionData<typeof action>()
   const [openConnectionId, setOpenConnectionId] = useState<string | null>(null)
+  const [selectedConnection, setSelectedConnection] =
+    useState<SlackConnectionListItem | null>(null)
   const showConnectedBanner = searchParams.get('connected') === 'slack'
   const { locale, t } = useT()
   const { connections } = loaderData
@@ -283,9 +285,12 @@ export default function IntegrationsPage({
     navigation.formData?.get('intent') === 'disconnect-slack'
       ? stringValue(navigation.formData.get('connectionId'))
       : null
-  const submittedConnection = connections.find(
-    (connection) => connection.id === actionData?.connectionId,
-  )
+  const submittedConnection =
+    selectedConnection?.id === actionData?.connectionId
+      ? selectedConnection
+      : connections.find(
+          (connection) => connection.id === actionData?.connectionId,
+        )
   const dialogRendered =
     currentUserIsAdmin &&
     connections.some((connection) => connection.id === openConnectionId)
@@ -354,9 +359,10 @@ export default function IntegrationsPage({
                   locale={locale}
                   canManage={currentUserIsAdmin}
                   pending={pendingDisconnectId === connection.id}
-                  onDisconnectOpenChange={(open) =>
+                  onDisconnectOpenChange={(open) => {
+                    if (open) setSelectedConnection(connection)
                     setOpenConnectionId(open ? connection.id : null)
-                  }
+                  }}
                 />
               ))}
             </Stack>

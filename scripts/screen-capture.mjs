@@ -59,7 +59,11 @@ export async function matchesCaptureAction(request, fixture, origin) {
   const body = request.postData() ?? ''
   let intent
   if (contentType.includes('application/json')) {
-    intent = JSON.parse(body).intent
+    try {
+      intent = JSON.parse(body)?.intent
+    } catch {
+      return false
+    }
   } else if (contentType.includes('application/x-www-form-urlencoded')) {
     intent = new URLSearchParams(body).get('intent')
   } else if (contentType.includes('multipart/form-data')) {

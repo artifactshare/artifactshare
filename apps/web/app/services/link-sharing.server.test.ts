@@ -546,6 +546,7 @@ describe('workspace link-sharing service', () => {
     )
     expect(preview).toEqual({
       kind: 'preview',
+      previousMaximumDays: null,
       maximumDays: 30,
       shortenedLinkCount: 2,
     })
@@ -567,7 +568,12 @@ describe('workspace link-sharing service', () => {
     expect(result).toMatchObject({ kind: 'ok', shortenedLinkCount: 2 })
     expect(
       await previewWorkspaceExternalAccessPolicy(db, ADMIN, patch, at),
-    ).toEqual({ kind: 'preview', maximumDays: 30, shortenedLinkCount: 0 })
+    ).toEqual({
+      kind: 'preview',
+      previousMaximumDays: 30,
+      maximumDays: 30,
+      shortenedLinkCount: 0,
+    })
   })
 
   test('a reduction still previews zero when every link expires before the cutoff', async () => {
@@ -582,7 +588,12 @@ describe('workspace link-sharing service', () => {
         { linkExpiryDefaultDays: 7, linkExpiryMaxDays: 7 },
         '2026-07-20T00:00:00.000Z',
       ),
-    ).toEqual({ kind: 'preview', maximumDays: 7, shortenedLinkCount: 0 })
+    ).toEqual({
+      kind: 'preview',
+      previousMaximumDays: null,
+      maximumDays: 7,
+      shortenedLinkCount: 0,
+    })
     expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
       [],
     )

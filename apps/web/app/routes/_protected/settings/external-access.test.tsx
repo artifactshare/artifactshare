@@ -21,7 +21,15 @@ vi.mock('~/middleware/context', () => ({
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
 import ExternalAccessPage, { action } from './external-access'
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'preview',
+    previousMaximumDays: 30,
+    maximumDays: 30,
+    shortenedLinkCount: 0,
+  })
+})
 
 test('preview parses the complete draft and resume without invoking a mutation', async () => {
   services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
@@ -51,6 +59,15 @@ test('preview parses the complete draft and resume without invoking a mutation',
     kind: 'preview',
     maximumDays: 30,
     shortenedLinkCount: 2,
+    draft: {
+      defaultDays: '7',
+      maxDays: '30',
+      defaultUnlimited: false,
+      maxUnlimited: false,
+      linkSharingEnabled: false,
+      externalPostingEnabled: false,
+    },
+    resume: 'linkSharing',
   })
   expect(services.previewWorkspaceExternalAccessPolicy).toHaveBeenCalledWith(
     {},
@@ -83,7 +100,10 @@ test.each(['forbidden', 'plan-required', 'invalid-policy'])(
       url: new URL('https://example.test/settings/external-access'),
       pattern: '/settings/external-access',
     })
-    expect(result).toEqual({ kind })
+    expect(result).toMatchObject({
+      kind,
+      draft: { defaultDays: '7', maxDays: '30' },
+    })
   },
 )
 
@@ -102,7 +122,7 @@ test('invalid preview input never invokes preview or mutation', async () => {
     url: new URL('https://example.test/settings/external-access'),
     pattern: '/settings/external-access',
   })
-  expect(result).toEqual({ kind: 'invalid-policy' })
+  expect(result).toMatchObject({ kind: 'invalid-policy' })
   expect(services.previewWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
   expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
 })
@@ -171,3 +191,108 @@ test('Free owners have a billing link and explicit page-wide save instructions',
   expect(html).not.toContain('Unsaved changes')
   router.dispose()
 })
+
+test('stale-page extension requires the current reduction preview before any mutation', async () => {
+  services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'preview',
+    previousMaximumDays: 180,
+    maximumDays: 120,
+    shortenedLinkCount: 2,
+  })
+  services.updateWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'ok',
+    shortenedLinkCount: 2,
+  })
+  const form = new URLSearchParams({
+    intent: 'update-external-access',
+    defaultDays: '30',
+    maxDays: '120',
+  })
+  const submit = () =>
+    action({
+      request: new Request('https://example.test/settings/external-access', {
+        method: 'POST',
+        body: form,
+      }),
+      context: new RouterContextProvider(),
+      params: {},
+      url: new URL('https://example.test/settings/external-access'),
+      pattern: '/settings/external-access',
+    })
+  expect(await submit()).toMatchObject({
+    kind: 'preview',
+    previousMaximumDays: 180,
+    shortenedLinkCount: 2,
+    draft: { defaultDays: '30', maxDays: '120' },
+  })
+  expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
+  form.set('confirmedPreviousMaximum', '90')
+  form.set('confirmedMaximum', '120')
+  expect(await submit()).toMatchObject({ kind: 'preview' })
+  expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
+  form.set('confirmedPreviousMaximum', '180')
+  expect(await submit()).toBeInstanceOf(Response)
+  expect(services.updateWorkspaceExternalAccessPolicy).toHaveBeenCalledTimes(1)
+})
+
+test.each([false, true])(
+  'native action failure presentation (%s) retains the submitted draft',
+  (failed) => {
+    const policy = {
+      plan: 'team' as const,
+      linkSharingEnabled: true,
+      externalPostingEnabled: true,
+      linkExpiryDefaultDays: 30,
+      linkExpiryMaxDays: 90,
+    }
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <Outlet
+              context={{ currentUserRole: 'owner', currentUserIsAdmin: true }}
+            />
+          ),
+          children: [
+            {
+              id: 'settings',
+              path: '/',
+              element: <ExternalAccessPage loaderData={{ policy }} />,
+            },
+          ],
+        },
+      ],
+      {
+        hydrationData: {
+          actionData: failed
+            ? {
+                settings: {
+                  kind: 'forbidden',
+                  draft: {
+                    defaultDays: '7',
+                    maxDays: '90',
+                    defaultUnlimited: false,
+                    maxUnlimited: false,
+                    linkSharingEnabled: false,
+                  },
+                },
+              }
+            : null,
+        },
+      },
+    )
+    try {
+      const html = renderToStaticMarkup(<RouterProvider router={router} />)
+      if (failed) {
+        expect(html).toContain('role="alert"')
+        expect(html).toContain('value="7"')
+        expect(html).toContain('Unsaved changes')
+      } else {
+        expect(html).not.toContain('role="alert"')
+        expect(html).not.toContain('Unsaved changes')
+      }
+    } finally {
+      router.dispose()
+    }
+  },
+)

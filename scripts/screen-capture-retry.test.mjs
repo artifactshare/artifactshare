@@ -606,6 +606,13 @@ test('capture action matching isolates route, method, origin and JSON/form inten
       'intent=stop',
       true,
     ],
+    ...['', 'not json', 'null'].map((invalidBody) => [
+      '/settings/bots',
+      'POST',
+      'application/json',
+      invalidBody,
+      false,
+    ]),
     ['/settings/bots', 'GET', 'application/json', '{"intent":"stop"}', false],
     [
       '/settings/bots',

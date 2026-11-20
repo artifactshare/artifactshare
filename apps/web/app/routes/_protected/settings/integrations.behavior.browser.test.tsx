@@ -140,7 +140,7 @@ test('Slack disconnect names the connection, dismissal writes nothing and confir
 
 // Revalidation can remove the permission-dependent controls after a submission.
 // A real router/browser is needed to observe the dialog unmount and surviving alert.
-test.each(['forbidden', 'invalid'] as const)(
+test.each(['forbidden', 'invalid', 'not-found'] as const)(
   'Slack action %s remains visible outside permission-dependent controls',
   async (error) => {
     let canManage = true
@@ -155,6 +155,20 @@ test.each(['forbidden', 'invalid'] as const)(
         </TooltipProvider>
       )
     }
+    const connections = [
+      {
+        id: 'slack',
+        teamName: 'Example team',
+        installedAt: '2026-01-01T00:00:00.000Z',
+        installedByName: 'Owner',
+        needsReauthorization: false,
+      },
+    ]
+    let removed = false
+    function ConnectionPage() {
+      const data = useLoaderData<{ connections: typeof connections }>()
+      return <IntegrationsPage loaderData={data} />
+    }
     const router = createMemoryRouter(
       [
         {
@@ -163,21 +177,8 @@ test.each(['forbidden', 'invalid'] as const)(
           children: [
             {
               path: '/settings/integrations',
-              element: (
-                <IntegrationsPage
-                  loaderData={{
-                    connections: [
-                      {
-                        id: 'slack',
-                        teamName: 'Example team',
-                        installedAt: '2026-01-01T00:00:00.000Z',
-                        installedByName: 'Owner',
-                        needsReauthorization: false,
-                      },
-                    ],
-                  }}
-                />
-              ),
+              loader: () => ({ connections: removed ? [] : connections }),
+              Component: ConnectionPage,
               action: () =>
                 new Promise<{ error: string; connectionId?: string }>(
                   (resolve) => {
@@ -200,7 +201,7 @@ test.each(['forbidden', 'invalid'] as const)(
         exact: true,
       })
       await expect.element(trigger).toBeEnabled()
-      if (error === 'forbidden') {
+      if (error !== 'invalid') {
         await trigger.click()
         await page
           .getByRole('alertdialog')
@@ -208,7 +209,8 @@ test.each(['forbidden', 'invalid'] as const)(
           .click()
         await vi.waitFor(() => expect(release).toBeTypeOf('function'))
         await expect.element(page.getByRole('alertdialog')).toBeInTheDocument()
-        canManage = false
+        if (error === 'forbidden') canManage = false
+        else removed = true
       } else {
         // Invalid submissions need an error even without a submitted dialog.
         void router.navigate('/settings/integrations', {
@@ -220,7 +222,7 @@ test.each(['forbidden', 'invalid'] as const)(
       await act(async () =>
         release!({
           error,
-          ...(error === 'forbidden' ? { connectionId: 'slack' } : {}),
+          ...(error !== 'invalid' ? { connectionId: 'slack' } : {}),
         }),
       )
       await vi.waitFor(() => expect(router.state.navigation.state).toBe('idle'))
@@ -230,13 +232,15 @@ test.each(['forbidden', 'invalid'] as const)(
       await expect
         .element(page.getByRole('alert'))
         .toHaveTextContent(
-          (error === 'forbidden'
+          (error !== 'invalid'
             ? 'Could not disconnect Example team from Slack.'
             : '') +
             bindI18n('en').t(
               error === 'forbidden'
                 ? 'team.status.forbidden'
-                : 'team.status.invalid',
+                : error === 'not-found'
+                  ? 'team.status.notFound'
+                  : 'team.status.invalid',
             ),
         )
       expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1)

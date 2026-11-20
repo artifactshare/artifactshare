@@ -85,7 +85,7 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
       )
       .toBeVisible()
     await toggle.click()
-    expect(container.querySelectorAll('[role="status"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1)
     await act(async () => {
       await router.navigate('/away')
     })
@@ -112,7 +112,7 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
         }),
       )
       .toHaveValue(7)
-    expect(container.querySelectorAll('[role="status"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1)
     await page
       .getByRole('button', { name: 'Save changes', exact: true })
       .click()
@@ -141,11 +141,12 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
 })
 
 test.each([
-  [90, 2],
-  [null, 0],
+  [90, 2, 30],
+  [null, 0, 30],
+  [90, 2, 120],
 ] as const)(
   'maximum %s previews count %s, preserves dismissed edits and confirms the exact draft once',
-  async (maximum, count) => {
+  async (maximum, count, proposed) => {
     let policy: WorkspaceLinkPolicy = {
       plan: 'team',
       linkSharingEnabled: true,
@@ -171,9 +172,15 @@ test.each([
               action: async ({ request }) => {
                 const form = await request.formData()
                 submissions.push(form)
-                if (form.get('intent') === 'preview-external-access')
+                if (proposed === 120)
+                  policy = { ...policy, linkExpiryMaxDays: 180 }
+                if (
+                  form.get('intent') === 'preview-external-access' ||
+                  !form.has('confirmedMaximum')
+                )
                   return {
                     kind: 'preview',
+                    previousMaximumDays: proposed === 120 ? 180 : maximum,
                     maximumDays: Number(form.get('maxDays')),
                     shortenedLinkCount: count,
                   }
@@ -205,7 +212,7 @@ test.each([
         name: 'Maximum expiration',
         exact: true,
       })
-      await maxInput.fill('30')
+      await maxInput.fill(String(proposed))
       await page
         .getByRole('button', { name: 'Save changes', exact: true })
         .click()
@@ -216,7 +223,7 @@ test.each([
           new RegExp(`Existing links to shorten at preview time: ${count}`),
         )
       expect(submissions.map((form) => form.get('intent'))).toEqual([
-        'preview-external-access',
+        proposed === 120 ? 'update-external-access' : 'preview-external-access',
       ])
       const confirm = dialog.getByRole('button', {
         name: 'Save changes',
@@ -227,26 +234,32 @@ test.each([
         .getByRole('button', { name: 'Keep editing', exact: true })
         .click()
       await expect.element(dialog).not.toBeInTheDocument()
-      await expect.element(maxInput).toHaveValue(30)
-      await maxInput.fill('40')
+      await expect.element(maxInput).toHaveValue(proposed)
+      await maxInput.fill(String(proposed + 10))
       await page
         .getByRole('button', { name: 'Save changes', exact: true })
         .click()
-      await expect.element(dialog).toMatchTextContent(/40 days/)
+      await expect
+        .element(dialog)
+        .toMatchTextContent(new RegExp(`${proposed + 10} days`))
       await confirm.click()
       await expect.element(dialog.getByRole('alert')).toBeVisible()
       expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1)
       await confirm.click()
       await expect.element(dialog).not.toBeInTheDocument()
       expect(submissions.map((form) => form.get('intent'))).toEqual([
-        'preview-external-access',
+        proposed === 120 ? 'update-external-access' : 'preview-external-access',
         'preview-external-access',
         'update-external-access',
         'update-external-access',
       ])
-      expect(submissions[2].get('maxDays')).toBe('40')
+      expect(submissions[2].get('maxDays')).toBe(String(proposed + 10))
+      expect(submissions[2].get('confirmedMaximum')).toBe(String(proposed + 10))
+      expect(submissions[2].get('confirmedPreviousMaximum')).toBe(
+        String(proposed === 120 ? 180 : maximum),
+      )
       expect(submissions[2].getAll('linkSharingEnabled')).toEqual(['false'])
-      expect(policy.linkExpiryMaxDays).toBe(40)
+      expect(policy.linkExpiryMaxDays).toBe(proposed + 10)
     } finally {
       await act(async () => root.unmount())
       router.dispose()
@@ -398,3 +411,105 @@ test('successful recovery with unchanged persisted values clears the previous sa
     container.remove()
   }
 })
+
+// Hydrated native action data must join the real form/Radix lifecycle.
+test.each(['preview', 'forbidden'] as const)(
+  'native %s retains the draft and starts a fresh confirmation',
+  async (kind) => {
+    const policy: WorkspaceLinkPolicy = {
+      plan: 'team',
+      linkSharingEnabled: true,
+      externalPostingEnabled: true,
+      linkExpiryDefaultDays: 30,
+      linkExpiryMaxDays: 90,
+    }
+    const draft = {
+      defaultDays: '7',
+      maxDays: '30',
+      defaultUnlimited: false,
+      maxUnlimited: false,
+      linkSharingEnabled: false,
+      externalPostingEnabled: false,
+    }
+    const previewResult = {
+      kind: 'preview',
+      previousMaximumDays: 90,
+      maximumDays: 30,
+      shortenedLinkCount: 2,
+      draft,
+      resume: 'linkSharing',
+    }
+    const submissions: FormData[] = []
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <Outlet
+              context={{ currentUserIsAdmin: true, currentUserRole: 'owner' }}
+            />
+          ),
+          children: [
+            {
+              id: 'settings',
+              path: '/settings/external-access',
+              element: <ExternalAccessPage loaderData={{ policy }} />,
+              action: async ({ request }) => {
+                const form = await request.formData()
+                submissions.push(form)
+                if (form.get('intent') === 'preview-external-access')
+                  return previewResult
+                return redirect('/settings/external-access?status=ok')
+              },
+            },
+          ],
+        },
+      ],
+      {
+        initialEntries: ['/settings/external-access'],
+        hydrationData: {
+          actionData: {
+            settings: kind === 'preview' ? previewResult : { kind, draft },
+          },
+        },
+      },
+    )
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      const dialog = page.getByRole('alertdialog')
+      if (kind === 'forbidden') {
+        await expect.element(page.getByRole('alert')).toBeVisible()
+        await page
+          .getByRole('button', { name: 'Save changes', exact: true })
+          .click()
+      }
+      await expect
+        .element(dialog)
+        .toMatchTextContent(/Existing links to shorten at preview time: 2/)
+      await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
+      await dialog
+        .getByRole('button', { name: 'Save changes', exact: true })
+        .click()
+      await vi.waitFor(() =>
+        expect(router.state.location.search).toBe('?status=ok'),
+      )
+      await expect.element(dialog).not.toBeInTheDocument()
+      const saved = submissions.at(-1)
+      expect(saved?.get('intent')).toBe('update-external-access')
+      expect(saved?.get('defaultDays')).toBe('7')
+      expect(saved?.get('maxDays')).toBe('30')
+      expect(saved?.getAll('linkSharingEnabled')).toEqual(['false'])
+      expect(saved?.getAll('externalPostingEnabled')).toEqual(['false'])
+      expect(saved?.get('confirmedPreviousMaximum')).toBe('90')
+      expect(saved?.get('confirmedMaximum')).toBe('30')
+      if (kind === 'preview') expect(saved?.get('resume')).toBe('linkSharing')
+      expect(submissions).toHaveLength(kind === 'preview' ? 1 : 2)
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+    }
+  },
+)

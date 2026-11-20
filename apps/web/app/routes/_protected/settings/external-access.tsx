@@ -1,7 +1,9 @@
-import { useId, useState, type ComponentProps } from 'react'
+import { useId, useState, useEffect, type ComponentProps } from 'react'
 import {
   Link,
   useFetcher,
+  useActionData,
+  useLocation,
   redirect,
   useOutletContext,
   useSearchParams,
@@ -94,6 +96,61 @@ export const screen = {
       },
     },
     {
+      id: 'reduction-pending',
+      description: 'Expiry confirmation reduction-pending',
+      setup: {
+        scenario: 'settings-external-access/finite',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/external-access',
+          method: 'POST',
+          intent: 'update-external-access',
+          pending: true,
+        },
+        interactions: [
+          { action: 'fill', selector: 'input[name="maxDays"]', value: '30' },
+          {
+            action: 'click',
+            selector: 'button:text-is("Save changes")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Save changes")',
+            readySelector:
+              '[role="alertdialog"] button:disabled:text-is("Save changes")',
+          },
+        ],
+      },
+    },
+    {
+      id: 'reduction-failed',
+      description: 'Expiry confirmation reduction-failed',
+      setup: {
+        scenario: 'settings-external-access/finite',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/external-access',
+          method: 'POST',
+          intent: 'update-external-access',
+          data: { kind: 'forbidden' },
+        },
+        interactions: [
+          { action: 'fill', selector: 'input[name="maxDays"]', value: '30' },
+          {
+            action: 'click',
+            selector: 'button:text-is("Save changes")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Save changes")',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+      },
+    },
+    {
       id: 'unlimited-reduction',
       description: 'unlimited reduction',
       setup: {
@@ -174,11 +231,25 @@ export async function action({ request, context }: Route.ActionArgs) {
   const user = requireUser(context)
   const form = await request.formData()
   const intent = stringValue(form.get('intent'))
+  const draft = {
+    defaultDays: stringValue(form.get('defaultDays')) ?? '',
+    maxDays: stringValue(form.get('maxDays')) ?? '',
+    defaultUnlimited: form.get('defaultUnlimited') === 'true',
+    maxUnlimited: form.get('maxUnlimited') === 'true',
+    ...(hasFormField(form, 'linkSharingEnabled') && {
+      linkSharingEnabled: form.getAll('linkSharingEnabled').includes('true'),
+    }),
+    ...(hasFormField(form, 'externalPostingEnabled') && {
+      externalPostingEnabled: form
+        .getAll('externalPostingEnabled')
+        .includes('true'),
+    }),
+  }
   if (
     intent !== 'update-external-access' &&
     intent !== 'preview-external-access'
   ) {
-    return { kind: 'invalid' as const }
+    return { kind: 'invalid' as const, draft }
   }
 
   const defaultUnlimited = form.get('defaultUnlimited') === 'true'
@@ -188,7 +259,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     : parseDays(form.get('defaultDays'))
   const maxDays = maxUnlimited ? null : parseDays(form.get('maxDays'))
   if (defaultDays === undefined || maxDays === undefined) {
-    return { kind: 'invalid-policy' as const }
+    return { kind: 'invalid-policy' as const, draft }
   }
 
   const resume = stringValue(form.get('resume'))
@@ -208,8 +279,22 @@ export async function action({ request, context }: Route.ActionArgs) {
     ...(resume === 'linkSharing' && { linkSharingEnabled: true }),
     ...(resume === 'externalPosting' && { externalPostingEnabled: true }),
   }
-  if (intent === 'preview-external-access') {
-    return previewWorkspaceExternalAccessPolicy(createDb(), user, patch)
+  const preview = await previewWorkspaceExternalAccessPolicy(
+    createDb(),
+    user,
+    patch,
+  )
+  if (preview.kind !== 'preview') return { ...preview, draft }
+  if (
+    intent === 'preview-external-access' ||
+    (preview.maximumDays !== null &&
+      (preview.previousMaximumDays === null ||
+        preview.maximumDays < preview.previousMaximumDays) &&
+      (form.get('confirmedPreviousMaximum') !==
+        String(preview.previousMaximumDays) ||
+        form.get('confirmedMaximum') !== String(preview.maximumDays)))
+  ) {
+    return { ...preview, draft, resume }
   }
   const result = await updateWorkspaceExternalAccessPolicy(
     createDb(),
@@ -217,7 +302,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     patch,
   )
   if (result.kind !== 'ok') {
-    return result
+    return { ...result, draft }
   }
   const shortened =
     result.shortenedLinkCount > 0
@@ -240,12 +325,8 @@ function hasFormField(form: FormData, name: string): boolean {
 export default function ExternalAccessPage({
   loaderData,
 }: Pick<Route.ComponentProps, 'loaderData'>) {
-  return (
-    <ExternalAccessForm
-      key={JSON.stringify(loaderData.policy)}
-      policy={loaderData.policy}
-    />
-  )
+  const location = useLocation()
+  return <ExternalAccessForm key={location.key} policy={loaderData.policy} />
 }
 
 function ExternalAccessForm({
@@ -257,14 +338,7 @@ function ExternalAccessForm({
   const { t } = useT()
   const submission = useExternalAccessSubmission(policy.linkExpiryMaxDays)
   const { save, pending, previewResult, failure } = submission
-  const [draft, setDraft] = useState({
-    linkSharingEnabled: policy.linkSharingEnabled,
-    externalPostingEnabled: policy.externalPostingEnabled,
-    defaultDays: String(policy.linkExpiryDefaultDays ?? ''),
-    maxDays: String(policy.linkExpiryMaxDays ?? ''),
-    defaultUnlimited: policy.linkExpiryDefaultDays === null,
-    maxUnlimited: policy.linkExpiryMaxDays === null,
-  })
+  const [draft, setDraft] = useExternalAccessDraft(policy)
   const [searchParams] = useSearchParams()
   const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
   const canEditExpiry =
@@ -310,7 +384,7 @@ function ExternalAccessForm({
         {canEdit ? (
           <div className="space-y-2">
             {dirty ? (
-              <p role="status" className="text-sm font-medium">
+              <p className="text-sm font-medium">
                 {t('externalAccess.unsaved')}
               </p>
             ) : null}
@@ -462,24 +536,36 @@ function ExternalAccessPolicySection({
 }
 
 function useExternalAccessSubmission(maximumDays: number | null) {
+  const nativeResult = useActionData<typeof action>()
   const save = useFetcher<typeof action>()
   const preview = useFetcher<typeof action>()
   const [lastOperation, setLastOperation] = useState<{
-    kind: 'preview' | 'save'
+    kind: 'native' | 'preview' | 'save'
     previousData: typeof save.data
-  }>({ kind: 'save', previousData: undefined })
+  }>({ kind: 'native', previousData: undefined })
   const [returnFocusId, setReturnFocusId] = useState('save-external-access')
-  const [submittedDraft, setSubmittedDraft] = useState<FormData | null>(null)
+  const [submittedDraft, setSubmittedDraft] = useState<FormData | null>(() => {
+    if (nativeResult?.kind !== 'preview') return null
+    const form = new FormData()
+    for (const [key, value] of Object.entries(nativeResult.draft))
+      form.set(key, String(value))
+    form.set('intent', 'update-external-access')
+    if (nativeResult.resume) form.set('resume', nativeResult.resume)
+    return form
+  })
   const pending = save.state !== 'idle' || preview.state !== 'idle'
-  const previewResult =
-    submittedDraft &&
-    preview.state === 'idle' &&
-    preview.data?.kind === 'preview'
-      ? preview.data
-      : null
-  const active = lastOperation.kind === 'save' ? save : preview
+  const active = lastOperation.kind === 'preview' ? preview : save
+  const [receivedPreview, setReceivedPreview] = useState<Extract<
+    NonNullable<typeof save.data>,
+    { kind: 'preview' }
+  > | null>(nativeResult?.kind === 'preview' ? nativeResult : null)
+  useEffect(() => {
+    if (active.state === 'idle' && active.data?.kind === 'preview')
+      setReceivedPreview(active.data)
+  }, [active.state, active.data])
+  const previewResult = submittedDraft ? receivedPreview : null
   // Redirects retain fetcher data; only a new result belongs to this submission.
-  const failure =
+  const fetcherFailure =
     active.state === 'idle' &&
     active.data &&
     active.data !== lastOperation.previousData &&
@@ -505,6 +591,7 @@ function useExternalAccessSubmission(maximumDays: number | null) {
       maximum !== undefined &&
       (maximumDays === null || maximum < maximumDays)
     ) {
+      setReceivedPreview(null)
       setSubmittedDraft(form)
       const request = new FormData()
       for (const [key, value] of form) request.append(key, value)
@@ -512,13 +599,19 @@ function useExternalAccessSubmission(maximumDays: number | null) {
       setLastOperation({ kind: 'preview', previousData: preview.data })
       void preview.submit(request, { method: 'post' })
     } else {
-      setSubmittedDraft(null)
+      setReceivedPreview(null)
+      setSubmittedDraft(form)
       setLastOperation({ kind: 'save', previousData: save.data })
       void save.submit(form, { method: 'post' })
     }
   }
   const confirm = () => {
-    if (submittedDraft) {
+    if (submittedDraft && previewResult) {
+      submittedDraft.set(
+        'confirmedPreviousMaximum',
+        String(previewResult.previousMaximumDays),
+      )
+      submittedDraft.set('confirmedMaximum', String(previewResult.maximumDays))
       setLastOperation({ kind: 'save', previousData: save.data })
       void save.submit(submittedDraft, { method: 'post' })
     }
@@ -528,11 +621,29 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     pending,
     returnFocusId,
     previewResult,
-    failure,
+    failure:
+      lastOperation.kind === 'native' && nativeResult?.kind !== 'preview'
+        ? (nativeResult?.kind ?? null)
+        : fetcherFailure,
     submit,
     confirm,
     clearPreview: () => setSubmittedDraft(null),
   }
+}
+
+function useExternalAccessDraft(
+  policy: Route.ComponentProps['loaderData']['policy'],
+) {
+  const actionData = useActionData<typeof action>()
+  return useState({
+    linkSharingEnabled: policy.linkSharingEnabled,
+    externalPostingEnabled: policy.externalPostingEnabled,
+    defaultDays: String(policy.linkExpiryDefaultDays ?? ''),
+    maxDays: String(policy.linkExpiryMaxDays ?? ''),
+    defaultUnlimited: policy.linkExpiryDefaultDays === null,
+    maxUnlimited: policy.linkExpiryMaxDays === null,
+    ...(actionData && 'draft' in actionData ? actionData.draft : {}),
+  })
 }
 
 type ExternalAccessDraft = {
