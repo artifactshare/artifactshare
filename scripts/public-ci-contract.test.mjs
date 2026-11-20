@@ -908,9 +908,8 @@ test('visual gate uses exact Linux Compose baselines', () => {
         'export PATH=/opt/toolchain/bin:$$PATH && node --version && pnpm --version && ' +
         'pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile --ignore-scripts && ' +
         'pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run ' +
-        (service === compose.services.visual
-          ? '$${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}'
-          : '--update'),
+        (service === compose.services.visual ? '' : '--update ') +
+        '$${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}',
     ])
   }
   assert.match(webPackage.scripts['test:visual-browser'], /docker compose/u)

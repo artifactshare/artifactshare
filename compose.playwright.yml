@@ -52,7 +52,7 @@ services:
         pnpm --version &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile --ignore-scripts &&
-        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run --update
+        pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run --update $${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}
 
 volumes:
   playwright-pnpm-store:

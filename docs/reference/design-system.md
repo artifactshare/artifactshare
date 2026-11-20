@@ -562,7 +562,7 @@ task 層は walkthrough と証拠を読み、次の 8 観点をタスクごと�
 
 1. **デザイントークン検査 (`check:design-tokens`)**: 色、余白、寸法、セレクタ、レイアウト所有など、ソースコードの静的な禁止条件として判定できる指摘。
 2. **コピー用語検査 (`copy-glossary/no-violations`)**: 禁止語、表示語の置換、語彙の組み合わせなど、表示文言を静的に判定できる指摘。許容表現と禁止表現の根拠は [glossary](./glossary.md) に置く。
-3. **回帰検査 (`pnpm visual:compose`)**: 部品や代表画面の見た目、横あふれ、重なり、主要要素の可視性など、描画結果または画面の幾何で判定する指摘。baselineを意図的に更新するときは `pnpm visual:compose:update` を使う。
+3. **回帰検査 (`pnpm visual:compose`)**: 部品や代表画面の見た目、横あふれ、重なり、主要要素の可視性など、描画結果または画面の幾何で判定する指摘。baselineを意図的に更新するときは `pnpm visual:compose:update` を使う。一部のテストだけを更新するときは、`VITEST_TEST_NAME` にテスト名の正規表現を渡す（例: `VITEST_TEST_NAME='(^|\s)search-results-(mobile|mobile-short|desktop)-(light|dark)$' pnpm visual:compose:update`）。対象外のbaselineは書き換わらない。
 
 隣接ブロックの縦間隔ゼロは、2 回の再発を受けて gap audit に昇格しました。
 
