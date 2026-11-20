@@ -114,6 +114,7 @@ export function withoutLongAttributeValues(html: string): string {
   let at = 0
   // Inside <svg> or <math>, script, style and title are markup, not raw text.
   let foreign = 0
+  let bangEnd = -2
   const skipTo = (marker: string, from: number) => {
     const found = html.indexOf(marker, from)
     return found < 0 ? html.length : found + marker.length
@@ -139,7 +140,13 @@ export function withoutLongAttributeValues(html: string): string {
       // The tokenizer also ends a comment at <!-->, <!---> and --!>.
       if (html.startsWith('>', open + 4)) at = open + 5
       else if (html.startsWith('->', open + 4)) at = open + 6
-      else at = Math.min(skipTo('-->', open + 4), skipTo('--!>', open + 4))
+      else {
+        // Each marker is searched for again only once the scan passes it.
+        if (bangEnd === -2 || (bangEnd !== -1 && bangEnd < open + 4))
+          bangEnd = html.indexOf('--!>', open + 4)
+        const end = skipTo('-->', open + 4)
+        at = bangEnd >= 0 && bangEnd + 4 < end ? bangEnd + 4 : end
+      }
       continue
     }
     const next = html[open + 1] ?? ''
@@ -232,6 +239,21 @@ export function withoutLongAttributeValues(html: string): string {
 }
 
 export async function extractHtml(html: string): Promise<ExtractedText> {
+  try {
+    return await extractParsedHtml(html)
+  } catch (error) {
+    // Only a page the parser rejects for a start tag over its memory limit is
+    // rewritten, so pages that already index are never affected by the scan.
+    if (
+      !(error instanceof TypeError) ||
+      !error.message.includes('memory limit has been exceeded')
+    )
+      throw error
+    return extractParsedHtml(withoutLongAttributeValues(html))
+  }
+}
+
+async function extractParsedHtml(html: string): Promise<ExtractedText> {
   let node = ''
   let rawScript = ''
   let scriptType = ''
@@ -259,7 +281,7 @@ export async function extractHtml(html: string): Promise<ExtractedText> {
       },
     })
     .transform(
-      new Response(withoutLongAttributeValues(html), {
+      new Response(html, {
         headers: { 'content-type': 'text/html' },
       }),
     )

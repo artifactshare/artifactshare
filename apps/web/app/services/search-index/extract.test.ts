@@ -72,3 +72,10 @@ test('ends comments where the HTML tokenizer does', () => {
     ),
   ).toBe(`<!--><img src=""><!-- x --!><img src="">`)
 })
+
+test('finds comment ends without rescanning the document per comment', () => {
+  const html = `${'<!-- c -->'.repeat(20000)}${'x'.repeat(2_000_000)}<img src="${kib}">`
+  const started = performance.now()
+  expect(withoutLongAttributeValues(html).endsWith('<img src="">')).toBe(true)
+  expect(performance.now() - started).toBeLessThan(2000)
+})
