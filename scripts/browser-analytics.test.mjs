@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
@@ -88,6 +88,8 @@ const contextsWithoutApp = new Map([
   ['scripts/browser-waits.integration.mjs', 'renders fixed setContent markup'],
 ])
 
+const scriptExtensions = /\.(?:mjs|cjs|js|mts|cts|ts)$/u
+
 async function scriptFiles(root, dir) {
   const files = []
   for (const entry of await readdir(join(root, dir), { withFileTypes: true })) {
@@ -95,8 +97,7 @@ async function scriptFiles(root, dir) {
     if (entry.isDirectory()) {
       if (entry.name !== 'node_modules')
         files.push(...(await scriptFiles(root, path)))
-    } else if (entry.name.endsWith('.mjs') && !entry.name.endsWith('.test.mjs'))
-      files.push(path)
+    } else if (scriptExtensions.test(entry.name)) files.push(path)
   }
   return files
 }
@@ -116,8 +117,15 @@ test('scripts open app browser contexts only through newAppBrowserContext', asyn
       }
   const direct = []
   for (const dir of dirs)
-    for (const file of await scriptFiles(root, dir)) {
-      if (file === 'scripts/lib/browser-analytics.mjs') continue
+    for (const file of (await scriptFiles(root, dir)).map((path) =>
+      path.split(sep).join('/'),
+    )) {
+      // The helper itself, and this test, which names the call it searches for.
+      if (
+        file === 'scripts/lib/browser-analytics.mjs' ||
+        file === 'scripts/browser-analytics.test.mjs'
+      )
+        continue
       if (contextsWithoutApp.has(file)) continue
       if ((await readFile(join(root, file), 'utf8')).includes('.newContext('))
         direct.push(file)
