@@ -836,73 +836,97 @@ describe('runReconciliation', () => {
     errorSpy.mockRestore()
   })
 
-  test('prunes more than one batch of 90-day search logs and opens while retaining the cutoff', async () => {
-    await seedWorkspaceAndUser(db)
-    await db
-      .insertInto('artifact_containers')
-      .values({
-        id: 'search-home',
-        workspace_id: 'ws-owner-1',
-        kind: 'inbox',
-        owner_user_id: 'owner-1',
-        created_by_id: 'owner-1',
-        name: 'Home',
-        created_at: NOW.toISOString(),
-        updated_at: NOW.toISOString(),
-      })
-      .execute()
-    await db
-      .insertInto('shareables')
-      .values({
-        id: 'search-file',
-        container_id: 'search-home',
-        workspace_id: 'ws-owner-1',
-        owner_user_id: 'owner-1',
-        name: 'Search file',
-        artifact_kind: 'html_page',
-        visibility: 'private',
-        created_at: NOW.toISOString(),
-        updated_at: NOW.toISOString(),
-      })
-      .execute()
-    const cutoff = new Date(NOW.getTime() - 90 * 86400000).toISOString()
-    const older = new Date(new Date(cutoff).getTime() - 1).toISOString()
-    for (let i = 0; i < 10_002; i++) {
+  test.each([
+    null,
+    'search_actor_daily_usage',
+    'search_workspace_daily_usage',
+  ] as const)(
+    'prunes more than one batch of 90-day search logs and opens while retaining the cutoff (missing usage table: %s)',
+    async (missingTable) => {
+      await seedWorkspaceAndUser(db)
       await db
-        .insertInto('search_logs')
+        .insertInto('artifact_containers')
         .values({
-          id: `search-${i}`,
-          actor_id: 'owner-1',
-          created_at: i === 10_001 ? cutoff : older,
-          query: 'alpha',
-          filters_json: '{}',
-          result_count: 1,
-          count_relation: 'eq',
-          tier: 'all',
-          duration_ms: 0,
-          discoverable_count: 1,
-          source: 'screen',
+          id: 'search-home',
+          workspace_id: 'ws-owner-1',
+          kind: 'inbox',
+          owner_user_id: 'owner-1',
+          created_by_id: 'owner-1',
+          name: 'Home',
+          created_at: NOW.toISOString(),
+          updated_at: NOW.toISOString(),
         })
         .execute()
       await db
-        .insertInto('search_opens')
+        .insertInto('shareables')
         .values({
-          id: `open-${i}`,
-          search_id: `search-${i}`,
-          shareable_id: 'search-file',
-          rank: 1,
-          opened_at: older,
+          id: 'search-file',
+          container_id: 'search-home',
+          workspace_id: 'ws-owner-1',
+          owner_user_id: 'owner-1',
+          name: 'Search file',
+          artifact_kind: 'html_page',
+          visibility: 'private',
+          created_at: NOW.toISOString(),
+          updated_at: NOW.toISOString(),
         })
         .execute()
-    }
-    await runReconciliation(db, fakeBucket, NOW)
-    expect(await db.selectFrom('search_logs').select('id').execute()).toEqual([
-      { id: 'search-10001' },
-    ])
-    expect(
-      await db.selectFrom('search_opens').select('search_id').execute(),
-    ).toEqual([{ search_id: 'search-10001' }])
-  })
+      const cutoff = new Date(NOW.getTime() - 90 * 86400000).toISOString()
+      const older = new Date(new Date(cutoff).getTime() - 1).toISOString()
+      for (let i = 0; i < 10_002; i++) {
+        await db
+          .insertInto('search_logs')
+          .values({
+            id: `search-${i}`,
+            actor_id: 'owner-1',
+            created_at: i === 10_001 ? cutoff : older,
+            query: 'alpha',
+            filters_json: '{}',
+            result_count: 1,
+            count_relation: 'eq',
+            tier: 'all',
+            duration_ms: 0,
+            discoverable_count: 1,
+            source: 'screen',
+          })
+          .execute()
+        await db
+          .insertInto('search_opens')
+          .values({
+            id: `open-${i}`,
+            search_id: `search-${i}`,
+            shareable_id: 'search-file',
+            rank: 1,
+            opened_at: older,
+          })
+          .execute()
+      }
+      if (missingTable) {
+        await db.schema.dropTable(missingTable).execute()
+        const diagnostic = vi
+          .spyOn(console, 'error')
+          .mockImplementation(() => {})
+        try {
+          await expect(runReconciliation(db, fakeBucket, NOW)).rejects.toThrow(
+            AggregateError,
+          )
+          expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+            'reconcile_search_usage_cleanup_failed',
+          )
+        } finally {
+          diagnostic.mockRestore()
+        }
+      } else {
+        await runReconciliation(db, fakeBucket, NOW)
+      }
+      expect(await db.selectFrom('search_logs').select('id').execute()).toEqual(
+        [{ id: 'search-10001' }],
+      )
+      expect(
+        await db.selectFrom('search_opens').select('search_id').execute(),
+      ).toEqual([{ search_id: 'search-10001' }])
+    },
+  )
 
   test('emits structured log lines in order', async () => {
     await seedWorkspaceAndUser(db)

@@ -607,3 +607,32 @@ test('resource loaders return capacity responses directly before framework error
     })
   }
 })
+
+test('workspace accounting failure escapes as a storage error after admission, never a quota response', async () => {
+  fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const url = new URL('https://example.com/api/search?q=alpha')
+  const args = {
+    request: new Request(url),
+    url,
+    pattern: '/api/search',
+    params: {},
+    context,
+  }
+  try {
+    await expect(middleware[0](args, () => loader(args))).rejects.toThrow(
+      'Search usage storage failed',
+    )
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+      'search_workspace_usage_write_failed',
+    )
+    expect(
+      fixture.sqlite
+        .prepare('SELECT requests FROM search_actor_daily_usage')
+        .get(),
+    ).toEqual({ requests: 1 })
+    expect(rpc.search).toHaveBeenCalled()
+  } finally {
+    diagnostic.mockRestore()
+  }
+})

@@ -61,9 +61,9 @@ export function meterSearchIndexes(
   indexes: SearchIndexes,
   now: string,
 ): SearchIndexes {
-  const counted = new Map<string, Promise<void>>()
+  const counted = new Map<string, Promise<Error | null>>()
   let diagnosed = false
-  async function count(workspace: string) {
+  function count(workspace: string) {
     let pending = counted.get(workspace)
     if (!pending) {
       pending = db
@@ -76,26 +76,35 @@ export function meterSearchIndexes(
         )
         .execute()
         .then(
-          () => {},
+          () => null,
           () => {
             if (!diagnosed) console.error('search_workspace_usage_write_failed')
             diagnosed = true
+            return new Error('Search usage storage failed')
           },
         )
       counted.set(workspace, pending)
     }
-    await pending
+    return pending
   }
   async function invoke<T>(workspace: string, run: () => Promise<T>) {
-    const measured = count(workspace)
+    // Store handled outcomes immediately so a failed write cannot reject unobserved
+    // while the index query is still running.
+    count(workspace)
+    let result: T
     try {
-      return await run()
-    } finally {
-      await measured
-      // Include every workspace already invoked before this call settled.
+      result = await run()
+    } catch (error) {
       await Promise.all(counted.values())
+      throw error
     }
+    // Include every workspace already invoked before this call settled.
+    const failures = await Promise.all(counted.values())
+    const failure = failures.find((error) => error !== null)
+    if (failure) throw failure
+    return result
   }
+
   return (workspace) => ({
     search: (input) =>
       invoke(workspace, () => indexes(workspace).search(input)),

@@ -1950,13 +1950,13 @@ test('valid group receipts consume admission while invalid representatives retai
   ).resolves.toMatchObject({ error: { code: 'invalid_cursor' } })
 })
 
-test('measurement failure is isolated from search and reports once per operation', async () => {
+test('measurement failure fails search and reports once per operation', async () => {
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
   try {
     fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
     await expect(
       search(fixture.db, () => index(), 'viewer', input),
-    ).resolves.not.toHaveProperty('error')
+    ).rejects.toThrow('Search usage storage failed')
     expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
       'search_workspace_usage_write_failed',
     )
@@ -1969,3 +1969,44 @@ test('measurement failure is isolated from search and reports once per operation
     diagnostic.mockRestore()
   }
 })
+
+test.each([false, true])(
+  'measurement failure is handled while the index is pending (index fails: %s)',
+  async (indexFails) => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const indexError = new Error('synthetic index failure')
+    const stub = index()
+    vi.mocked(stub.search).mockImplementation(async () => {
+      await gate
+      if (indexFails) throw indexError
+      return { items: [], nextCursor: null }
+    })
+    try {
+      fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
+      const pending = search(fixture.db, () => stub, 'viewer', input)
+      const checked = indexFails
+        ? expect(pending).rejects.toBe(indexError)
+        : expect(pending).rejects.toThrow('Search usage storage failed')
+      await vi.waitFor(() => {
+        expect(stub.search).toHaveBeenCalledTimes(1)
+        expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+          'search_workspace_usage_write_failed',
+        )
+      })
+      release()
+      await checked
+      expect(
+        fixture.sqlite
+          .prepare('SELECT requests FROM search_actor_daily_usage')
+          .get(),
+      ).toEqual({ requests: 1 })
+    } finally {
+      release()
+      diagnostic.mockRestore()
+    }
+  },
+)
