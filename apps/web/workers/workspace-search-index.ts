@@ -702,7 +702,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         }
         if (state.dirty)
           this.ctx.storage.sql.exec(
-            'UPDATE pending SET retry_at=0 WHERE retry_at>0',
+            // Given-up files wait for their daily retry or their own change.
+            'UPDATE pending SET retry_at=0 WHERE retry_at>0 AND given_up=0',
           )
         if (
           obligation &&

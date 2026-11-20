@@ -654,10 +654,16 @@ test('a file that keeps failing for an hour stops blocking rebuild completion an
   )
   await invoke('giveup', 'alarm')
   const [waiting] = (await index.exec(
-    'SELECT id,failed_count,retry_at FROM pending',
-  )) as Array<{ id: string; failed_count: number; retry_at: number }>
+    'SELECT id,failed_count,given_up,retry_at FROM pending',
+  )) as Array<{
+    id: string
+    failed_count: number
+    given_up: number
+    retry_at: number
+  }>
   expect(waiting.id).toBe('giveup-000')
   expect(waiting.failed_count).toBe(3)
+  expect(waiting.given_up).toBe(1)
   expect(waiting.retry_at).toBeGreaterThan(Date.now() + 23 * 60 * 60_000)
   expect(
     await rows(
@@ -667,6 +673,18 @@ test('a file that keeps failing for an hour stops blocking rebuild completion an
   expect(
     await rows("SELECT * FROM search_index_ready WHERE workspace_id='giveup'"),
   ).toHaveLength(0)
+  // A change to another file does not retry the given-up file early.
+  await run("UPDATE shareables SET name='elsewhere' WHERE id='giveup-001'")
+  // A product write notifies the index, which marks it dirty.
+  await invoke('giveup')
+  // The given-up file keeps a daily alarm, so the feed never settles to none.
+  for (let i = 0; i < 5; i++) await invoke('giveup', 'alarm')
+  expect(
+    (await invoke('giveup', 'search', 'elsewhere')).items.map((row) => row.id),
+  ).toEqual(['giveup-001'])
+  expect(
+    await index.exec("SELECT retry_at FROM pending WHERE id='giveup-000'"),
+  ).toEqual([{ retry_at: waiting.retry_at }])
   // A change to the file resets its count and retries it at once.
   await bucket.put('giveup-000', '<p>giveupneedle</p>')
   await run("UPDATE versions SET sha256='recovered' WHERE id='giveup-000-v'")
