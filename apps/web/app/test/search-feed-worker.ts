@@ -1,3 +1,5 @@
+import { search } from '../services/search.server'
+import { searchVisibilitySources } from '../services/search-visibility.server'
 import { createDb } from '../services/db.server'
 import { dispatchWorkspaceSearch } from '../services/search-index/schedule.server'
 import { WorkspaceSearchIndex as BaseIndex } from '../../workers/workspace-search-index'
@@ -32,7 +34,11 @@ export class WorkspaceSearchIndex extends BaseIndex {
                   return (...args: unknown[]) => wrap(prepared.bind(...args))
                 if (method === 'all')
                   return async () => {
-                    if (/delete from "search_index_changes"/iu.test(query)) {
+                    if (
+                      /delete from "search_index_(?:policy_)?changes"/iu.test(
+                        query,
+                      )
+                    ) {
                       if (gates.failAck) {
                         gates.failAck = false
                         throw new Error('synthetic acknowledgement failure')
@@ -146,6 +152,41 @@ export default {
       const db = createDb(env.DB)
       try {
         await dispatchWorkspaceSearch(db, env)
+      } finally {
+        await db.destroy()
+      }
+    } else if (action === 'visible' || action === 'localVisible') {
+      const db = createDb(env.DB)
+      try {
+        if (action === 'visible')
+          return Response.json(
+            await search(
+              db,
+              (id) => workspaceSearchIndex(env.WORKSPACE_SEARCH_INDEX, id),
+              `${workspace}-reader`,
+              {
+                query: query ?? 'syntheticneedle',
+                filters: {},
+                sort: 'relevance',
+                pageSize: 20,
+              },
+            ),
+          )
+        const sources = await searchVisibilitySources(
+          db,
+          `${workspace}-reader`,
+          {},
+          new Date().toISOString(),
+        )
+        const source = sources.find((row) => row.workspaceId === workspace)
+        return Response.json(
+          source
+            ? await index.search({
+                query: query ?? 'syntheticneedle',
+                visibility: source.visibility,
+              })
+            : { items: [] },
+        )
       } finally {
         await db.destroy()
       }

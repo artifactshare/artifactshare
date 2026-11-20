@@ -132,13 +132,16 @@ beforeAll(async () => {
     "INSERT INTO search_index_workspaces(workspace_id,dispatched_at) VALUES('predeleted','old')",
   )
   // Apply the exact new migration to populated, old-format D1 and DO storage.
-  const migration = await readFile(
-    join(root, 'db/migrations/0130_search_index_change_feed.sql'),
-    'utf8',
-  )
-  await binding.batch(
-    unstable_splitSqlQuery(migration).map((sql) => binding.prepare(sql)),
-  )
+  for (const name of [
+    '0130_search_index_change_feed.sql',
+    '0131_search_daily_usage.sql',
+    '0132_search_visibility.sql',
+  ]) {
+    const migration = await readFile(join(root, 'db/migrations', name), 'utf8')
+    await binding.batch(
+      unstable_splitSqlQuery(migration).map((sql) => binding.prepare(sql)),
+    )
+  }
 })
 afterAll(async () => {
   await db?.destroy()
@@ -148,7 +151,9 @@ afterAll(async () => {
 
 test('migration-first cutover preserves the old registry and bootstraps pre-feed live and deleted indexed data once', async () => {
   expect(
-    await rows('SELECT target,phase,cursor FROM search_index_rebuilds'),
+    await rows(
+      `SELECT target,phase,cursor FROM search_index_rebuilds WHERE target=${INDEX_FORMAT_VERSION}`,
+    ),
   ).toEqual([{ target: INDEX_FORMAT_VERSION, phase: 'live', cursor: '' }])
   expect(await rows('SELECT * FROM search_index_changes')).toEqual([])
   expect(
@@ -651,6 +656,184 @@ test('D1 dispatch uses the ready index, bounds and rotates failed work, and neve
   expect(calls).toEqual([])
 })
 
+test('typed policy handoff survives failed ack, eviction and concurrent coalescing', async () => {
+  const workspace = 'policy-handoff'
+  await seed(workspace)
+  await invoke(workspace)
+  await settle(workspace)
+  await run(
+    "UPDATE artifact_containers SET base_visibility='private' WHERE id='policy-handoff-inbox'",
+  )
+  await invoke(workspace, 'failAck')
+  await expect(invoke(workspace, 'alarm')).rejects.toThrow(
+    'synthetic acknowledgement failure',
+  )
+  const local = await storage(workspace)
+  expect(await local.exec('SELECT kind,key FROM policy_pending')).toEqual([
+    { kind: 'container', key: 'policy-handoff-inbox' },
+  ])
+  const old = (
+    await rows(
+      "SELECT id FROM search_index_policy_changes WHERE workspace_id='policy-handoff'",
+    )
+  )[0].id
+  await invoke(workspace, 'pauseAck')
+  const running = invoke(workspace, 'alarm')
+  try {
+    await vi.waitFor(async () =>
+      expect(await invoke(workspace, 'reachedAck')).toBe(true),
+    )
+    await run(
+      "UPDATE artifact_containers SET base_visibility='workspace',archived_at='now' WHERE id='policy-handoff-inbox'",
+    )
+  } finally {
+    await invoke(workspace, 'releaseAck')
+  }
+  await running
+  expect(
+    (
+      await rows(
+        "SELECT id FROM search_index_policy_changes WHERE workspace_id='policy-handoff'",
+      )
+    )[0].id,
+  ).toBeGreaterThan(old as number)
+  await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
+    name: 'policy-handoff:0@apac-ne',
+  })
+  await settle(workspace)
+  expect(
+    await local.exec('SELECT base,archived FROM container_policy'),
+  ).toEqual([{ base: 'workspace', archived: 'now' }])
+  expect(await local.exec('SELECT * FROM policy_pending')).toEqual([])
+  expect(
+    await rows(
+      "SELECT * FROM search_index_policy_changes WHERE workspace_id='policy-handoff'",
+    ),
+  ).toEqual([])
+  expect(
+    await rows(
+      "SELECT * FROM search_index_changes WHERE workspace_id='policy-handoff'",
+    ),
+  ).toEqual([])
+  expect(await invoke(workspace, 'nextAlarm')).toBeNull()
+})
+
+test('visibility and project policy converge from durable events without child fan-out or notification', async () => {
+  const workspace = 'visibility-policy'
+  await seed(workspace, 3)
+  await run(
+    `INSERT INTO users(id,email,email_verified,name,workspace_id,created_at,updated_at,google_sub) VALUES('${workspace}-reader','reader@example.test',1,'Reader','${workspace}','${now}','${now}','${workspace}-reader-google')`,
+  )
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  const ids = async (action = 'visible') =>
+    (await invoke(workspace, action)).items.map((r) => r.id)
+  expect(await ids()).toEqual([])
+  await run(
+    `UPDATE shareables SET visibility='workspace' WHERE id='${workspace}-000'`,
+  )
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids('localVisible')).toEqual([`${workspace}-000`])
+  expect(await ids()).toEqual([`${workspace}-000`])
+  await run(
+    `UPDATE shareables SET visibility='private' WHERE id='${workspace}-000'`,
+  )
+  // Permissive local metadata cannot authorize before the alarm catches up.
+  expect(await ids()).toEqual([])
+  await run(
+    `INSERT INTO shareable_grants VALUES('${workspace}-001','READER@example.test','${now}','${workspace}-user')`,
+  )
+  expect(await ids()).toEqual([`${workspace}-001`])
+  await run(
+    `DELETE FROM shareable_grants WHERE shareable_id='${workspace}-001'`,
+  )
+  expect(await ids()).toEqual([])
+  await run(
+    `INSERT INTO artifact_containers(id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES('${workspace}-project','${workspace}','project','Project','private','${workspace}-reader','${now}','${now}')`,
+  )
+  await run(
+    `UPDATE shareables SET container_id='${workspace}-project',visibility='project' WHERE workspace_id='${workspace}'`,
+  )
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  await run(
+    `INSERT INTO project_members VALUES('${workspace}-project','${workspace}-reader','${now}','${now}')`,
+  )
+  expect(
+    await rows(
+      `SELECT kind,policy_key FROM search_index_policy_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([{ kind: 'container', policy_key: `${workspace}-project` }])
+  expect(
+    await rows(
+      `SELECT id FROM search_index_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([])
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids('localVisible')).toHaveLength(3)
+  await run(
+    `DELETE FROM project_members WHERE container_id='${workspace}-project'`,
+  )
+  expect(await ids()).toEqual([])
+  await run(
+    `INSERT INTO project_share_defaults(id,project_container_id,email,created_at,updated_at) VALUES('visibility-default','${workspace}-project','READER@example.test','${now}','${now}')`,
+  )
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids('localVisible')).toHaveLength(3)
+  await run(
+    `UPDATE artifact_containers SET archived_at='${now}',base_visibility='workspace',created_by_id='${workspace}-user' WHERE id='${workspace}-project'`,
+  )
+  expect(
+    await rows(
+      `SELECT kind,policy_key FROM search_index_policy_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([{ kind: 'container', policy_key: `${workspace}-project` }])
+  expect(
+    await rows(
+      `SELECT id FROM search_index_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([])
+  expect(await ids()).toEqual([])
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids('localVisible')).toEqual([])
+  await run(
+    `UPDATE artifact_containers SET archived_at=NULL WHERE id='${workspace}-project'`,
+  )
+  await run(
+    `UPDATE workspaces SET link_sharing_enabled=1 WHERE id='${workspace}'`,
+  )
+  await run(
+    `UPDATE shareables SET visibility='link',name='Link sentinel' WHERE id='${workspace}-002'`,
+  )
+  await run(
+    `INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES('${workspace}-002','${workspace}-reader','${now}','${now}')`,
+  )
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids()).toContain(`${workspace}-002`)
+  await run(
+    `UPDATE workspaces SET link_sharing_enabled=0 WHERE id='${workspace}'`,
+  )
+  expect(
+    await rows(
+      `SELECT kind,policy_key FROM search_index_policy_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([{ kind: 'workspace', policy_key: workspace }])
+  expect(
+    await rows(
+      `SELECT id FROM search_index_changes WHERE workspace_id='${workspace}'`,
+    ),
+  ).toEqual([])
+  expect(await ids()).not.toContain(`${workspace}-002`)
+  await invoke(workspace, 'dispatch')
+  await settle(workspace)
+  expect(await ids('localVisible')).not.toContain(`${workspace}-002`)
+})
+
 test('bounded migration-first seeding resumes interrupted pages, includes deleted legacy IDs and fences a future format', async () => {
   await run('DELETE FROM search_index_ready')
   await run('DELETE FROM search_index_workspace_rebuilds')
@@ -666,8 +849,11 @@ test('bounded migration-first seeding resumes interrupted pages, includes delete
   expect(
     await rows('SELECT count(*) AS n FROM search_index_workspace_rebuilds'),
   ).toEqual([{ n: 50 }])
-  const checkpoint = (await rows('SELECT cursor FROM search_index_rebuilds'))[0]
-    .cursor
+  const checkpoint = (
+    await rows(
+      `SELECT cursor FROM search_index_rebuilds WHERE target=${INDEX_FORMAT_VERSION}`,
+    )
+  )[0].cursor
   await run(
     "UPDATE search_index_workspace_rebuilds SET completed=1 WHERE workspace_id='seed-001'",
   )
@@ -675,7 +861,11 @@ test('bounded migration-first seeding resumes interrupted pages, includes delete
   await run("UPDATE search_index_rebuilds SET cursor=''")
   await seedSearchRebuild(db)
   expect(
-    (await rows('SELECT cursor FROM search_index_rebuilds'))[0].cursor,
+    (
+      await rows(
+        `SELECT cursor FROM search_index_rebuilds WHERE target=${INDEX_FORMAT_VERSION}`,
+      )
+    )[0].cursor,
   ).toBe(checkpoint)
   expect(
     await rows(
@@ -688,9 +878,11 @@ test('bounded migration-first seeding resumes interrupted pages, includes delete
       "SELECT target FROM search_index_workspace_rebuilds WHERE workspace_id='deleted-legacy'",
     ),
   ).toEqual([{ target: INDEX_FORMAT_VERSION }])
-  expect(await rows('SELECT phase FROM search_index_rebuilds')).toEqual([
-    { phase: 'done' },
-  ])
+  expect(
+    await rows(
+      `SELECT phase FROM search_index_rebuilds WHERE target=${INDEX_FORMAT_VERSION}`,
+    ),
+  ).toEqual([{ phase: 'done' }])
   await run('DELETE FROM search_index_ready')
   await seedSearchRebuild(db)
   expect(await rows('SELECT * FROM search_index_ready')).toEqual([])

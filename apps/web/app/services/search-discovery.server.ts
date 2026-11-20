@@ -1,3 +1,4 @@
+import { SearchCapacityError } from './search-index/query'
 import {
   sql,
   type Kysely,
@@ -59,7 +60,7 @@ function viewerQuery(db: Kysely<DB>, viewerUserId: string) {
 declare const liveViewer: unique symbol
 /**
  * The viewer's live identity and own-workspace membership. Only
- * loadDiscoveryViewer produces it, so callers cannot pass session claims.
+ * this module produces it from viewerQuery, so callers cannot pass session claims.
  */
 export type DiscoveryViewer = {
   id: string
@@ -91,21 +92,33 @@ function inputViewer(
 }
 
 /** Fixed aliases are owned by this module, never supplied by the caller. */
-function discoveryEligibility(viewer: DiscoveryViewer, now: string) {
+function discoveryEligibility(
+  viewer: DiscoveryViewer,
+  now: string,
+  current = false,
+) {
   const email = grantMatchEmail({
     email: viewer.email,
     emailVerified: viewer.email_verified === 1,
   })
+  // Keep the existing JS email normalization, while fencing a snapshot that
+  // changed during an index await. In particular SQLite lower() is ASCII-only.
+  const matchEmail = current
+    ? sql<string>`(SELECT CASE WHEN email_verified=1 AND email=${viewer.email} THEN ${viewer.email.toLowerCase()} ELSE NULL END FROM users WHERE id=${viewer.id})`
+    : sql`${email}`
+  const workspace = current
+    ? sql<string>`(SELECT workspace_id FROM users WHERE id=${viewer.id})`
+    : sql`${viewer.workspace_id}`
   const live = sql<boolean>`NOT ${workspaceAccessRevokedSql(sql.ref('s.workspace_id'), viewer.id)}`
   return sql<boolean>`(
     (s.owner_user_id = ${viewer.id} AND ${live})
     OR EXISTS (SELECT 1 FROM shareable_grants g
-      WHERE ${lowerEmail('g.granted_email')} = ${email} AND g.shareable_id = s.id)
-    OR (s.visibility = 'workspace' AND s.workspace_id = ${viewer.workspace_id} AND ${live})
+      WHERE ${lowerEmail('g.granted_email')} = ${matchEmail} AND g.shareable_id = s.id)
+    OR (s.visibility = 'workspace' AND s.workspace_id = ${workspace} AND ${live})
     OR (s.visibility = 'project' AND c.kind = 'project' AND (
       EXISTS (SELECT 1 FROM project_share_defaults d
-        WHERE ${lowerEmail('d.email')} = ${email} AND d.project_container_id = c.id)
-      OR (c.base_visibility = 'workspace' AND s.workspace_id = ${viewer.workspace_id} AND ${live})
+        WHERE ${lowerEmail('d.email')} = ${matchEmail} AND d.project_container_id = c.id)
+      OR (c.base_visibility = 'workspace' AND s.workspace_id = ${workspace} AND ${live})
       OR (c.created_by_id = ${viewer.id} AND ${live} AND EXISTS (
         SELECT 1 FROM project_members m WHERE m.container_id = c.id AND m.user_id = ${viewer.id}
       ))
@@ -123,12 +136,13 @@ function discoveryQuery(
   viewer: DiscoveryViewer,
   filters: DiscoveryFilters,
   now: string,
+  current = false,
 ): DiscoveryQuery {
   let query = db
     .selectFrom('shareables as s')
     .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
     .select(['s.id', 's.workspace_id as workspaceId'])
-    .where(discoveryEligibility(viewer, now))
+    .where(discoveryEligibility(viewer, now, current))
   if (filters.credentialScope)
     query = query.where(sql<boolean>`EXISTS (
       SELECT 1 FROM users AS search_viewer
@@ -185,7 +199,7 @@ export function buildCandidateDiscoveryQuery(
   now: string,
 ): DiscoveryQuery {
   return (
-    discoveryQuery(db, viewer, input, now)
+    discoveryQuery(db, viewer, input, now, true)
       .where(
         sql<boolean>`s.id IN (SELECT value FROM json_each(${JSON.stringify(input.candidateIds)}))`,
       )
@@ -200,9 +214,45 @@ export async function discoverCandidates(
 ): Promise<DiscoveredId[]> {
   const now = input.now ?? new Date().toISOString()
   if (!input.candidateIds.length) return []
-  const viewer = await inputViewer(db, input)
+  let viewer = await inputViewer(db, input)
   if (!viewer) return []
-  return buildCandidateDiscoveryQuery(db, viewer, input, now).execute()
+  // Read the current identity in the same statement as the ID-leading check.
+  // Normally the request snapshot still matches, with no extra round trip. If
+  // it changed during an index await, reuse the trusted row and normalize its
+  // email in JS before checking once more. Repeated identity churn is capacity,
+  // never an exact empty result based on stale claims.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const query = buildCandidateDiscoveryQuery(db, viewer, input, now)
+    const result = await sql<{
+      id: string | null
+      workspaceId: string | null
+      viewer_json: string | null
+    }>`
+      SELECT candidates.id,candidates.workspaceId,NULL AS viewer_json FROM (${query}) candidates
+      UNION ALL SELECT NULL,NULL,json_object(
+        'id',identity.id,'workspace_id',identity.workspace_id,'email',identity.email,
+        'email_verified',identity.email_verified,'member_status',identity.member_status)
+      FROM (${viewerQuery(db, input.viewerUserId)}) identity
+    `.execute(db)
+    const encoded = result.rows.find(
+      (row) => row.viewer_json !== null,
+    )?.viewer_json
+    if (!encoded) return []
+    const current = JSON.parse(encoded) as DiscoveryViewer
+    if (
+      current.id === viewer.id &&
+      current.email === viewer.email &&
+      current.email_verified === viewer.email_verified &&
+      current.workspace_id === viewer.workspace_id
+    )
+      return result.rows.flatMap((row) =>
+        row.id !== null && row.workspaceId !== null
+          ? [{ id: row.id, workspaceId: row.workspaceId }]
+          : [],
+      )
+    viewer = current
+  }
+  throw new SearchCapacityError()
 }
 
 /** Sparse domain only: active members use indexed candidates for their workspace. */
@@ -360,7 +410,7 @@ export async function enumerateSuggestionIds(
   return domain
 }
 
-/** Complete member fallback, sharing the exact discovery predicate with candidate checks. */
+/** Full-inventory oracle; full-text request paths never use this enumeration. */
 export function buildMemberDiscoveryQuery(
   db: Kysely<DB>,
   viewer: DiscoveryViewer,

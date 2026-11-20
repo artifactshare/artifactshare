@@ -524,7 +524,9 @@ describe('project share defaults', () => {
     ).resolves.toEqual({ kind: 'project-name-conflict' })
   })
 
-  test('updateProjectContainer changes the base visibility', async () => {
+  test('updateProjectContainer changes the base visibility while queuing policy work', async () => {
+    await db.deleteFrom('search_index_policy_changes').execute()
+    await db.deleteFrom('search_index_ready').execute()
     const updated = await updateProjectContainer(db, 'ws-a', 'project-a', {
       name: 'Project A',
       description: null,
@@ -534,6 +536,20 @@ describe('project share defaults', () => {
     expect(updated.kind === 'ok' ? updated.project.baseVisibility : null).toBe(
       'private',
     )
+    expect(
+      await db
+        .selectFrom('search_index_policy_changes')
+        .select(['workspace_id', 'kind', 'policy_key'])
+        .execute(),
+    ).toEqual([
+      { workspace_id: 'ws-a', kind: 'container', policy_key: 'project-a' },
+    ])
+    expect(
+      await db
+        .selectFrom('search_index_ready')
+        .select('workspace_id')
+        .execute(),
+    ).toEqual([{ workspace_id: 'ws-a' }])
   })
 
   test('updateProjectContainer rejects another active project name', async () => {

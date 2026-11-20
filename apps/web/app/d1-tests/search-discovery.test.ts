@@ -457,13 +457,18 @@ it('search presentation joins keep actor recency and authorized facet counts on 
     db,
     () => ({
       search: async () => ({
+        visibilityProtocol: 1,
         items: [
           { id: 'presentation-healthy', tier: 'all', rank: 1, activityAt: now },
           { id: 'presentation-denied', tier: 'all', rank: 2, activityAt: now },
         ],
         nextCursor: null,
       }),
-      groupMembers: async () => ({ items: [], nextCursor: null }),
+      groupMembers: async () => ({
+        visibilityProtocol: 1,
+        items: [],
+        nextCursor: null,
+      }),
       details: async (_input, selectedIds) =>
         selectedIds.map((id) => ({
           id,
