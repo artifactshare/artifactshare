@@ -620,6 +620,84 @@ test('a page with a start tag larger than the HTML parser limit is indexed', asy
     ).toEqual(['largetag-000'])
 })
 
+test('a file that keeps failing for an hour stops blocking rebuild completion and dispatch, and a change retries it', async () => {
+  await seed('giveup', 2)
+  const bucket = (await worker.getEnv()).BUCKET
+  await bucket.delete('giveup-000')
+  await run(
+    "INSERT INTO search_index_workspace_rebuilds(workspace_id,target,completed) SELECT 'giveup', max(target), 0 FROM search_index_rebuilds",
+  )
+  await invoke('giveup')
+  for (let i = 0; i < 3; i++) await invoke('giveup', 'alarm')
+  const index = await storage('giveup')
+  // Failures inside the first hour still hold everything back, however many.
+  await index.exec(
+    `UPDATE pending SET failed_count=5, failing_since=${Date.now() - 30 * 60_000}, retry_at=0 WHERE id='giveup-000'`,
+  )
+  await invoke('giveup', 'alarm')
+  expect(
+    await index.exec(
+      "SELECT failed_count,given_up FROM pending WHERE id='giveup-000'",
+    ),
+  ).toEqual([{ failed_count: 6, given_up: 0 }])
+  expect(
+    await rows(
+      "SELECT completed FROM search_index_workspace_rebuilds WHERE workspace_id='giveup'",
+    ),
+  ).toEqual([{ completed: 0 }])
+  expect(
+    await rows("SELECT * FROM search_index_ready WHERE workspace_id='giveup'"),
+  ).toHaveLength(1)
+  // Simulate two earlier failures that began more than an hour ago.
+  await index.exec(
+    `UPDATE pending SET failed_count=2, failing_since=${Date.now() - 2 * 60 * 60_000}, retry_at=0 WHERE id='giveup-000'`,
+  )
+  await invoke('giveup', 'alarm')
+  const [waiting] = (await index.exec(
+    'SELECT id,failed_count,given_up,retry_at FROM pending',
+  )) as Array<{
+    id: string
+    failed_count: number
+    given_up: number
+    retry_at: number
+  }>
+  expect(waiting.id).toBe('giveup-000')
+  expect(waiting.failed_count).toBe(3)
+  expect(waiting.given_up).toBe(1)
+  expect(waiting.retry_at).toBeGreaterThan(Date.now() + 23 * 60 * 60_000)
+  expect(
+    await rows(
+      "SELECT completed FROM search_index_workspace_rebuilds WHERE workspace_id='giveup'",
+    ),
+  ).toEqual([{ completed: 1 }])
+  expect(
+    await rows("SELECT * FROM search_index_ready WHERE workspace_id='giveup'"),
+  ).toHaveLength(0)
+  // A change to another file does not retry the given-up file early.
+  await run("UPDATE shareables SET name='elsewhere' WHERE id='giveup-001'")
+  // A product write notifies the index, which marks it dirty.
+  await invoke('giveup')
+  // The given-up file keeps a daily alarm, so the feed never settles to none.
+  for (let i = 0; i < 5; i++) await invoke('giveup', 'alarm')
+  expect(
+    (await invoke('giveup', 'search', 'elsewhere')).items.map((row) => row.id),
+  ).toEqual(['giveup-001'])
+  expect(
+    await index.exec("SELECT retry_at FROM pending WHERE id='giveup-000'"),
+  ).toEqual([{ retry_at: waiting.retry_at }])
+  // A change to the file resets its count and retries it at once.
+  await bucket.put('giveup-000', '<p>giveupneedle</p>')
+  await run("UPDATE versions SET sha256='recovered' WHERE id='giveup-000-v'")
+  await invoke('giveup', 'dispatch')
+  await settle('giveup')
+  expect(await index.exec('SELECT id FROM pending')).toEqual([])
+  expect(
+    (await invoke('giveup', 'search', 'giveupneedle')).items.map(
+      (row) => row.id,
+    ),
+  ).toEqual(['giveup-000'])
+})
+
 test('D1 dispatch uses the ready index, bounds and rotates failed work, and never revisits settled inventory', async () => {
   await run("UPDATE search_index_rebuilds SET phase='done',cursor=''")
   await run('DELETE FROM search_index_ready')

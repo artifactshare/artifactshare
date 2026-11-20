@@ -924,7 +924,15 @@ describe('Worker integration harness', () => {
       (await storage.exec('PRAGMA table_info(pending)')).map(
         (column: { name: string }) => column.name,
       ),
-    ).toEqual(['id', 'attempted', 'retry_at', 'policy_dirty'])
+    ).toEqual([
+      'id',
+      'attempted',
+      'retry_at',
+      'policy_dirty',
+      'failed_count',
+      'failing_since',
+      'given_up',
+    ])
     expect(
       await storage.exec(
         "SELECT name FROM sqlite_master WHERE name='placement'",
