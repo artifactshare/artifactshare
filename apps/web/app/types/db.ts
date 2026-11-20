@@ -33,6 +33,26 @@ export interface DB {
     rank: number
     opened_at: string
   }
+  search_index_changes: {
+    id: Generated<number>
+    workspace_id: string
+    shareable_id: string
+    recorded_at: Generated<string>
+  }
+  search_index_ready: {
+    workspace_id: string
+    dispatched_at: Generated<string>
+  }
+  search_index_rebuilds: {
+    target: number
+    phase: Generated<'live' | 'legacy' | 'done'>
+    cursor: Generated<string>
+  }
+  search_index_workspace_rebuilds: {
+    workspace_id: string
+    target: number
+    completed: Generated<number>
+  }
   search_index_workspaces: {
     workspace_id: string
     dispatched_at: string

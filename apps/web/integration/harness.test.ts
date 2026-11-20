@@ -586,14 +586,7 @@ describe('Worker integration harness', () => {
       const env = await worker.getEnv()
       const stub = searchProbe('ws-signal')
       await stub.sync('ws-signal')
-      expect(await stub.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
-      // The registry is written when a full pass starts, so make one due.
-      if (point === 'registry')
-        await (
-          await worker.getDurableObjectStorage('WORKSPACE_SEARCH_INDEX', {
-            name: 'ws-signal:0@apac-ne',
-          })
-        ).exec('UPDATE state SET scanned_at=0')
+      expect(await stub.nextAlarm()).toBeNull()
       await stub.pause(point)
       const running = stub.resume()
       try {
@@ -951,11 +944,15 @@ describe('Worker integration harness', () => {
     // The source object never exists, so every attempt fails.
     await worker.scheduled({ cron: '*/5 * * * *' })
     const probe = searchProbe(owner.workspaceId)
-    // After a counted failure the index waits minutes, not a second.
-    expect(await probe.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
-    // Once the source is back, the next sync request retries at once.
+    const retryAt = await probe.nextAlarm()
+    expect(retryAt).toEqual(expect.any(Number))
+    expect(retryAt!).toBeGreaterThan(Date.now() + 60_000)
+    // Cron can find this workspace but honors the saved retry deadline.
     await env.BUCKET.put('artifacts/backoff/missing', '<p>backoffneedle</p>')
     await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await probe.nextAlarm()).toBe(retryAt)
+    expect((await probe.search({ query: 'backoffneedle' })).items).toEqual([])
+    await probe.resumeAt(retryAt!)
     expect(
       (await probe.search({ query: 'backoffneedle' })).items.map(
         (row) => row.id,
@@ -963,7 +960,7 @@ describe('Worker integration harness', () => {
     ).toEqual(['backoff-missing'])
   }, 60_000)
 
-  test('an idle index reads only changed rows and sleeps until its next full pass', async () => {
+  test('an idle index drains durable changes and keeps no periodic alarm', async () => {
     const owner = {
       workspaceId: 'ws-idle',
       userId: 'user-idle',
@@ -973,7 +970,7 @@ describe('Worker integration harness', () => {
     }
     await seedRuntimeUser(owner)
     const env = await worker.getEnv()
-    // Written an hour ago, well before the change mark the first pass sets.
+    // Old timestamps do not affect durable feed discovery.
     const now = new Date(Date.now() - 60 * 60_000).toISOString()
     await env.DB.prepare(
       "INSERT INTO artifact_containers (id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES ('idle-inbox',?,'inbox',?,?,'Inbox',?,?)",
@@ -995,7 +992,7 @@ describe('Worker integration harness', () => {
     const probe = searchProbe(owner.workspaceId)
     await probe.sync()
     for (let step = 0; step < 50; step++) {
-      if ((await probe.nextAlarm())! > Date.now() + 60_000) break
+      if ((await probe.nextAlarm()) === null) break
       await probe.resume()
     }
     const index = await worker.getDurableObjectStorage(
@@ -1005,26 +1002,21 @@ describe('Worker integration harness', () => {
     expect(await index.exec('SELECT count(*) AS count FROM active')).toEqual([
       { count: 60 },
     ])
-    // Once the first pass is done, the index sleeps until the next one.
-    expect(await probe.nextAlarm()).toBeGreaterThan(
-      Date.now() + 11 * 60 * 60_000,
-    )
+    // Settled work has no recurring alarm.
+    expect(await probe.nextAlarm()).toBeNull()
     // A notification with nothing changed neither restarts a full pass nor
     // keeps the index awake.
     const before = await probe.queryState()
     await probe.sync()
-    // The writes are the state row (notification, flag, change mark) and the
-    // three alarm settings.
+    // Only notification bookkeeping and alarm handoff write to idle storage.
     expect(
       (await probe.queryState()).changes - before.changes,
     ).toBeLessThanOrEqual(6)
     expect(
       await index.exec('SELECT cursor, sweep, recent_time FROM state'),
     ).toEqual([{ cursor: '', sweep: '', recent_time: '' }])
-    expect(await probe.nextAlarm()).toBeGreaterThan(
-      Date.now() + 11 * 60 * 60_000,
-    )
-    // A change written after the mark is found by the next notification.
+    expect(await probe.nextAlarm()).toBeNull()
+    // The next notification drains the durable change.
     await env.DB.prepare(
       "UPDATE shareables SET description='idlechangedneedle',updated_at=? WHERE id='idle-42'",
     )
@@ -1038,13 +1030,13 @@ describe('Worker integration harness', () => {
     ).toEqual(['idle-42'])
     const settle = async () => {
       for (let step = 0; step < 50; step++) {
-        if ((await probe.nextAlarm())! > Date.now() + 60_000) return
+        if ((await probe.nextAlarm()) === null) return
         await probe.resume()
       }
       throw new Error('the index did not settle')
     }
-    // A notification that arrives while a walk is under way starts another
-    // walk once it ends, so a write dated before the walk's position is found.
+    // A change arriving while a batch is pending remains durable even when
+    // its timestamp is older than the writes already read.
     const later = Date.now()
     for (let n = 0; n < 55; n++)
       await env.DB.prepare(
@@ -1058,16 +1050,15 @@ describe('Worker integration harness', () => {
         .run()
     await probe.sync()
     expect(
-      (await index.exec('SELECT recent_time FROM state'))[0].recent_time,
-    ).not.toBe('')
+      (await index.exec('SELECT count(*) AS n FROM pending'))[0].n,
+    ).toBeGreaterThan(0)
     await env.DB.prepare(
       "UPDATE shareables SET description='latecommitneedle',updated_at=? WHERE id='idle-58'",
     )
       .bind(new Date(later - 1000).toISOString())
       .run()
     await probe.sync()
-    // The walks take longer than the five-minute overlap. The next walk still
-    // reads from the mark saved when the previous walk started.
+    // Delayed continuations still find the change without a timestamp overlap.
     for (let step = 1; step <= 6; step++)
       await probe.resumeAt(Date.now() + step * 10 * 60_000)
     expect(
@@ -1075,11 +1066,15 @@ describe('Worker integration harness', () => {
         (row) => row.id,
       ),
     ).toEqual(['idle-58'])
-    // A scan started under another index format starts again from the first
-    // file, so files before its position are rebuilt too.
+    // An explicit rebuild resumes a prior-format checkpoint from the beginning.
     await index.exec(
-      "UPDATE state SET cursor='idle-20',scan_format=0,scanned_at=0",
+      "INSERT OR REPLACE INTO rebuild(singleton,target,cursor) VALUES(1,0,'idle-20')",
     )
+    await env.DB.prepare(
+      "INSERT INTO search_index_workspace_rebuilds(workspace_id,target,completed) VALUES('ws-idle',?,0) ON CONFLICT(workspace_id) DO UPDATE SET completed=0",
+    )
+      .bind(INDEX_FORMAT_VERSION)
+      .run()
     await index.exec('UPDATE active SET format=0')
     await probe.resume()
     await settle()
@@ -1803,7 +1798,19 @@ describe('Worker integration harness', () => {
         "SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH 'searchablebody' AND c.shareable='backfill-00'",
       ),
     ).toEqual([{ shareable: 'backfill-00' }])
+    const pendingRetry = await index.exec(
+      "SELECT retry_at FROM pending WHERE id='backfill-11'",
+    )
+    expect(pendingRetry).toEqual([{ retry_at: expect.any(Number) }])
+    const retryAt = Number(pendingRetry[0].retry_at)
+    expect(retryAt).toBeGreaterThan(Date.now())
+    const alarm = await searchProbe('ws-backfill').nextAlarm()
+    expect(alarm).not.toBeNull()
+    expect(alarm).toBeGreaterThan(Date.now())
+    expect(alarm).toBeLessThanOrEqual(retryAt)
     await index.exec('DROP TRIGGER pause_backfill')
+    // Exercise the stored deadline through the alarm path, without another sync.
+    await searchProbe('ws-backfill').resumeAt(retryAt)
     // Alarm continuations survive eviction; the test does not invoke a second import path.
     await vi.waitFor(
       async () => {
@@ -1824,17 +1831,7 @@ describe('Worker integration harness', () => {
         "SELECT normalized_title FROM documents d JOIN active a ON a.generation=d.generation WHERE d.shareable='backfill-00'",
       ),
     ).toEqual([{ normalized_title: 'backfill 00' }])
-    // A scheduled sync compares rows changed since the last mark; this write
-    // is dated before it, so only the next full pass finds it.
-    await expect(
-      worker.scheduled({ cron: '*/5 * * * *' }),
-    ).resolves.toMatchObject({ outcome: 'ok' })
-    expect(
-      await index.exec(
-        "SELECT normalized_title FROM documents d JOIN active a ON a.generation=d.generation WHERE d.shareable='backfill-00'",
-      ),
-    ).toEqual([{ normalized_title: 'backfill 00' }])
-    await index.exec('UPDATE state SET scanned_at=0')
+    // The feed finds this backdated write on the first cron, without scanning.
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
     ).resolves.toMatchObject({ outcome: 'ok' })
@@ -1851,9 +1848,18 @@ describe('Worker integration harness', () => {
     )
     await index.exec('DROP TABLE search_runs')
     await index.exec('UPDATE active SET format=0')
-    // A format change ships as a new INDEX_FORMAT_VERSION, which no finished
-    // scan has used yet.
-    await index.exec('UPDATE state SET scanned_format=0')
+    // Model the explicit marker's target arriving at an older-format checkpoint.
+    await index.exec(
+      'INSERT OR REPLACE INTO rebuild(singleton,target) VALUES(1,0)',
+    )
+    await env.DB.prepare(
+      "INSERT INTO search_index_workspace_rebuilds(workspace_id,target,completed) VALUES('ws-backfill',?,0) ON CONFLICT(workspace_id) DO UPDATE SET completed=0",
+    )
+      .bind(INDEX_FORMAT_VERSION)
+      .run()
+    await env.DB.prepare(
+      "INSERT INTO search_index_ready(workspace_id) VALUES('ws-backfill') ON CONFLICT(workspace_id) DO NOTHING",
+    ).run()
     const servingBefore = await index.exec(
       'SELECT count(*) AS count FROM serving_chunks',
     )
@@ -1943,10 +1949,15 @@ describe('Worker integration harness', () => {
         "SELECT DISTINCT version FROM serving_chunks WHERE shareable='backfill-00'",
       ),
     ).toEqual(oldVersion)
+    const [stagedRetry] = await index.exec(
+      "SELECT retry_at FROM pending WHERE id='backfill-00'",
+    )
+    expect(stagedRetry).toEqual({ retry_at: expect.any(Number) })
+    const stagedRetryAt = Number(stagedRetry.retry_at)
+    expect(stagedRetryAt).toBeGreaterThan(Date.now())
+    expect(await searchProbe('ws-backfill').nextAlarm()).toEqual(stagedRetryAt)
     await index.exec('DROP TRIGGER pause_search_stage')
-    await expect(
-      worker.scheduled({ cron: '*/5 * * * *' }),
-    ).resolves.toMatchObject({ outcome: 'ok' })
+    await searchProbe('ws-backfill').resumeAt(stagedRetryAt)
     expect(
       await index.exec(
         "SELECT DISTINCT c.version FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH 'replacementtail' AND c.shareable='backfill-00'",
@@ -1980,7 +1991,7 @@ describe('Worker integration harness', () => {
     ])
     expect(
       await env.DB.prepare(
-        "SELECT workspace_id FROM search_index_workspaces WHERE workspace_id='ws-backfill'",
+        "SELECT workspace_id FROM search_index_ready WHERE workspace_id='ws-backfill'",
       ).first(),
     ).not.toBeNull()
     await expect(
