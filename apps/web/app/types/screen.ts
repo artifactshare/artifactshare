@@ -24,6 +24,7 @@ export type ScreenInteraction =
   | {
       action: 'click' | 'hover'
       selector: string
+      readySelector?: string
     }
   | {
       action: 'setInputFiles'

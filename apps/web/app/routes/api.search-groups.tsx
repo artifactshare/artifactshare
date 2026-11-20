@@ -1,4 +1,7 @@
-import { searchNoStoreMiddleware } from '~/services/search-response.server'
+import {
+  searchErrorResponse,
+  searchNoStoreMiddleware,
+} from '~/services/search-response.server'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { searchGroup } from '~/services/search.server'
@@ -30,7 +33,12 @@ export async function loader({ url, context }: Route.LoaderArgs) {
         url.searchParams.get('receipt') ?? '',
         url.searchParams.get('cursor') ?? undefined,
       ),
+    searchErrorResponse,
   )
+  if (result instanceof Response) {
+    result.headers.set('Server-Timing', serverTiming)
+    return result
+  }
   return Response.json(result, {
     status: 'error' in result ? 400 : 200,
     headers: {
