@@ -21,7 +21,12 @@ export async function loader({ url, context }: Route.LoaderArgs) {
   )
   if (result instanceof Response) {
     result.headers.set('Server-Timing', serverTiming)
-    return result
+    if (!input.resume) return result
+    // A refused return still names the signed-in viewer.
+    return Response.json(
+      { ...((await result.json()) as object), actor: user.id },
+      { status: result.status, headers: result.headers },
+    )
   }
   // Returning to a screen search also names the signed-in viewer, so the page
   // never labels results with a viewer remembered in the tab.
