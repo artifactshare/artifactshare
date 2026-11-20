@@ -98,6 +98,19 @@ export function mapApiError(
       })
     }
   }
+  if (apiCode === 'search_daily_limit_exceeded') {
+    const raw = isRecord(body) && isRecord(body.error) ? body.error : undefined
+    return cliError({
+      code: apiCode,
+      message: apiMessage ?? 'Daily search limit reached.',
+      why: 'The daily search budget is exhausted.',
+      hint: 'Wait until retry_at before searching again.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'retry_later' },
+      ...(raw && isRecord(raw.details) ? { details: raw.details } : {}),
+    })
+  }
   if (apiCode === 'rate-limited' || apiCode === 'thread-capacity') {
     const raw = isRecord(body) && isRecord(body.error) ? body.error : undefined
     const details = raw && isRecord(raw.details) ? raw.details : undefined

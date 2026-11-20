@@ -55,6 +55,7 @@ export const ProjectBaseVisibilitySchema = z.enum(['workspace', 'private'])
 export type ProjectBaseVisibility = z.infer<typeof ProjectBaseVisibilitySchema>
 
 export const ApiErrorSchema = z.object({
+  retry_at: z.string().datetime().optional(),
   code: stringId,
   message: z.string().min(1),
   details: z.record(z.string(), z.unknown()).optional(),

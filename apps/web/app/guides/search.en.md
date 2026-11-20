@@ -18,3 +18,9 @@ Suggestions cover a narrower set of files than full results, so a missing sugges
 Admin rights alone do not make a file appear in search, even if those rights let you open it. Search includes eligible files you own, files shared directly with you, and files shared with you through a workspace or project. Files available to you only through link sharing appear only after you have opened them while signed in, and only while the link is active and workspace link sharing is enabled. Files in archived projects are excluded by default.
 
 Agents and scripts search these files through MCP `list_artifacts` and the CLI `artifacts list --q`; restricted agent and bot credentials see only the projects they can read. The filters and error handling are described in the [CLI reference](/guides/cli#recovery).
+
+## Daily search limit
+
+Each signed-in person can make 1,000 full-text search requests per UTC day, shared across the website, API, MCP and CLI on every plan. Suggestions for nonempty queries, filter-only searches, additional result pages and same-title groups count. Empty search history and title-only file listing do not count. A search that returns no matches or fails after admission still counts.
+
+When the limit is reached, the alert shows the exact date, time and zone when search resumes. Wait until then; changing keywords or retrying immediately does not restore access. Your query and filters remain available.

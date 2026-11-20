@@ -67,6 +67,7 @@ afterEach(() => {
   window.history.replaceState(originalState, '', originalUrl)
   document.body.replaceChildren()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 test('authorized metadata renders with inert excerpts and same-title expansion without delaying opens', async () => {
@@ -1315,3 +1316,85 @@ test.each([1000, 599])(
     expect(router.state.loaderData).toEqual({ '0': result })
   },
 )
+
+test('daily group refusal keeps visible results and retries on deliberate re-expansion only at reset', async () => {
+  const now = vi
+    .spyOn(Date, 'now')
+    .mockReturnValue(Date.parse('2026-11-20T23:59:59.999Z'))
+  const fetcher = vi.fn(async () =>
+    Response.json(
+      {
+        error: {
+          code: 'search_daily_limit_exceeded',
+          retry_at: '2026-11-21T00:00:00.000Z',
+        },
+      },
+      { status: 429 },
+    ),
+  )
+  vi.stubGlobal('fetch', fetcher)
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/search',
+        element: <SearchResults result={result} actor="viewer" />,
+      },
+    ],
+    {
+      initialEntries: [
+        { pathname: '/search', search: '?q=alpha', key: 'daily-group-limit' },
+      ],
+    },
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(
+    <TooltipProvider>
+      <RouterProvider router={router} />
+    </TooltipProvider>,
+  )
+  const group = page.getByRole('button', { name: /1 more/ })
+  const limitMessage =
+    'Daily search limit reached. Search resumes at Nov 21, 2026, 00:00 UTC. Please wait until then.'
+  await group.click()
+  await expect.element(page.getByRole('alert')).toHaveTextContent(limitMessage)
+  await expect
+    .element(page.getByRole('button', { name: 'Retry', exact: true }))
+    .not.toBeInTheDocument()
+  await expect
+    .element(page.getByRole('link', { name: 'Alpha report' }))
+    .toBeVisible()
+  await group.click()
+  await group.click()
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(router.state.location.search).toBe('?q=alpha')
+
+  now.mockReturnValue(Date.parse('2026-11-21T00:00:00.000Z'))
+  await waitForBrowserLayout()
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  await expect.element(page.getByRole('alert')).toHaveTextContent(limitMessage)
+  fetcher.mockImplementationOnce(async () =>
+    Response.json({
+      items: [
+        {
+          id: 'file-b',
+          title: 'Alpha report 2',
+          updatedAt: '2026-09-17T00:00:00Z',
+          lastViewedAt: null,
+          receipt: 'receipt-b',
+        },
+      ],
+      total: { value: 2, relation: 'eq' },
+      nextCursor: null,
+    }),
+  )
+  await group.click()
+  await group.click()
+  await expect
+    .element(page.getByRole('link', { name: 'Alpha report 2', exact: true }))
+    .toBeVisible()
+  await expect.element(page.getByRole('alert')).not.toBeInTheDocument()
+  expect(fetcher).toHaveBeenCalledTimes(2)
+  expect(router.state.location.search).toBe('?q=alpha')
+})

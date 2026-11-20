@@ -24,6 +24,8 @@ const shortViewportScenarios = new Set<ScenarioId>([
   'search-mobile-filters-ja',
   'search-loading',
   'search-error',
+  'search-daily-limit',
+  'search-palette-daily-limit',
   'search-continuation-error',
   'search-group-expanded',
   'search-results',
@@ -84,6 +86,7 @@ export const SCENARIO_CONTRACTS = Object.fromEntries(
           'search-mobile-search',
           'search-mobile-search-ja',
           'search-loading',
+          'search-palette-daily-limit',
         ].includes(scenario)
           ? {
               interactions: [

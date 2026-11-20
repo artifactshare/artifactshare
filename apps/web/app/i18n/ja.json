@@ -1766,6 +1766,7 @@
   "search.remove": "絞り込みを解除",
   "search.cancel": "キャンセル",
   "search.retry": "再読み込み",
+  "search.dailyLimit": "本日の検索回数の上限に達しました。{time} に検索を再開できます。それまでお待ちください。",
   "search.failure": "検索できませんでした。もう一度お試しください。",
   "search.invalid": "検索条件や日付を確認してください。",
   "search.count": "{n}件",

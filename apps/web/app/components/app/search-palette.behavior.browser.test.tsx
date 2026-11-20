@@ -15,6 +15,8 @@ afterEach(() => {
   root?.unmount()
   document.body.replaceChildren()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 test('unselected Enter searches, while arrow-selected Enter opens an authorized file', async () => {
@@ -866,4 +868,112 @@ test('choosing a suggested person clears the partial name and keeps a row that r
   await page.getByRole('option', { name: /^View all matching files/ }).click()
   await vi.waitFor(() => expect(router.state.location.pathname).toBe('/search'))
   expect(router.state.location.search).toContain('owner=alex')
+})
+
+test('daily refusal retains keywords, shows UTC reset and suppresses retry; empty history remains available', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-20T23:59:59.999Z'))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'https://example.com')
+      if (url.pathname.includes('search-logs'))
+        return Response.json({ searches: [] })
+      return url.searchParams.get('q')
+        ? Response.json(
+            {
+              error: {
+                code: 'search_daily_limit_exceeded',
+                retry_at: '2026-11-21T00:00:00.000Z',
+              },
+            },
+            { status: 429 },
+          )
+        : Response.json(empty)
+    }),
+  )
+  const router = createMemoryRouter([
+    {
+      id: 'root',
+      path: '/',
+      loader: () => ({ locale: 'ja' }),
+      element: (
+        <AppTopbar>
+          <SearchPalette />
+        </AppTopbar>
+      ),
+    },
+    { path: '/search', element: <p>Results screen</p> },
+  ])
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(
+    <TooltipProvider>
+      <RouterProvider router={router} />
+    </TooltipProvider>,
+  )
+  await page.getByRole('button', { name: /^検索(?::|$)/ }).click()
+  const field = page.getByRole('combobox', { name: /^(Keywords|キーワード)$/ })
+  await field.fill('alpha')
+  await expect.element(page.getByText(/本日の検索回数の上限/)).toBeVisible()
+  expect(document.body.textContent).toContain('2026年11月21日 00:00 UTC')
+  await expect
+    .element(page.getByRole('button', { name: '再読み込み', exact: true }))
+    .not.toBeInTheDocument()
+  await expect.element(field).toHaveValue('alpha')
+  await userEvent.keyboard('{Enter}')
+  expect(router.state.location.pathname).toBe('/')
+  await field.fill('')
+  await expect
+    .element(page.getByText(/本日の検索回数の上限/))
+    .not.toBeInTheDocument()
+})
+
+test('daily refusal allows deliberate Enter at UTC reset without changing keywords or retrying automatically', async () => {
+  const now = vi
+    .spyOn(Date, 'now')
+    .mockReturnValue(Date.parse('2026-11-20T23:59:59.999Z'))
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'https://example.com')
+    if (url.pathname.includes('search-logs'))
+      return Response.json({ searches: [] })
+    return url.searchParams.get('q')
+      ? Response.json(
+          {
+            error: {
+              code: 'search_daily_limit_exceeded',
+              retry_at: '2026-11-21T00:00:00.000Z',
+            },
+          },
+          { status: 429 },
+        )
+      : Response.json(empty)
+  })
+  vi.stubGlobal('fetch', fetcher)
+  const router = mountPalette()
+  await page.getByRole('button', { name: /^Search(?::|$)/ }).click()
+  const field = page.getByRole('combobox', { name: /^(Keywords|キーワード)$/ })
+  await field.fill('alpha')
+  await expect.element(page.getByText(/Daily search limit/)).toBeVisible()
+  const requests = fetcher.mock.calls.length
+  await userEvent.keyboard('{Enter}')
+  expect(router.state.location.pathname).toBe('/')
+  expect(fetcher).toHaveBeenCalledTimes(requests)
+  await expect.element(field).toHaveValue('alpha')
+
+  now.mockReturnValue(Date.parse('2026-11-21T00:00:00.000Z'))
+  await waitForBrowserLayout()
+  expect(router.state.location.pathname).toBe('/')
+  expect(fetcher).toHaveBeenCalledTimes(requests)
+  await expect.element(field).toHaveValue('alpha')
+  await expect
+    .element(page.getByRole('button', { name: 'Retry', exact: true }))
+    .not.toBeInTheDocument()
+  await userEvent.keyboard('{Enter}')
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  expect(new URLSearchParams(router.state.location.search).get('q')).toBe(
+    'alpha',
+  )
+  expect(fetcher).toHaveBeenCalledTimes(requests)
+  await expect.element(page.getByText('Results screen')).toBeVisible()
 })

@@ -1212,11 +1212,19 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
     operation.responses['503'].description,
     'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again. This error is not a zero-result search.',
   )
+  assert.match(
+    operation.responses['429'].description,
+    /search_daily_limit_exceeded.*retry_at/,
+  )
+  assert.deepEqual(operation.responses['429'].headers['Retry-After'], {
+    schema: { type: 'integer', minimum: 1 },
+  })
   assert.deepEqual(Object.keys(operation.responses), [
     '200',
     '400',
     '401',
     '403',
+    '429',
     '503',
   ])
 })

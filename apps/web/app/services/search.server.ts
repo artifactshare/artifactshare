@@ -1,3 +1,4 @@
+import { admitSearch, meterSearchIndexes } from './search-quota.server'
 import { createHash } from 'node:crypto'
 import {
   newSearchTokenKey,
@@ -506,6 +507,9 @@ export async function search(
     input.cursor
       ? readSearchToken(db, actor, input.cursor, 'cursor', now)
       : undefined,
+    // Authentication and deterministic parsing are complete at the boundary.
+    // A continuation must first authenticate its token below.
+    input.cursor ? undefined : admitSearch(db, actor, now),
   ])
   if (input.cursor) {
     if (
@@ -519,6 +523,8 @@ export async function search(
     searchLogId = cursor.log.id
     tokenKey = cursor.log.token_key
   }
+  if (input.cursor) await admitSearch(db, actor, now)
+  indexes = meterSearchIndexes(db, indexes, now)
   if (input.relativeDays && input.filters.date) {
     input = {
       ...input,
@@ -734,6 +740,10 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
+  if (input.query.trim()) {
+    await admitSearch(db, user.id, now)
+    indexes = meterSearchIndexes(db, indexes, now)
+  }
   // Project names do not depend on the viewer row, so read them alongside it.
   const [viewer, projects] = await Promise.all([
     loadDiscoveryViewer(db, user.id),
@@ -925,7 +935,10 @@ function searchFacets(rows: Metadata[], actor: string, exact: boolean) {
     id: string
     name: string
     count: number
-  }) => ({ ...row, ...(exact ? { count } : {}) })
+  }) => ({
+    ...row,
+    ...(exact ? { count } : {}),
+  })
   return {
     owners: [...owners.values()]
       .sort(
@@ -985,6 +998,8 @@ export async function searchGroup(
   const digest = createHash('sha256').update(key).digest('base64url')
   if (continuation && continuation.payload.group !== digest)
     return invalidCursor
+  await admitSearch(db, actor, now)
+  indexes = meterSearchIndexes(db, indexes, now)
   const [sources, collected] = await Promise.all([
     universe(db, searchActor, input.filters, now),
     collect(db, indexes, searchActor, input, now, handle.log.tier === 'any'),

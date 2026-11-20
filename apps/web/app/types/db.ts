@@ -10,6 +10,12 @@ import type {
 } from '~/lib/shareable-types'
 
 export interface DB {
+  search_actor_daily_usage: { actor_id: string; day: string; requests: number }
+  search_workspace_daily_usage: {
+    workspace_id: string
+    day: string
+    requests: number
+  }
   search_logs: {
     token_key: Generated<string>
     id: string

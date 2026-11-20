@@ -288,7 +288,7 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
           const texts = Array.isArray(section.body)
             ? section.body
             : [section.body]
-          if (id === 'recovery') expect(paragraphs).toHaveLength(8)
+          if (id === 'recovery') expect(paragraphs).toHaveLength(9)
           for (const [index, text] of texts.entries()) {
             const paragraph = paragraphs[index]
             expect(paragraph.textContent).toBe(text)

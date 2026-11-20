@@ -22,6 +22,7 @@ vi.mock('~/services/db.server', () => ({
 }))
 import { loader, middleware } from './api.search'
 import { loader as suggestions } from './api.search-suggestions'
+import { loader as groups } from './api.search-groups'
 import { loader as logs } from './api.search-logs'
 import { action as open } from './api.search-logs.$id.opens'
 let fixture: ReturnType<typeof createMigratedInMemoryDb>
@@ -456,4 +457,182 @@ test('blank-query recent files use view order and omit newly denied metadata', a
   ).json<Awaited<ReturnType<typeof searchSuggestions>>>()
   expect(denied.recent.map((row) => row.id)).toEqual(['file-5', 'file-4'])
   expect(JSON.stringify(denied.recent)).not.toMatch(/alpha a|alpha Owner 0/)
+})
+
+test('daily refusal preserves HTTP reset metadata on results and suggestions', async () => {
+  const day = new Date().toISOString().slice(0, 10)
+  fixture.sqlite
+    .prepare('INSERT INTO search_actor_daily_usage VALUES (?, ?, 1000)')
+    .run('viewer', day)
+  for (const run of [loader, suggestions]) {
+    const url = new URL('https://example.com/api/search?q=alpha')
+    const args = {
+      request: new Request(url),
+      url,
+      pattern: '/api/search',
+      params: {},
+      context,
+    }
+    const response = await middleware[0](args, () => run(args))
+    if (!(response instanceof Response)) throw new Error('Expected response')
+    expect(response.status).toBe(429)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0)
+    const next = new Date(`${day}T00:00:00.000Z`)
+    next.setUTCDate(next.getUTCDate() + 1)
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'search_daily_limit_exceeded',
+        retry_at: next.toISOString(),
+        details: { retry_at: next.toISOString() },
+      },
+    })
+  }
+  expect(rpc.search).not.toHaveBeenCalled()
+})
+
+test('resource loaders return quota responses directly before framework error handling', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-11-20T12:00:00.000Z'))
+  try {
+    const url = new URL('https://example.com/api/search?q=alpha')
+    const args = {
+      request: new Request(url),
+      url,
+      pattern: '/api/search',
+      params: {},
+      context,
+    }
+    const initial = await (
+      await loader(args)
+    ).json<Awaited<ReturnType<typeof search>>>()
+    if ('error' in initial) throw new Error('unexpected search error')
+    fixture.sqlite
+      .prepare(
+        'UPDATE search_actor_daily_usage SET requests=1000 WHERE actor_id=? AND day=?',
+      )
+      .run('viewer', '2026-11-20')
+    vi.clearAllMocks()
+    for (const [path, run] of [
+      ['/api/search', loader],
+      ['/api/search-suggestions', suggestions],
+      ['/api/search-groups', groups],
+    ] as const) {
+      const resourceUrl = new URL(path, 'https://example.com')
+      resourceUrl.searchParams.set('q', 'alpha')
+      resourceUrl.searchParams.set('receipt', initial.items[0].receipt)
+      // Call the loader itself: React Router would turn an escaped Error into 500.
+      const response = await run({
+        ...args,
+        url: resourceUrl,
+        request: new Request(resourceUrl),
+        pattern: path,
+      })
+      expect(response.status).toBe(429)
+      expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+      expect(response.headers.get('Retry-After')).toBe('43200')
+      expect(response.headers.get('Server-Timing')).toContain('search;dur=')
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'search_daily_limit_exceeded',
+          retry_at: '2026-11-21T00:00:00.000Z',
+          details: {
+            retry_at: '2026-11-21T00:00:00.000Z',
+            retry_after_seconds: 43200,
+          },
+        },
+      })
+    }
+    expect(rpc.search).not.toHaveBeenCalled()
+    expect(rpc.groupMembers).not.toHaveBeenCalled()
+    expect(rpc.details).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('dev palette daily refusal returns the same quota response directly', async () => {
+  const url = new URL('https://example.com/api/search-suggestions?q=alpha')
+  const response = await suggestions({
+    url,
+    request: new Request(url, {
+      headers: {
+        'X-ArtifactShare-Dev-Screen-State': 'search/palette-daily-limit',
+      },
+    }),
+    pattern: '/api/search-suggestions',
+    params: {},
+    context,
+  })
+  expect(response.status).toBe(429)
+  expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+  expect(response.headers.get('Retry-After')).toBe('43200')
+  expect(await response.json()).toMatchObject({
+    error: {
+      code: 'search_daily_limit_exceeded',
+      retry_at: '2026-11-21T00:00:00.000Z',
+      details: {
+        retry_at: '2026-11-21T00:00:00.000Z',
+        retry_after_seconds: 43200,
+      },
+    },
+  })
+  expect(rpc.search).not.toHaveBeenCalled()
+})
+
+test('resource loaders return capacity responses directly before framework error handling', async () => {
+  const url = new URL('https://example.com/api/search?q=alpha')
+  const args = {
+    request: new Request(url),
+    url,
+    pattern: '/api/search',
+    params: {},
+    context,
+  }
+  const initial = await (
+    await loader(args)
+  ).json<Awaited<ReturnType<typeof search>>>()
+  if ('error' in initial) throw new Error('unexpected search error')
+  url.searchParams.set('receipt', initial.items[0].receipt)
+  for (const run of [loader, suggestions, groups]) {
+    rpc.search.mockResolvedValueOnce({
+      error: { code: 'search_capacity_exceeded' },
+    })
+    const response = await run(args)
+    expect(response.status).toBe(503)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(response.headers.get('Server-Timing')).toContain('search;dur=')
+    expect(await response.json()).toEqual({
+      error: { code: 'search_capacity_exceeded' },
+    })
+  }
+})
+
+test('workspace accounting failure escapes as a storage error after admission, never a quota response', async () => {
+  fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const url = new URL('https://example.com/api/search?q=alpha')
+  const args = {
+    request: new Request(url),
+    url,
+    pattern: '/api/search',
+    params: {},
+    context,
+  }
+  try {
+    await expect(middleware[0](args, () => loader(args))).rejects.toThrow(
+      'Search usage storage failed',
+    )
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+      'search_workspace_usage_write_failed',
+    )
+    expect(
+      fixture.sqlite
+        .prepare('SELECT requests FROM search_actor_daily_usage')
+        .get(),
+    ).toEqual({ requests: 1 })
+    expect(rpc.search).toHaveBeenCalled()
+  } finally {
+    diagnostic.mockRestore()
+  }
 })

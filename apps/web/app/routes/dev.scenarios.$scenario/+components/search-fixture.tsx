@@ -16,6 +16,7 @@ export function SearchFixture({
     | 'any'
     | 'capped'
     | 'error'
+    | 'daily-limit'
     | 'continuation-error'
     | 'group-expanded'
 }) {
@@ -101,14 +102,23 @@ export function SearchFixture({
       </div>
       <main data-regression-region="main" className={listMainClassName}>
         <SearchResults
-          result={
-            state === 'error'
-              ? { error: { code: 'search_capacity_exceeded', hint: '' } }
-              : result
-          }
+          result={fixtureResult(state, result)}
           actor="fixture-user"
         />
       </main>
     </>
   )
+}
+
+function fixtureResult(state: string, result: SearchResponse): SearchResponse {
+  if (state === 'daily-limit')
+    return {
+      error: {
+        code: 'search_daily_limit_exceeded',
+        retry_at: '2026-11-21T00:00:00.000Z',
+      },
+    }
+  if (state === 'error')
+    return { error: { code: 'search_capacity_exceeded', hint: '' } }
+  return result
 }

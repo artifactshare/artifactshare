@@ -505,3 +505,63 @@ it('search presentation joins keep actor recency and authorized facet counts on 
   })
   expect(labels.projects).toEqual([{ id: 'project', name: 'Project' }])
 })
+
+it('daily admission is atomic on D1 and cleanup batches use day indexes', async () => {
+  const { admitSearch, pruneSearchUsage } =
+    await import('~/services/search-quota.server')
+  await db
+    .insertInto('search_actor_daily_usage')
+    .values({ actor_id: 'viewer', day: '2026-11-20', requests: 998 })
+    .execute()
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: 8 }, () =>
+      admitSearch(db, 'viewer', '2026-11-20T23:59:59.500Z'),
+    ),
+  )
+  expect(
+    outcomes.filter((outcome) => outcome.status === 'fulfilled'),
+  ).toHaveLength(2)
+  for (const outcome of outcomes)
+    if (outcome.status === 'rejected')
+      expect(outcome.reason).toMatchObject({
+        code: 'search_daily_limit_exceeded',
+        retry_at: '2026-11-21T00:00:00.000Z',
+      })
+  await admitSearch(db, 'owner', '2026-11-20T23:59:59.500Z')
+  await admitSearch(db, 'viewer', '2026-11-21T00:00:00.000Z')
+  for (const table of [
+    'search_actor_daily_usage',
+    'search_workspace_daily_usage',
+  ]) {
+    const plan = await binding
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT rowid FROM ${table} WHERE day < ? ORDER BY day LIMIT 500`,
+      )
+      .bind('2026-11-21')
+      .all<{ detail: string }>()
+    expect(
+      plan.results.some((row) => row.detail.includes(`${table}_day`)),
+    ).toBe(true)
+  }
+  await binding
+    .prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<501)
+    INSERT INTO search_workspace_daily_usage(workspace_id,day,requests) SELECT 'source', date('2020-01-01', '+' || x || ' days'),1 FROM n`)
+    .run()
+  expect(
+    await pruneSearchUsage(
+      db,
+      '2026-08-01T00:00:00.000Z',
+      '2026-11-21T00:00:00.000Z',
+    ),
+  ).toBe(500)
+  expect(
+    await pruneSearchUsage(
+      db,
+      '2026-08-01T00:00:00.000Z',
+      '2026-11-21T00:00:00.000Z',
+    ),
+  ).toBe(1)
+  expect(
+    await db.selectFrom('search_actor_daily_usage').selectAll().execute(),
+  ).toEqual([{ actor_id: 'viewer', day: '2026-11-21', requests: 1 }])
+})

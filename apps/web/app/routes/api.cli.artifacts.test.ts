@@ -129,6 +129,35 @@ describe('/api/cli/artifacts', () => {
     })
   })
 
+  test('daily refusal returns exact retry metadata and private HTTP 429', async () => {
+    const { SearchDailyLimitError } =
+      await import('~/services/search-quota.server')
+    searchCliArtifactsMock.mockResolvedValue({
+      kind: 'daily-limit',
+      limit: new SearchDailyLimitError('2026-11-20T23:59:00.000Z'),
+    })
+    const response = await loader({
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/api/cli/artifacts'),
+      pattern: '/api/cli/artifacts',
+      params: {},
+      request: new Request('https://example.test/api/cli/artifacts?q=body'),
+    })
+    expect(response.status).toBe(429)
+    expect(response.headers.get('Retry-After')).toBe('60')
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'search_daily_limit_exceeded',
+        retry_at: '2026-11-21T00:00:00.000Z',
+        details: {
+          retry_at: '2026-11-21T00:00:00.000Z',
+          retry_after_seconds: 60,
+        },
+      },
+    })
+  })
+
   test('dispatches full-text filters and preserves successful empty guidance', async () => {
     const data = {
       artifacts: [],

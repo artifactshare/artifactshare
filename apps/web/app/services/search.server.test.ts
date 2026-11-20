@@ -1742,4 +1742,271 @@ test('other workspaces are searched side by side and keep their order', async ()
   expect(result.items.map((row) => row.id)).toEqual(
     expect.arrayContaining(['in-a', 'in-b']),
   )
+  expect(
+    await fixture.db
+      .selectFrom('search_workspace_daily_usage')
+      .select(['workspace_id', 'requests'])
+      .orderBy('workspace_id')
+      .execute(),
+  ).toEqual([
+    { workspace_id: 'ws', requests: 1 },
+    { workspace_id: 'xa', requests: 1 },
+    { workspace_id: 'xb', requests: 1 },
+  ])
+  indexes.xa.search = async () => ({ items: [], nextCursor: null })
+  indexes.xb.search = async () => {
+    throw new Error('synthetic fan-out failure')
+  }
+  await expect(
+    search(
+      fixture.db,
+      (workspace) => indexes[workspace as keyof typeof indexes],
+      'viewer',
+      input,
+    ),
+  ).rejects.toThrow('synthetic fan-out failure')
+  expect(
+    await fixture.db
+      .selectFrom('search_workspace_daily_usage')
+      .select(['workspace_id', 'requests'])
+      .orderBy('workspace_id')
+      .execute(),
+  ).toEqual([
+    { workspace_id: 'ws', requests: 2 },
+    { workspace_id: 'xa', requests: 2 },
+    { workspace_id: 'xb', requests: 2 },
+  ])
 })
+
+test('all search entry points share atomic daily admission and preserve invalid tokens', async () => {
+  const { searchGroup } = await import('./search.server')
+  const { SearchDailyLimitError } = await import('./search-quota.server')
+  const stub = index()
+  const day = new Date().toISOString().slice(0, 10)
+  fixture.sqlite
+    .prepare('INSERT INTO search_actor_daily_usage VALUES (?, ?, 998)')
+    .run('viewer', day)
+  const outcomes = await Promise.allSettled([
+    search(fixture.db, () => stub, 'viewer', input, 'screen'),
+    search(fixture.db, () => stub, 'viewer', input, 'cli'),
+    search(fixture.db, () => stub, 'viewer', input, 'mcp'),
+    searchSuggestions(fixture.db, () => stub, { id: 'viewer' }, input),
+  ])
+  expect(
+    outcomes.filter((result) => result.status === 'fulfilled'),
+  ).toHaveLength(2)
+  const denied = outcomes.filter((result) => result.status === 'rejected')
+  expect(denied).toHaveLength(2)
+  for (const result of denied)
+    expect(result.reason).toBeInstanceOf(SearchDailyLimitError)
+  expect(
+    fixture.sqlite
+      .prepare(
+        'SELECT requests FROM search_actor_daily_usage WHERE actor_id = ?',
+      )
+      .get('viewer'),
+  ).toEqual({ requests: 1000 })
+  vi.mocked(stub.search).mockClear()
+  await expect(
+    search(fixture.db, () => stub, 'viewer', { ...input, cursor: 'invalid' }),
+  ).resolves.toMatchObject({ error: { code: 'invalid_cursor' } })
+  await expect(
+    searchGroup(fixture.db, () => stub, 'viewer', 'invalid'),
+  ).resolves.toMatchObject({ error: { code: 'invalid_cursor' } })
+  await expect(
+    searchSuggestions(
+      fixture.db,
+      () => stub,
+      { id: 'viewer' },
+      { ...input, query: '' },
+    ),
+  ).resolves.toMatchObject({ files: [], owners: [], projects: [] })
+  expect(stub.search).not.toHaveBeenCalled()
+  await expect(
+    search(fixture.db, () => stub, 'owner', input),
+  ).resolves.not.toHaveProperty('error')
+  const next = new Date(`${day}T00:00:00.000Z`)
+  next.setUTCDate(next.getUTCDate() + 1)
+  await expect(
+    search(
+      fixture.db,
+      () => stub,
+      'viewer',
+      input,
+      'screen',
+      () => next,
+    ),
+  ).resolves.not.toHaveProperty('error')
+})
+
+test('denied suggestions skip discovery and name queries; storage failures fail closed', async () => {
+  const day = new Date().toISOString().slice(0, 10)
+  fixture.sqlite
+    .prepare('INSERT INTO search_actor_daily_usage VALUES (?, ?, 1000)')
+    .run('viewer', day)
+  const discover = vi.spyOn(discovery, 'enumerateSuggestionIds')
+  const names = vi.spyOn(discovery, 'suggestionOwners')
+  const stub = index()
+  await expect(
+    searchSuggestions(fixture.db, () => stub, { id: 'viewer' }, input),
+  ).rejects.toMatchObject({ code: 'search_daily_limit_exceeded' })
+  expect(discover).not.toHaveBeenCalled()
+  expect(names).not.toHaveBeenCalled()
+  fixture.sqlite.exec('DROP TABLE search_actor_daily_usage')
+  await expect(search(fixture.db, () => stub, 'viewer', input)).rejects.toThrow(
+    'no such table',
+  )
+  expect(stub.search).not.toHaveBeenCalled()
+  discover.mockRestore()
+  names.mockRestore()
+})
+
+test('workspace measurement counts zero hits and failures once despite relaxation', async () => {
+  const stub = index()
+  vi.mocked(stub.search).mockResolvedValue({ items: [], nextCursor: null })
+  await search(fixture.db, () => stub, 'viewer', input)
+  expect(
+    fixture.sqlite
+      .prepare(
+        'SELECT workspace_id, requests FROM search_workspace_daily_usage',
+      )
+      .all(),
+  ).toEqual([{ workspace_id: 'ws', requests: 1 }])
+  vi.mocked(stub.search).mockRejectedValue(new Error('synthetic index failure'))
+  await expect(search(fixture.db, () => stub, 'viewer', input)).rejects.toThrow(
+    'synthetic index failure',
+  )
+  expect(
+    fixture.sqlite
+      .prepare('SELECT requests FROM search_workspace_daily_usage')
+      .get(),
+  ).toEqual({ requests: 2 })
+  expect(
+    fixture.sqlite
+      .prepare('SELECT requests FROM search_actor_daily_usage')
+      .get(),
+  ).toEqual({ requests: 2 })
+})
+
+test('usage cleanup uses bounded batches and distinct retention windows', async () => {
+  const { pruneSearchUsage } = await import('./search-quota.server')
+  const { admitSearch, SearchDailyLimitError } =
+    await import('./search-quota.server')
+  const nearMidnight = '2026-11-20T23:59:59.500Z'
+  fixture.sqlite.exec(
+    "INSERT INTO search_actor_daily_usage VALUES ('viewer', '2026-11-20', 1000), ('owner', '2026-11-19', 1); INSERT INTO search_workspace_daily_usage VALUES ('ws', '2026-08-01', 3), ('ws', '2026-11-19', 4)",
+  )
+  await expect(
+    admitSearch(fixture.db, 'viewer', nearMidnight),
+  ).rejects.toMatchObject({
+    retry_at: '2026-11-21T00:00:00.000Z',
+    retry_after_seconds: 1,
+  })
+  expect(new SearchDailyLimitError(nearMidnight).headers).toEqual({
+    'Cache-Control': 'private, no-store',
+    'Retry-After': '1',
+  })
+  expect(
+    await pruneSearchUsage(
+      fixture.db,
+      '2026-08-22T00:00:00.000Z',
+      nearMidnight,
+    ),
+  ).toBe(1)
+  expect(
+    fixture.sqlite
+      .prepare('SELECT actor_id FROM search_actor_daily_usage')
+      .all(),
+  ).toEqual([{ actor_id: 'viewer' }])
+  expect(
+    fixture.sqlite
+      .prepare('SELECT day FROM search_workspace_daily_usage')
+      .all(),
+  ).toEqual([{ day: '2026-11-19' }])
+})
+
+test('valid group receipts consume admission while invalid representatives retain their contract', async () => {
+  const { searchGroup } = await import('./search.server')
+  const stub = index()
+  const result = await search(fixture.db, () => stub, 'viewer', input)
+  if ('error' in result) throw new Error('Expected results')
+  const receipt = result.items[0].receipt
+  await fixture.db
+    .updateTable('search_actor_daily_usage')
+    .set({ requests: 1000 })
+    .where('actor_id', '=', 'viewer')
+    .execute()
+  vi.mocked(stub.search).mockClear()
+  await expect(
+    searchGroup(fixture.db, () => stub, 'viewer', receipt),
+  ).rejects.toMatchObject({ code: 'search_daily_limit_exceeded' })
+  expect(stub.search).not.toHaveBeenCalled()
+  await fixture.db
+    .deleteFrom('shareables')
+    .where('id', '=', result.items[0].id)
+    .execute()
+  await expect(
+    searchGroup(fixture.db, () => stub, 'viewer', receipt),
+  ).resolves.toMatchObject({ error: { code: 'invalid_cursor' } })
+})
+
+test('measurement failure fails search and reports once per operation', async () => {
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
+    await expect(
+      search(fixture.db, () => index(), 'viewer', input),
+    ).rejects.toThrow('Search usage storage failed')
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+      'search_workspace_usage_write_failed',
+    )
+    expect(
+      fixture.sqlite
+        .prepare('SELECT requests FROM search_actor_daily_usage')
+        .get(),
+    ).toEqual({ requests: 1 })
+  } finally {
+    diagnostic.mockRestore()
+  }
+})
+
+test.each([false, true])(
+  'measurement failure is handled while the index is pending (index fails: %s)',
+  async (indexFails) => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const indexError = new Error('synthetic index failure')
+    const stub = index()
+    vi.mocked(stub.search).mockImplementation(async () => {
+      await gate
+      if (indexFails) throw indexError
+      return { items: [], nextCursor: null }
+    })
+    try {
+      fixture.sqlite.exec('DROP TABLE search_workspace_daily_usage')
+      const pending = search(fixture.db, () => stub, 'viewer', input)
+      const checked = indexFails
+        ? expect(pending).rejects.toBe(indexError)
+        : expect(pending).rejects.toThrow('Search usage storage failed')
+      await vi.waitFor(() => {
+        expect(stub.search).toHaveBeenCalledTimes(1)
+        expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+          'search_workspace_usage_write_failed',
+        )
+      })
+      release()
+      await checked
+      expect(
+        fixture.sqlite
+          .prepare('SELECT requests FROM search_actor_daily_usage')
+          .get(),
+      ).toEqual({ requests: 1 })
+    } finally {
+      release()
+      diagnostic.mockRestore()
+    }
+  },
+)

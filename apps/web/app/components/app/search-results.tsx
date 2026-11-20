@@ -1,3 +1,9 @@
+import {
+  SEARCH_DAILY_LIMIT,
+  SearchRequestError,
+  searchResetTime,
+  type SearchLimitResponse,
+} from '~/lib/search-limit'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Link,
@@ -72,6 +78,7 @@ type Item = Result['items'][number]
 export type SearchResponse =
   | Awaited<ReturnType<typeof search>>
   | import('~/services/search-input').SearchValidation
+  | SearchLimitResponse
 function recordOpen(searchId: string, receipt: string) {
   void fetch(`/api/search-logs/${searchId}/opens`, {
     method: 'POST',
@@ -80,6 +87,20 @@ function recordOpen(searchId: string, receipt: string) {
     keepalive: true,
   }).catch(() => {})
 }
+function searchErrorMessage(
+  error: { code: string; retry_at?: string },
+  t: ReturnType<typeof useT>['t'],
+  locale: ReturnType<typeof useT>['locale'],
+) {
+  if (error.code === SEARCH_DAILY_LIMIT && error.retry_at)
+    return t('search.dailyLimit', {
+      time: searchResetTime(error.retry_at, locale),
+    })
+  if (error.code === 'validation_error') return t('search.invalid')
+  if (error.code === 'search_capacity_exceeded') return t('search.capacity')
+  return t('search.failure')
+}
+
 export function SearchResults({
   result,
   actor,
@@ -87,13 +108,15 @@ export function SearchResults({
   result: SearchResponse
   actor: string
 }) {
-  const { t } = useT(),
+  const { t, locale } = useT(),
     location = useLocation(),
     navigate = useNavigate()
   const params = new URLSearchParams(location.search)
   // Retrying repeats the same URL; it can only help when the failure was
   // not caused by the search itself (too broad or malformed).
+  const limited = 'error' in result && result.error.code === SEARCH_DAILY_LIMIT
   const retryable =
+    !limited &&
     'error' in result &&
     result.error.code !== 'search_capacity_exceeded' &&
     result.error.code !== 'validation_error'
@@ -104,33 +127,29 @@ export function SearchResults({
           {/* A failed search has no owner names to show. */}
           {searchHeading(params.get('q') ?? '', [], '', t)}
         </h1>
-        <p role="alert">
-          {t(
-            result.error.code === 'validation_error'
-              ? 'search.invalid'
-              : result.error.code === 'search_capacity_exceeded'
-                ? 'search.capacity'
-                : 'search.failure',
-          )}
-        </p>
-        <Button
-          variant={retryable ? 'outline' : 'default'}
-          onClick={() => openSearchField(params.get('q') ?? '')}
-        >
-          {t('search.edit')}
-        </Button>
-        <SearchFilterBar
-          params={params}
-          facets={undefined}
-          selectedScope={undefined}
-          actor={actor}
-          update={(next) => {
-            void navigate(`/search?${next}`, {
-              preventScrollReset: true,
-              state: searchNavigationState(location),
-            })
-          }}
-        />
+        <p role="alert">{searchErrorMessage(result.error, t, locale)}</p>
+        {!limited && (
+          <Button
+            variant={retryable ? 'outline' : 'default'}
+            onClick={() => openSearchField(params.get('q') ?? '')}
+          >
+            {t('search.edit')}
+          </Button>
+        )}
+        {!limited && (
+          <SearchFilterBar
+            params={params}
+            facets={undefined}
+            selectedScope={undefined}
+            actor={actor}
+            update={(next) => {
+              void navigate(`/search?${next}`, {
+                preventScrollReset: true,
+                state: searchNavigationState(location),
+              })
+            }}
+          />
+        )}
         {retryable && (
           <Button onClick={() => window.location.reload()}>
             {t('search.retry')}
@@ -688,7 +707,7 @@ function SearchResultRow({
   const { t, locale } = useT(),
     location = useLocation()
   const [expanded, setExpanded] = useState(initiallyExpanded)
-  const { group, error, pending, loadGroup, recover } = useSearchGroup(
+  const { group, error, retryAt, pending, loadGroup, recover } = useSearchGroup(
     item,
     initiallyExpanded,
     restoreDepth,
@@ -733,7 +752,12 @@ function SearchResultRow({
           onClick={() => {
             setExpanded((value) => !value)
             onExpand(item.id, !expanded)
-            if (!group && !expanded) void loadGroup()
+            if (
+              !group &&
+              !expanded &&
+              (!retryAt || Date.now() >= Date.parse(retryAt))
+            )
+              void loadGroup()
           }}
         >
           <IconChevronRight className={expanded ? 'rotate-90' : ''} />
@@ -741,7 +765,9 @@ function SearchResultRow({
             item.groupSizeRelation === 'gte'
               ? 'search.groupLower'
               : 'search.group',
-            { n: item.groupSize - 1 },
+            {
+              n: item.groupSize - 1,
+            },
           )}
         </Button>
       )}
@@ -780,19 +806,25 @@ function SearchResultRow({
           {error && (
             <div role="alert" className="space-y-3">
               <p>
-                {t(
-                  error === 'invalid_cursor'
-                    ? 'search.continuationExpired'
-                    : 'search.continuation',
-                )}
+                {retryAt
+                  ? t('search.dailyLimit', {
+                      time: searchResetTime(retryAt, locale),
+                    })
+                  : t(
+                      error === 'invalid_cursor'
+                        ? 'search.continuationExpired'
+                        : 'search.continuation',
+                    )}
               </p>
-              <Button disabled={pending} onClick={() => void recover()}>
-                {t(
-                  error === 'invalid_cursor'
-                    ? 'search.restart'
-                    : 'search.retry',
-                )}
-              </Button>
+              {!retryAt && (
+                <Button disabled={pending} onClick={() => void recover()}>
+                  {t(
+                    error === 'invalid_cursor'
+                      ? 'search.restart'
+                      : 'search.retry',
+                  )}
+                </Button>
+              )}
             </div>
           )}
           {group?.nextCursor && !error && (
@@ -922,11 +954,13 @@ function useSearchGroup(
 ) {
   const [group, setGroup] = useState<Group>()
   const [error, setError] = useState('')
+  const [retryAt, setRetryAt] = useState<string>()
   const [pending, setPending] = useState(false)
   const loadedDepth = useRef(0)
   async function loadGroup(cursor?: string, restoring = false) {
     setPending(true)
     setError('')
+    setRetryAt(undefined)
     try {
       do {
         const response = await fetch(
@@ -954,6 +988,9 @@ function useSearchGroup(
         cursor = data.nextCursor ?? undefined
       } while (restoring && cursor && loadedDepth.current < restoreDepth)
     } catch (failure) {
+      setRetryAt(
+        failure instanceof SearchRequestError ? failure.retryAt : undefined,
+      )
       setError(failure instanceof Error ? failure.message : 'request_failed')
     } finally {
       setPending(false)
@@ -972,13 +1009,20 @@ function useSearchGroup(
     setPending(true)
     try {
       await restartSearch()
-    } catch {
-      setError('invalid_cursor')
+    } catch (failure) {
+      setRetryAt(
+        failure instanceof SearchRequestError ? failure.retryAt : undefined,
+      )
+      setError(
+        failure instanceof SearchRequestError
+          ? failure.message
+          : 'invalid_cursor',
+      )
     } finally {
       setPending(false)
     }
   }
-  return { group, error, pending, loadGroup, recover }
+  return { group, error, retryAt, pending, loadGroup, recover }
 }
 
 function FilterMenu({
@@ -1366,6 +1410,7 @@ function SearchResultListing({
     [cursor, setCursor] = useState(initial.nextCursor)
   const [pending, setPending] = useState(false),
     [failure, setFailure] = useState('')
+  const [retryAt, setRetryAt] = useState<string>()
   const sentinel = useRef<HTMLDivElement>(null),
     nextCursor = useRef(initial.nextCursor),
     busy = useRef(false),
@@ -1401,8 +1446,12 @@ function SearchResultListing({
         setDepth((value) => value + 1)
       }
     } catch (error) {
-      if (alive.current)
+      if (alive.current) {
+        setRetryAt(
+          error instanceof SearchRequestError ? error.retryAt : undefined,
+        )
         setFailure(error instanceof Error ? error.message : 'request_failed')
+      }
     } finally {
       busy.current = false
       if (alive.current) setPending(false)
@@ -1534,26 +1583,11 @@ function SearchResultListing({
         ))}
       </ul>
       {failure && (
-        <div role="alert" className="space-y-3">
-          <p>
-            {t(
-              failure === 'invalid_cursor'
-                ? 'search.continuationExpired'
-                : 'search.continuation',
-            )}
-          </p>
-          <Button
-            onClick={() =>
-              failure === 'invalid_cursor'
-                ? window.location.reload()
-                : void more()
-            }
-          >
-            {t(
-              failure === 'invalid_cursor' ? 'search.restart' : 'search.retry',
-            )}
-          </Button>
-        </div>
+        <SearchContinuationFailure
+          failure={failure}
+          retryAt={retryAt}
+          more={more}
+        />
       )}
       {cursor && !failure && (
         <div ref={sentinel}>
@@ -1578,5 +1612,41 @@ function SearchResultListing({
         </p>
       )}
     </>
+  )
+}
+
+function SearchContinuationFailure({
+  failure,
+  retryAt,
+  more,
+}: {
+  failure: string
+  retryAt?: string
+  more: () => Promise<void>
+}) {
+  const { t, locale } = useT()
+  return (
+    <div role="alert" className="space-y-3">
+      <p>
+        {retryAt
+          ? t('search.dailyLimit', { time: searchResetTime(retryAt, locale) })
+          : t(
+              failure === 'invalid_cursor'
+                ? 'search.continuationExpired'
+                : 'search.continuation',
+            )}
+      </p>
+      {!retryAt && (
+        <Button
+          onClick={() =>
+            failure === 'invalid_cursor'
+              ? window.location.reload()
+              : void more()
+          }
+        >
+          {t(failure === 'invalid_cursor' ? 'search.restart' : 'search.retry')}
+        </Button>
+      )}
+    </div>
   )
 }

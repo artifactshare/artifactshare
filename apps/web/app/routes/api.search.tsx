@@ -1,4 +1,7 @@
-import { searchNoStoreMiddleware } from '~/services/search-response.server'
+import {
+  searchErrorResponse,
+  searchNoStoreMiddleware,
+} from '~/services/search-response.server'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { parseSearchInput } from '~/services/search-input'
@@ -14,7 +17,12 @@ export async function loader({ url, context }: Route.LoaderArgs) {
   const { value: result, serverTiming } = await withSearchTiming(
     'api-search',
     (db, indexes) => search(db, indexes, user.id, input),
+    searchErrorResponse,
   )
+  if (result instanceof Response) {
+    result.headers.set('Server-Timing', serverTiming)
+    return result
+  }
   return Response.json(result, {
     status: 'error' in result ? 400 : 200,
     headers: { ...headers, 'Server-Timing': serverTiming },

@@ -1171,7 +1171,11 @@ export function registerArtifactTools(
             ctx.db,
             workspaceSearchIndexes(),
             mcpUserAsSessionUser(user),
-            { ...parsed.data, baseUrl: ctx.baseUrl, source: 'mcp' },
+            {
+              ...parsed.data,
+              baseUrl: ctx.baseUrl,
+              source: 'mcp',
+            },
           )
         : await listCliArtifacts(ctx.db, mcpUserAsSessionUser(user), {
             baseUrl: ctx.baseUrl,
@@ -1179,6 +1183,13 @@ export function registerArtifactTools(
             query: args.query,
             cursor: args.cursor,
           })
+      if (result.kind === 'daily-limit')
+        return toolError({
+          ...result.limit.error,
+          retry_after_seconds: result.limit.retry_after_seconds,
+          recoverable_by: 'agent',
+          hint: 'Wait until retry_at before searching again.',
+        })
       if (result.kind === 'capacity-exceeded')
         return toolError({
           code: 'search_capacity_exceeded',

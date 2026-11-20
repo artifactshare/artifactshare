@@ -99,3 +99,5 @@ Human CLI and MCP OAuth use person discovery. Restricted agents and bots search 
 
 Rephrase the query and search again before concluding that nothing exists.
 A completed zero-result search succeeds with this `search_hint`; errors and capacity failures are not empty results. Retry with fewer or different words before concluding absence. For a query with two or more normalized terms and no matches for all terms, search automatically retries for any of the terms. No additional flag or OR syntax is needed. Results from this fallback carry the hint: "No documents matched all query terms. These results match any of the terms. Rephrase the query and search again." If `list_artifacts` returns the `search_capacity_exceeded` tool error, narrow the query or filters and search again; this error is not a zero-result search.
+
+Full-text search has a shared limit of 1,000 requests per authenticated actor per UTC day across all plans and clients. A `search_daily_limit_exceeded` tool error includes UTC ISO `retry_at` and `retry_after_seconds`. Wait until `retry_at` before searching again; changing words does not bypass the limit. Title-only listing is unaffected.

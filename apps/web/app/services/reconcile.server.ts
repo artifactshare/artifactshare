@@ -1,3 +1,4 @@
+import { pruneSearchUsage } from './search-quota.server'
 import { pruneSearchLogs } from './search-logs.server'
 import { type Kysely, sql } from 'kysely'
 import type Stripe from 'stripe'
@@ -486,12 +487,20 @@ export async function runReconciliation(
     errors.push(new Error('security deception cleanup failed'))
   }
 
+  const searchCutoff = new Date(now.getTime() - 90 * 86400000).toISOString()
   try {
-    const cutoff = new Date(
-      new Date(now).getTime() - 90 * 86400000,
-    ).toISOString()
     for (;;) {
-      if ((await pruneSearchLogs(db, cutoff)) < 500) break
+      if ((await pruneSearchUsage(db, searchCutoff, now.toISOString())) < 500)
+        break
+    }
+  } catch {
+    console.error('reconcile_search_usage_cleanup_failed')
+    errors.push(new Error('search usage cleanup failed'))
+  }
+
+  try {
+    for (;;) {
+      if ((await pruneSearchLogs(db, searchCutoff)) < 500) break
     }
   } catch {
     console.error('reconcile_search_logs_cleanup_failed')
