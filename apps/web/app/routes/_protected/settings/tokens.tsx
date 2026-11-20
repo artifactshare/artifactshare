@@ -36,6 +36,21 @@ export const screen = {
   primaryAction: 'トークンを作成する',
   states: [
     {
+      id: 'result-success',
+      description: 'result success',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'result warning',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description: 'result error',
+      setup: { query: '?status=forbidden' },
+    },
+    {
       id: 'active-cli',
       description: 'CLI sessions',
       setup: { scenario: 'settings-tokens/active-cli' },

@@ -141,7 +141,7 @@ describe('/settings/integrations action', () => {
     expect(response).toBeInstanceOf(Response)
     expect((response as Response).status).toBe(302)
     expect((response as Response).headers.get('Location')).toBe(
-      '/settings/integrations?status=ok',
+      '/settings/integrations?status=slack-disconnected',
     )
     expect(fetchMock).toHaveBeenCalledWith(
       'https://slack.com/api/auth.revoke',
@@ -181,9 +181,7 @@ describe('/settings/integrations action', () => {
       context: {},
     } as never)
 
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/integrations?status=forbidden',
-    )
+    expect(response).toEqual({ error: 'forbidden', connectionId: 'sw-a' })
     expect(fetchMock).not.toHaveBeenCalled()
     const remaining = await db
       .selectFrom('slack_workspaces')
@@ -212,9 +210,7 @@ describe('/settings/integrations action', () => {
       context: {},
     } as never)
 
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/integrations?status=not-found',
-    )
+    expect(response).toEqual({ error: 'not-found', connectionId: 'sw-b' })
     expect(fetchMock).not.toHaveBeenCalled()
     const remaining = await db
       .selectFrom('slack_workspaces')

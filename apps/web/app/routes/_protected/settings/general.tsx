@@ -43,6 +43,21 @@ export const screen = {
   primaryAction: '設定を更新する',
   states: [
     {
+      id: 'result-success',
+      description: 'result success',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'result warning',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description: 'result error',
+      setup: { query: '?status=forbidden' },
+    },
+    {
       id: 'default',
       description: '一般設定',
       setup: {},

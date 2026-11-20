@@ -1527,7 +1527,17 @@ describe('settings with-bots dev screen state', () => {
       })
       .execute()
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
-    // Reseed is idempotent.
+    // Reseed restores mutations from a preceding destructive capture.
+    await db
+      .updateTable('users')
+      .set({ bot_stopped_at: now })
+      .where('id', '=', workspaceId + '-bot-active')
+      .execute()
+    await db
+      .updateTable('cli_refresh_credentials')
+      .set({ revoked_at: now })
+      .where('user_id', '=', workspaceId + '-bot-active')
+      .execute()
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
 
     const bots = await listWorkspaceBots(db, workspaceId, now)
@@ -2064,3 +2074,268 @@ test.each(['owner', 'readonly', 'unlimited', 'older-current'])(
     }
   },
 )
+
+test('Slack scenario refresh only disconnects its workspace and restores connection fields', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    const workspaces: string[] = []
+    for (const scenario of [
+      'settings-integrations/slack-connected',
+      'settings-integrations/slack-reauthorization',
+    ]) {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      workspaces.push(workspaceId)
+      const userId = workspaceId + '-user'
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: scenario.split('/')[1] + '@example.test',
+          name: 'Owner',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    }
+    const [selected, unrelated] = workspaces
+    const before = await db
+      .selectFrom('slack_workspaces')
+      .selectAll()
+      .where('workspace_id', '=', unrelated)
+      .execute()
+    await seedDevScreenState(
+      db,
+      'settings-integrations/slack-disconnected',
+      selected,
+      selected + '-user',
+      now,
+    )
+    await seedDevScreenState(
+      db,
+      'settings-integrations/slack-disconnected',
+      selected,
+      selected + '-user',
+      now,
+    )
+    expect(
+      await db
+        .selectFrom('slack_workspaces')
+        .selectAll()
+        .where('workspace_id', '=', selected)
+        .execute(),
+    ).toEqual([])
+    expect(
+      await db
+        .selectFrom('slack_workspaces')
+        .selectAll()
+        .where('workspace_id', '=', unrelated)
+        .execute(),
+    ).toEqual(before)
+    await seedDevScreenState(
+      db,
+      'settings-integrations/slack-reauthorization',
+      selected,
+      selected + '-user',
+      now,
+    )
+    await seedDevScreenState(
+      db,
+      'settings-integrations/slack-connected',
+      selected,
+      selected + '-user',
+      now,
+    )
+    expect(
+      await db
+        .selectFrom('slack_workspaces')
+        .select(['team_name', 'bot_scopes', 'bot_token'])
+        .where('workspace_id', '=', selected)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      team_name: 'Artifact Share Dev',
+      bot_scopes:
+        'chat:write,links:read,links:write,users:read,users:read.email',
+      bot_token: 'dev-screen-fixture',
+    })
+  } finally {
+    await db.destroy()
+  }
+})
+
+test.each(['finite', 'unlimited', 'zero'])(
+  'external access %s fixture survives repeated sign-in',
+  async (state) => {
+    const { db } = createMigratedInMemoryDb()
+    const now = '2026-09-09T00:00:00.000Z'
+    const scenario = `settings-external-access/${state}`
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      const userId = workspaceId + '-user'
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: `${state}@example.test`,
+          name: 'Owner',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      for (let signIn = 0; signIn < 2; signIn++) {
+        await ensureDevScreenState(db, scenario, now, 'team')
+        await seedDevScreenState(db, scenario, workspaceId, userId, now)
+        expect(
+          await db
+            .selectFrom('shareables')
+            .select(['visibility', 'link_expires_at'])
+            .where('id', '=', devShareableId(workspaceId + '-expiry-preview'))
+            .executeTakeFirstOrThrow(),
+        ).toEqual({
+          visibility: 'link',
+          link_expires_at: state === 'zero' ? now : null,
+        })
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .select([
+              'link_sharing_enabled',
+              'external_posting_enabled',
+              'link_expiry_default_days',
+              'link_expiry_max_days',
+            ])
+            .where('id', '=', workspaceId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({
+          link_sharing_enabled: 1,
+          external_posting_enabled: 1,
+          link_expiry_default_days: 30,
+          link_expiry_max_days: state === 'unlimited' ? null : 90,
+        })
+      }
+    } finally {
+      await db.destroy()
+    }
+  },
+)
+
+test('past-due billing fixture survives repeated sign-in', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    for (let signIn = 0; signIn < 2; signIn++) {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings-billing/past-due',
+        now,
+        'team',
+      )
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select([
+            'plan',
+            'stripe_subscription_id',
+            'stripe_subscription_status',
+          ])
+          .where('id', '=', workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({
+        plan: 'team',
+        stripe_subscription_id: `${workspaceId}-subscribed`,
+        stripe_subscription_status: 'past_due',
+      })
+    }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('external access fixture recreates a deleted shareable with retained publication history', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  const scenario = 'settings-external-access/finite'
+  try {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = workspaceId + '-user'
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'expiry-owner@example.test',
+        name: 'Owner',
+        email_verified: 1,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+      })
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    const shareableId = devShareableId(workspaceId + '-expiry-preview')
+    const publication = await db
+      .selectFrom('link_publications')
+      .selectAll()
+      .where('workspace_id', '=', workspaceId)
+      .where('shareable_id', '=', shareableId)
+      .executeTakeFirstOrThrow()
+    await db.deleteFrom('shareables').where('id', '=', shareableId).execute()
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', shareableId)
+        .executeTakeFirst(),
+    ).toBeUndefined()
+    expect(
+      await db
+        .selectFrom('link_publications')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('shareable_id', '=', shareableId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(publication)
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['id', 'visibility', 'link_expires_at'])
+        .where('id', '=', shareableId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      id: shareableId,
+      visibility: 'link',
+      link_expires_at: null,
+    })
+    expect(
+      await db
+        .selectFrom('link_publications')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('shareable_id', '=', shareableId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(publication)
+  } finally {
+    await db.destroy()
+  }
+})

@@ -15,16 +15,12 @@ import { Topbar } from '../../_home/+components/topbar'
 import { BottomTabBar } from '../../_home/+components/bottom-tab-bar'
 import { listJoinedProjectsForDropdown } from '~/services/project-membership.server'
 import type { JoinedProjectNav } from '../../_home/+components/primary-nav'
-import { SettingsBanner } from './+components/settings-banner'
+import { StatusBanner } from './+components/settings-banner'
 import { SettingsNav } from './+components/settings-nav'
 import { PageHeader } from '~/components/form/page-header'
 import { SettingsPage } from '~/components/form/settings-page'
 import { useT } from '~/hooks/use-t'
-import type { TKey } from '~/i18n/messages'
-import type {
-  SettingsShellData,
-  TeamMutationResult,
-} from '~/lib/team-management'
+import type { SettingsShellData } from '~/lib/team-management'
 import { toUserInfo, type UserInfo } from '~/lib/user'
 import { settingsMainClassName } from '~/components/app/page-shell-styles'
 
@@ -32,24 +28,6 @@ type SettingsLoaderData = SettingsShellData & {
   user: UserInfo
   joinedProjects: JoinedProjectNav[]
 }
-
-export type BillingStatusKey =
-  | 'checkout-success'
-  | 'checkout-cancelled'
-  | 'plan-change-requested'
-  | 'already-subscribed'
-  | 'no-subscription'
-  | 'plan-required'
-  | 'invalid-policy'
-
-type SettingsStatusKey =
-  | TeamMutationResult['kind']
-  | BillingStatusKey
-  | 'removed'
-  | 'removed-transfer-failed'
-  | 'restore-unavailable'
-  | 'slack-team-in-use'
-  | 'slack-team-mismatch'
 
 export type SettingsLayoutContext = SettingsLoaderData
 
@@ -91,7 +69,7 @@ export default function SettingsLayout({ loaderData }: Route.ComponentProps) {
         joinedProjects={loaderData.joinedProjects}
       />
       <main className={settingsMainClassName}>
-        {status ? <StatusBanner status={status as SettingsStatusKey} /> : null}
+        {status ? <StatusBanner status={status} /> : null}
         <SettingsPage>
           <div>
             <PageBreadcrumb aria-label={t('project.location')}>
@@ -121,33 +99,4 @@ export default function SettingsLayout({ loaderData }: Route.ComponentProps) {
       <BottomTabBar />
     </>
   )
-}
-
-function StatusBanner({ status }: { status: SettingsStatusKey }) {
-  const message = SETTINGS_STATUS_MESSAGES[status] ?? 'team.status.generic'
-  const { t } = useT()
-  return <SettingsBanner role="status">{t(message)}</SettingsBanner>
-}
-
-const SETTINGS_STATUS_MESSAGES: Record<SettingsStatusKey, TKey> = {
-  ok: 'team.status.ok',
-  removed: 'team.status.removed',
-  'removed-transfer-failed': 'team.status.removedTransferFailed',
-  'restore-unavailable': 'team.status.restoreUnavailable',
-  forbidden: 'team.status.forbidden',
-  'self-forbidden': 'team.status.selfForbidden',
-  'not-team': 'team.status.notTeam',
-  'not-found': 'team.status.notFound',
-  invalid: 'team.status.invalid',
-  'external-failed': 'team.status.externalFailed',
-  'checkout-success': 'billing.status.checkoutSuccess',
-  'checkout-cancelled': 'billing.status.checkoutCancelled',
-  'plan-change-requested': 'billing.status.planChangeRequested',
-  'already-subscribed': 'billing.status.alreadySubscribed',
-  'no-subscription': 'billing.status.noSubscription',
-  'plan-required': 'team.status.planRequired',
-  'invalid-policy': 'team.status.invalidPolicy',
-  'bot-revoke-not-supported': 'team.status.botRevokeNotSupported',
-  'slack-team-in-use': 'team.integrations.slack.teamInUse',
-  'slack-team-mismatch': 'team.integrations.slack.teamMismatch',
 }

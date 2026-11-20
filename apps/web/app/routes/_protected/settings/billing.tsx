@@ -109,6 +109,26 @@ export const screen = {
   primaryAction: 'プランを管理する',
   states: [
     {
+      id: 'past-due',
+      description: 'Past-due billing warning',
+      setup: { scenario: 'settings-billing/past-due' },
+    },
+    {
+      id: 'result-success',
+      description: 'result success',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'result warning',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description: 'result error',
+      setup: { query: '?status=forbidden' },
+    },
+    {
       id: 'continuing-near-limit',
       description: 'Continuing subscription near included storage',
       setup: { scenario: 'settings-billing/continuing-near-limit' },
@@ -187,6 +207,7 @@ export async function loader({
   const useDevFixture =
     canManage &&
     (isDevScreenStateRequest(request, 'settings-billing/subscribed') ||
+      isDevScreenStateRequest(request, 'settings-billing/past-due') ||
       isDevScreenStateRequest(
         request,
         'settings-billing/continuing-near-limit',
@@ -404,7 +425,7 @@ export default function BillingPage({
   return (
     <SettingsPage>
       {loaderData.stripeSubscriptionStatus === 'past_due' ? (
-        <SettingsBanner role="alert">
+        <SettingsBanner kind="warning" urgent>
           {t('billing.pastDue.banner')}
         </SettingsBanner>
       ) : null}
@@ -483,7 +504,7 @@ function BillingStorageSection({
         loaderData.storageUsedBytes,
         loaderData.storageQuotaBytes,
       ) ? (
-        <SettingsBanner role="alert">
+        <SettingsBanner kind="warning" urgent>
           <p className="font-medium">{t('team.usage.nearLimit')}</p>
           <p>
             {t('team.usage.nearLimitDetails', {

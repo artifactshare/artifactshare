@@ -24,6 +24,21 @@ export const screen = {
   primaryAction: 'プロジェクトを確認する',
   states: [
     {
+      id: 'result-success',
+      description: 'result success',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'result warning',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description: 'result error',
+      setup: { query: '?status=forbidden' },
+    },
+    {
       id: 'default',
       description: 'プロジェクト棚卸し',
       setup: {},

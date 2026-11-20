@@ -21,6 +21,11 @@ export function ConfirmActionDialog({
   action,
   pending,
   trigger,
+  destructive = false,
+  dismissLabel,
+  result,
+  awaitResult = false,
+  returnFocusId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -29,24 +34,52 @@ export function ConfirmActionDialog({
   description: string
   action: string
   pending: boolean
+  destructive?: boolean
+  dismissLabel?: string
+  result?: ReactNode
+  awaitResult?: boolean
+  returnFocusId?: string
   trigger?: ReactNode
 }) {
   const { t } = useT()
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) onOpenChange(next)
+      }}
+    >
       {trigger ? (
         <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
       ) : null}
-      <AlertDialogContent size="sm">
+      <AlertDialogContent
+        size="sm"
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusId) return
+          const focusTarget = document.getElementById(returnFocusId)
+          if (focusTarget) {
+            event.preventDefault()
+            focusTarget.focus()
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        {result}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>
-            {t('confirm.cancel')}
+            {dismissLabel ?? t('confirm.cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction disabled={pending} onClick={onConfirm}>
+          <AlertDialogAction
+            variant={destructive ? 'destructive' : 'default'}
+            disabled={pending}
+            onClick={(event) => {
+              if (awaitResult) event.preventDefault()
+              if (!pending) onConfirm()
+            }}
+          >
             {action}
           </AlertDialogAction>
         </AlertDialogFooter>

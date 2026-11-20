@@ -1840,5 +1840,20 @@
   "settings.revoke.body": "Revoke “{name}”?",
   "billing.plan.teamUnsubscribed": "Team without a subscription",
   "storage.unavailable": "Usage percentage unavailable",
-  "settings.cli.title": "CLI sessions signed in"
+  "settings.cli.title": "CLI sessions signed in",
+  "team.integrations.slack.disconnected": "Slack connection disconnected.",
+  "team.integrations.slack.disconnectFailed": "Could not disconnect {name} from Slack.",
+  "team.integrations.slack.disconnectTitle": "Disconnect {name}?",
+  "team.integrations.slack.disconnectBody": "Link previews and access-request notifications will stop. To reconnect, a workspace admin must authorize Slack again.",
+  "team.integrations.slack.memberGuidance": "Ask a workspace admin to connect or update the Slack connection.",
+  "team.bots.keep": "Keep bot",
+  "team.status.invalidPatch": "The changes could not be read. Reload the page and try again.",
+  "team.status.billingUnavailable": "Billing is unavailable. Please try again later.",
+  "externalAccess.saveInstructions": "All changes on this page require Save changes. Leaving without saving discards your edits.",
+  "externalAccess.unsaved": "Unsaved changes",
+  "externalAccess.expiry.confirmTitle": "Shorten existing links?",
+  "externalAccess.expiry.confirmBody": "Set the maximum to {days} days. Existing links to shorten at preview time: {count}. The final count is checked again when saving.",
+  "externalAccess.keepEditing": "Keep editing",
+  "externalAccess.externalPosting.comparePlans": "External posting is available on Plus and Team. View Plan and billing.",
+  "team.integrations.slack.reauthorization.memberBody": "Slack needs authorization again. Ask a workspace admin to reauthorize the connection."
 }

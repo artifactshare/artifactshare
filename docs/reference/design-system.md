@@ -304,7 +304,7 @@ Sonner (`ui/sonner.tsx`) を使う。成功は緑チェック、任意で Undo �
 **ルール**:
 
 - 同時に 1 件のみ (新規 toast は前のを置き換える)。
-- 確認ダイアログを挟むかは `--destructive` の見た目でなく操作結果で判断する。結果が不可逆、または実行者自身の権限・アクセスを失わせる操作は、ボタンの見た目に関わらず実行前に確認ダイアログを出す (例: 管理者移譲は実行者を member へ降格させ UI では戻せないため確認が要る)。取り消せる操作には確認の摩擦を足さない。
+- 確認ダイアログを挟むかは `--destructive` の見た目でなく操作結果で判断する。結果が不可逆、または実行者自身の権限・アクセスを失わせる操作は、ボタンの見た目に関わらず実行前に確認ダイアログを出す (例: 管理者移譲は実行者を member へ降格させ UI では戻せないため確認が要る)。Slack 切断のように復旧に再認可が必要な操作にも確認を出す。それ以外の取り消せる操作には確認の摩擦を足さない。
 - toast は完了通知に使い、確認ダイアログの代わりにしない。
 
 ### 11.6 Dropdown menu
@@ -600,3 +600,9 @@ The storage meter belongs below the used amount. Its neutral track remains
 visible at zero; near-quota fill uses the warning token. A labelled progressbar
 and visible percentage communicate usage, with fill capped at 100% while the
 text retains over-quota percentages. Invalid quotas show unavailable text.
+
+### Settings confirmations and results
+
+Disconnecting Slack removes authorization. Although reconnecting is possible, it requires a new authorization flow and interrupts previews and notifications; use a destructive confirmation that explains these consequences. Bot stop and creation cancellation also use destructive confirmations. Keep async confirmation dialogs open and disabled while submitting, show failures inside the dialog, and close only after success.
+
+Settings notices use success (check, status), warning (triangle, status), and error (error icon, alert). Past-due and near-storage-limit billing warnings are urgent warning alerts. Unknown outcomes are errors. External sharing uses one explicit page-wide save with visible unsaved-change cues; reductions to maximum expiry require a read-only count preview before destructive confirmation.

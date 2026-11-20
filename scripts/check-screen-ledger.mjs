@@ -160,6 +160,30 @@ export function checkScreenLedger({
     ledgerExclusions.map(({ file, reason }) => [file, reason]),
   )
   const failures = []
+  for (const screen of ledgerScreens)
+    for (const state of screen.states ?? []) {
+      for (const interaction of state.setup?.interactions ?? []) {
+        if (
+          interaction.action === 'fill' &&
+          typeof interaction.value !== 'string'
+        )
+          failures.push(
+            'fill requires a string value: ' + screen.id + '/' + state.id,
+          )
+      }
+      const fixture = state.setup?.actionResponse
+      if (
+        fixture &&
+        (fixture.method !== 'POST' ||
+          !Object.values(screen.route).includes(fixture.route) ||
+          !fixture.intent ||
+          (!fixture.pending && !fixture.data))
+      ) {
+        failures.push(
+          'invalid action response fixture: ' + screen.id + '/' + state.id,
+        )
+      }
+    }
   if (screenModules) {
     try {
       validateLedger(ledgerScreens)

@@ -1840,5 +1840,20 @@
   "settings.revoke.body": "「{name}」を取り消しますか？",
   "billing.plan.teamUnsubscribed": "Team（サブスクリプションなし）",
   "storage.unavailable": "使用率を計算できません",
-  "settings.cli.title": "CLI でログイン中の端末"
+  "settings.cli.title": "CLI でログイン中の端末",
+  "team.integrations.slack.disconnected": "Slack 連携を解除しました。",
+  "team.integrations.slack.disconnectFailed": "{name} と Slack の接続を解除できませんでした。",
+  "team.integrations.slack.disconnectTitle": "{name} との連携を解除しますか？",
+  "team.integrations.slack.disconnectBody": "リンクのプレビューと閲覧リクエスト通知が停止します。再接続には、ワークスペース管理者による Slack の再認可が必要です。",
+  "team.integrations.slack.memberGuidance": "Slack の接続・更新はワークスペース管理者に依頼してください。",
+  "team.bots.keep": "Bot を残す",
+  "team.status.invalidPatch": "変更内容を読み取れませんでした。ページを再読み込みして、やり直してください。",
+  "team.status.billingUnavailable": "現在、請求設定を利用できません。しばらくしてから、やり直してください。",
+  "externalAccess.saveInstructions": "このページの変更には「変更を保存」が必要です。保存せずにページを離れると、変更内容は失われます。",
+  "externalAccess.unsaved": "未保存の変更があります",
+  "externalAccess.expiry.confirmTitle": "既存リンクの期限を短縮しますか？",
+  "externalAccess.expiry.confirmBody": "最長期限を {days} 日にします。確認時点で、既存の {count} 件のリンクの期限が短縮されます。保存時に対象件数を再確認します。",
+  "externalAccess.keepEditing": "編集を続ける",
+  "externalAccess.externalPosting.comparePlans": "外部からの投稿は Plus・Team プランで利用できます。プランと請求を見る。",
+  "team.integrations.slack.reauthorization.memberBody": "Slack の再認可が必要です。ワークスペース管理者に再認可を依頼してください。"
 }

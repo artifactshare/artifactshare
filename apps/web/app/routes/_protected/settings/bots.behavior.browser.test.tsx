@@ -1,3 +1,4 @@
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
@@ -241,14 +242,14 @@ test('creation uses the existing picker and recovers from candidate failure and 
       await page.viewport(width, 800)
       const element = dialog.element() as HTMLElement
       expect(element.scrollWidth).toBeLessThanOrEqual(element.clientWidth)
-      const hint = dialog
-        .getByText(
-          'Select a replacement primary before removing the current primary. Keep at least one destination.',
-          { exact: true },
+      await expect
+        .element(
+          dialog.getByText(
+            'Select a replacement primary before removing the current primary. Keep at least one destination.',
+            { exact: true },
+          ),
         )
-        .element() as HTMLElement
-      expect(getComputedStyle(hint).whiteSpace).toBe('normal')
-      expect(hint.scrollWidth).toBeLessThanOrEqual(hint.clientWidth)
+        .not.toBeInTheDocument()
       const addBounds = dialog
         .getByRole('button', { name: 'Add destination', exact: true })
         .element()
@@ -276,6 +277,25 @@ test('creation uses the existing picker and recovers from candidate failure and 
         }),
       )
       .toBeVisible()
+    await expect
+      .element(
+        dialog.getByText(
+          'Select a replacement primary before removing the current primary. Keep at least one destination.',
+          { exact: true },
+        ),
+      )
+      .toBeVisible()
+    for (const width of [390, 1280]) {
+      await page.viewport(width, 800)
+      const hint = dialog
+        .getByText(
+          'Select a replacement primary before removing the current primary. Keep at least one destination.',
+          { exact: true },
+        )
+        .element()
+      expect(getComputedStyle(hint).whiteSpace).toBe('normal')
+      expect(hint.scrollWidth).toBeLessThanOrEqual(hint.clientWidth)
+    }
     await dialog
       .getByRole('textbox', { name: 'Bot name', exact: true })
       .fill('Reports')
@@ -382,3 +402,140 @@ test('conflict reloads inventory so reopening can save the current revision', as
     await page.viewport(1280, 800)
   }
 })
+
+// Browser witness: Radix automatic dismissal and alert geometry cannot be
+// established by a service or static-markup test.
+test.each([
+  ['stop', 'Stop', 'Stop bot'],
+  ['cancel', 'Cancel creation', 'Cancel creation'],
+  ['reissue', 'Reissue token', 'Reissue'],
+] as const)(
+  '%s keeps pending and failed confirmation visible on mobile, then retries',
+  async (intent, triggerLabel, actionLabel) => {
+    await page.viewport(390, 844)
+    let release: ((result: Response) => void) | undefined
+    const submissions: unknown[] = []
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/settings/bots',
+          element: (
+            <BotSection
+              bots={[
+                { ...bot, cancelable: true },
+                { ...bot, id: 'other', name: 'Other bot', cancelable: true },
+              ]}
+              canCreate={false}
+            />
+          ),
+          action: async ({ request }) => {
+            submissions.push(await request.json())
+            return new Promise<Response>((resolve) => {
+              release = resolve
+            })
+          },
+        },
+      ],
+      { initialEntries: ['/settings/bots'] },
+    )
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      const trigger = page
+        .getByRole('button', { name: triggerLabel, exact: true })
+        .first()
+      await trigger.click()
+      const dialog = page.getByRole('alertdialog')
+      await expect.element(dialog).toBeVisible()
+      const confirm = dialog.getByRole('button', {
+        name: actionLabel,
+        exact: true,
+      })
+      if (intent !== 'reissue')
+        expect(confirm.element().className).toContain('bg-destructive')
+      if (intent === 'cancel')
+        await expect
+          .element(
+            dialog.getByRole('button', { name: 'Keep bot', exact: true }),
+          )
+          .toBeVisible()
+      await confirm.click()
+      await expect.element(confirm).toBeDisabled()
+      // Capture readiness must identify the action, not both disabled buttons.
+      expect(
+        dialog
+          .element()
+          .querySelectorAll('[data-slot="alert-dialog-action"]:disabled'),
+      ).toHaveLength(1)
+      await expect.element(dialog).toBeVisible()
+      await vi.waitFor(() => expect(submissions).toHaveLength(1))
+      const disabledConfirm = confirm.element()
+      if (!(disabledConfirm instanceof HTMLButtonElement))
+        throw new Error('Expected confirmation button')
+      disabledConfirm.click()
+      expect(submissions).toHaveLength(1)
+      const scroll = window.scrollY
+      await act(async () =>
+        release!(Response.json({ error: { code: 'forbidden' } })),
+      )
+      const alert = dialog.getByRole('alert')
+      await expect.element(alert).toBeVisible()
+      await waitForBrowserLayout()
+      const bounds = alert.element().getBoundingClientRect()
+      expect(bounds.top).toBeGreaterThanOrEqual(0)
+      expect(bounds.bottom).toBeLessThanOrEqual(844)
+      expect(bounds.left).toBeGreaterThanOrEqual(0)
+      expect(bounds.right).toBeLessThanOrEqual(390)
+      expect(window.scrollY).toBe(scroll)
+      await confirm.click()
+      await expect.element(confirm).toBeDisabled()
+      // Capture readiness must identify the action, not both disabled buttons.
+      expect(
+        dialog
+          .element()
+          .querySelectorAll('[data-slot="alert-dialog-action"]:disabled'),
+      ).toHaveLength(1)
+      await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
+      await vi.waitFor(() => expect(submissions).toHaveLength(2))
+      await act(async () =>
+        release!(
+          Response.json({
+            ok: true,
+            ...(intent === 'reissue'
+              ? { token: 'synthetic-reissued-token' }
+              : {}),
+          }),
+        ),
+      )
+      await expect.element(dialog).not.toBeInTheDocument()
+      if (intent === 'reissue') {
+        await expect
+          .element(page.getByTestId('bot-token'))
+          .toHaveTextContent('synthetic-reissued-token')
+        expect(
+          document.querySelectorAll('[data-testid="bot-token"]'),
+        ).toHaveLength(1)
+        await page.getByRole('checkbox').click()
+        await page
+          .getByRole('button', { name: 'Close', exact: true })
+          .first()
+          .click()
+        await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
+      }
+      await page
+        .getByRole('button', { name: triggerLabel, exact: true })
+        .last()
+        .click()
+      await expect.element(page.getByRole('alertdialog')).toBeVisible()
+      await expect
+        .element(page.getByRole('alertdialog').getByRole('alert'))
+        .not.toBeInTheDocument()
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+    }
+  },
+)

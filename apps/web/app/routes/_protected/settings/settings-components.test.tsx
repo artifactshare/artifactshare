@@ -1,3 +1,8 @@
+import {
+  SettingsBanner,
+  StatusBanner,
+  settingsNotice,
+} from './+components/settings-banner'
 vi.mock('~/hooks/use-t', () => ({ useT: () => ({ t: (key: string) => key }) }))
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
@@ -147,4 +152,61 @@ describe('settings shared components', () => {
     )
     expect(html).toContain('aria-current="page"')
   })
+})
+
+describe('settings notice outcomes', () => {
+  test.each([
+    ['ok', 'success'],
+    ['removed', 'success'],
+    ['checkout-success', 'success'],
+    ['plan-change-requested', 'success'],
+    ['slack-disconnected', 'success'],
+    ['removed-transfer-failed', 'warning'],
+    ['checkout-cancelled', 'warning'],
+    ['already-subscribed', 'warning'],
+    ...[
+      'forbidden',
+      'self-forbidden',
+      'not-team',
+      'not-found',
+      'invalid',
+      'external-failed',
+      'restore-unavailable',
+      'no-subscription',
+      'plan-required',
+      'invalid-policy',
+      'invalid-patch',
+      'billing-unavailable',
+      'bot-revoke-not-supported',
+      'slack-team-in-use',
+      'slack-team-mismatch',
+      'unknown',
+    ].map((status) => [status, 'error']),
+  ])('%s has %s semantics and an icon', (status, kind) => {
+    const notice = settingsNotice(status)
+    expect(notice.kind).toBe(kind)
+    const html = renderToStaticMarkup(<StatusBanner status={status} />)
+    expect(html).toContain(kind === 'error' ? 'role="alert"' : 'role="status"')
+    expect(html).toContain(
+      kind === 'error'
+        ? 'tabler-icon-alert-circle'
+        : kind === 'warning'
+          ? 'tabler-icon-alert-triangle'
+          : 'tabler-icon-check',
+    )
+  })
+  test.each([false, true])(
+    'warning urgency %s preserves grouped content',
+    (urgent) => {
+      const html = renderToStaticMarkup(
+        <SettingsBanner kind="warning" urgent={urgent}>
+          <p>Payment past due</p>
+          <p>Update payment</p>
+        </SettingsBanner>,
+      )
+      expect(html).toContain(urgent ? 'role="alert"' : 'role="status"')
+      expect(html).toContain('tabler-icon-alert-triangle')
+      expect(html).toContain('<p>Payment past due</p><p>Update payment</p>')
+    },
+  )
 })
