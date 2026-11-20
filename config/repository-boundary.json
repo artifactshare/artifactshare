@@ -65,6 +65,7 @@
     "scripts/audit-ai-search-eligibility.test.mjs",
     "scripts/billing-regression.mjs",
     "scripts/billing-regression.test.mjs",
+    "scripts/browser-analytics.test.mjs",
     "scripts/browser-waits.integration.mjs",
     "scripts/browser-waits.test.mjs",
     "scripts/test-reliability-lint-plugin.mjs",
