@@ -79,6 +79,18 @@ function entities(value: string, attribute = false): string {
   )
 }
 
+// HTMLRewriter rejects a start tag larger than its fixed per-tag memory limit
+// (about 2-3 MB) with "Parser error: The memory limit has been exceeded", so one
+// embedded data URI made a whole page unindexable. Only short attributes (alt,
+// title, aria-label, placeholder) are indexed, so longer values are emptied
+// before parsing. Quoted values cannot contain their own quote; unquoted values
+// end at whitespace or '>'.
+const LONG_ATTRIBUTE_VALUE =
+  /(\s[^\s"'<>/=]+\s*=\s*)(?:"[^"]{65536,}"|'[^']{65536,}'|[^\s"'=<>`]{65536,})/gu
+export function withoutLongAttributeValues(html: string): string {
+  return html.replace(LONG_ATTRIBUTE_VALUE, '$1""')
+}
+
 export async function extractHtml(html: string): Promise<ExtractedText> {
   let node = ''
   let rawScript = ''
@@ -106,7 +118,11 @@ export async function extractHtml(html: string): Promise<ExtractedText> {
         element.replace(' ')
       },
     })
-    .transform(new Response(html, { headers: { 'content-type': 'text/html' } }))
+    .transform(
+      new Response(withoutLongAttributeValues(html), {
+        headers: { 'content-type': 'text/html' },
+      }),
+    )
   const rewriter = new HTMLRewriter()
     .on('*', {
       element(element) {
