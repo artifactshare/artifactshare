@@ -62,17 +62,17 @@ test('dispatch syncs each workspace index in its one location', async () => {
     {
       name: 'ws-a:0@apac-ne',
       options: { locationHint: 'apac-ne' },
-      args: ['ws-a'],
+      args: ['ws-a', false],
     },
     {
       name: 'ws-b:0@apac-ne',
       options: { locationHint: 'apac-ne' },
-      args: ['ws-b'],
+      args: ['ws-b', false],
     },
     {
       name: 'ws-c:0@apac-ne',
       options: { locationHint: 'apac-ne' },
-      args: ['ws-c'],
+      args: ['ws-c', false],
     },
   ])
 })
@@ -87,4 +87,62 @@ test('a failing workspace does not stop the others', async () => {
     'ws-b:0@apac-ne',
     'ws-c:0@apac-ne',
   ])
+})
+
+test('a failed seed write preserves its cursor, dispatches unrelated ready work and reports the error', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO search_index_ready(workspace_id) VALUES('deleted-ready');
+    CREATE TRIGGER fail_seed BEFORE INSERT ON search_index_workspace_rebuilds
+    BEGIN SELECT RAISE(ABORT,'synthetic seed failure'); END;
+  `)
+  const { calls, binding } = namespace()
+  await expect(
+    dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding }),
+  ).rejects.toMatchObject({
+    message: 'workspace_search_dispatch_failed',
+    errors: [
+      expect.objectContaining({
+        message: expect.stringContaining('synthetic seed failure'),
+      }),
+    ],
+  })
+  expect(calls.map((call) => call.args)).toEqual([['deleted-ready', false]])
+  expect(
+    fixture.sqlite
+      .prepare('SELECT phase,cursor FROM search_index_rebuilds')
+      .all(),
+  ).toEqual([{ phase: 'live', cursor: '' }])
+})
+
+test('a retained newer target prevents dispatch even when its seeding is complete', async () => {
+  fixture.sqlite.exec(`
+    UPDATE search_index_rebuilds SET target=target+1,phase='done';
+    INSERT INTO search_index_ready(workspace_id) VALUES('deleted-ready');
+  `)
+  const { calls, binding } = namespace()
+  await dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding })
+  expect(calls).toEqual([])
+})
+
+test('a newer format arriving during a failed seed page fences fallback dispatch', async () => {
+  fixture.sqlite.exec(
+    "INSERT INTO search_index_ready(workspace_id) VALUES('deleted-ready')",
+  )
+  const insert = vi
+    .spyOn(fixture.db, 'insertInto')
+    .mockImplementationOnce(() => {
+      fixture.sqlite.exec(
+        'INSERT INTO search_index_rebuilds(target) SELECT max(target)+1 FROM search_index_rebuilds',
+      )
+      throw new Error('synthetic seed interruption')
+    })
+  const { calls, binding } = namespace()
+  try {
+    await expect(
+      dispatchWorkspaceSearch(fixture.db, { WORKSPACE_SEARCH_INDEX: binding }),
+    ).rejects.toThrow('workspace_search_dispatch_failed')
+    expect(calls).toEqual([])
+  } finally {
+    insert.mockRestore()
+  }
 })

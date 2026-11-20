@@ -1,4 +1,6 @@
-/** Increment whenever extraction, normalization or token/chunk policy changes. */
+/** Increment whenever extraction, normalization or token/chunk policy changes.
+ * Include a migration INSERT INTO search_index_rebuilds(target) VALUES(new format).
+ * Retain old/completed markers: their targets fence rolled-back Workers. */
 export const INDEX_FORMAT_VERSION = 12
 export const BM25_WEIGHTS = [3, 1, 0.5] as const
 export const KATAKANA_WEIGHT = 0.25

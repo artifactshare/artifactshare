@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers'
 import type { Db } from '../db.server'
 import type { WorkspaceSearchIndex } from '../../../workers/workspace-search-index'
 import { workspaceSearchIndex } from './names'
+import { INDEX_FORMAT_VERSION } from './normalize'
 
 export type SearchEnvironment = {
   WORKSPACE_SEARCH_INDEX?: DurableObjectNamespace<WorkspaceSearchIndex>
@@ -30,51 +31,118 @@ export function scheduleWorkspaceSearch(
   }
 }
 
-/** Oldest dispatch first is a durable pagination cursor, including deleted workspaces. */
+/** One bounded seed page per invocation; completed targets remain rollback fences. */
+export async function seedSearchRebuild(
+  db: Db,
+  supported = INDEX_FORMAT_VERSION,
+): Promise<boolean> {
+  const latest = await db
+    .selectFrom('search_index_rebuilds')
+    .selectAll()
+    .orderBy('target', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if (!latest) return true
+  if (latest.target > supported) return false
+  if (latest.phase === 'done') return true
+  const rows =
+    latest.phase === 'live'
+      ? await db
+          .selectFrom('workspaces')
+          .select('id as workspace_id')
+          .where('id', '>', latest.cursor)
+          .orderBy('id')
+          .limit(50)
+          .execute()
+      : await db
+          .selectFrom('search_index_workspaces')
+          .select('workspace_id')
+          .where('workspace_id', '>', latest.cursor)
+          .orderBy('workspace_id')
+          .limit(50)
+          .execute()
+  for (const row of rows) {
+    await db
+      .insertInto('search_index_workspace_rebuilds')
+      .values({
+        workspace_id: row.workspace_id,
+        target: latest.target,
+        completed: 0,
+      })
+      .onConflict((oc) =>
+        oc
+          .column('workspace_id')
+          .doUpdateSet({ target: latest.target, completed: 0 })
+          .where('search_index_workspace_rebuilds.target', '<', latest.target),
+      )
+      .execute()
+  }
+  // Retrying an interrupted page cannot reset a completed workspace target.
+  await db
+    .updateTable('search_index_rebuilds')
+    .set(
+      rows.length === 50
+        ? { cursor: rows.at(-1)!.workspace_id }
+        : { cursor: '', phase: latest.phase === 'live' ? 'legacy' : 'done' },
+    )
+    .where('target', '=', latest.target)
+    .where('phase', '=', latest.phase)
+    .where('cursor', '=', latest.cursor)
+    .execute()
+  return true
+}
+
+/** Only durable ready rows are rotated, including deleted workspaces. */
 export async function dispatchWorkspaceSearch(
   db: Db,
   bindings: SearchEnvironment,
 ): Promise<void> {
   if (!bindings.WORKSPACE_SEARCH_INDEX) return
-  const live = await db
-    .selectFrom('workspaces as w')
-    .leftJoin('search_index_workspaces as r', 'r.workspace_id', 'w.id')
-    .select('w.id')
-    .where('r.workspace_id', 'is', null)
-    .orderBy('w.id')
-    .limit(50)
-    .execute()
-  for (const row of live)
-    await db
-      .insertInto('search_index_workspaces')
-      .values({ workspace_id: row.id, dispatched_at: '' })
-      .onConflict((oc) => oc.column('workspace_id').doNothing())
-      .execute()
+  const failures: unknown[] = []
+  try {
+    if (!(await seedSearchRebuild(db))) return
+  } catch (error) {
+    // A failed seed page must not block unrelated ready work. Keep the page
+    // cursor unchanged and report the failure after the bounded dispatch.
+    failures.push(error)
+  }
+  // Recheck even after a failed page: a concurrent migration may have fenced us.
+  const latest = await db
+    .selectFrom('search_index_rebuilds')
+    .select('target')
+    .orderBy('target', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if ((latest?.target ?? 0) > INDEX_FORMAT_VERSION) {
+    if (failures.length)
+      throw new AggregateError(failures, 'workspace_search_dispatch_failed')
+    return
+  }
   const rows = await db
-    .selectFrom('search_index_workspaces')
+    .selectFrom('search_index_ready')
     .select('workspace_id')
     .orderBy('dispatched_at')
     .orderBy('workspace_id')
     .limit(50)
     .execute()
-  const failures: unknown[] = []
   await Promise.all(
     rows.map(async (row) => {
       // Advance even when one workspace is broken, so it cannot starve others.
       try {
         await db
-          .updateTable('search_index_workspaces')
+          .updateTable('search_index_ready')
           .set({ dispatched_at: new Date().toISOString() })
           .where('workspace_id', '=', row.workspace_id)
           .execute()
         await workspaceSearchIndex(
           bindings.WORKSPACE_SEARCH_INDEX!,
           row.workspace_id,
-        ).sync(row.workspace_id)
+        ).sync(row.workspace_id, false)
       } catch (error) {
         failures.push(error)
       }
     }),
   )
-  if (failures.length) throw new Error('workspace_search_dispatch_failed')
+  if (failures.length)
+    throw new AggregateError(failures, 'workspace_search_dispatch_failed')
 }
