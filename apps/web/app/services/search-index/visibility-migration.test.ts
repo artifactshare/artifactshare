@@ -2,26 +2,30 @@ import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { applyMigrations, loadMigrations } from '~/test/sqlite-fixture'
 
-test('100,000-row ownership backfill, keyed UPSERT moves, rollback and cascade cleanup', () => {
+function seedHistoricalOwnership(db: DatabaseSync, fileCount: number) {
+  const migrations = loadMigrations()
+  applyMigrations(
+    db,
+    migrations.filter((m) => m.name < '0130_'),
+  )
+  db.exec(`
+    INSERT INTO workspaces(id,name,created_at) VALUES('a','A','now'),('b','B','now');
+    INSERT INTO users(id,email,google_sub,name,workspace_id,created_at,updated_at) VALUES('owner','owner@example.test','owner','Owner','a','now','now'),('other','other@example.test','other','Other','b','now','now');
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES('project','a','project','Project','private','owner','now','now'),('destination','b','project','Destination','private','other','now','now');
+    WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<${fileCount - 1})
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at)
+    SELECT 'file-'||x,'a','owner','File','html_page','private','project','now','now' FROM n;
+  `)
+  applyMigrations(
+    db,
+    migrations.filter((m) => m.name >= '0130_' && m.name < '0133_'),
+  )
+}
+
+test('100,000-row ownership backfill, keyed UPSERT moves and rollback', () => {
   const db = new DatabaseSync(':memory:')
   try {
-    const migrations = loadMigrations()
-    applyMigrations(
-      db,
-      migrations.filter((m) => m.name < '0132_'),
-    )
-    db.exec(`
-      INSERT INTO workspaces(id,name,created_at) VALUES('a','A','now'),('b','B','now');
-      INSERT INTO users(id,email,google_sub,name,workspace_id,created_at,updated_at) VALUES('owner','owner@example.test','owner','Owner','a','now','now'),('other','other@example.test','other','Other','b','now','now');
-      INSERT INTO artifact_containers(id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES('project','a','project','Project','private','owner','now','now'),('destination','b','project','Destination','private','other','now','now');
-      WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<99999)
-      INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at)
-      SELECT 'file-'||x,'a','owner','File','html_page','private','project','now','now' FROM n;
-    `)
-    applyMigrations(
-      db,
-      migrations.filter((m) => m.name.startsWith('0132_')),
-    )
+    seedHistoricalOwnership(db, 100_000)
     const counts = () =>
       db
         .prepare(
@@ -70,6 +74,28 @@ test('100,000-row ownership backfill, keyed UPSERT moves, rollback and cascade c
     expect(
       db.prepare('SELECT id FROM search_index_policy_changes').get()!.id,
     ).toBe(second)
+  } finally {
+    db.close()
+  }
+})
+
+test('ownership routing entries survive moves and are removed on parent cascades', () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    seedHistoricalOwnership(db, 3)
+    const counts = () =>
+      db
+        .prepare(
+          'SELECT * FROM search_owner_workspaces ORDER BY actor_id,workspace_id',
+        )
+        .all()
+    db.exec(
+      "UPDATE shareables SET owner_user_id='other', workspace_id='b', container_id='destination' WHERE id='file-0'",
+    )
+    expect(counts()).toEqual([
+      { actor_id: 'other', workspace_id: 'b', file_count: 1 },
+      { actor_id: 'owner', workspace_id: 'a', file_count: 2 },
+    ])
     db.exec(
       "DELETE FROM users WHERE id='owner'; DELETE FROM workspaces WHERE id='a'",
     )

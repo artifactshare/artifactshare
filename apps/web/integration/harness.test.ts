@@ -461,6 +461,19 @@ describe('Worker integration harness', () => {
         activityAt: now,
       })),
     )
+    // The probe writes the document snapshot directly with no source upload to
+    // dispatch. Retire only this fixture's setup work before testing exact counts.
+    await env.DB.batch([
+      env.DB.prepare(
+        "DELETE FROM search_index_changes WHERE workspace_id='ws-search-list'",
+      ),
+      env.DB.prepare(
+        "DELETE FROM search_index_policy_changes WHERE workspace_id='ws-search-list'",
+      ),
+      env.DB.prepare(
+        "DELETE FROM search_index_ready WHERE workspace_id='ws-search-list'",
+      ),
+    ])
     const response = await worker.fetch('/__test/search-index', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -911,7 +924,7 @@ describe('Worker integration harness', () => {
       (await storage.exec('PRAGMA table_info(pending)')).map(
         (column: { name: string }) => column.name,
       ),
-    ).toEqual(['id', 'attempted', 'retry_at'])
+    ).toEqual(['id', 'attempted', 'retry_at', 'policy_dirty'])
     expect(
       await storage.exec(
         "SELECT name FROM sqlite_master WHERE name='placement'",
@@ -940,13 +953,53 @@ describe('Worker integration harness', () => {
       env.DB.prepare(
         "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-backoff-missing','backoff-missing','html_page','published','/index.html','artifacts/backoff/missing',100,'sha',?,?)",
       ).bind(owner.userId, now),
+      env.DB.prepare(
+        "INSERT INTO shareables (id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at) VALUES ('backoff-healthy',?,?,'Healthy','backoff-inbox','html_page','private','v-backoff-healthy',?,?)",
+      ).bind(owner.workspaceId, owner.userId, now, now),
+      env.DB.prepare(
+        "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES ('v-backoff-healthy','backoff-healthy','html_page','published','/index.html','artifacts/backoff/healthy',100,'healthy-sha',?,?)",
+      ).bind(owner.userId, now),
+      env.DB.prepare(
+        'INSERT INTO search_index_workspace_rebuilds(workspace_id,target,completed) VALUES (?,?,0) ON CONFLICT(workspace_id) DO UPDATE SET target=excluded.target,completed=0',
+      ).bind(owner.workspaceId, INDEX_FORMAT_VERSION),
     ])
-    // The source object never exists, so every attempt fails.
+    await env.BUCKET.put('artifacts/backoff/healthy', '<p>knownmarker</p>')
+    // The missing file's source object never exists, so extraction fails.
     await worker.scheduled({ cron: '*/5 * * * *' })
     const probe = searchProbe(owner.workspaceId)
     const retryAt = await probe.nextAlarm()
     expect(retryAt).toEqual(expect.any(Number))
     expect(retryAt!).toBeGreaterThan(Date.now() + 60_000)
+    const storage = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      {
+        name: `${owner.workspaceId}:0@apac-ne`,
+      },
+    )
+    expect(await storage.exec('SELECT id,policy_dirty FROM pending')).toEqual([
+      { id: 'backoff-missing', policy_dirty: 0 },
+    ])
+    expect(
+      await storage.exec('SELECT target, scanned, swept FROM rebuild'),
+    ).toEqual([{ target: INDEX_FORMAT_VERSION, scanned: 1, swept: 1 }])
+    const obligation = await env.DB.prepare(
+      'SELECT completed FROM search_index_workspace_rebuilds WHERE workspace_id=?',
+    )
+      .bind(owner.workspaceId)
+      .first()
+    expect(obligation).toEqual({ completed: 0 })
+    const search = await worker.fetch(
+      '/api/search?q=knownmarker+totallyabsentword',
+      {
+        headers: { Cookie: sessionCookie(owner.sessionToken) },
+      },
+    )
+    expect(search.status, await search.clone().text()).toBe(200)
+    expect(await search.json()).toMatchObject({
+      tier: 'any',
+      total: { relation: 'eq', value: 1 },
+      items: [{ id: 'backoff-healthy', groupSizeRelation: 'eq' }],
+    })
     // Cron can find this workspace but honors the saved retry deadline.
     await env.BUCKET.put('artifacts/backoff/missing', '<p>backoffneedle</p>')
     await worker.scheduled({ cron: '*/5 * * * *' })

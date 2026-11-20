@@ -2171,6 +2171,20 @@ test('a revoked first representative refills page one without losing a cursor sl
   })
 })
 
+test('an indexed match that loses its details is replaced by the next result', async () => {
+  fixture.sqlite.exec("UPDATE shareables SET name='First' WHERE id='a'")
+  const stub = index()
+  const details = stub.details
+  stub.details = async (...args) =>
+    (await details(...args)).filter((row) => row.id !== 'a')
+
+  const result = await search(fixture.db, () => stub, 'viewer', input)
+  if ('error' in result) throw new Error('Expected results')
+  expect(result.items).toMatchObject([{ id: 'b', rank: 1 }])
+  expect(result.total).toEqual({ value: 2, relation: 'eq' })
+  expect(result.nextCursor).not.toBeNull()
+})
+
 test('unstable detail materialization has a bounded safe outcome', async () => {
   const stub = index()
   vi.mocked(stub.details).mockResolvedValue([])

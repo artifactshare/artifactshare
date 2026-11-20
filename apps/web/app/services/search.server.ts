@@ -724,6 +724,19 @@ export async function search(
   // followed by another live check after those awaits. Unchanged pages do no extra work.
   let finalSelected = selected
   for (let attempt = 0; ; attempt++) {
+    // The file may still be authorized after a new generation stops matching.
+    // A successfully read but missing detail cannot occupy a result slot.
+    const missing = new Set(
+      pages.flatMap(({ visible, details, current }) =>
+        visible
+          .filter((row) => !details.has(row.id) || !current.has(row.id))
+          .map((row) => row.id),
+      ),
+    )
+    for (const id of missing) {
+      finalDomain.delete(id)
+      finalIds.delete(id)
+    }
     result.knownHits = result.knownHits.filter((row) => finalIds.has(row.id))
     result.groups = groupSearchHits(result.knownHits)
     finalSelected = result.groups.slice(
@@ -735,6 +748,8 @@ export async function search(
         [...details.keys()].filter((id) => current.has(id)),
       ),
     )
+    if (attempt >= 2 && missing.size && !finalSelected.length)
+      throw new SearchCapacityError()
     if (
       finalSelected.every(
         (row) =>

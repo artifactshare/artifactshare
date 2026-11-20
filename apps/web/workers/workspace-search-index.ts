@@ -153,6 +153,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0',
       )
+    // A file can finish refreshing access policy even if its text needs a retry.
+    if (!pendingColumns.has('policy_dirty'))
+      this.ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN policy_dirty INTEGER NOT NULL DEFAULT 1',
+      )
+    this.ctx.storage.sql.exec(
+      'CREATE INDEX IF NOT EXISTS pending_dirty_policy ON pending(policy_dirty) WHERE policy_dirty=1',
+    )
     // Retain legacy reconciliation columns for additive cutover and rollback.
     // New code only advances the explicit rebuild checkpoint.
     const stateColumns = new Set(
@@ -313,27 +321,33 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             .toArray()[0]?.workspace
         : undefined)
     const durable = workspace
-      ? await this.env.DB.prepare(`SELECT
+      ? (
+          await this.env.DB.prepare(`SELECT
       EXISTS(SELECT 1 FROM search_index_changes WHERE workspace_id=?) OR
-      EXISTS(SELECT 1 FROM search_index_policy_changes WHERE workspace_id=?) OR
-      EXISTS(SELECT 1 FROM search_index_workspace_rebuilds WHERE workspace_id=? AND completed=0) AS pending`)
-          .bind(workspace, workspace, workspace)
-          .all<{ pending: number }>()
-      : null
-    // Read local state AFTER D1: dispatch persists pending before deleting the
-    // exact feed ID. This also covers replay and work awaiting object IO.
-    const local =
-      this.#schemaReady &&
-      this.ctx.storage.sql
-        .exec<{ pending: number }>(`SELECT
-      EXISTS(SELECT 1 FROM pending) OR EXISTS(SELECT 1 FROM policy_pending) OR
-      EXISTS(SELECT 1 FROM staging) OR
+      EXISTS(SELECT 1 FROM search_index_policy_changes WHERE workspace_id=?) AS pending,
+      (SELECT target FROM search_index_workspace_rebuilds WHERE workspace_id=? AND completed=0) AS rebuildTarget`)
+            .bind(workspace, workspace, workspace)
+            .all<{ pending: number; rebuildTarget: number | null }>()
+        ).results[0]
+      : undefined
+    // Dispatch persists policy work before acknowledging its D1 feed identity.
+    // Once policy has converged, a text extraction or object cleanup failure
+    // cannot make the indexed candidate set incomplete indefinitely.
+    const local = this.#schemaReady
+      ? this.ctx.storage.sql
+          .exec<{ pending: number; scannedPolicyTarget: number }>(`SELECT
+      EXISTS(SELECT 1 FROM pending WHERE policy_dirty=1) OR
+      EXISTS(SELECT 1 FROM policy_pending) OR
       EXISTS(SELECT 1 FROM rebuild WHERE scanned=0 OR swept=0) OR
-      EXISTS(SELECT 1 FROM state WHERE dirty>0) OR
-      EXISTS(SELECT 1 FROM intentions) OR EXISTS(SELECT 1 FROM reclaims) OR
-      EXISTS(SELECT 1 FROM cleanup) AS pending`)
-        .one().pending
-    return Boolean(durable?.results[0]?.pending || local)
+      EXISTS(SELECT 1 FROM state WHERE dirty>0) AS pending,
+      coalesce((SELECT target FROM rebuild WHERE singleton=1 AND scanned=1 AND swept=1),0) AS scannedPolicyTarget`)
+          .one()
+      : undefined
+    return Boolean(
+      durable?.pending ||
+      local?.pending ||
+      (durable?.rebuildTarget ?? 0) > (local?.scannedPolicyTarget ?? 0),
+    )
   }
   async search(input: IndexSearchInput): Promise<IndexSearchResult> {
     const incomplete = await this.visibilityPending(input)
@@ -723,7 +737,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         this.ctx.storage.transactionSync(() => {
           for (const row of received)
             this.ctx.storage.sql.exec(
-              'INSERT INTO pending(id) VALUES(?) ON CONFLICT(id) DO UPDATE SET retry_at=0',
+              'INSERT INTO pending(id) VALUES(?) ON CONFLICT(id) DO UPDATE SET retry_at=0, policy_dirty=1',
               row.shareable_id,
             )
           this.ctx.storage.sql.exec(
@@ -899,6 +913,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               // Policy and the following generation replacement share the serial item budget.
               // react-doctor-disable-next-line react-doctor/async-await-in-loop
               await this.refreshFilePolicy(db, state.workspace, id)
+              this.ctx.storage.sql.exec(
+                'UPDATE pending SET policy_dirty=0 WHERE id=?',
+                id,
+              )
               const active = this.ctx.storage.sql
                 .exec<Active>('SELECT * FROM active WHERE id=?', id)
                 .toArray()[0]
@@ -922,6 +940,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             else {
               this.ctx.storage.sql.exec(
                 'DELETE FROM file_policy WHERE id=?',
+                id,
+              )
+              this.ctx.storage.sql.exec(
+                'UPDATE pending SET policy_dirty=0 WHERE id=?',
                 id,
               )
               await this.remove(state.workspace, id)
