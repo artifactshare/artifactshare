@@ -70,6 +70,14 @@ const compatibleContentFormat = (format: number | string) =>
 
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
+// A file that keeps failing stops holding back rebuild completion and the
+// dispatch queue after this many failures spread over at least this long,
+// so an outage that clears within the hour still blocks, but a file that can
+// never be indexed does not block forever. It is then retried once a day,
+// and a change to the file resets its count.
+const GIVE_UP_FAILURES = 3
+const GIVE_UP_AFTER_MS = 60 * 60_000
+const GIVEN_UP_RETRY_MS = 24 * 60 * 60_000
 // Rows compared with D1, or swept, in one pass step. A D1 lookup binds the
 // workspace and these ids, under its 100-parameter limit.
 const PASS_BATCH = 50
@@ -164,6 +172,15 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS pending_dirty_policy ON pending(policy_dirty) WHERE policy_dirty=1',
     )
+    // Consecutive failures since the file last changed, and when they began.
+    if (!pendingColumns.has('failed_count'))
+      this.ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failed_count INTEGER NOT NULL DEFAULT 0',
+      )
+    if (!pendingColumns.has('failing_since'))
+      this.ctx.storage.sql.exec(
+        'ALTER TABLE pending ADD COLUMN failing_since INTEGER NOT NULL DEFAULT 0',
+      )
     // Retain legacy reconciliation columns for additive cutover and rollback.
     // New code only advances the explicit rebuild checkpoint.
     const stateColumns = new Set(
@@ -740,7 +757,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         this.ctx.storage.transactionSync(() => {
           for (const row of received)
             this.ctx.storage.sql.exec(
-              'INSERT INTO pending(id) VALUES(?) ON CONFLICT(id) DO UPDATE SET retry_at=0, policy_dirty=1',
+              'INSERT INTO pending(id) VALUES(?) ON CONFLICT(id) DO UPDATE SET retry_at=0, policy_dirty=1, failed_count=0, failing_since=0',
               row.shareable_id,
             )
           this.ctx.storage.sql.exec(
@@ -965,18 +982,37 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             // Wait five minutes before the next try, unless a sync request
             // arrived after this run began reading D1, since the failure may
             // come from what it read.
-            if (this.#syncedAt <= readAt)
+            let givenUp = false
+            if (this.#syncedAt <= readAt) {
+              const failedAt = Date.now()
+              const failure = this.ctx.storage.sql
+                .exec<{ failed_count: number; failing_since: number }>(
+                  'UPDATE pending SET failed_count=failed_count+1, failing_since=CASE WHEN failing_since=0 THEN ? ELSE failing_since END WHERE id=? RETURNING failed_count, failing_since',
+                  failedAt,
+                  id,
+                )
+                .toArray()[0]
+              givenUp =
+                !!failure &&
+                failure.failed_count >= GIVE_UP_FAILURES &&
+                failedAt - failure.failing_since >= GIVE_UP_AFTER_MS
               this.ctx.storage.sql.exec(
                 'UPDATE pending SET retry_at=? WHERE id=?',
-                Date.now() + FAILURE_SPACING_MS,
+                failedAt + (givenUp ? GIVEN_UP_RETRY_MS : FAILURE_SPACING_MS),
                 id,
               )
-            console.error('workspace_search_item_failed', {
-              workspace_id: state.workspace,
-              shareable_id: id,
-              stage,
-              reason: searchFailureReason(error),
-            })
+            }
+            console.error(
+              givenUp
+                ? 'workspace_search_item_given_up'
+                : 'workspace_search_item_failed',
+              {
+                workspace_id: state.workspace,
+                shareable_id: id,
+                stage,
+                reason: searchFailureReason(error),
+              },
+            )
           }
         }
         const policyPending =
@@ -991,7 +1027,9 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             cleanup: number
             rebuild: number
           }>(
-            'SELECT (SELECT count(*) FROM pending) AS pending, (SELECT count(*) FROM pending WHERE retry_at<=?) AS due, (SELECT min(retry_at) FROM pending) AS retry, EXISTS(SELECT id FROM (SELECT shareable AS id FROM intentions WHERE shareable NOT IN (SELECT id FROM staging) UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup WHERE id NOT IN (SELECT id FROM staging)) WHERE id NOT IN (SELECT id FROM pending)) AS cleanup, EXISTS(SELECT 1 FROM rebuild WHERE target=? AND (scanned=0 OR swept=0)) AS rebuild',
+            'SELECT (SELECT count(*) FROM pending WHERE NOT (failed_count>=? AND failing_since>0 AND failing_since<=?)) AS pending, (SELECT count(*) FROM pending WHERE retry_at<=?) AS due, (SELECT min(retry_at) FROM pending) AS retry, EXISTS(SELECT id FROM (SELECT shareable AS id FROM intentions WHERE shareable NOT IN (SELECT id FROM staging) UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup WHERE id NOT IN (SELECT id FROM staging)) WHERE id NOT IN (SELECT id FROM pending)) AS cleanup, EXISTS(SELECT 1 FROM rebuild WHERE target=? AND (scanned=0 OR swept=0)) AS rebuild',
+            GIVE_UP_FAILURES,
+            Date.now() - GIVE_UP_AFTER_MS,
             Date.now(),
             INDEX_FORMAT_VERSION,
           )
