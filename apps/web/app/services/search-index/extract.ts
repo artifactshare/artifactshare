@@ -79,16 +79,124 @@ function entities(value: string, attribute = false): string {
   )
 }
 
-// HTMLRewriter rejects a start tag larger than its fixed per-tag memory limit
-// (about 2-3 MB) with "Parser error: The memory limit has been exceeded", so one
-// embedded data URI made a whole page unindexable. Only short attributes (alt,
-// title, aria-label, placeholder) are indexed, so longer values are emptied
-// before parsing. Quoted values cannot contain their own quote; unquoted values
-// end at whitespace or '>'.
-const LONG_ATTRIBUTE_VALUE =
-  /(\s[^\s"'<>/=]+\s*=\s*)(?:"[^"]{65536,}"|'[^']{65536,}'|[^\s"'=<>`]{65536,})/gu
+const INDEXED_ATTRIBUTES = ['alt', 'title', 'aria-label', 'placeholder']
+// Elements whose content the HTML tokenizer reads as text, not markup.
+const RAW_TEXT_ELEMENTS = new Set([
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'plaintext',
+])
+const OTHER_ATTRIBUTE_LIMIT = 1024
+const INDEXED_ATTRIBUTE_LIMIT = 65536
+const SPACE = /[\t\n\f\r ]/u
+
+/**
+ * HTMLRewriter rejects a start tag larger than its fixed per-tag memory limit
+ * (about 2-3 MB) with "Parser error: The memory limit has been exceeded", so
+ * one embedded data URI made a whole page unindexable. This pass reads only
+ * start tags, the way the HTML tokenizer does, and shortens attribute values
+ * there: values of attributes that are not indexed are emptied above 1 KiB,
+ * and indexed attribute values are cut at 64 KiB. Text, comments and the
+ * content of raw-text elements such as script are left unchanged.
+ */
 export function withoutLongAttributeValues(html: string): string {
-  return html.replace(LONG_ATTRIBUTE_VALUE, '$1""')
+  const parts: string[] = []
+  let lower: string | undefined
+  let copied = 0
+  let at = 0
+  const skipTo = (marker: string, from: number) => {
+    const found = html.indexOf(marker, from)
+    return found < 0 ? html.length : found + marker.length
+  }
+  while (at < html.length) {
+    const open = html.indexOf('<', at)
+    if (open < 0) break
+    if (html.startsWith('<!--', open)) {
+      at = skipTo('-->', open + 4)
+      continue
+    }
+    const next = html[open + 1] ?? ''
+    if (next === '!' || next === '?' || next === '/') {
+      at = skipTo('>', open + 1)
+      continue
+    }
+    if (!/[A-Za-z]/u.test(next)) {
+      at = open + 1
+      continue
+    }
+    let i = open + 1
+    while (
+      i < html.length &&
+      !SPACE.test(html[i]) &&
+      html[i] !== '/' &&
+      html[i] !== '>'
+    )
+      i++
+    const tag = html.slice(open + 1, i).toLowerCase()
+    while (i < html.length && html[i] !== '>') {
+      if (SPACE.test(html[i]) || html[i] === '/') {
+        i++
+        continue
+      }
+      const nameStart = i
+      while (
+        i < html.length &&
+        !SPACE.test(html[i]) &&
+        html[i] !== '/' &&
+        html[i] !== '>' &&
+        (html[i] !== '=' || i === nameStart)
+      )
+        i++
+      const name = html.slice(nameStart, i).toLowerCase()
+      let j = i
+      while (j < html.length && SPACE.test(html[j])) j++
+      if (html[j] !== '=') continue
+      j++
+      while (j < html.length && SPACE.test(html[j])) j++
+      let valueStart = j
+      let valueEnd: number
+      const quote = html[j]
+      if (quote === '"' || quote === "'") {
+        valueStart = j + 1
+        const close = html.indexOf(quote, valueStart)
+        valueEnd = close < 0 ? html.length : close
+        i = close < 0 ? html.length : close + 1
+      } else {
+        while (j < html.length && !SPACE.test(html[j]) && html[j] !== '>') j++
+        valueEnd = j
+        i = j
+      }
+      const limit = INDEXED_ATTRIBUTES.includes(name)
+        ? INDEXED_ATTRIBUTE_LIMIT
+        : OTHER_ATTRIBUTE_LIMIT
+      if (valueEnd - valueStart > limit) {
+        parts.push(html.slice(copied, valueStart))
+        parts.push(
+          limit === OTHER_ATTRIBUTE_LIMIT
+            ? ''
+            : html.slice(valueStart, valueStart + limit),
+        )
+        copied = valueEnd
+      }
+    }
+    at = i + 1
+    if (RAW_TEXT_ELEMENTS.has(tag)) {
+      if (tag === 'plaintext') break
+      lower ??= html.toLowerCase()
+      const closing = lower.indexOf(`</${tag}`, at)
+      at = closing < 0 ? html.length : closing
+    }
+  }
+  if (copied === 0) return html
+  parts.push(html.slice(copied))
+  return parts.join('')
 }
 
 export async function extractHtml(html: string): Promise<ExtractedText> {
