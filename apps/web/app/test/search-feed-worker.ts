@@ -1,3 +1,5 @@
+import { createDb } from '../services/db.server'
+import { dispatchWorkspaceSearch } from '../services/search-index/schedule.server'
 import { WorkspaceSearchIndex as BaseIndex } from '../../workers/workspace-search-index'
 import { workspaceSearchIndex } from '../services/search-index/names'
 
@@ -140,8 +142,16 @@ export default {
       query?: string
     }>()
     const index = workspaceSearchIndex(env.WORKSPACE_SEARCH_INDEX, workspace)
-    if (action === 'legacy') await index.seedLegacy(workspace)
+    if (action === 'dispatch') {
+      const db = createDb(env.DB)
+      try {
+        await dispatchWorkspaceSearch(db, env)
+      } finally {
+        await db.destroy()
+      }
+    } else if (action === 'legacy') await index.seedLegacy(workspace)
     else if (action === 'sync') await index.sync(workspace)
+    else if (action === 'wake') await index.sync(workspace, false)
     else if (action === 'alarm') await index.resume()
     else if (action === 'nextAlarm')
       return Response.json(await index.nextAlarm())

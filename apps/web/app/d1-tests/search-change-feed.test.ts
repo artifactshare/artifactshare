@@ -162,8 +162,8 @@ test('migration-first cutover preserves the old registry and bootstraps pre-feed
   const bindings = {
     WORKSPACE_SEARCH_INDEX: {
       getByName: () => ({
-        sync: async (workspace: string) => {
-          await invoke(workspace)
+        sync: async (workspace: string, mutation = true) => {
+          await invoke(workspace, mutation ? 'sync' : 'wake')
         },
       }),
     } as never,
@@ -258,6 +258,52 @@ test('real D1 coalesces with new acknowledgement identities without resetting di
   ).toEqual([{ shareable_id: 'triggers-000' }])
 })
 
+test('outer shareable UPSERT coalesces with a fresh identity and restores ready without changing rotation', async () => {
+  await seed('upsert')
+  const original = (
+    await rows(
+      "SELECT id FROM search_index_changes WHERE workspace_id='upsert'",
+    )
+  )[0].id
+  await run("DELETE FROM search_index_ready WHERE workspace_id='upsert'")
+  const upsert = `INSERT INTO shareables(id,workspace_id,owner_user_id,name,container_id,artifact_kind,visibility,current_version_id,created_at,updated_at)
+    VALUES('upsert-000','upsert','upsert-user','Updated','upsert-inbox','html_page','private','upsert-000-v','${now}','${now}')
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name`
+  await run(upsert)
+  const fresh = (
+    await rows(
+      "SELECT id FROM search_index_changes WHERE workspace_id='upsert'",
+    )
+  )[0].id
+  expect(fresh).toBeGreaterThan(original as number)
+  expect(
+    await rows(
+      "SELECT workspace_id FROM search_index_ready WHERE workspace_id='upsert'",
+    ),
+  ).toEqual([{ workspace_id: 'upsert' }])
+  await run(
+    "UPDATE search_index_ready SET dispatched_at='keep' WHERE workspace_id='upsert'",
+  )
+  await run(upsert.replace("'Updated'", "'Updated again'"))
+  const newest = (
+    await rows(
+      "SELECT id FROM search_index_changes WHERE workspace_id='upsert'",
+    )
+  )[0].id
+  expect(newest).toBeGreaterThan(fresh as number)
+  await run(`DELETE FROM search_index_changes WHERE id=${fresh}`)
+  expect(
+    await rows(
+      "SELECT id FROM search_index_changes WHERE workspace_id='upsert'",
+    ),
+  ).toEqual([{ id: newest }])
+  expect(
+    await rows(
+      "SELECT dispatched_at FROM search_index_ready WHERE workspace_id='upsert'",
+    ),
+  ).toEqual([{ dispatched_at: 'keep' }])
+})
+
 test('lost notification, timestamp-free fallback rename, move and deletion converge with text cleanup and no periodic alarm', async () => {
   await seed('runtime')
   await seed('destination', 0)
@@ -265,9 +311,9 @@ test('lost notification, timestamp-free fallback rename, move and deletion conve
   const bindings = {
     WORKSPACE_SEARCH_INDEX: {
       getByName: (name: string) => ({
-        sync: async (workspace: string) => {
+        sync: async (workspace: string, mutation = true) => {
           syncs.push(name)
-          await invoke(workspace)
+          await invoke(workspace, mutation ? 'sync' : 'wake')
         },
       }),
     } as never,
@@ -521,9 +567,27 @@ test('one persistently failing item cannot monopolize healthy changes or create 
   )
   expect(
     await rows("SELECT * FROM search_index_ready WHERE workspace_id='failure'"),
-  ).toEqual([])
+  ).toHaveLength(1)
+  const waiting = await index.exec('SELECT id,retry_at,attempted FROM pending')
+  // A scheduled dispatch hands off new changes without invalidating unrelated retries.
+  await run("UPDATE shareables SET name='healthychange' WHERE id='failure-001'")
+  await invoke('failure', 'dispatch')
+  expect(await index.exec('SELECT id,retry_at,attempted FROM pending')).toEqual(
+    waiting,
+  )
+  expect(
+    (await invoke('failure', 'search', 'healthychange')).items.map(
+      (row) => row.id,
+    ),
+  ).toEqual(['failure-001'])
+  await invoke('failure', 'wake')
+  expect(await index.exec('SELECT id,retry_at,attempted FROM pending')).toEqual(
+    waiting,
+  )
   await bucket.put('failure-000', '<p>recoveredneedle</p>')
-  await index.exec('UPDATE pending SET retry_at=0')
+  // A new feed identity for the failed source is an eligible early retry.
+  await run("UPDATE versions SET sha256='recovered' WHERE id='failure-000-v'")
+  await invoke('failure', 'dispatch')
   await settle('failure')
   expect(
     (await invoke('failure', 'search', 'recoveredneedle')).items.map(
@@ -630,9 +694,47 @@ test('bounded migration-first seeding resumes interrupted pages, includes delete
   await run('DELETE FROM search_index_ready')
   await seedSearchRebuild(db)
   expect(await rows('SELECT * FROM search_index_ready')).toEqual([])
+  await seed('postbootstrap')
+  await invoke('postbootstrap')
+  await settle('postbootstrap')
+  await run(
+    "UPDATE users SET workspace_id='runtime' WHERE id='postbootstrap-user'",
+  )
+  await run("DELETE FROM shareables WHERE workspace_id='postbootstrap'")
+  await run("DELETE FROM workspaces WHERE id='postbootstrap'")
+  await invoke('postbootstrap', 'failCleanup')
+  await expect(invoke('postbootstrap', 'wake')).rejects.toThrow(
+    'synthetic cleanup failure',
+  )
+  expect(
+    await rows(
+      "SELECT * FROM search_index_changes WHERE workspace_id='postbootstrap'",
+    ),
+  ).toEqual([])
+  expect(
+    await rows(
+      "SELECT * FROM search_index_workspaces WHERE workspace_id='postbootstrap'",
+    ),
+  ).toEqual([])
+  expect(
+    await (await storage('postbootstrap')).exec('SELECT id FROM pending'),
+  ).toEqual([{ id: 'postbootstrap-000' }])
+  expect(
+    await rows(
+      "SELECT workspace_id FROM search_index_ready WHERE workspace_id='postbootstrap'",
+    ),
+  ).toEqual([{ workspace_id: 'postbootstrap' }])
   await run(
     `INSERT INTO search_index_rebuilds(target) VALUES(${INDEX_FORMAT_VERSION + 1})`,
   )
+  await invoke('postbootstrap', 'wake')
+  expect(await invoke('postbootstrap', 'nextAlarm')).toBeNull()
+  expect(
+    await rows(
+      "SELECT workspace_id FROM search_index_ready WHERE workspace_id='postbootstrap'",
+    ),
+  ).toEqual([{ workspace_id: 'postbootstrap' }])
+
   expect(await seedSearchRebuild(db)).toBe(false)
   await invoke('runtime')
   expect(await invoke('runtime', 'nextAlarm')).toBeNull()
@@ -701,6 +803,25 @@ test('a next-format Worker resumes the migration target and rollback leaves newe
     })
   }
   await reload(nextMain)
+  // The new dispatcher's only discovery source for this deleted, nonlegacy
+  // workspace is the ready row retained across the old worker's fence.
+  const deletedIndex = await storage('postbootstrap')
+  await deletedIndex.exec('UPDATE pending SET retry_at=0')
+  for (let i = 0; i < 5; i++) await invoke('unused', 'dispatch')
+  expect(await deletedIndex.exec('SELECT id FROM pending')).toEqual([])
+  expect(
+    (
+      await (
+        await worker.getEnv()
+      ).BUCKET.list({ prefix: 'search-text/@apac-ne/postbootstrap/' })
+    ).objects,
+  ).toEqual([])
+  expect(
+    await rows(
+      "SELECT * FROM search_index_ready WHERE workspace_id='postbootstrap'",
+    ),
+  ).toEqual([])
+  expect(await invoke('postbootstrap', 'nextAlarm')).toBeNull()
   for (let i = 0; i < 5; i++)
     await seedSearchRebuild(db, INDEX_FORMAT_VERSION + 1)
   await invoke('rebuild')

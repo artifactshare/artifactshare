@@ -502,7 +502,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
   }
   /** Only the index named for this workspace accepts its sync. */
-  async sync(workspace: string): Promise<void> {
+  async sync(workspace: string, mutation = true): Promise<void> {
     workspaceSearchPrefix(workspace)
     if (!this.#isNamedIndex(workspace)) {
       // A leftover object, judged by the workspace it recorded itself or by
@@ -520,12 +520,12 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     if (state && state.workspace !== workspace)
       throw new Error('search_workspace_mismatch')
     this.ctx.storage.sql.exec(
-      'INSERT INTO state(singleton,workspace) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+1',
+      'INSERT INTO state(singleton,workspace,dirty) VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET dirty=dirty+excluded.dirty',
       workspace,
+      Number(mutation),
     )
-    // A sync request retries every waiting item at once, so a transient
-    // failure recovers on the next notification or scheduled dispatch.
-    this.#syncedAt = Date.now()
+    // Only product notifications invalidate retries; cron wakes preserve backoff.
+    if (mutation) this.#syncedAt = Date.now()
     await this.ctx.storage.setAlarm(Date.now() + 1000)
     await this.run()
   }
@@ -555,6 +555,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       unconsumed = state.dirty
       const db = createDb(this.env.DB)
       try {
+        // Keep local work discoverable even when a format fence pauses its alarm.
+        // DO handoff and D1 acknowledgement must never outlive this durable wake row.
+        await db
+          .insertInto('search_index_ready')
+          .values({ workspace_id: state.workspace, dispatched_at: '' })
+          .onConflict((oc) => oc.column('workspace_id').doNothing())
+          .execute()
         const latest = await db
           .selectFrom('search_index_rebuilds')
           .select('target')
@@ -817,32 +824,49 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             .where('target', '=', obligation.target)
             .execute()
         }
-        // A single conditional DELETE cannot lose an insert interleaved with an empty check.
-        await db
-          .deleteFrom('search_index_ready')
-          .where('workspace_id', '=', state.workspace)
-          .where((eb) =>
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('search_index_changes')
-                  .select('id')
-                  .where('workspace_id', '=', state.workspace),
+        // Delete only after both local and D1 work drain. The D1 predicates
+        // also protect a concurrent source insert or migration target.
+        if (
+          !remaining.pending &&
+          !remaining.cleanup &&
+          !remaining.rebuild &&
+          !this.state()!.dirty
+        )
+          await db
+            .deleteFrom('search_index_ready')
+            .where('workspace_id', '=', state.workspace)
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('search_index_changes')
+                    .select('id')
+                    .where('workspace_id', '=', state.workspace),
+                ),
               ),
-            ),
-          )
-          .where((eb) =>
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('search_index_workspace_rebuilds')
-                  .select('workspace_id')
-                  .where('workspace_id', '=', state.workspace)
-                  .where('completed', '=', 0),
+            )
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('search_index_workspace_rebuilds')
+                    .select('workspace_id')
+                    .where('workspace_id', '=', state.workspace)
+                    .where('completed', '=', 0),
+                ),
               ),
-            ),
-          )
-          .execute()
+            )
+            .where((eb) =>
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('search_index_rebuilds')
+                    .select('target')
+                    .where('target', '>', INDEX_FORMAT_VERSION),
+                ),
+              ),
+            )
+            .execute()
         const feed = await db
           .selectFrom('search_index_changes')
           .select('id')

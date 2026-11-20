@@ -98,7 +98,26 @@ export async function dispatchWorkspaceSearch(
   bindings: SearchEnvironment,
 ): Promise<void> {
   if (!bindings.WORKSPACE_SEARCH_INDEX) return
-  if (!(await seedSearchRebuild(db))) return
+  const failures: unknown[] = []
+  try {
+    if (!(await seedSearchRebuild(db))) return
+  } catch (error) {
+    // A failed seed page must not block unrelated ready work. Keep the page
+    // cursor unchanged and report the failure after the bounded dispatch.
+    failures.push(error)
+  }
+  // Recheck even after a failed page: a concurrent migration may have fenced us.
+  const latest = await db
+    .selectFrom('search_index_rebuilds')
+    .select('target')
+    .orderBy('target', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if ((latest?.target ?? 0) > INDEX_FORMAT_VERSION) {
+    if (failures.length)
+      throw new AggregateError(failures, 'workspace_search_dispatch_failed')
+    return
+  }
   const rows = await db
     .selectFrom('search_index_ready')
     .select('workspace_id')
@@ -106,7 +125,6 @@ export async function dispatchWorkspaceSearch(
     .orderBy('workspace_id')
     .limit(50)
     .execute()
-  const failures: unknown[] = []
   await Promise.all(
     rows.map(async (row) => {
       // Advance even when one workspace is broken, so it cannot starve others.
@@ -119,11 +137,12 @@ export async function dispatchWorkspaceSearch(
         await workspaceSearchIndex(
           bindings.WORKSPACE_SEARCH_INDEX!,
           row.workspace_id,
-        ).sync(row.workspace_id)
+        ).sync(row.workspace_id, false)
       } catch (error) {
         failures.push(error)
       }
     }),
   )
-  if (failures.length) throw new Error('workspace_search_dispatch_failed')
+  if (failures.length)
+    throw new AggregateError(failures, 'workspace_search_dispatch_failed')
 }
