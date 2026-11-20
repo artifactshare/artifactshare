@@ -579,6 +579,16 @@ function ExternalAccessPolicySection({
   )
 }
 
+function isExpiryReduction(
+  maximumDays: number | null,
+  previousMaximumDays: number | null,
+) {
+  return (
+    maximumDays !== null &&
+    (previousMaximumDays === null || maximumDays < previousMaximumDays)
+  )
+}
+
 function useExternalAccessSubmission(maximumDays: number | null) {
   const nativeResult = useActionData<typeof action>()
   const save = useFetcher<typeof action>()
@@ -597,46 +607,39 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     if (nativeResult.resume) form.set('resume', nativeResult.resume)
     return form
   })
-  const pending = save.state !== 'idle' || preview.state !== 'idle'
   const active = lastOperation.kind === 'preview' ? preview : save
   const [receivedPreview, setReceivedPreview] = useState<Extract<
     NonNullable<typeof save.data>,
     { kind: 'preview' }
   > | null>(nativeResult?.kind === 'preview' ? nativeResult : null)
+  // Redirects retain fetcher data; only a new result belongs to this submission.
+  const currentResult =
+    active.state === 'idle' && active.data !== lastOperation.previousData
+      ? active.data
+      : undefined
+  const readyPreview = currentResult?.kind === 'preview' ? currentResult : null
+  const autoSavePending =
+    submittedDraft !== null &&
+    readyPreview !== null &&
+    !isExpiryReduction(
+      readyPreview.maximumDays,
+      readyPreview.previousMaximumDays,
+    )
+  const pending =
+    save.state !== 'idle' || preview.state !== 'idle' || autoSavePending
   useEffect(() => {
-    if (
-      active.state === 'idle' &&
-      active.data !== lastOperation.previousData &&
-      active.data?.kind === 'preview'
-    ) {
-      if (
-        submittedDraft &&
-        (active.data.maximumDays === null ||
-          (active.data.previousMaximumDays !== null &&
-            active.data.maximumDays >= active.data.previousMaximumDays))
-      ) {
+    if (readyPreview) {
+      if (submittedDraft && autoSavePending) {
         setLastOperation({ kind: 'save', previousData: save.data })
         void save.submit(submittedDraft, { method: 'post' })
       } else {
-        setReceivedPreview(active.data)
+        setReceivedPreview(readyPreview)
       }
     }
-  }, [
-    active.state,
-    active.data,
-    lastOperation.previousData,
-    submittedDraft,
-    save,
-  ])
+  }, [readyPreview, autoSavePending, submittedDraft, save])
   const previewResult = submittedDraft ? receivedPreview : null
-  // Redirects retain fetcher data; only a new result belongs to this submission.
   const fetcherFailure =
-    active.state === 'idle' &&
-    active.data &&
-    active.data !== lastOperation.previousData &&
-    active.data.kind !== 'preview'
-      ? active.data.kind
-      : null
+    currentResult?.kind === 'preview' ? null : currentResult?.kind
   const submit: NonNullable<ComponentProps<typeof save.Form>['onSubmit']> = (
     event,
   ) => {
@@ -651,11 +654,7 @@ function useExternalAccessSubmission(maximumDays: number | null) {
       form.get('maxUnlimited') === 'true'
         ? null
         : parseDays(form.get('maxDays'))
-    if (
-      maximum !== null &&
-      maximum !== undefined &&
-      (maximumDays === null || maximum < maximumDays)
-    ) {
+    if (maximum !== undefined && isExpiryReduction(maximum, maximumDays)) {
       setReceivedPreview(null)
       setSubmittedDraft(form)
       const request = new FormData()
@@ -850,7 +849,9 @@ function ExternalAccessExpiryFields({
             </label>
           </div>
         </SettingsSubsection>
-        {Number.isSafeInteger(Number(shortened)) && Number(shortened) > 0 ? (
+        {shortened !== null &&
+        /^[1-9]\d*$/.test(shortened) &&
+        Number.isSafeInteger(Number(shortened)) ? (
           <TeamMutedParagraph role="status">
             {tPlural('externalAccess.expiry.shortened', Number(shortened))}
           </TeamMutedParagraph>

@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   createMemoryRouter,
@@ -568,6 +568,7 @@ test.each([30, 90])(
       linkExpiryMaxDays: 90,
     }
     const submissions: string[] = []
+    const disabledDuringHandoff: boolean[] = []
     const router = createMemoryRouter(
       [
         {
@@ -604,7 +605,30 @@ test.each([30, 90])(
     document.body.appendChild(container)
     const root = createRoot(container)
     try {
-      await act(async () => root.render(<RouterProvider router={router} />))
+      await act(async () =>
+        root.render(
+          <Profiler
+            id="external-access"
+            onRender={() => {
+              // Observe every committed frame, including the one before the
+              // effect starts saving a preview that is no longer a reduction.
+              if (
+                storedMaximum === 30 &&
+                submissions.length > 0 &&
+                !container.querySelector('[role="alert"]')
+              ) {
+                const maximum = container.querySelector<HTMLInputElement>(
+                  'input[name="maxDays"]',
+                )
+                if (!maximum) throw new Error('Maximum expiration is missing')
+                disabledDuringHandoff.push(maximum.disabled)
+              }
+            }}
+          >
+            <RouterProvider router={router} />
+          </Profiler>,
+        ),
+      )
       await page
         .getByRole('spinbutton', { name: 'Maximum expiration', exact: true })
         .fill('60')
@@ -644,6 +668,10 @@ test.each([30, 90])(
         }
       }
       await expect.element(page.getByRole('alert')).toBeVisible()
+      if (storedMaximum === 30) {
+        expect(disabledDuringHandoff.length).toBeGreaterThan(0)
+        expect(disabledDuringHandoff.every(Boolean)).toBe(true)
+      }
       await expect.element(dialog).not.toBeInTheDocument()
       expect(submissions).toEqual([
         'preview-external-access',

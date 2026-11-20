@@ -300,9 +300,19 @@ test.each([false, true])(
 )
 
 test.each([
-  ...['abc', 'NaN', '0', '-1', '1.5', 'Infinity'].map(
-    (count) => ['en', count, null] as const,
-  ),
+  ...[
+    'abc',
+    'NaN',
+    '0',
+    '-1',
+    '1.5',
+    'Infinity',
+    '1e3',
+    '0x10',
+    ' 2 ',
+    '+5',
+    '01',
+  ].map((count) => ['en', count, null] as const),
   [
     'en',
     1,
@@ -356,7 +366,9 @@ test.each([
           ],
         },
       ],
-      { initialEntries: [`/?status=ok&shortened=${count}`] },
+      {
+        initialEntries: [`/?status=ok&shortened=${encodeURIComponent(count)}`],
+      },
     )
     try {
       const html = renderToStaticMarkup(<RouterProvider router={router} />)

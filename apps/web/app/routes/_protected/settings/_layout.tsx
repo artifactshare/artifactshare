@@ -18,6 +18,7 @@ import type { JoinedProjectNav } from '../../_home/+components/primary-nav'
 import { StatusBanner } from './+components/settings-banner'
 import { SettingsNav } from './+components/settings-nav'
 import { PageHeader } from '~/components/form/page-header'
+import { Stack } from '~/components/layout/stack'
 import { SettingsPage } from '~/components/form/settings-page'
 import { useT } from '~/hooks/use-t'
 import type { SettingsShellData } from '~/lib/team-management'
@@ -93,8 +94,10 @@ export default function SettingsLayout({
             currentUserIsAdmin={loaderData.currentUserIsAdmin}
             workspaceKind={loaderData.kind}
           >
-            {status ? <StatusBanner status={status} /> : null}
-            <Outlet context={loaderData} />
+            <Stack gap="4">
+              {status ? <StatusBanner status={status} /> : null}
+              <Outlet context={loaderData} />
+            </Stack>
           </SettingsNav>
         </SettingsPage>
       </main>

@@ -35,7 +35,7 @@ export function SettingsBanner({
         kind === 'error' || (kind === 'warning' && urgent) ? 'alert' : 'status'
       }
       className={cn(
-        'text-foreground mb-[var(--spacing-4)] rounded-[var(--r-md)] px-[var(--spacing-4)] py-[var(--spacing-3)]',
+        'text-foreground rounded-[var(--r-md)] px-[var(--spacing-4)] py-[var(--spacing-3)]',
         kind === 'success' &&
           'border-success/30 bg-success-soft [&>svg]:text-success',
         kind === 'warning' &&
