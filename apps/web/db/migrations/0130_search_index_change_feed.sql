@@ -4,6 +4,7 @@ CREATE TABLE search_index_changes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   workspace_id TEXT NOT NULL,
   shareable_id TEXT NOT NULL,
+  recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   UNIQUE(workspace_id, shareable_id)
 );
 CREATE INDEX search_index_changes_workspace ON search_index_changes(workspace_id, id);

@@ -195,18 +195,23 @@ test('real D1 coalesces with new acknowledgement identities without resetting di
   await run(
     "UPDATE search_index_ready SET dispatched_at='keep' WHERE workspace_id='triggers'",
   )
+  await run(
+    "UPDATE search_index_changes SET recorded_at='2000-01-01T00:00:00.000Z' WHERE workspace_id='triggers'",
+  )
   const old = (
     await rows(
       "SELECT id FROM search_index_changes WHERE workspace_id='triggers'",
     )
   )[0].id
   await run("UPDATE shareables SET name='Renamed' WHERE id='triggers-000'")
-  const fresh = (
+  const { id: fresh, recorded_at: recordedAt } = (
     await rows(
-      "SELECT id FROM search_index_changes WHERE workspace_id='triggers'",
+      "SELECT id, recorded_at FROM search_index_changes WHERE workspace_id='triggers'",
     )
-  )[0].id
+  )[0]
   expect(fresh).toBe(Number(old) + 1)
+  expect(recordedAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
+  expect(recordedAt).not.toBe('2000-01-01T00:00:00.000Z')
   expect(
     await rows(
       "SELECT dispatched_at FROM search_index_ready WHERE workspace_id='triggers'",

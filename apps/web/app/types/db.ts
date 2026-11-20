@@ -37,6 +37,7 @@ export interface DB {
     id: Generated<number>
     workspace_id: string
     shareable_id: string
+    recorded_at: Generated<string>
   }
   search_index_ready: {
     workspace_id: string
