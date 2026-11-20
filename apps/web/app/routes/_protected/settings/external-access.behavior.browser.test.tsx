@@ -237,11 +237,32 @@ test.each([
         name: 'Save changes',
         exact: true,
       })
-      expect(confirm.element().className).toContain('bg-destructive')
-      await dialog
-        .getByRole('button', { name: 'Keep editing', exact: true })
-        .click()
-      await expect.element(dialog).not.toBeInTheDocument()
+      expect(confirm.element().className.includes('bg-destructive')).toBe(
+        count > 0,
+      )
+      // Observe the native exit animation, before Radix removes the content.
+      const content = dialog.element()
+      const originalText = content.textContent
+      const closingText: (string | null)[] = []
+      const observer = new MutationObserver(() => {
+        if (content.getAttribute('data-state') === 'closed')
+          closingText.push(content.textContent)
+      })
+      observer.observe(content, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      })
+      try {
+        await dialog
+          .getByRole('button', { name: 'Keep editing', exact: true })
+          .click()
+        await expect.element(dialog).not.toBeInTheDocument()
+        expect(closingText.length).toBeGreaterThan(0)
+        expect(closingText.every((text) => text === originalText)).toBe(true)
+      } finally {
+        observer.disconnect()
+      }
       await expect.element(maxInput).toHaveValue(proposed)
       await maxInput.fill(String(proposed + 10))
       await page

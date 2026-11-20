@@ -83,7 +83,7 @@ export function ConfirmActionDialog({
               if (!pending) onConfirm()
             }}
           >
-            {pending ? (pendingLabel ?? action) : action}
+            {pending ? (pendingLabel ?? t('confirm.pending')) : action}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

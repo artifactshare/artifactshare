@@ -354,7 +354,7 @@ function ExternalAccessForm({
   const shell = useOutletContext<SettingsLayoutContext>()
   const { t, tPlural } = useT()
   const submission = useExternalAccessSubmission(policy.linkExpiryMaxDays)
-  const { save, pending, previewResult, failure } = submission
+  const { save, pending, previewResult, receivedPreview, failure } = submission
   const [draft, setDraft] = useExternalAccessDraft(policy)
   const [searchParams] = useSearchParams()
   const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
@@ -420,24 +420,24 @@ function ExternalAccessForm({
         open={previewResult !== null}
         returnFocusId={submission.returnFocusId}
         awaitResult
-        destructive
+        destructive={(receivedPreview?.shortenedLinkCount ?? 0) > 0}
         onOpenChange={(open) => {
           if (!open) submission.clearPreview()
         }}
         title={t(
-          previewResult?.shortenedLinkCount === 0
+          receivedPreview?.shortenedLinkCount === 0
             ? 'externalAccess.expiry.confirmZeroTitle'
             : 'externalAccess.expiry.confirmTitle',
-          { days: previewResult?.maximumDays ?? '' },
+          { days: receivedPreview?.maximumDays ?? '' },
         )}
         description={
-          previewResult?.shortenedLinkCount === 0
+          receivedPreview?.shortenedLinkCount === 0
             ? t('externalAccess.expiry.confirmZeroBody')
             : tPlural(
                 'externalAccess.expiry.confirmBody',
-                previewResult?.shortenedLinkCount ?? 0,
+                receivedPreview?.shortenedLinkCount ?? 0,
                 {
-                  days: previewResult?.maximumDays ?? '',
+                  days: receivedPreview?.maximumDays ?? '',
                 },
               )
         }
@@ -655,6 +655,7 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     pending,
     returnFocusId,
     previewResult,
+    receivedPreview,
     failure:
       lastOperation.kind === 'native' && nativeResult?.kind !== 'preview'
         ? (nativeResult?.kind ?? null)
@@ -662,8 +663,9 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     submit,
     confirm,
     clearPreview: () => {
+      // Keep the last preview visible through the dialog exit animation.
+      // submittedDraft alone controls whether it is open and confirmable.
       setSubmittedDraft(null)
-      setReceivedPreview(null)
     },
   }
 }
@@ -717,7 +719,7 @@ function ExternalAccessExpiryFields({
   disabled: boolean
   shortened: string | null
 }) {
-  const { t } = useT()
+  const { t, tPlural } = useT()
   const defaultExpirationUnitId = useId()
   const maximumExpirationUnitId = useId()
   return (
@@ -819,7 +821,7 @@ function ExternalAccessExpiryFields({
         </SettingsSubsection>
         {shortened ? (
           <TeamMutedParagraph role="status">
-            {t('externalAccess.expiry.shortened', { count: shortened })}
+            {tPlural('externalAccess.expiry.shortened', Number(shortened))}
           </TeamMutedParagraph>
         ) : null}
       </div>

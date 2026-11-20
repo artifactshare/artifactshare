@@ -6,6 +6,7 @@ import { expect, test, vi } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
+import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import ApiTokensPage from './+components/ai-tools-page'
 
 test.each(['token', 'session', 'session-noop'] as const)(
@@ -111,3 +112,39 @@ test.each(['token', 'session', 'session-noop'] as const)(
     }
   },
 )
+
+test('shared confirmation labels pending work even without a caller label', async () => {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  const render = (pending: boolean, pendingLabel?: string) =>
+    root.render(
+      <ConfirmActionDialog
+        open
+        onOpenChange={() => {}}
+        onConfirm={() => {}}
+        title="Confirm change"
+        description="Apply this change."
+        action="Apply"
+        awaitResult
+        pending={pending}
+        pendingLabel={pendingLabel}
+      />,
+    )
+  try {
+    await act(async () => render(false))
+    const button = document.querySelector<HTMLButtonElement>(
+      '[role="alertdialog"] button[aria-busy]',
+    )!
+    expect(button.textContent).toBe('Apply')
+    expect(button.disabled).toBe(false)
+    await act(async () => render(true))
+    expect(button.textContent).toBe('Processing…')
+    expect(button.disabled).toBe(true)
+    await act(async () => render(true, 'Saving…'))
+    expect(button.textContent).toBe('Saving…')
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})

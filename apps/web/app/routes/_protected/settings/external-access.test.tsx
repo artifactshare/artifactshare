@@ -18,11 +18,13 @@ vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'owner', workspaceId: 'workspace' }),
 }))
-vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
+const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
+vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 import ExternalAccessPage, { action } from './external-access'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  language.locale = 'en'
   services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
     kind: 'preview',
     previousMaximumDays: 30,
@@ -291,6 +293,72 @@ test.each([false, true])(
         expect(html).not.toContain('role="alert"')
         expect(html).not.toContain('Unsaved changes')
       }
+    } finally {
+      router.dispose()
+    }
+  },
+)
+
+test.each([
+  [
+    'en',
+    1,
+    '1 existing link was shortened to match the new maximum expiration.',
+  ],
+  [
+    'en',
+    2,
+    '2 existing links were shortened to match the new maximum expiration.',
+  ],
+  [
+    'ja',
+    1,
+    '既存のリンク1件の有効期限を、新しい最長期限に合わせて短縮しました。',
+  ],
+  [
+    'ja',
+    2,
+    '既存のリンク2件の有効期限を、新しい最長期限に合わせて短縮しました。',
+  ],
+] as const)(
+  'shortened notice in %s for %s links',
+  (locale, count, expected) => {
+    language.locale = locale
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <Outlet
+              context={{ currentUserRole: 'owner', currentUserIsAdmin: true }}
+            />
+          ),
+          children: [
+            {
+              index: true,
+              element: (
+                <ExternalAccessPage
+                  loaderData={{
+                    policy: {
+                      plan: 'team',
+                      linkSharingEnabled: true,
+                      externalPostingEnabled: true,
+                      linkExpiryDefaultDays: 30,
+                      linkExpiryMaxDays: 30,
+                    },
+                  }}
+                />
+              ),
+            },
+          ],
+        },
+      ],
+      { initialEntries: [`/?status=ok&shortened=${count}`] },
+    )
+    try {
+      expect(
+        renderToStaticMarkup(<RouterProvider router={router} />),
+      ).toContain(expected)
     } finally {
       router.dispose()
     }
