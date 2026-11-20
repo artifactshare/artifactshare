@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react'
 import {
   AlertDialog,
+  AlertDialogTrigger,
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
@@ -18,6 +20,7 @@ export function ConfirmActionDialog({
   description,
   action,
   pending,
+  trigger,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -26,10 +29,14 @@ export function ConfirmActionDialog({
   description: string
   action: string
   pending: boolean
+  trigger?: ReactNode
 }) {
   const { t } = useT()
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
+      {trigger ? (
+        <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+      ) : null}
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

@@ -122,9 +122,9 @@ describe('/dev/scenarios/:scenario loader', () => {
 })
 
 describe('scenario registry and required contracts', () => {
-  test('has 29 unique fixed ids including both search refusal states', () => {
-    expect(SCENARIO_IDS).toHaveLength(29)
-    expect(new Set(SCENARIO_IDS).size).toBe(29)
+  test('has 34 unique fixed ids including both search refusal states', () => {
+    expect(SCENARIO_IDS).toHaveLength(34)
+    expect(new Set(SCENARIO_IDS).size).toBe(34)
     expect(SCENARIO_IDS).toContain('search-daily-limit')
     expect(SCENARIO_IDS).toContain('search-palette-daily-limit')
     expect(Object.keys(scenarioRegistry).sort()).toEqual(

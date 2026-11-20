@@ -24,12 +24,11 @@ const copyableCodeHeadSurfaceClassName = cn(
 )
 
 const copyableCodeCopyButtonClassName = cn(
-  'text-faint inline-flex min-h-7 cursor-pointer items-center gap-1.5 rounded-[var(--r-sm)] border border-transparent px-2 shadow-none',
+  'inline-flex min-h-7 cursor-pointer items-center gap-1.5 rounded-[var(--r-sm)] border border-transparent px-2 shadow-none',
   'transition-[color,background] duration-[var(--duration-fast)] ease-[var(--ease-out)] motion-reduce:transition-none',
-  'hover:bg-accent hover:text-foreground',
   // Button base の active:not-aria-[haspopup]:translate-y-px と同じ modifier
   // 連鎖で書かないと tailwind-merge が畳まず、詳細度でも負けて 1px 沈む。
-  'dark:hover:bg-accent active:not-aria-[haspopup]:translate-y-0',
+  'active:not-aria-[haspopup]:translate-y-0',
   'focus-visible:border-transparent focus-visible:ring-0',
   guideFocusRingClassName,
 )
@@ -108,7 +107,11 @@ export function CopyableCodeBlock({
               aria-label={label}
               tabIndex={copyTabIndex}
               onClick={copy}
-              className={copyableCodeCopyButtonClassName}
+              className={cn(
+                copyableCodeCopyButtonClassName,
+                copyButtonVariant !== 'default' &&
+                  'text-faint hover:bg-accent hover:text-foreground dark:hover:bg-accent',
+              )}
             >
               {state === 'copied' ? (
                 <IconCheck

@@ -30,6 +30,14 @@ const MECHANICAL_EXCLUDES = [
 // 機械的な除外 (api./dev./og-image 等) はこの checker が持つ。
 export const excludedRoutes = [
   {
+    file: '_protected/settings/cli-sessions.tsx',
+    reason: 'Authenticated redirect to combined credentials page',
+  },
+  {
+    file: '_protected/settings/usage.tsx',
+    reason: 'Authenticated redirect to combined billing page',
+  },
+  {
     file: 'a.$id.body.tsx',
     reason:
       'Loader-only resource returning an authorized redirect or recovery response, not an app screen',

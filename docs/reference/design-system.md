@@ -278,7 +278,7 @@ shadcn `Button` (`ui/button.tsx`) を唯一のボタン実装とする。独自�
 - レイアウト都合の調整 (全幅化・縦積みなど) は使用側の `className` で行い、`ui/button.tsx` は改変しない。
 - `Link` に適用するときは `asChild` で包む。
 
-アイコンだけの app 操作は shadcn `Button` を土台にした `IconButton` (`components/app/icon-button.tsx`) を使う。`sm` は 28px、`md` は viewer・comment・project 用の 30px。home topbar は `NavigationLink` の `topbar` variant、settings navigation は `TabNav` (`components/app/tab-nav.tsx`) を使う。
+アイコンだけの app 操作は shadcn `Button` を土台にした `IconButton` (`components/app/icon-button.tsx`) を使う。`sm` は 28px、`md` は viewer・comment・project 用の 30px。home topbar は `NavigationLink` の `topbar` variant、settings navigation はグループ別のサイドバーとモバイルの `Sheet` を使う。
 
 ### 11.2 Avatar
 
@@ -388,7 +388,7 @@ shareable の公開範囲 (`Visibility`) を表す pill 形バッジ。shadcn `B
 - 隠しラベルは `FieldLabel` に `sr-only` を付ける。エラーは `FieldError` (`role="alert"`) をフィールド直下に置き、`aria-describedby` / `aria-invalid` を入力へ配線する。
 - ボタンは shadcn `Button` を使う (§11.1)。
 - 表示系も shadcn 公式を使う: バッジ / ステータス pill は `Badge`、バナーは `Alert` (ARIA role は用途に合わせ使用側で上書き)、アバターは `Avatar` (§11.2)、使用量メーターは `Progress` (装飾扱いなら `aria-hidden`)、radio は `RadioGroup` (非制御フォームでは Root に `name` + `defaultValue`)。
-- 構造系も shadcn 公式を使う: ページ内状態切替は `Tabs`、URL 駆動の切替 (ネステッドルート切替) はリンクの `TabNav` を使う。`TabNav` はページナビゲーションであり `role="tablist"` を付けない。その他は `Table` (semantic `<table>`)、`Breadcrumb`、`Empty` (§11.7)、`Card`、`Tooltip` (§11.1 のルール)。手組みの `role="tablist"` / `role="table"` を新設しない。
+- 構造系も shadcn 公式を使う: ページ内状態切替は `Tabs`、URL 駆動の切替 (ネステッドルート切替) はリンクの `TabNav` を使う。設定メニューは目的別の見出しで分けたリンク一覧を使い、狭い画面では `Sheet` に収める。`TabNav` はページナビゲーションであり `role="tablist"` を付けない。その他は `Table` (semantic `<table>`)、`Breadcrumb`、`Empty` (§11.7)、`Card`、`Tooltip` (§11.1 のルール)。手組みの `role="tablist"` / `role="table"` を新設しない。
 
 ### 11.13 Layout primitives (`Stack` / `Inline`)
 
@@ -587,3 +587,16 @@ visual検出器の負の対照は `pnpm visual:fault-injection` で実行する�
 | 日付 | 版 | 変更内容 |
 |---|---|---|
 | Unreleased | v0.28 | 批評所見の処置を直す・見送るの二つとし、明確な利用者体験・UI の改善と証拠で判断する規則へ変更 |
+
+### Grouped Settings navigation
+
+Settings uses purpose groups in this order: Your settings, Workspace, Review,
+Plan, Workspace info. The desktop sidebar and mobile bottom sheet share the
+same role-filtered items; empty groups are omitted. On narrow screens the
+trigger names the current item followed by its group. Selecting a link closes
+the sheet. The dialog primitive owns Escape, focus containment and return.
+
+The storage meter belongs below the used amount. Its neutral track remains
+visible at zero; near-quota fill uses the warning token. A labelled progressbar
+and visible percentage communicate usage, with fill capped at 100% while the
+text retains over-quota percentages. Invalid quotas show unavailable text.

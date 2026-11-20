@@ -35,7 +35,7 @@
   "settings-integrations/slack-reauthorization",
   "settings-tokens/created-secret",
   "settings-tokens/active-cli",
-  "settings-usage/near-limit",
+  "settings-billing/near-limit",
   "device/unrestricted",
   "device/unrestricted-confirmed",
   "device/fixed-project",
@@ -45,7 +45,7 @@
   "device/publisher-continue",
   "device/publisher-invalid",
   "device/publisher-long-name",
-  "settings-cli-sessions/mixed-presets",
+  "settings-tokens/mixed-presets",
   "search/results",
   "search/empty",
   "search/any",
@@ -53,5 +53,7 @@
   "search/error",
   "search/daily-limit",
   "search/palette-daily-limit",
-  "search/continuation-error"
+  "search/continuation-error",
+  "settings-billing/continuing-near-limit",
+  "settings-billing/team-unsubscribed"
 ]

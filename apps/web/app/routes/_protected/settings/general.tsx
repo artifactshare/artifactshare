@@ -2,10 +2,8 @@ import {
   Form,
   Link,
   redirect,
-  useFetcher,
   useNavigation,
   useOutletContext,
-  useRouteLoaderData,
 } from 'react-router'
 import type { Route } from './+types/general'
 import { TeamUser } from './+components/team-user'
@@ -78,7 +76,6 @@ export default function GeneralPage({ loaderData }: Route.ComponentProps) {
   const canManage = shell.currentUserIsAdmin
   return (
     <SettingsPage>
-      <AnalyticsConsentSection />
       <WorkspaceNameSection name={shell.workspace.name} canManage={canManage} />
       <SettingsSection title={t('team.members.owner')}>
         {loaderData.owner ? (
@@ -90,58 +87,6 @@ export default function GeneralPage({ loaderData }: Route.ComponentProps) {
       </SettingsSection>
       {canManage ? <RoleGuideSection role={shell.currentUserRole} /> : null}
     </SettingsPage>
-  )
-}
-
-function AnalyticsConsentSection() {
-  const { t } = useT()
-  const fetcher = useFetcher()
-  const rootData = useRouteLoaderData<{
-    analyticsConsent?: {
-      shouldLoadAnalytics: boolean
-      state: 'granted' | 'denied' | 'unset'
-    }
-  }>('root')
-  const on = rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
-  const pending = fetcher.state !== 'idle'
-  const submit = (consent: 'granted' | 'denied') =>
-    fetcher.submit(
-      { consent },
-      { method: 'POST', action: '/set-analytics-consent' },
-    )
-  return (
-    <SettingsSection
-      title={t('analyticsConsent.settings.title')}
-      description={t('analyticsConsent.settings.description')}
-    >
-      <div className="gap-field flex flex-col">
-        <p className="text-muted-foreground m-0 text-sm">
-          {on
-            ? t('analyticsConsent.status.granted')
-            : t('analyticsConsent.status.denied')}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant={on ? 'secondary' : 'outline'}
-            size="sm"
-            disabled={pending}
-            onClick={() => submit('granted')}
-          >
-            {t('analyticsConsent.settings.on')}
-          </Button>
-          <Button
-            type="button"
-            variant={on ? 'outline' : 'secondary'}
-            size="sm"
-            disabled={pending}
-            onClick={() => submit('denied')}
-          >
-            {t('analyticsConsent.settings.off')}
-          </Button>
-        </div>
-      </div>
-    </SettingsSection>
   )
 }
 

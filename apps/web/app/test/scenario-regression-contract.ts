@@ -40,7 +40,7 @@ const shortViewportScenarios = new Set<ScenarioId>([
 ])
 
 export const SCENARIO_CONDITIONS = SCENARIO_IDS.flatMap((scenario) => [
-  ...(scenario.startsWith('search-mobile-')
+  ...(scenario.startsWith('search-mobile-') || scenario === 'settings-menu-open'
     ? (['mobile'] as const)
     : standardViewports
   ).flatMap((viewport) =>
@@ -75,6 +75,17 @@ export const SCENARIO_CONTRACTS = Object.fromEntries(
     return [
       scenario,
       {
+        ...(scenario === 'settings-menu-open'
+          ? {
+              interactions: [
+                {
+                  selector: '[data-slot=sheet-trigger]',
+                  type: 'click',
+                  readySelector: '[data-slot=sheet-content]',
+                },
+              ],
+            }
+          : {}),
         requiredRegions: definition.requiredRegions,
         requiresHeading: definition.requiresHeading,
         requiresPrimary: definition.requiresPrimary,
