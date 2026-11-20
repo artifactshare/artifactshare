@@ -73,20 +73,22 @@ test('D1 enforces publisher provenance, current ownership and revocation at the 
         .set({ derived_title: 'Updated' })
         .where('id', '=', 'abc123def4')
         .where(publisherArtifactSql('publisher-owner', authority))
-        .executeTakeFirst()
-    expect(Number((await write()).numUpdatedRows)).toBe(1)
+        .returning('id')
+        .execute()
+    // D1 change metadata also counts work recorded by SQLite triggers.
+    expect(await write()).toEqual([{ id: 'abc123def4' }])
     await database
       .prepare(
         "UPDATE shareables SET visibility = 'workspace', derived_title = 'Human title' WHERE id = 'abc123def4'",
       )
       .run()
-    expect(Number((await write()).numUpdatedRows)).toBe(1)
+    expect(await write()).toEqual([{ id: 'abc123def4' }])
     await database
       .prepare(
         "UPDATE cli_family_authorities SET status = 'revoked' WHERE family_id = 'publisher-family'",
       )
       .run()
-    expect(Number((await write()).numUpdatedRows)).toBe(0)
+    expect(await write()).toEqual([])
     await database
       .prepare(
         "UPDATE cli_family_authorities SET status = 'active' WHERE family_id = 'publisher-family'",
@@ -97,7 +99,7 @@ test('D1 enforces publisher provenance, current ownership and revocation at the 
         "UPDATE shareables SET created_by_publisher_client_id = NULL WHERE id = 'abc123def4'",
       )
       .run()
-    expect(Number((await write()).numUpdatedRows)).toBe(0)
+    expect(await write()).toEqual([])
     expect(
       (await database.prepare('PRAGMA foreign_key_check').all()).results,
     ).toEqual([])

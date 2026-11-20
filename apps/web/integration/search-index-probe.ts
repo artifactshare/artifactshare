@@ -89,9 +89,13 @@ export class WorkspaceSearchIndex extends Index {
                     return (...args: unknown[]) => wrap(prepared.bind(...args))
                   if (method === 'all')
                     return async () => {
-                      if (/insert into "search_index_workspaces"/iu.test(query))
+                      if (
+                        /select "target" from "search_index_rebuilds"/iu.test(
+                          query,
+                        )
+                      )
                         await reach('registry')
-                      if (/select "id" from "workspaces"/iu.test(query))
+                      if (/delete from "search_index_ready"/iu.test(query))
                         await reach('idle')
                       return prepared.all()
                     }
