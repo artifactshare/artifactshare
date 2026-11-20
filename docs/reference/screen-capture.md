@@ -435,3 +435,9 @@ observations, fault diff and restoration, clean healthy HEAD, display/input
 inspection results and limitations. Healthy evidence must cover both viewports.
 The harness's self-reported result alone is insufficient acceptance evidence;
 do not claim guaranteed reviewer conclusions or unmeasured time savings.
+
+### Settings action states
+
+An interaction may use `action: 'fill'`, `selector`, and a string `value`. Use `readySelector` after the final interaction to require the resulting UI.
+
+`setup.actionResponse` is a capture-only fixture with exact `route`, `method: 'POST'`, and `intent`. It accepts either `pending: true` or inline action `data`. The runner matches the same-origin route (including its `.data` URL), reading JSON, URL-encoded or multipart intent bodies. Other requests continue normally. Matched actions never reach the server. Responses use the installed router's single-fetch encoding and data envelope. Exactly one match is required before recording evidence. Held actions are aborted only after capture, and handlers are removed in cleanup; no production route reads this configuration. Use real seeded loaders and readiness selectors, and reseed destructive scenarios serially.

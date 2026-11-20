@@ -33,6 +33,7 @@ import {
   reopenExpiredLink,
   resolveLinkSharingWrite,
   updateWorkspaceExternalAccessPolicy,
+  previewWorkspaceExternalAccessPolicy,
 } from './link-sharing.server'
 import type { startLinkAbuseJudgment } from './link-abuse-signals.server'
 
@@ -479,6 +480,195 @@ describe('workspace link-sharing service', () => {
   afterEach(async () => {
     await db.destroy()
     sqliteRef.current = null
+  })
+
+  test('preview counts only shortened links without changing policy, links or audit', async () => {
+    const at = '2026-07-20T00:00:00.000Z'
+    const patch = { linkExpiryDefaultDays: 30, linkExpiryMaxDays: 30 }
+    const reference = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', 'unlimited-link')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('shareables')
+      .values([
+        {
+          ...reference,
+          id: 'at-cutoff',
+          link_expires_at: '2026-08-19T00:00:00.000Z',
+        },
+        { ...reference, id: 'private-control', visibility: 'private' },
+      ])
+      .execute()
+    await db
+      .insertInto('workspaces')
+      .values({
+        id: 'other-workspace',
+        hd: 'other.example',
+        name: 'Other',
+        created_at: at,
+        plan: 'team',
+      })
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'other-inbox',
+        workspace_id: 'other-workspace',
+        kind: 'inbox',
+        owner_user_id: OWNER.id,
+        created_by_id: OWNER.id,
+        name: 'Inbox',
+        created_at: at,
+        updated_at: at,
+      })
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values({
+        ...reference,
+        id: 'other-workspace-link',
+        workspace_id: 'other-workspace',
+        container_id: 'other-inbox',
+      })
+      .execute()
+    const before = {
+      policy: await db.selectFrom('workspaces').selectAll().execute(),
+      links: await db.selectFrom('shareables').selectAll().execute(),
+      audit: await db.selectFrom('audit_events').selectAll().execute(),
+    }
+    const preview = await previewWorkspaceExternalAccessPolicy(
+      db,
+      ADMIN,
+      patch,
+      at,
+    )
+    expect(preview).toEqual({
+      kind: 'preview',
+      previousMaximumDays: null,
+      maximumDays: 30,
+      shortenedLinkCount: 2,
+    })
+    expect(await db.selectFrom('workspaces').selectAll().execute()).toEqual(
+      before.policy,
+    )
+    expect(await db.selectFrom('shareables').selectAll().execute()).toEqual(
+      before.links,
+    )
+    expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
+      before.audit,
+    )
+    const result = await updateWorkspaceExternalAccessPolicy(
+      db,
+      ADMIN,
+      patch,
+      at,
+    )
+    expect(result).toMatchObject({ kind: 'ok', shortenedLinkCount: 2 })
+    expect(
+      await previewWorkspaceExternalAccessPolicy(db, ADMIN, patch, at),
+    ).toEqual({
+      kind: 'preview',
+      previousMaximumDays: 30,
+      maximumDays: 30,
+      shortenedLinkCount: 0,
+    })
+  })
+
+  test('a reduction still previews zero when every link expires before the cutoff', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ link_expires_at: '2026-07-21T00:00:00.000Z' })
+      .execute()
+    expect(
+      await previewWorkspaceExternalAccessPolicy(
+        db,
+        OWNER,
+        { linkExpiryDefaultDays: 7, linkExpiryMaxDays: 7 },
+        '2026-07-20T00:00:00.000Z',
+      ),
+    ).toEqual({
+      kind: 'preview',
+      previousMaximumDays: null,
+      maximumDays: 7,
+      shortenedLinkCount: 0,
+    })
+    expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
+      [],
+    )
+  })
+
+  test.each(['free', 'plus'] as const)(
+    '%s preview preserves owner-only plan restrictions',
+    async (plan) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+      const patch = { linkExpiryDefaultDays: 7, linkExpiryMaxDays: 7 }
+      expect(
+        await previewWorkspaceExternalAccessPolicy(db, OWNER, patch),
+      ).toMatchObject({ kind: 'preview', maximumDays: 7 })
+      expect(
+        await previewWorkspaceExternalAccessPolicy(db, ADMIN, patch),
+      ).toEqual({ kind: 'forbidden' })
+      expect(
+        await previewWorkspaceExternalAccessPolicy(db, OWNER, {
+          ...patch,
+          linkSharingEnabled: false,
+        }),
+      ).toEqual({ kind: 'forbidden' })
+    },
+  )
+
+  test.each(['revoked-owner', 'member', 'outside-viewer'])(
+    '%s cannot read preview counts',
+    async (caller) => {
+      const patch = { linkExpiryDefaultDays: 7, linkExpiryMaxDays: 7 }
+      expect(
+        await previewWorkspaceExternalAccessPolicy(db, OWNER, patch),
+      ).toMatchObject({ kind: 'preview' })
+      if (caller === 'revoked-owner')
+        await db
+          .deleteFrom('workspace_members')
+          .where('user_id', '=', OWNER.id)
+          .execute()
+      if (caller === 'member')
+        await db
+          .updateTable('workspace_members')
+          .set({ role: 'member' })
+          .where('user_id', '=', OWNER.id)
+          .execute()
+      const result = await previewWorkspaceExternalAccessPolicy(
+        db,
+        {
+          ...OWNER,
+          id: caller === 'outside-viewer' ? 'outside-viewer' : OWNER.id,
+        },
+        patch,
+      )
+      expect(JSON.stringify(result)).toBe('{"kind":"forbidden"}')
+    },
+  )
+
+  test('preview denies nonmembers and invalid policy without disclosing a count', async () => {
+    const patch = { linkExpiryDefaultDays: 30, linkExpiryMaxDays: 30 }
+    const denied = await previewWorkspaceExternalAccessPolicy(
+      db,
+      { ...ADMIN, id: 'former-owner' },
+      patch,
+    )
+    expect(JSON.stringify(denied)).toBe('{"kind":"forbidden"}')
+    expect(
+      await previewWorkspaceExternalAccessPolicy(db, OWNER, {
+        linkExpiryMaxDays: 0,
+      }),
+    ).toEqual({ kind: 'invalid-policy', field: 'max' })
+    expect(await previewWorkspaceExternalAccessPolicy(db, OWNER, {})).toEqual({
+      kind: 'invalid-patch',
+    })
   })
 
   test('shortens unlimited and over-limit links without extending existing finite links', async () => {

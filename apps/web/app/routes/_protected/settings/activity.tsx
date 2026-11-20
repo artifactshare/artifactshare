@@ -41,6 +41,23 @@ export const screen = {
   primaryAction: '活動を確認する',
   states: [
     {
+      id: 'result-success',
+      description:
+        'Successful settings action announced above the page content',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'Informational settings warning above the page content',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description:
+        'Failed settings action with an error alert above the page content',
+      setup: { query: '?status=forbidden' },
+    },
+    {
       id: 'default',
       description: '活動履歴',
       setup: {},

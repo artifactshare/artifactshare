@@ -33,6 +33,7 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-tokens/created-secret',
   'settings-billing/subscribed',
+  'settings-billing/past-due',
   'viewer/revisit-context',
   'viewer/bridge-attribution',
   'search/capped',
@@ -301,6 +302,7 @@ export async function ensureDevScreenState(
   }
   if (
     scenario === 'settings-billing/subscribed' ||
+    scenario === 'settings-billing/past-due' ||
     scenario === 'settings-billing/continuing-near-limit'
   ) {
     await db
@@ -308,7 +310,8 @@ export async function ensureDevScreenState(
       .set({
         plan: 'team',
         stripe_subscription_id: `${workspaceId}-subscribed`,
-        stripe_subscription_status: 'active',
+        stripe_subscription_status:
+          scenario === 'settings-billing/past-due' ? 'past_due' : 'active',
       })
       .where('id', '=', workspaceId)
       .execute()
@@ -2348,6 +2351,15 @@ export async function seedDevScreenState(
     ]
     for (const [index, bot] of bots.entries()) {
       const botUserId = `${workspaceId}-bot-${bot.key}`
+      // Restore this fixture bot after a captured stop, cancellation or reissue.
+      await db
+        .deleteFrom('cli_refresh_credentials')
+        .where('user_id', '=', botUserId)
+        .execute()
+      await db
+        .deleteFrom('cli_family_authorities')
+        .where('user_id', '=', botUserId)
+        .execute()
       const familyId = `${botUserId}-family`
       const createdAt = new Date(
         Date.parse(now) - (index + 1) * 60_000,
@@ -2367,7 +2379,9 @@ export async function seedDevScreenState(
           kind: 'bot',
           bot_stopped_at: bot.stoppedAt,
         })
-        .onConflict((oc) => oc.column('id').doNothing())
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet({ bot_stopped_at: bot.stoppedAt }),
+        )
         .execute()
       await db
         .insertInto('workspace_members')
@@ -2479,27 +2493,89 @@ export async function seedDevScreenState(
     }
   }
 
+  if (scenario.startsWith('settings-external-access/')) {
+    await db
+      .updateTable('workspaces')
+      .set({
+        link_sharing_enabled: 1,
+        external_posting_enabled: 1,
+        link_expiry_default_days: 30,
+        link_expiry_max_days: scenario.endsWith('/unlimited') ? null : 90,
+      })
+      .where('id', '=', workspaceId)
+      .execute()
+    const shareableId = devShareableId(workspaceId + '-expiry-preview')
+    const existing = await db
+      .selectFrom('shareables')
+      .select('id')
+      .where('id', '=', shareableId)
+      .executeTakeFirst()
+    if (existing) {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', shareableId)
+        .execute()
+    } else {
+      // Recreating a deleted fixture must also clear its retained publication ID.
+      await db
+        .deleteFrom('link_publications')
+        .where('workspace_id', '=', workspaceId)
+        .where('shareable_id', '=', shareableId)
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: shareableId,
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          name: 'Shared report.html',
+          artifact_kind: 'html_page',
+          visibility: 'link',
+          container_id: containerId,
+          created_at: now,
+          updated_at: now,
+          link_expires_at: null,
+        })
+        .execute()
+    }
+    await db
+      .updateTable('shareables')
+      .set({
+        link_expires_at: scenario.endsWith('/zero') ? now : null,
+      })
+      .where('workspace_id', '=', workspaceId)
+      .where('visibility', '=', 'link')
+      .execute()
+  }
+  if (scenario === 'settings-integrations/slack-disconnected') {
+    await db
+      .deleteFrom('slack_workspaces')
+      .where('workspace_id', '=', workspaceId)
+      .execute()
+  }
   if (
     scenario === 'settings-integrations/slack-connected' ||
     scenario === 'settings-integrations/slack-reauthorization'
   ) {
+    const connection = {
+      id: `${workspaceId}-slack`,
+      team_id: `team-${workspaceId}`,
+      team_name: 'Artifact Share Dev',
+      bot_user_id: `bot-${workspaceId}`,
+      bot_token: 'dev-screen-fixture',
+      bot_scopes:
+        scenario === 'settings-integrations/slack-connected'
+          ? 'chat:write,links:read,links:write,users:read,users:read.email'
+          : null,
+      installed_by_user_id: userId,
+      installed_at: now,
+      workspace_id: workspaceId,
+    }
     await db
       .insertInto('slack_workspaces')
-      .values({
-        id: `${workspaceId}-slack`,
-        team_id: `team-${workspaceId}`,
-        team_name: 'Artifact Share Dev',
-        bot_user_id: `bot-${workspaceId}`,
-        bot_token: 'dev-screen-fixture',
-        bot_scopes:
-          scenario === 'settings-integrations/slack-connected'
-            ? 'chat:write,links:read,links:write,users:read,users:read.email'
-            : null,
-        installed_by_user_id: userId,
-        installed_at: now,
-        workspace_id: workspaceId,
-      })
-      .onConflict((oc) => oc.column('id').doNothing())
+      .values(connection)
+      .onConflict((oc) => oc.column('id').doUpdateSet(connection))
       .execute()
   }
 

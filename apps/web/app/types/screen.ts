@@ -21,6 +21,7 @@ export type ScreenReady = {
 }
 
 export type ScreenInteraction =
+  | { action: 'fill'; selector: string; value: string; readySelector?: string }
   | {
       action: 'click' | 'hover'
       selector: string
@@ -45,6 +46,14 @@ export type ScreenSetup = {
   scenarioArtifactIndex?: number
   query?: string
   interactions?: ScreenInteraction[]
+  /** Capture runner only: never installed in production routes. */
+  actionResponse?: {
+    route: string
+    method: 'POST'
+    intent: string
+    pending?: boolean
+    data?: Record<string, unknown>
+  }
   ready?: ScreenReady
 }
 

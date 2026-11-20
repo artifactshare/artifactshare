@@ -1,4 +1,4 @@
-import type { Compilable, Kysely } from 'kysely'
+import type { Compilable, Kysely, ExpressionBuilder } from 'kysely'
 import { nanoid } from 'nanoid'
 import { normalizePlan } from '~/lib/billing-plan.server'
 import {
@@ -480,12 +480,14 @@ export type WorkspaceExternalAccessMutationResult =
   | { kind: 'invalid-policy'; field: 'default' | 'max' | 'relationship' }
   | { kind: 'invalid-patch' }
 
-export async function updateWorkspaceExternalAccessPolicy(
+async function resolveWorkspaceExternalAccessPolicy(
   db: Kysely<DB>,
   actor: { id: string; workspaceId: string },
   patch: WorkspaceExternalAccessPatch,
-  at: string = nowIso(),
-): Promise<WorkspaceExternalAccessMutationResult> {
+): Promise<
+  | { kind: 'ok'; current: WorkspaceLinkPolicy; next: WorkspaceLinkPolicy }
+  | Exclude<WorkspaceExternalAccessMutationResult, { kind: 'ok' }>
+> {
   if (Object.keys(patch).length === 0) return { kind: 'invalid-patch' }
   if (
     (patch.linkSharingEnabled !== undefined &&
@@ -562,27 +564,83 @@ export async function updateWorkspaceExternalAccessPolicy(
     return { kind: 'invalid-policy', field: validation.field }
   }
 
-  const maxWasShortened =
-    next.linkExpiryMaxDays !== null &&
+  return { kind: 'ok', current, next }
+}
+
+function shorteningCutoff(
+  current: WorkspaceLinkPolicy,
+  next: WorkspaceLinkPolicy,
+  at: string,
+) {
+  return next.linkExpiryMaxDays !== null &&
     (current.linkExpiryMaxDays === null ||
       next.linkExpiryMaxDays < current.linkExpiryMaxDays)
-  let shortenedLinkCount = 0
-  if (maxWasShortened) {
-    const row = await db
-      .selectFrom('shareables')
-      .select(({ fn }) => fn.countAll<number>().as('count'))
-      .where('workspace_id', '=', actor.workspaceId)
-      .where('visibility', '=', 'link')
-      .where((eb) =>
-        eb.or([
-          eb('link_expires_at', 'is', null),
-          eb('link_expires_at', '>', addDays(at, next.linkExpiryMaxDays!)),
-        ]),
-      )
-      .executeTakeFirstOrThrow()
-    shortenedLinkCount = Number(row.count)
-  }
+    ? addDays(at, next.linkExpiryMaxDays)
+    : null
+}
 
+function shorteningSelection(workspaceId: string, cutoff: string) {
+  return (eb: ExpressionBuilder<DB, 'shareables'>) =>
+    eb.and([
+      eb('workspace_id', '=', workspaceId),
+      eb('visibility', '=', 'link'),
+      eb.or([
+        eb('link_expires_at', 'is', null),
+        eb('link_expires_at', '>', cutoff),
+      ]),
+    ])
+}
+
+async function countShortenedLinks(
+  db: Kysely<DB>,
+  workspaceId: string,
+  cutoff: string | null,
+) {
+  if (cutoff === null) return 0
+  const row = await db
+    .selectFrom('shareables')
+    .select(({ fn }) => fn.countAll<number>().as('count'))
+    .where(shorteningSelection(workspaceId, cutoff))
+    .executeTakeFirstOrThrow()
+  return Number(row.count)
+}
+
+export async function previewWorkspaceExternalAccessPolicy(
+  db: Kysely<DB>,
+  actor: { id: string; workspaceId: string },
+  patch: WorkspaceExternalAccessPatch,
+  at: string = nowIso(),
+) {
+  const resolved = await resolveWorkspaceExternalAccessPolicy(db, actor, patch)
+  if (resolved.kind !== 'ok') return resolved
+  const cutoff = shorteningCutoff(resolved.current, resolved.next, at)
+  return {
+    kind: 'preview' as const,
+    previousMaximumDays: resolved.current.linkExpiryMaxDays,
+    maximumDays: resolved.next.linkExpiryMaxDays,
+    shortenedLinkCount: await countShortenedLinks(
+      db,
+      actor.workspaceId,
+      cutoff,
+    ),
+  }
+}
+
+export async function updateWorkspaceExternalAccessPolicy(
+  db: Kysely<DB>,
+  actor: { id: string; workspaceId: string },
+  patch: WorkspaceExternalAccessPatch,
+  at: string = nowIso(),
+): Promise<WorkspaceExternalAccessMutationResult> {
+  const resolved = await resolveWorkspaceExternalAccessPolicy(db, actor, patch)
+  if (resolved.kind !== 'ok') return resolved
+  const { current, next } = resolved
+  const cutoff = shorteningCutoff(current, next, at)
+  const shortenedLinkCount = await countShortenedLinks(
+    db,
+    actor.workspaceId,
+    cutoff,
+  )
   const workspaceSet = {
     link_sharing_enabled: next.linkSharingEnabled ? 1 : 0,
     // Free clamps external posting to off in the policy view; leave the stored
@@ -599,20 +657,12 @@ export async function updateWorkspaceExternalAccessPolicy(
       .set(workspaceSet)
       .where('id', '=', actor.workspaceId),
   ]
-  if (maxWasShortened) {
-    const cutoff = addDays(at, next.linkExpiryMaxDays!)
+  if (cutoff !== null) {
     queries.push(
       db
         .updateTable('shareables')
         .set({ link_expires_at: cutoff })
-        .where('workspace_id', '=', actor.workspaceId)
-        .where('visibility', '=', 'link')
-        .where((eb) =>
-          eb.or([
-            eb('link_expires_at', 'is', null),
-            eb('link_expires_at', '>', cutoff),
-          ]),
-        ),
+        .where(shorteningSelection(actor.workspaceId, cutoff)),
     )
   }
   queries.push(

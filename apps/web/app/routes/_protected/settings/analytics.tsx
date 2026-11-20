@@ -11,7 +11,26 @@ export const screen = {
   metric: 'アクセス解析の選択',
   role: 'アクセス解析を設定する',
   primaryAction: '設定を更新する',
-  states: [{ id: 'default', description: 'アクセス解析', setup: {} }],
+  states: [
+    {
+      id: 'result-success',
+      description:
+        'Successful settings action announced above the page content',
+      setup: { query: '?status=ok' },
+    },
+    {
+      id: 'result-warning',
+      description: 'Informational settings warning above the page content',
+      setup: { query: '?status=removed-transfer-failed' },
+    },
+    {
+      id: 'result-error',
+      description:
+        'Failed settings action with an error alert above the page content',
+      setup: { query: '?status=forbidden' },
+    },
+    { id: 'default', description: 'アクセス解析', setup: {} },
+  ],
 } satisfies ScreenSpec
 export default function AnalyticsPage() {
   const { t } = useT()

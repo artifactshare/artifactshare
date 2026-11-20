@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useFetcher, useRevalidator } from 'react-router'
+import { SettingsBanner } from './settings-banner'
 import { ConfirmActionDialog } from './confirm-action-dialog'
 import { BotBadge } from '~/components/app/user-kind-badge'
 import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
@@ -83,18 +84,6 @@ export function BotSection({
   const [reissueTarget, setReissueTarget] = useState<WorkspaceBotRow | null>(
     null,
   )
-  const stopFetcher = useFetcher<BotActionResponse>()
-  const cancelFetcher = useFetcher<BotActionResponse>()
-  const reissueFetcher = useFetcher<BotActionResponse>()
-  // Derived, not synced: the token dialog shows whenever the fetcher holds a
-  // token the admin has not dismissed yet.
-  const [dismissedToken, setDismissedToken] = useState<string | null>(null)
-  const reissueToken =
-    reissueFetcher.state === 'idle' &&
-    reissueFetcher.data?.token &&
-    reissueFetcher.data.token !== dismissedToken
-      ? reissueFetcher.data.token
-      : null
 
   return (
     <SettingsSection title={t('team.bots')} description={t('team.bots.body')}>
@@ -172,6 +161,7 @@ export function BotSection({
                               type="button"
                               variant="outline"
                               size="sm"
+                              id={`bot-reissue-${bot.id}`}
                               onClick={() => setReissueTarget(bot)}
                             >
                               {t('team.bots.reissue')}
@@ -180,6 +170,7 @@ export function BotSection({
                               type="button"
                               variant="destructive"
                               size="sm"
+                              id={`bot-stop-${bot.id}`}
                               onClick={() => setStopTarget(bot)}
                             >
                               {t('team.bots.stop')}
@@ -191,6 +182,7 @@ export function BotSection({
                             type="button"
                             variant="outline"
                             size="sm"
+                            id={`bot-cancel-${bot.id}`}
                             onClick={() => setCancelTarget(bot)}
                           >
                             {t('team.bots.cancel')}
@@ -217,91 +209,84 @@ export function BotSection({
         <BotCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
       ) : null}
 
-      <ConfirmActionDialog
-        open={cancelTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setCancelTarget(null)
-        }}
-        onConfirm={() => {
-          if (!cancelTarget) return
-          cancelFetcher.submit(
-            { intent: 'cancel', botUserId: cancelTarget.id },
-            {
-              method: 'post',
-              action: '/settings/bots',
-              encType: 'application/json',
-            },
-          )
-          setCancelTarget(null)
-        }}
-        title={t('team.bots.cancelConfirm.title', {
-          name: cancelTarget?.name ?? '',
-        })}
-        description={t('team.bots.cancelConfirm.body')}
-        action={t('team.bots.cancelConfirm.action')}
-        pending={cancelFetcher.state !== 'idle'}
-      />
-
-      <ConfirmActionDialog
-        open={stopTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setStopTarget(null)
-        }}
-        onConfirm={() => {
-          if (!stopTarget) return
-          stopFetcher.submit(
-            { intent: 'stop', botUserId: stopTarget.id },
-            {
-              method: 'post',
-              action: '/settings/bots',
-              encType: 'application/json',
-            },
-          )
-          setStopTarget(null)
-        }}
-        title={t('team.bots.stopConfirm.title', {
-          name: stopTarget?.name ?? '',
-        })}
-        description={t('team.bots.stopConfirm.body')}
-        action={t('team.bots.stopConfirm.action')}
-        pending={stopFetcher.state !== 'idle'}
-      />
-
-      <ConfirmActionDialog
-        open={reissueTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setReissueTarget(null)
-        }}
-        onConfirm={() => {
-          if (!reissueTarget) return
-          reissueFetcher.submit(
-            { intent: 'reissue', botUserId: reissueTarget.id },
-            {
-              method: 'post',
-              action: '/settings/bots',
-              encType: 'application/json',
-            },
-          )
-          setReissueTarget(null)
-        }}
-        title={t('team.bots.reissueConfirm.title', {
-          name: reissueTarget?.name ?? '',
-        })}
-        description={t('team.bots.reissueConfirm.body')}
-        action={t('team.bots.reissueConfirm.action')}
-        pending={reissueFetcher.state !== 'idle'}
-      />
-
-      {reissueToken ? (
-        <BotTokenDialog
-          token={reissueToken}
-          onClose={() => setDismissedToken(reissueToken)}
+      {cancelTarget ? (
+        <BotActionDialog
+          key={cancelTarget.id}
+          bot={cancelTarget}
+          intent="cancel"
+          onClose={() => setCancelTarget(null)}
         />
       ) : null}
-      <FetcherError fetcher={stopFetcher} />
-      <FetcherError fetcher={cancelFetcher} />
-      <FetcherError fetcher={reissueFetcher} variant="reissue" />
+      {stopTarget ? (
+        <BotActionDialog
+          key={stopTarget.id}
+          bot={stopTarget}
+          intent="stop"
+          onClose={() => setStopTarget(null)}
+        />
+      ) : null}
+      {reissueTarget ? (
+        <BotActionDialog
+          key={reissueTarget.id}
+          bot={reissueTarget}
+          intent="reissue"
+          onClose={() => setReissueTarget(null)}
+        />
+      ) : null}
     </SettingsSection>
+  )
+}
+
+function BotActionDialog({
+  bot,
+  intent,
+  onClose,
+}: {
+  bot: WorkspaceBotRow
+  intent: 'stop' | 'cancel' | 'reissue'
+  onClose: () => void
+}) {
+  const { t } = useT()
+  const fetcher = useFetcher<BotActionResponse>()
+  const pending = fetcher.state !== 'idle'
+  const complete = !pending && fetcher.data?.ok
+  const token = complete ? fetcher.data?.token : undefined
+  useEffect(() => {
+    if (complete && !token) onClose()
+  }, [complete, token, onClose])
+  if (token) return <BotTokenDialog token={token} onClose={onClose} />
+  return (
+    <ConfirmActionDialog
+      open
+      returnFocusId={`bot-${intent}-${bot.id}`}
+      awaitResult
+      destructive={intent !== 'reissue'}
+      dismissLabel={intent === 'cancel' ? t('team.bots.keep') : undefined}
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+      onConfirm={() => {
+        void fetcher.submit(
+          { intent, botUserId: bot.id },
+          {
+            method: 'post',
+            action: '/settings/bots',
+            encType: 'application/json',
+          },
+        )
+      }}
+      title={t(`team.bots.${intent}Confirm.title`, { name: bot.name ?? '' })}
+      description={t(`team.bots.${intent}Confirm.body`)}
+      action={t(`team.bots.${intent}Confirm.action`)}
+      pending={pending}
+      pendingLabel={t(`team.bots.${intent}Confirm.pending`)}
+      result={
+        <FetcherError
+          fetcher={fetcher}
+          variant={intent === 'reissue' ? 'reissue' : 'create'}
+        />
+      }
+    />
   )
 }
 
@@ -379,11 +364,7 @@ function FetcherError({
     (variant === 'reissue' ? REISSUE_ERROR_OVERRIDES[code] : undefined) ??
     ERROR_KEYS[code] ??
     'team.bots.error.generic'
-  return (
-    <p role="alert" className="text-destructive text-sm">
-      {t(key)}
-    </p>
-  )
+  return <SettingsBanner kind="error">{t(key)}</SettingsBanner>
 }
 
 type SelectedDestination = { id: string; name: string; unavailable?: boolean }
@@ -478,7 +459,9 @@ function BotDestinationSelection({
           {t('team.bots.addDestination')}
         </Button>
       </Field>
-      <TeamMutedParagraph>{t('team.bots.primaryHint')}</TeamMutedParagraph>
+      {projects.length > 0 ? (
+        <TeamMutedParagraph>{t('team.bots.primaryHint')}</TeamMutedParagraph>
+      ) : null}
     </fieldset>
   )
 }
@@ -734,9 +717,16 @@ export function BotTokenDialog({
           >
             {copied ? t('team.bots.token.copied') : t('team.bots.token.copy')}
           </Button>
-          <TeamMuted>{t('team.bots.token.boundary')}</TeamMuted>
-          <TeamMuted>{t('team.bots.token.expiry')}</TeamMuted>
-          <TeamMuted>{t('team.bots.token.stdin')}</TeamMuted>
+          <TeamMutedParagraph>
+            {t('team.bots.token.boundary')}
+          </TeamMutedParagraph>
+          <TeamMutedParagraph>{t('team.bots.token.expiry')}</TeamMutedParagraph>
+          <TeamMutedParagraph>
+            {t('team.bots.token.stdin')}
+            <code className="block break-words">
+              {`printf '%s' "$TOKEN" | artifactshare profiles import-token --profile bot`}
+            </code>
+          </TeamMutedParagraph>
           <label className="flex items-center gap-[var(--spacing-2)] text-sm">
             <input
               type="checkbox"

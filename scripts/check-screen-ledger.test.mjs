@@ -1226,3 +1226,41 @@ test('capture reseeding requires an explicit scenario and a boolean', () => {
     true,
   )
 })
+
+test('validates typed fill values and same-route action fixtures', () => {
+  const base = {
+    screens: [
+      {
+        id: 'profile',
+        route: { en: '/settings/profile' },
+        states: [
+          {
+            id: 'error',
+            setup: {
+              interactions: [
+                { action: 'fill', selector: 'input', value: '30' },
+              ],
+              actionResponse: {
+                route: '/settings/profile',
+                method: 'POST',
+                intent: 'save',
+                data: { kind: 'forbidden' },
+              },
+            },
+          },
+        ],
+      },
+    ],
+    excludedRoutes: [],
+    loadRouteTree: () => routeTree,
+    readRouteSource: () => 'export default function Profile() {}',
+  }
+  assert.deepEqual(checkScreenLedger(base), [])
+  base.screens[0].states[0].setup.interactions[0].value = 30
+  assert.match(checkScreenLedger(base).join(' '), /fill requires a string/)
+  base.screens[0].states[0].setup.actionResponse.route = '/settings/other'
+  assert.match(
+    checkScreenLedger(base).join(' '),
+    /invalid action response fixture/,
+  )
+})

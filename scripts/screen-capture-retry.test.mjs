@@ -583,3 +583,196 @@ test('capture navigation errors remain failures with an expected status', async 
     /navigation failed: connection refused/,
   )
 })
+
+test('capture action matching isolates route, method, origin and JSON/form intent', async () => {
+  const { matchesCaptureAction } = await import('./screen-capture.mjs')
+  const actionFixture = {
+    route: '/settings/bots',
+    method: 'POST',
+    intent: 'stop',
+  }
+  for (const [path, method, contentType, body, expected] of [
+    [
+      '/settings/bots.data?_routes=routes%2Fsettings%2Fbots',
+      'POST',
+      'application/json',
+      '{"intent":"stop"}',
+      true,
+    ],
+    [
+      '/settings/bots',
+      'POST',
+      'application/x-www-form-urlencoded',
+      'intent=stop',
+      true,
+    ],
+    ...['', 'not json', 'null'].map((invalidBody) => [
+      '/settings/bots',
+      'POST',
+      'application/json',
+      invalidBody,
+      false,
+    ]),
+    ['/settings/bots', 'GET', 'application/json', '{"intent":"stop"}', false],
+    [
+      '/settings/bots',
+      'POST',
+      'application/json',
+      '{"intent":"reissue"}',
+      false,
+    ],
+    [
+      '/settings/bots-extra.data',
+      'POST',
+      'application/json',
+      '{"intent":"stop"}',
+      false,
+    ],
+  ]) {
+    const request = {
+      url: () => 'https://example.test' + path,
+      method: () => method,
+      headers: () => ({ 'content-type': contentType }),
+      postData: () => body,
+    }
+    assert.equal(
+      await matchesCaptureAction(
+        request,
+        actionFixture,
+        'https://example.test',
+      ),
+      expected,
+    )
+    assert.equal(
+      await matchesCaptureAction(
+        request,
+        actionFixture,
+        'https://other.example.test',
+      ),
+      false,
+    )
+  }
+  const form = new FormData()
+  form.set('intent', 'stop')
+  const encoded = new Response(form)
+  const body = await encoded.text()
+  assert.equal(
+    await matchesCaptureAction(
+      {
+        url: () => 'https://example.test/settings/bots.data',
+        method: () => 'POST',
+        headers: () => ({
+          'content-type': encoded.headers.get('content-type'),
+        }),
+        postData: () => body,
+      },
+      actionFixture,
+      'https://example.test',
+    ),
+    true,
+  )
+})
+
+test('capture inline failure is router-decodable and matched actions are never forwarded', async () => {
+  const { createRequire } = await import('node:module')
+  const requireWeb = createRequire(
+    new URL('../apps/web/package.json', import.meta.url),
+  )
+  const { UNSAFE_decodeViaTurboStream } = requireWeb('react-router')
+  const { installCaptureActionResponse } = await import('./screen-capture.mjs')
+  let handler
+  let fulfilled
+  let forwarded = 0
+  let removed = false
+  const actionFixture = await installCaptureActionResponse(
+    {
+      route: (_pattern, next) => {
+        handler = next
+      },
+      unroute: () => {
+        removed = true
+      },
+    },
+    {
+      route: '/settings/external-access',
+      method: 'POST',
+      intent: 'update-external-access',
+      data: { kind: 'forbidden' },
+    },
+    'https://example.test',
+  )
+  assert.throws(() => actionFixture.assertMatched(), /expected one request/)
+  await handler({
+    request: () => ({
+      url: () => 'https://example.test/settings/external-access.data',
+      method: () => 'POST',
+      headers: () => ({ 'content-type': 'application/x-www-form-urlencoded' }),
+      postData: () => 'intent=update-external-access',
+    }),
+    fulfill: (response) => {
+      fulfilled = response
+    },
+    fallback: () => {
+      forwarded++
+    },
+  })
+  actionFixture.assertMatched()
+  assert.equal(forwarded, 0)
+  assert.equal(fulfilled.contentType, 'text/x-script')
+  const decoded = await UNSAFE_decodeViaTurboStream(
+    new Response(fulfilled.body).body,
+    globalThis,
+  )
+  assert.deepEqual(decoded.value, { data: { kind: 'forbidden' } })
+  await actionFixture.cleanup()
+  assert.equal(removed, true)
+})
+
+test('held action remains pending through screenshot observation and is aborted before handler removal', async () => {
+  const { installCaptureActionResponse } = await import('./screen-capture.mjs')
+  const events = []
+  let handler
+  const actionFixture = await installCaptureActionResponse(
+    {
+      route: (_pattern, next) => {
+        handler = next
+      },
+      unroute: () => {
+        events.push('removed')
+      },
+    },
+    { route: '/settings/bots', method: 'POST', intent: 'stop', pending: true },
+    'https://example.test',
+  )
+  const request = handler({
+    request: () => ({
+      url: () => 'https://example.test/settings/bots.data',
+      method: () => 'POST',
+      headers: () => ({ 'content-type': 'application/json' }),
+      postData: () => '{"intent":"stop"}',
+    }),
+    abort: () => {
+      events.push('aborted')
+    },
+    fallback: () => {
+      throw new Error('Matched action forwarded')
+    },
+  })
+  // Await the match without resolving its deliberately held response.
+  await Promise.resolve()
+  actionFixture.assertMatched()
+  await captureScreenImages({
+    page: {
+      screenshot: () => {
+        assert.deepEqual(events, [])
+        events.push('screenshot')
+      },
+    },
+    outDir: '/tmp',
+    sections: [],
+    entry: { file: 'held.png' },
+  })
+  await actionFixture.cleanup()
+  await request
+  assert.deepEqual(events, ['screenshot', 'aborted', 'removed'])
+})

@@ -28,6 +28,262 @@ export const screen = {
   primaryAction: 'Botを管理する',
   states: [
     {
+      id: 'stop-pending',
+      description:
+        'Stopping the bot with a busy confirmation and disabled controls',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'stop',
+          pending: true,
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Stop")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Stop bot")',
+            readySelector:
+              '[role="alertdialog"] [data-slot="alert-dialog-action"]:disabled',
+          },
+        ],
+      },
+    },
+    {
+      id: 'stop-failed',
+      description:
+        'Stopping the bot failed with an alert inside the open confirmation',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'stop',
+          data: { error: { code: 'forbidden' } },
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Stop")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Stop bot")',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'stop-success',
+      description: 'Stopped bot in the table after successful confirmation',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Stop")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Stop bot")',
+            readySelector: 'body:not(:has([role="alertdialog"]))',
+          },
+        ],
+      },
+    },
+    {
+      id: 'cancel-pending',
+      description:
+        'Cancelling bot creation with a busy confirmation and disabled controls',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'cancel',
+          pending: true,
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:text-is("Cancel creation")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Cancel creation")',
+            readySelector:
+              '[role="alertdialog"] [data-slot="alert-dialog-action"]:disabled',
+          },
+        ],
+      },
+    },
+    {
+      id: 'cancel-failed',
+      description:
+        'Cancelling bot creation failed with an alert inside the open confirmation',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'cancel',
+          data: { error: { code: 'forbidden' } },
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:text-is("Cancel creation")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Cancel creation")',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'cancel-success',
+      description: 'Unused bot removed after successful creation cancellation',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:text-is("Cancel creation")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Cancel creation")',
+            readySelector: 'body:not(:has([role="alertdialog"]))',
+          },
+        ],
+      },
+    },
+    {
+      id: 'reissue-pending',
+      description:
+        'Reissuing the bot token with a busy confirmation and disabled controls',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'reissue',
+          pending: true,
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Reissue token")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Reissue")',
+            readySelector:
+              '[role="alertdialog"] [data-slot="alert-dialog-action"]:disabled',
+          },
+        ],
+      },
+    },
+    {
+      id: 'reissue-failed',
+      description:
+        'Reissuing the bot token failed with an alert inside the open confirmation',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings/bots',
+          method: 'POST',
+          intent: 'reissue',
+          data: { error: { code: 'forbidden' } },
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Reissue token")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Reissue")',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'reissue-success',
+      description:
+        'One-time replacement token and full import instructions after reissue',
+      setup: {
+        scenario: 'settings/with-bots',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:text-is("Reissue token")',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] button:text-is("Reissue")',
+            readySelector: '[data-testid="bot-token"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'create-populated-destinations',
+      description:
+        'Bot creation with an added destination and replacement-primary guidance',
+      setup: {
+        scenario: 'settings/with-bots',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button:text-is("Add bot")',
+            readySelector: '[role="dialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="dialog"] [role="group"] button >> nth=0',
+          },
+          {
+            action: 'click',
+            selector: '[role="dialog"] button:text-is("Add destination")',
+            readySelector: '[role="dialog"] input[type="radio"]',
+          },
+        ],
+      },
+    },
+    {
       id: 'default',
       description: 'Bot管理',
       setup: {},

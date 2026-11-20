@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { File } from 'node:buffer'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { screens, validateLedger } from './screen-ledger.mjs'
 import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import { auditGaps as auditGapsBrowser } from '../apps/web/app/lib/gap-audit.js'
@@ -27,6 +27,97 @@ import {
   screenCaptureOutputDirectory,
   screenCaptureOutputRoot,
 } from './screen-capture-output.mjs'
+
+// Uses the installed router's action transport, including its data envelope.
+export async function encodeCaptureActionData(data) {
+  const requireWeb = createRequire(
+    new URL('../apps/web/package.json', import.meta.url),
+  )
+  const routerDirectory = dirname(requireWeb.resolve('react-router'))
+  const { encodeViaTurboStream } = await import(
+    pathToFileURL(join(routerDirectory, 'lib/server-runtime/single-fetch.js'))
+      .href
+  )
+  return new Response(
+    encodeViaTurboStream(
+      { data },
+      new AbortController().signal,
+      5000,
+      'production',
+    ),
+  ).text()
+}
+
+export async function matchesCaptureAction(request, fixture, origin) {
+  const url = new URL(request.url())
+  if (
+    url.origin !== origin ||
+    request.method() !== fixture.method ||
+    ![fixture.route, fixture.route + '.data'].includes(url.pathname)
+  )
+    return false
+  const contentType = request.headers()['content-type'] ?? ''
+  const body = request.postData() ?? ''
+  let intent
+  if (contentType.includes('application/json')) {
+    try {
+      intent = JSON.parse(body)?.intent
+    } catch {
+      return false
+    }
+  } else if (contentType.includes('application/x-www-form-urlencoded')) {
+    intent = new URLSearchParams(body).get('intent')
+  } else if (contentType.includes('multipart/form-data')) {
+    intent = (
+      await new Response(body, {
+        headers: { 'content-type': contentType },
+      }).formData()
+    ).get('intent')
+  } else return false
+  return intent === fixture.intent
+}
+
+export async function installCaptureActionResponse(page, fixture, origin) {
+  let matches = 0
+  let release
+  const held = new Promise((resolveHeld) => {
+    release = resolveHeld
+  })
+  const requests = []
+  const handler = async (route) => {
+    if (!(await matchesCaptureAction(route.request(), fixture, origin)))
+      return route.fallback()
+    matches += 1
+    const response = (async () => {
+      if (fixture.pending) {
+        await held
+        await route.abort('aborted')
+      } else {
+        const body = await encodeCaptureActionData(fixture.data)
+        await route.fulfill({ status: 200, contentType: 'text/x-script', body })
+      }
+    })()
+    requests.push(response)
+    await response
+  }
+  await page.route('**/*', handler)
+  return {
+    assertMatched() {
+      if (matches !== 1)
+        throw new Error(
+          'Capture action fixture expected one request, received ' + matches,
+        )
+    },
+    async cleanup() {
+      release()
+      try {
+        await Promise.all(requests)
+      } finally {
+        await page.unroute('**/*', handler)
+      }
+    },
+  }
+}
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
@@ -746,6 +837,7 @@ async function captureScreensLocked({
   const captureJob = async (job, attempt = 0) => {
     const { screen, locale, state, viewport, theme, order } = job
     let retry = false
+    let fixtureCleanupError
     let beforeInteractions = true
     const file = fileName(screen, state, viewport, theme, locale)
     const auth = screenStateAuth(screen, state)
@@ -767,6 +859,8 @@ async function captureScreensLocked({
     let page
     let url
     let releaseHeldUpload
+    let actionResponse
+    let captureFailed = false
     let heldUploadRequest
     try {
       if (cookie)
@@ -802,6 +896,12 @@ async function captureScreensLocked({
           { times: 1 },
         )
       }
+      if (state.setup?.actionResponse)
+        actionResponse = await installCaptureActionResponse(
+          page,
+          state.setup.actionResponse,
+          new URL(baseUrl).origin,
+        )
       for (const interaction of interactions) {
         await waitForInteractionTarget(page, interaction)
         try {
@@ -809,6 +909,8 @@ async function captureScreensLocked({
             await page.hover(interaction.selector)
           else if (interaction.action === 'click')
             await page.click(interaction.selector)
+          else if (interaction.action === 'fill')
+            await page.locator(interaction.selector).fill(interaction.value)
           else if (interaction.action === 'setInputFiles')
             await page.locator(interaction.selector).setInputFiles({
               name: interaction.name,
@@ -830,16 +932,19 @@ async function captureScreensLocked({
             action: 'wait',
             selector: interaction.readySelector,
           })
-        if (!interaction.captureImmediately) await page.waitForTimeout(400)
+        if (!interaction.captureImmediately && !state.setup?.actionResponse)
+          await page.waitForTimeout(400)
       }
       // goto already waited for networkidle; only re-settle after interactions.
       if (
         interactions.length > 0 &&
+        !state.setup?.actionResponse?.pending &&
         !interactions.some((interaction) => interaction.captureImmediately)
       )
         await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
+      actionResponse?.assertMatched()
       const entries = await captureScreenImages({
         page,
         outDir,
@@ -881,6 +986,7 @@ async function captureScreensLocked({
       })
       manifest.push(...entries)
     } catch (error) {
+      captureFailed = true
       const failure = captureFailure(error)
       if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
         retry = true
@@ -917,10 +1023,20 @@ async function captureScreensLocked({
         )
       }
     } finally {
-      releaseHeldUpload?.()
-      await heldUploadRequest?.catch(() => {})
-      await context.close()
+      try {
+        if (actionResponse) await actionResponse.cleanup()
+      } catch (cleanupError) {
+        if (!captureFailed) fixtureCleanupError = cleanupError
+        console.error(
+          'Action fixture cleanup failed after the recorded capture failure.',
+        )
+      } finally {
+        releaseHeldUpload?.()
+        await heldUploadRequest?.catch(() => {})
+        await context.close()
+      }
     }
+    if (fixtureCleanupError) throw fixtureCleanupError
     if (retry) return captureJob(job, attempt + 1)
   }
 
