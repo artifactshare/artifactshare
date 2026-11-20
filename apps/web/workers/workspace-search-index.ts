@@ -15,6 +15,7 @@ import {
 } from '../app/services/search-index/query'
 import { DurableObject } from 'cloudflare:workers'
 import { searchIndexName } from '../app/services/search-index/names'
+import { searchFailureReason } from '../app/services/search-index/failure'
 import { createDb } from '../app/services/db.server'
 import {
   inventory,
@@ -58,7 +59,9 @@ type Active = {
   content: string
   format: number
 }
-class SearchCleanupError extends Error {}
+class SearchCleanupError extends Error {
+  override name = 'SearchCleanupError'
+}
 
 // Format 13 changes only candidate policy, not extraction or document ranking.
 const compatibleContentFormat = (format: number | string) =>
@@ -906,6 +909,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             Date.now(),
             id,
           )
+          let stage: 'policy' | 'retain' | 'replace' | 'remove' = 'policy'
           try {
             const source = sources[position]
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
@@ -924,6 +928,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 active?.fingerprint === fingerprint(source) &&
                 compatibleContentFormat(active.format)
               ) {
+                stage = 'retain'
                 // Format 13 adds policy only: retain the already indexed text generation.
                 this.ctx.storage.sql.exec(
                   'UPDATE active SET format=? WHERE id=?',
@@ -934,10 +939,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 this.reclaim(id)
                 // react-doctor-disable-next-line react-doctor/async-await-in-loop
                 await this.cleanObjects(source)
-              } else if (!(await this.replace(source))) continue
+              } else {
+                stage = 'replace'
+                if (!(await this.replace(source))) continue
+              }
             }
             // react-doctor-disable-next-line react-doctor/async-await-in-loop
             else {
+              stage = 'remove'
               this.ctx.storage.sql.exec(
                 'DELETE FROM file_policy WHERE id=?',
                 id,
@@ -962,7 +971,12 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 Date.now() + FAILURE_SPACING_MS,
                 id,
               )
-            console.error('workspace_search_item_failed')
+            console.error('workspace_search_item_failed', {
+              workspace_id: state.workspace,
+              shareable_id: id,
+              stage,
+              reason: searchFailureReason(error),
+            })
           }
         }
         const policyPending =
