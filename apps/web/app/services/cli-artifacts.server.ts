@@ -1,3 +1,4 @@
+import { SearchDailyLimitError } from './search-quota.server'
 import type { ArtifactsListQuery } from '@artifactshare/contract'
 import { SearchCapacityError } from './search-index/query'
 import { parseSearchInput } from './search-input'
@@ -419,6 +420,7 @@ export async function searchCliArtifacts(
   | CliArtifactsListResult
   | { kind: 'invalid-input' }
   | { kind: 'capacity-exceeded' }
+  | { kind: 'daily-limit'; limit: SearchDailyLimitError }
 > {
   if (args.query !== undefined) return { kind: 'invalid-input' }
   const params = new URLSearchParams({ q: args.q ?? '', pageSize: '50' })
@@ -440,6 +442,8 @@ export async function searchCliArtifacts(
   try {
     result = await search(db, indexes, user.id, input, args.source)
   } catch (error) {
+    if (error instanceof SearchDailyLimitError)
+      return { kind: 'daily-limit', limit: error }
     if (error instanceof SearchCapacityError)
       return { kind: 'capacity-exceeded' }
     throw error

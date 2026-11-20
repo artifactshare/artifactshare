@@ -491,7 +491,7 @@ export async function runReconciliation(
       new Date(now).getTime() - 90 * 86400000,
     ).toISOString()
     for (;;) {
-      if ((await pruneSearchLogs(db, cutoff)) < 500) break
+      if ((await pruneSearchLogs(db, cutoff, now.toISOString())) < 500) break
     }
   } catch {
     console.error('reconcile_search_logs_cleanup_failed')

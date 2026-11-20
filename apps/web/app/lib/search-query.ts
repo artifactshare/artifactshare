@@ -1,3 +1,4 @@
+import { SearchRequestError } from './search-limit'
 import type { Translator } from './i18n'
 import { parseSearchInput } from '~/services/search-input'
 
@@ -218,7 +219,9 @@ export async function readSearchJson<T extends object>(
     data.error &&
     typeof data.error === 'object'
   )
-    throw new Error((data.error as { code: string }).code)
+    throw new SearchRequestError(
+      data.error as { code: string; retry_at?: string },
+    )
   if (!response.ok || !data || typeof data !== 'object')
     throw new Error('request_failed')
   return data as Exclude<T, { error: unknown }>

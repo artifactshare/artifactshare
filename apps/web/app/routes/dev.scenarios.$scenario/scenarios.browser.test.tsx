@@ -51,6 +51,16 @@ function mount(
               },
             ],
           })
+        if (scenario === 'search-palette-daily-limit')
+          return Response.json(
+            {
+              error: {
+                code: 'search_daily_limit_exceeded',
+                retry_at: '2026-11-21T00:00:00.000Z',
+              },
+            },
+            { status: 429 },
+          )
         if (scenario === 'search-loading')
           return new Promise<Response>(() => {})
         if (scenario === 'search-continuation-error')
@@ -211,6 +221,10 @@ describe('scenario visual regression', () => {
       await runInteractions(scenario)
       if (scenario === 'search-continuation-error')
         await expect.element(page.getByRole('alert')).toBeVisible()
+      if (scenario === 'search-palette-daily-limit')
+        await expect
+          .element(page.getByText(/Daily search limit reached/))
+          .toBeVisible()
       if (scenario.startsWith('search-mobile-search'))
         await vi.waitFor(() =>
           expect(

@@ -642,6 +642,13 @@ export const REST_OPERATIONS = {
           description: 'Authentication required or agent viewer missing.',
         },
         403: { description: 'Credential scope denied.' },
+        429: {
+          description:
+            'Daily full-text search limit reached (search_daily_limit_exceeded). All clients share 1,000 requests per actor per UTC day. Wait until error.retry_at (UTC ISO); error.details includes retry_at and retry_after_seconds. Title-only listing is unaffected.',
+          headers: {
+            'Retry-After': { schema: { type: 'integer', minimum: 1 } },
+          },
+        },
         503: {
           description:
             'Search capacity exceeded (search_capacity_exceeded). Narrow the query or filters and search again. This error is not a zero-result search.',

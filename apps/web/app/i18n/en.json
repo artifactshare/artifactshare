@@ -1766,6 +1766,7 @@
   "search.remove": "Clear filters",
   "search.cancel": "Cancel",
   "search.retry": "Retry",
+  "search.dailyLimit": "Daily search limit reached. Search resumes at {time}. Please wait until then.",
   "search.failure": "Search failed. Please try again.",
   "search.invalid": "Check the search conditions and dates.",
   "search.count": "{n} results",

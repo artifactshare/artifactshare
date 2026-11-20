@@ -1,3 +1,5 @@
+import { SearchRequestError, searchResetTime } from '~/lib/search-limit'
+import { readSearchJson } from '~/lib/search-query'
 import {
   IconSearch,
   IconX,
@@ -387,6 +389,7 @@ function PaletteBody({
     [selected, setSelected] = useState(-1),
     [composing, setComposing] = useState(false),
     [retry, setRetry] = useState(0)
+  const [retryAt, setRetryAt] = useState<string>()
   const { history, historyError } = useSearchHistory(retry)
   const sequence = useRef(0),
     composition = useRef(false),
@@ -407,17 +410,14 @@ function PaletteBody({
       () => {
         fetched.current = true
         setStatus('loading')
+        setRetryAt(undefined)
         void fetch(
           `/api/search-suggestions?${searchApiParams(new URLSearchParams(signature))}`,
-          { signal: controller.signal },
+          {
+            signal: controller.signal,
+          },
         )
-          .then((response) => {
-            if (!response.ok) {
-              void response.body?.cancel()
-              throw new Error('suggestions')
-            }
-            return response.json<Suggestions>()
-          })
+          .then((response) => readSearchJson<Suggestions>(response))
           .then((data: Suggestions) => {
             if (sequence.current === generation) {
               setResults(data)
@@ -425,9 +425,13 @@ function PaletteBody({
               setStatus('ready')
             }
           })
-          .catch(() => {
-            if (!controller.signal.aborted && sequence.current === generation)
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted && sequence.current === generation) {
+              setRetryAt(
+                error instanceof SearchRequestError ? error.retryAt : undefined,
+              )
               setStatus('error')
+            }
           })
       },
       fetched.current ? 150 : 0,
@@ -449,7 +453,10 @@ function PaletteBody({
       state: searchNavigationState(here, { searchSubmission: submit }),
     })
   }
-  const submit = (keyboard = true) => go(`/search?${signature}`, keyboard)
+  const submit = (keyboard = true) => {
+    if (!retryAt || Date.now() >= Date.parse(retryAt))
+      go(`/search?${signature}`, keyboard)
+  }
   const choose = (kind: 'owner' | 'project', item: SearchProject) => {
     sequence.current++
     if (kind === 'owner')
@@ -472,17 +479,19 @@ function PaletteBody({
       }),
     [locale, timeZone],
   )
-  const options = paletteOptions({
-    query,
-    filtered: owners.length > 0 || Boolean(scope),
-    results,
-    history,
-    choose,
-    go,
-    submit,
-    t,
-    formatDate: (value: string) => dateFormat.format(new Date(value)),
-  })
+  const options = retryAt
+    ? []
+    : paletteOptions({
+        query,
+        filtered: owners.length > 0 || Boolean(scope),
+        results,
+        history,
+        choose,
+        go,
+        submit,
+        t,
+        formatDate: (value: string) => dateFormat.format(new Date(value)),
+      })
   const field = (
     <form
       data-search-field
@@ -612,6 +621,7 @@ function PaletteBody({
       query={query}
       status={status}
       historyError={historyError}
+      retryAt={retryAt}
       selected={selected}
       setSelected={setSelected}
       retry={() => setRetry((value) => value + 1)}
@@ -669,6 +679,7 @@ function PaletteCandidates({
   selected,
   setSelected,
   retry,
+  retryAt,
 }: {
   options: ReturnType<typeof paletteOptions>
   query: string
@@ -677,8 +688,9 @@ function PaletteCandidates({
   selected: number
   setSelected: (value: number) => void
   retry: () => void
+  retryAt?: string
 }) {
-  const { t } = useT()
+  const { t, locale } = useT()
   return (
     <Command
       shouldFilter={false}
@@ -704,14 +716,18 @@ function PaletteCandidates({
             {t(query.trim() ? 'search.loading' : 'search.loadingRecent')}
           </span>
         ) : status === 'error' ? (
-          t('search.failure')
+          retryAt ? (
+            t('search.dailyLimit', { time: searchResetTime(retryAt, locale) })
+          ) : (
+            t('search.failure')
+          )
         ) : (
           t('search.suggestionCount', {
             n: options.filter((option) => option.key !== 'all').length,
           })
         )}
       </div>
-      {(status === 'error' || historyError) && (
+      {!retryAt && (status === 'error' || historyError) && (
         <Button onClick={retry}>{t('search.retry')}</Button>
       )}
       <div

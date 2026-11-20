@@ -1,3 +1,4 @@
+import { pruneSearchUsage } from './search-quota.server'
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { sql } from 'kysely'
 import { searchHistoryParams } from '~/lib/search-query'
@@ -134,7 +135,12 @@ export async function recordSearchOpen(
     .execute()
   return true
 }
-export async function pruneSearchLogs(db: Db, cutoff: string) {
+export async function pruneSearchLogs(
+  db: Db,
+  cutoff: string,
+  now = new Date().toISOString(),
+) {
+  const usage = await pruneSearchUsage(db, cutoff, now)
   const result = await db
     .deleteFrom('search_logs')
     .where(
@@ -149,7 +155,7 @@ export async function pruneSearchLogs(db: Db, cutoff: string) {
     )
     .returning('id')
     .execute()
-  return result.length
+  return Math.max(result.length, usage)
 }
 
 /** A per-search key lives only on the actor-bound log. */

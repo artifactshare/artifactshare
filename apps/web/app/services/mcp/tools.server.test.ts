@@ -2744,6 +2744,21 @@ describe('headless publish wiring', () => {
     expect(JSON.stringify(capacity.result?.content)).toContain(
       'Narrow the query',
     )
+    await db
+      .updateTable('search_actor_daily_usage')
+      .set({ requests: 1000 })
+      .where('actor_id', '=', 'owner-1')
+      .execute()
+    searchIndexMock.search.mockClear()
+    const limited = await callTool(db, 'list_artifacts', { q: 'needle' })
+    expect(limited.result?.isError).toBe(true)
+    const content = JSON.stringify(limited.result?.content)
+    expect(content).toContain('search_daily_limit_exceeded')
+    expect(content).toContain('retry_at')
+    expect(content).toContain('Wait until')
+    expect(searchIndexMock.search).not.toHaveBeenCalled()
+    const titles = await callTool(db, 'list_artifacts', { query: 'needle' })
+    expect(titles.result?.isError).not.toBe(true)
   })
 
   test('list_artifacts runs through the SDK on normal data', async () => {

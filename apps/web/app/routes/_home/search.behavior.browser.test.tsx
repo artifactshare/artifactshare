@@ -1315,3 +1315,53 @@ test.each([1000, 599])(
     expect(router.state.loaderData).toEqual({ '0': result })
   },
 )
+
+test('daily group refusal keeps visible results and does not retry on re-expansion', async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json(
+      {
+        error: {
+          code: 'search_daily_limit_exceeded',
+          retry_at: '2026-11-21T00:00:00.000Z',
+        },
+      },
+      { status: 429 },
+    ),
+  )
+  vi.stubGlobal('fetch', fetcher)
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/search',
+        element: <SearchResults result={result} actor="viewer" />,
+      },
+    ],
+    { initialEntries: ['/search?q=alpha'] },
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(
+    <TooltipProvider>
+      <RouterProvider router={router} />
+    </TooltipProvider>,
+  )
+  const group = page.getByRole('button', { name: /1 more/ })
+  await group.click()
+  await expect
+    .element(page.getByRole('alert'))
+    .toHaveTextContent('Daily search limit reached')
+  await expect
+    .element(page.getByRole('alert'))
+    .toHaveTextContent('Nov 21, 2026, 00:00 UTC')
+  await expect
+    .element(page.getByRole('button', { name: 'Retry', exact: true }))
+    .not.toBeInTheDocument()
+  await expect
+    .element(page.getByRole('link', { name: 'Alpha report' }))
+    .toBeVisible()
+  await group.click()
+  await group.click()
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(router.state.location.search).toBe('?q=alpha')
+})

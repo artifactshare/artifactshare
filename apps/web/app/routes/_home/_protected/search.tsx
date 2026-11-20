@@ -1,3 +1,4 @@
+import { SearchDailyLimitError } from '~/services/search-quota.server'
 import { useT } from '~/hooks/use-t'
 import { Button } from '~/components/ui/button'
 import { SearchCapacityError } from '~/services/search-index/query'
@@ -27,6 +28,22 @@ export const screen = {
         'Header suggestions pending (deterministic capture: search-loading component scenario)',
       setup: {
         scenario: 'search/results',
+        query: '?q=Quarterly',
+        interactions: [
+          { action: 'click', selector: 'header [data-search-trigger]' },
+        ],
+      },
+    },
+    {
+      id: 'daily-limit',
+      description: 'Daily search limit with exact UTC reset',
+      setup: { scenario: 'search/daily-limit', query: '?q=Quarterly' },
+    },
+    {
+      id: 'palette-daily-limit',
+      description: 'Suggestions denied until daily reset',
+      setup: {
+        scenario: 'search/palette-daily-limit',
         query: '?q=Quarterly',
         interactions: [
           { action: 'click', selector: 'header [data-search-trigger]' },
@@ -121,6 +138,13 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   const user = requireUser(context),
     input = parseSearchQuery(url.searchParams)
   if ('error' in input) return { result: input, actor: user.id }
+  if (isDevScreenStateRequest(request, 'search/daily-limit')) {
+    const limit = new SearchDailyLimitError('2026-11-20T12:00:00.000Z')
+    return data(
+      { result: { error: limit.error }, actor: user.id },
+      { status: 429, headers: limit.headers },
+    )
+  }
   if (isDevScreenStateRequest(request, 'search/error'))
     return {
       result: { error: { code: 'search_capacity_exceeded', hint: '' } },
@@ -130,14 +154,16 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
     'search',
     (db, indexes) => search(db, indexes, user.id, input, 'screen'),
     (error) =>
-      error instanceof SearchCapacityError
-        ? {
-            error: {
-              code: 'search_capacity_exceeded',
-              hint: 'Narrow the query.',
-            },
-          }
-        : undefined,
+      error instanceof SearchDailyLimitError
+        ? { error: error.error }
+        : error instanceof SearchCapacityError
+          ? {
+              error: {
+                code: 'search_capacity_exceeded',
+                hint: 'Narrow the query.',
+              },
+            }
+          : undefined,
   )
   if (
     !('error' in result) &&
@@ -163,7 +189,15 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
   return data(
     { result, actor: user.id },
     {
+      status:
+        'error' in result && result.error.code === 'search_daily_limit_exceeded'
+          ? 429
+          : 200,
       headers: {
+        ...('error' in result && 'details' in result.error
+          ? { 'Retry-After': String(result.error.details.retry_after_seconds) }
+          : {}),
+        'Cache-Control': 'private, no-store',
         'Server-Timing': serverTiming,
       },
     },
@@ -174,6 +208,10 @@ export const headers: HeadersFunction = ({ parentHeaders, loaderHeaders }) => {
   const responseHeaders = new Headers(parentHeaders)
   const timing = loaderHeaders.get('Server-Timing')
   if (timing) responseHeaders.append('Server-Timing', timing)
+  for (const key of ['Cache-Control', 'Retry-After']) {
+    const value = loaderHeaders.get(key)
+    if (value) responseHeaders.set(key, value)
+  }
   return responseHeaders
 }
 export default function SearchPage({ loaderData }: Route.ComponentProps) {

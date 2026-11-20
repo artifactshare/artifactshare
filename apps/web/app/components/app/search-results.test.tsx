@@ -206,3 +206,37 @@ test.each([
       )
   },
 )
+
+test('daily refusal shows exact UTC reset and keeps the URL without immediate retry controls', () => {
+  for (const limited of [true, false]) {
+    const router = createMemoryRouter(
+      [
+        {
+          path: '*',
+          element: (
+            <SearchResults
+              actor="viewer"
+              result={{
+                error: {
+                  code: limited
+                    ? 'search_daily_limit_exceeded'
+                    : 'request_failed',
+                  retry_at: '2026-11-21T00:00:00.000Z',
+                },
+              }}
+            />
+          ),
+        },
+      ],
+      { initialEntries: ['/search?q=alpha&owner=viewer'] },
+    )
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    expect(html.includes('Daily search limit reached')).toBe(limited)
+    expect(html.includes('Retry')).toBe(!limited)
+    if (limited) {
+      expect(html).toContain('Nov 21, 2026, 00:00 UTC')
+      expect(html).not.toContain('Change keywords')
+    }
+    expect(router.state.location.search).toBe('?q=alpha&owner=viewer')
+  }
+})

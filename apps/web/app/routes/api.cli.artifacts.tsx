@@ -68,6 +68,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           includeVersionSummaries: true,
         },
       )
+      if (result.kind === 'daily-limit')
+        return Response.json(
+          { error: result.limit.error },
+          { status: 429, headers: result.limit.headers },
+        )
       if (result.kind === 'capacity-exceeded')
         return errorResponse(
           'search_capacity_exceeded',

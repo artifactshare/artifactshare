@@ -37,6 +37,8 @@ export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'viewer/bridge-attribution',
   'search/capped',
   'search/error',
+  'search/daily-limit',
+  'search/palette-daily-limit',
   'search/continuation-error',
 ]
 

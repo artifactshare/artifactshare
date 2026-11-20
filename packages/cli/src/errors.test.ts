@@ -260,3 +260,21 @@ test.each([{ linkExpiresAt: '2099-01-02T00:00:00Z' }, { noLinkExpiry: true }])(
     )
   },
 )
+
+test('daily search refusal preserves exact reset and wait recovery in CLI JSON', () => {
+  const details = {
+    retry_at: '2026-11-21T00:00:00.000Z',
+    retry_after_seconds: 60,
+  }
+  const result = mapApiError(429, {
+    error: {
+      code: 'search_daily_limit_exceeded',
+      message: 'Wait until reset.',
+      details,
+    },
+  })
+  assert.equal(result.code, 'search_daily_limit_exceeded')
+  assert.deepEqual(result.details, details)
+  assert.deepEqual(result.recovery, { kind: 'retry_later' })
+  assert.match(result.hint, /Wait until retry_at/)
+})

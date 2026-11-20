@@ -457,3 +457,35 @@ test('blank-query recent files use view order and omit newly denied metadata', a
   expect(denied.recent.map((row) => row.id)).toEqual(['file-5', 'file-4'])
   expect(JSON.stringify(denied.recent)).not.toMatch(/alpha a|alpha Owner 0/)
 })
+
+test('daily refusal preserves HTTP reset metadata on results and suggestions', async () => {
+  const day = new Date().toISOString().slice(0, 10)
+  fixture.sqlite
+    .prepare('INSERT INTO search_actor_daily_usage VALUES (?, ?, 1000)')
+    .run('viewer', day)
+  for (const run of [loader, suggestions]) {
+    const url = new URL('https://example.com/api/search?q=alpha')
+    const args = {
+      request: new Request(url),
+      url,
+      pattern: '/api/search',
+      params: {},
+      context,
+    }
+    const response = await middleware[0](args, () => run(args))
+    if (!(response instanceof Response)) throw new Error('Expected response')
+    expect(response.status).toBe(429)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0)
+    const next = new Date(`${day}T00:00:00.000Z`)
+    next.setUTCDate(next.getUTCDate() + 1)
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'search_daily_limit_exceeded',
+        retry_at: next.toISOString(),
+        details: { retry_at: next.toISOString() },
+      },
+    })
+  }
+  expect(rpc.search).not.toHaveBeenCalled()
+})
