@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { screens, validateLedger } from './screen-ledger.mjs'
+import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import { auditGaps as auditGapsBrowser } from '../apps/web/app/lib/gap-audit.js'
 import {
   appFetch,
@@ -755,7 +756,7 @@ async function captureScreensLocked({
         : state.setup?.scenario && auth === seedAuth
           ? seeds.scenarioCookies[`${seedAuth}:${state.setup.scenario}`]
           : seeds.cookies[auth]
-    const context = await browser.newContext({
+    const context = await newAppBrowserContext(browser, {
       viewport: VIEWPORTS[viewport],
       colorScheme: theme,
       deviceScaleFactor: 1,

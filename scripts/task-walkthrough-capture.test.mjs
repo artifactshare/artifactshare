@@ -657,6 +657,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
             return {
               addCookies: async () => {},
               addInitScript: async () => {},
+              route: async () => {},
               close: () => {
                 calls.push('close')
               },

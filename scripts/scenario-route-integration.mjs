@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { answerAnalyticsLocally } from './lib/browser-analytics.mjs'
+import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import { appFetch } from './lib/dev-sign-in.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -121,13 +121,12 @@ export async function main() {
         ? { channel: process.env.PLAYWRIGHT_CHANNEL }
         : undefined,
     )
-    const context = await browser.newContext({
+    const context = await newAppBrowserContext(browser, {
       ignoreHTTPSErrors: true,
       locale: 'en',
       reducedMotion: 'reduce',
       viewport: { width: 1440, height: 900 },
     })
-    await answerAnalyticsLocally(context)
     try {
       // A clean checkout may trigger Vite's one-time dependency optimizer
       // reload. Complete that transition before browser errors become test

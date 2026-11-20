@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
 import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
+import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import {
   assertCaptureServerHead,
   cleanCaptureHead,
@@ -966,7 +967,7 @@ export async function captureRun({
   const supplements = []
   let previous = null
   const openBranch = async (branchSession, branchName) => {
-    const context = await browser.newContext({
+    const context = await newAppBrowserContext(browser, {
       viewport: VIEWPORTS[viewport],
       ignoreHTTPSErrors: true,
       reducedMotion: 'reduce',
