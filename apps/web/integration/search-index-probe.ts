@@ -10,6 +10,7 @@ import {
   seedSearchBenchmark,
   measureSearchBenchmark,
   measureVisibilitySearch,
+  type VisibilityD1Statistics,
 } from './search-benchmark-worker'
 import {
   normalizeSearchText,
@@ -42,7 +43,7 @@ export class WorkspaceSearchIndex extends Index {
     { reached: boolean; release: () => void; wait: Promise<void> }
   >
   private readonly failures: Map<Point, number>
-  private readonly operations: { lists: number }
+  private readonly operations: { lists: number; d1: VisibilityD1Statistics }
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     const gates = new Map<
@@ -50,7 +51,10 @@ export class WorkspaceSearchIndex extends Index {
       { reached: boolean; release: () => void; wait: Promise<void> }
     >()
     const failures = new Map<Point, number>()
-    const operations = { lists: 0 }
+    const operations = {
+      lists: 0,
+      d1: { statements: 0, rowsRead: 0, rowsWritten: 0 },
+    }
     const reach = async (point: Point) => {
       const gate = gates.get(point)
       if (gate) {
@@ -103,7 +107,21 @@ export class WorkspaceSearchIndex extends Index {
                         await reach('registry')
                       if (/delete from "search_index_ready"/iu.test(query))
                         await reach('idle')
-                      return prepared.all()
+                      const result = await prepared.all()
+                      if (
+                        query.includes('AS pending') &&
+                        query.includes('search_index_policy_changes')
+                      ) {
+                        if (
+                          !Number.isFinite(result.meta.rows_read) ||
+                          !Number.isFinite(result.meta.rows_written)
+                        )
+                          throw new Error('missing_search_index_d1_measurement')
+                        operations.d1.statements++
+                        operations.d1.rowsRead += result.meta.rows_read
+                        operations.d1.rowsWritten += result.meta.rows_written
+                      }
+                      return result
                     }
                   const value = Reflect.get(prepared, method)
                   return typeof value === 'function'
@@ -127,6 +145,9 @@ export class WorkspaceSearchIndex extends Index {
     this.gates = gates
     this.failures = failures
     this.operations = operations
+  }
+  visibilityD1Statistics(): VisibilityD1Statistics {
+    return { ...this.operations.d1 }
   }
   /** Run details while counting the full-text statements it executes. */
   detailsSearches(input: IndexSearchInput, ids: string[]) {
@@ -460,6 +481,16 @@ export default {
         {
           const db = createDb(env.DB)
           try {
+            // This synthetic seed installs complete local policy/content directly.
+            // Retire only this workspace's setup feed, outside measured requests.
+            await db
+              .deleteFrom('search_index_changes')
+              .where('workspace_id', '=', command.workspace)
+              .execute()
+            await db
+              .deleteFrom('search_index_policy_changes')
+              .where('workspace_id', '=', command.workspace)
+              .execute()
             const count = await db
               .selectFrom('shareables')
               .select(db.fn.countAll<number>().as('files'))
@@ -479,6 +510,7 @@ export default {
         result = await measureVisibilitySearch(
           env,
           command.workspace,
+          () => stub.visibilityD1Statistics(),
           command.bypass,
         )
         break
@@ -493,6 +525,15 @@ export default {
             Math.min(500, command.size - offset),
             command.size,
           )
+        // The timing fixture also installs its full index directly, outside measurement.
+        await env.DB.batch([
+          env.DB.prepare(
+            'DELETE FROM search_index_changes WHERE workspace_id=?',
+          ).bind(command.workspace),
+          env.DB.prepare(
+            'DELETE FROM search_index_policy_changes WHERE workspace_id=?',
+          ).bind(command.workspace),
+        ])
         result = { size: command.size }
         break
       case 'measureSearch':

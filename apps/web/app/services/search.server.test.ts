@@ -2127,3 +2127,77 @@ test('unsupported candidate reader fails with capacity; unfinished cutover never
     items: [],
   })
 })
+
+test('a revoked first representative refills page one without losing a cursor slot', async () => {
+  fixture.sqlite.exec(`
+    UPDATE shareables SET owner_user_id='owner', name='First' WHERE id='a';
+    INSERT INTO shareable_grants VALUES('a','viewer@example.com','${now}','owner');
+  `)
+  const stub = index()
+  const details = stub.details
+  let first = true
+  stub.details = async (...args) => {
+    const rows = await details(...args)
+    if (first) {
+      first = false
+      fixture.sqlite.exec("DELETE FROM shareable_grants WHERE shareable_id='a'")
+    }
+    return rows
+  }
+  const result = await search(fixture.db, () => stub, 'viewer', input)
+  if ('error' in result) throw new Error('Expected results')
+  expect(result.items).toMatchObject([{ id: 'b', rank: 1, groupSize: 1 }])
+  expect(result.total).toEqual({ value: 2, relation: 'eq' })
+  expect(result.nextCursor).not.toBeNull()
+  const { readSearchToken } = await import('./search-logs.server')
+  expect(
+    (
+      await readSearchToken(
+        fixture.db,
+        'viewer',
+        result.items[0].receipt,
+        'open',
+        new Date().toISOString(),
+      )
+    )?.payload,
+  ).toMatchObject({ file: 'b', rank: 1 })
+  const next = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    cursor: result.nextCursor!,
+  })
+  expect(next).toMatchObject({
+    items: [{ id: 'c', rank: 2 }],
+    nextCursor: null,
+  })
+})
+
+test('unstable detail materialization has a bounded safe outcome', async () => {
+  const stub = index()
+  vi.mocked(stub.details).mockResolvedValue([])
+  await expect(
+    search(fixture.db, () => stub, 'viewer', input),
+  ).rejects.toBeInstanceOf(query.SearchCapacityError)
+  expect(stub.details).toHaveBeenCalledTimes(3)
+})
+
+test('selected owner label stops after its first live witness page', async () => {
+  const stub = index()
+  const original = stub.search
+  const witnessRequests: Array<number | undefined> = []
+  stub.search = async (request) => {
+    const page = await original(request)
+    if (request.query === '' && request.ownerUserIds?.includes('viewer')) {
+      witnessRequests.push(request.cursor)
+      return { ...page, nextCursor: 2000 }
+    }
+    return page
+  }
+  const result = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    filters: { ownerUserIds: ['viewer'] },
+  })
+  expect(result).toMatchObject({
+    selectedScope: { owners: [{ id: 'viewer', name: 'Viewer' }] },
+  })
+  expect(witnessRequests).toEqual([undefined])
+})

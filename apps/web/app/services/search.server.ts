@@ -271,6 +271,7 @@ async function collect(
         const page = await indexPage(indexes(source.workspaceId), {
           ...request,
           visibility: source.visibility,
+          workspaceId: source.workspaceId,
           cursor,
           includeActiveDocumentCount:
             includeActiveDocumentCount &&
@@ -355,7 +356,7 @@ async function completePageGroups(
     let cursor = 0
     for (let fetch = 0; fetch < 5 && pending.length; fetch++) {
       const page = await indexes(workspace).groupMembers(
-        { ...request, visibility, cursor },
+        { ...request, visibility, workspaceId: workspace, cursor },
         pending,
       )
       if ('error' in page || page.visibilityProtocol !== 1)
@@ -453,14 +454,59 @@ function selectionWitnesses(
           ? { ownerUserId: selection.id }
           : { containerId: selection.id }),
       }
-      const found = await collect(
+      const witnessInput: SearchInput = {
+        query: '',
+        filters,
+        sort: 'newest',
+        pageSize: 1,
+      }
+      const sources = await searchVisibilitySources(
         db,
-        indexes,
-        actor,
-        { query: '', filters, sort: 'newest', pageSize: 1 },
+        actor.id,
+        filters,
         now,
+        actor.viewer,
       )
-      return { selection, filters, rows: found.knownHits }
+      for (const source of sources) {
+        let cursor: number | undefined
+        for (let fetch = 0; fetch < 5; fetch++) {
+          const page = await indexPage(indexes(source.workspaceId), {
+            ...indexInput(witnessInput, false),
+            visibility: source.visibility,
+            workspaceId: source.workspaceId,
+            cursor,
+          })
+          const candidates = await accepted(
+            db,
+            actor,
+            filters,
+            now,
+            page.items.map((row) => ({
+              ...row,
+              workspaceId: source.workspaceId,
+            })),
+          )
+          for (const candidate of candidates) {
+            const rows = await metadata(db, [candidate.id], actor.id)
+            const live = await finalVisibleIds(
+              db,
+              actor,
+              filters,
+              now,
+              new Map([[candidate.id, source.workspaceId]]),
+            )
+            if (rows[0] && live.has(candidate.id))
+              return {
+                selection,
+                filters,
+                rows: [{ ...candidate, ...rows[0] }],
+              }
+          }
+          if (page.nextCursor === null) break
+          cursor = page.nextCursor
+        }
+      }
+      return { selection, filters, rows: [] }
     }),
   )
 }
@@ -572,29 +618,30 @@ export async function search(
   }
   let total = cappedTotal(result.groups.length, result.incomplete)
   let tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
-  const selected = result.groups.slice(
+  let selected = result.groups.slice(
     position,
     Math.min(1000, position + input.pageSize),
   )
   // Group sizes and the page's details do not depend on each other.
-  const sizesPending = selected.length
-    ? completePageGroups(
-        db,
-        indexes,
-        searchActor,
-        input,
-        now,
-        any,
-        result.workspaces,
-        selected.map((row) => groupKey(row.title)),
-        result.candidateSources,
-        result.knownHits,
-      )
-    : Promise.resolve({
-        members: new Map<string, Set<string>>(),
-        incomplete: new Set<string>(),
-        workspaceById: new Map<string, string>(),
-      })
+  const complete = () =>
+    selected.length
+      ? completePageGroups(
+          db,
+          indexes,
+          searchActor,
+          input,
+          now,
+          any,
+          result.workspaces,
+          selected.map((row) => groupKey(row.title)),
+          result.candidateSources,
+          result.knownHits,
+        )
+      : Promise.resolve({
+          members: new Map<string, Set<string>>(),
+          incomplete: new Set<string>(),
+          workspaceById: new Map<string, string>(),
+        })
   const items: Array<
     Metadata & {
       path: string
@@ -611,26 +658,29 @@ export async function search(
   const displayedRanks = new Map(
     selected.map((row, index) => [row.id, position + index + 1]),
   )
-  const pagesPending = Promise.all(
-    [...new Set(selected.map((row) => row.workspaceId))].map(
-      async (workspace) => {
-        const visible = selected.filter((row) => row.workspaceId === workspace)
-        const ids = visible.map((row) => row.id)
-        const [details, current] = await Promise.all([
-          indexes(workspace).details(indexInput(input, any), ids),
-          metadata(db, ids, actor),
-        ])
-        return {
-          visible,
-          details: new Map(details.map((row) => [row.id, row])),
-          current: new Map(current.map((row) => [row.id, row])),
-        }
-      },
-    ),
-  )
-  const [completion, pages, witnesses] = await Promise.all([
-    sizesPending,
-    pagesPending,
+  const materialize = () =>
+    Promise.all(
+      [...new Set(selected.map((row) => row.workspaceId))].map(
+        async (workspace) => {
+          const visible = selected.filter(
+            (row) => row.workspaceId === workspace,
+          )
+          const ids = visible.map((row) => row.id)
+          const [details, current] = await Promise.all([
+            indexes(workspace).details(indexInput(input, any), ids),
+            metadata(db, ids, actor),
+          ])
+          return {
+            visible,
+            details: new Map(details.map((row) => [row.id, row])),
+            current: new Map(current.map((row) => [row.id, row])),
+          }
+        },
+      ),
+    )
+  let [completion, pages, witnesses] = await Promise.all([
+    complete(),
+    materialize(),
     input.cursor
       ? []
       : selectionWitnesses(db, indexes, searchActor, input, now),
@@ -640,41 +690,67 @@ export async function search(
   )
   for (const [id, workspace] of completion.workspaceById)
     finalDomain.set(id, workspace)
-  const [finalIds, selectedRows] = await Promise.all([
-    finalVisibleIds(db, searchActor, input.filters, now, finalDomain),
-    Promise.all(
-      witnesses.map(async (witness) => {
+  const reauthorize = () =>
+    Promise.all([
+      finalVisibleIds(db, searchActor, input.filters, now, finalDomain),
+      Promise.all(
+        witnesses.map(async (witness) => {
+          const ids = await finalVisibleIds(
+            db,
+            searchActor,
+            witness.filters,
+            now,
+            new Map(witness.rows.map((r) => [r.id, r.workspaceId])),
+          )
+          return { ...witness, row: witness.rows.find((r) => ids.has(r.id)) }
+        }),
+      ),
+      ...relaxedWitnesses.map(async (witness) => {
         const ids = await finalVisibleIds(
           db,
           searchActor,
           witness.filters,
           now,
-          new Map(witness.rows.map((r) => [r.id, r.workspaceId])),
+          new Map(witness.found.knownHits.map((r) => [r.id, r.workspaceId])),
         )
-        return { ...witness, row: witness.rows.find((r) => ids.has(r.id)) }
+        witness.found.knownHits = witness.found.knownHits.filter((r) =>
+          ids.has(r.id),
+        )
+        witness.found.groups = groupSearchHits(witness.found.knownHits)
       }),
-    ),
-    ...relaxedWitnesses.map(async (witness) => {
-      const ids = await finalVisibleIds(
-        db,
-        searchActor,
-        witness.filters,
-        now,
-        new Map(witness.found.knownHits.map((r) => [r.id, r.workspaceId])),
+    ])
+  let [finalIds, selectedRows] = await reauthorize()
+  // Retry only this page. Each promotion needs details and group completion,
+  // followed by another live check after those awaits. Unchanged pages do no extra work.
+  let finalSelected = selected
+  for (let attempt = 0; ; attempt++) {
+    result.knownHits = result.knownHits.filter((row) => finalIds.has(row.id))
+    result.groups = groupSearchHits(result.knownHits)
+    finalSelected = result.groups.slice(
+      position,
+      Math.min(1000, position + input.pageSize),
+    )
+    const ready = new Set(
+      pages.flatMap(({ details, current }) =>
+        [...details.keys()].filter((id) => current.has(id)),
+      ),
+    )
+    if (
+      finalSelected.every(
+        (row) =>
+          ready.has(row.id) && completion.members.has(groupKey(row.title)),
       )
-      witness.found.knownHits = witness.found.knownHits.filter((r) =>
-        ids.has(r.id),
-      )
-      witness.found.groups = groupSearchHits(witness.found.knownHits)
-    }),
-  ])
-  result.knownHits = result.knownHits.filter((row) => finalIds.has(row.id))
-  result.groups = groupSearchHits(result.knownHits)
+    )
+      break
+    // A moving page or missing details must never consume an unseen cursor slot.
+    if (attempt >= 2) throw new SearchCapacityError()
+    selected = finalSelected
+    ;[completion, pages] = await Promise.all([complete(), materialize()])
+    for (const [id, workspace] of completion.workspaceById)
+      finalDomain.set(id, workspace)
+    ;[finalIds, selectedRows] = await reauthorize()
+  }
   tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
-  const finalSelected = result.groups.slice(
-    position,
-    Math.min(1000, position + input.pageSize),
-  )
   displayedRanks.clear()
   finalSelected.forEach((row, index) =>
     displayedRanks.set(row.id, position + index + 1),
@@ -1072,7 +1148,12 @@ export async function searchGroup(
     const request = indexInput(input, handle.log.tier === 'any')
     for (let offset = 0; offset < 10000; offset += 2000) {
       const page = await indexes(source.workspaceId).groupMembers(
-        { ...request, visibility: source.visibility, cursor: offset },
+        {
+          ...request,
+          visibility: source.visibility,
+          workspaceId: source.workspaceId,
+          cursor: offset,
+        },
         [key],
       )
       if ('error' in page || page.visibilityProtocol !== 1)

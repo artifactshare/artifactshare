@@ -190,12 +190,20 @@ export async function measureSearchBenchmark(
   }
 }
 
-/** Count real metadata for every Kysely execution, including admission and log writes. */
+export type VisibilityD1Statistics = {
+  statements: number
+  rowsRead: number
+  rowsWritten: number
+}
+
+/** Count service and workspace-index D1 operations, including admission and log writes. */
 export async function measureVisibilitySearch(
   env: Cloudflare.Env,
   workspace: string,
+  indexStatistics: () => Promise<VisibilityD1Statistics>,
   bypass = false,
 ) {
+  const before = await indexStatistics()
   const statements: Array<{ rowsRead: number; rowsWritten: number }> = []
   const database = new Proxy(env.DB, {
     get(target, property) {
@@ -258,6 +266,8 @@ export async function measureVisibilitySearch(
       },
     )
     const measured = statements.slice()
+    const after = await indexStatistics()
+    const indexStatements = after.statements - before.statements
     const log =
       'searchLogId' in result
         ? await db
@@ -268,9 +278,16 @@ export async function measureVisibilitySearch(
         : undefined
     return {
       result,
-      statements: measured.length,
-      rowsRead: measured.reduce((n, s) => n + s.rowsRead, 0),
-      rowsWritten: measured.reduce((n, s) => n + s.rowsWritten, 0),
+      indexStatements,
+      statements: measured.length + indexStatements,
+      rowsRead: measured.reduce(
+        (n, s) => n + s.rowsRead,
+        after.rowsRead - before.rowsRead,
+      ),
+      rowsWritten: measured.reduce(
+        (n, s) => n + s.rowsWritten,
+        after.rowsWritten - before.rowsWritten,
+      ),
       liveCandidates: log?.discoverable_count,
       method: log?.search_method,
     }

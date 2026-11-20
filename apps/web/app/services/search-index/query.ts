@@ -4,6 +4,8 @@ import { normalizeSearchText } from './normalize'
 export type SearchTier = 'title' | 'phrase' | 'all' | 'any'
 export type IndexSearchInput = {
   query: string
+  /** Workspace routing for read-only pending-feed detection, including cold indexes. */
+  workspaceId?: string
   visibility?: SearchVisibility
   includeActiveDocumentCount?: boolean
   ownerUserIds?: string[]

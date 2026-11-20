@@ -3952,6 +3952,13 @@ test('search cookie routes reject anonymous callers and return the authenticated
     name: 'Search User',
     sessionToken: 'search-route-session',
   })
+  // No indexing work is part of this cold-route fixture.
+  const routeEnv = await worker.getEnv()
+  await routeEnv.DB.prepare(
+    'DELETE FROM search_index_policy_changes WHERE workspace_id=?',
+  )
+    .bind('search-route')
+    .run()
   const response = await worker.fetch('/api/search?q=alpha', {
     headers: { Cookie: sessionCookie('search-route-session') },
   })
@@ -4008,6 +4015,17 @@ test('external search preserves title-substring and body recall without exposing
       chunks: [{ body: 'needletoken forbidden excerpt' }],
     },
   ])
+  // The directly seeded index represents this fixture's complete settled state.
+  for (const workspace of ['search-source', 'search-external']) {
+    await env.DB.batch([
+      env.DB.prepare(
+        'DELETE FROM search_index_changes WHERE workspace_id=?',
+      ).bind(workspace),
+      env.DB.prepare(
+        'DELETE FROM search_index_policy_changes WHERE workspace_id=?',
+      ).bind(workspace),
+    ])
+  }
   for (const [q, id] of [
     ['pha', 'external-title'],
     ['needletoken', 'external-body'],
@@ -4343,6 +4361,7 @@ test('caller visibility bounds real D1 reads at 100,000 files with a failing byp
     rowsRead: number
     rowsWritten: number
     statements: number
+    indexStatements: number
     liveCandidates: number
     method: string
     result: {
@@ -4391,6 +4410,9 @@ test('caller visibility bounds real D1 reads at 100,000 files with a failing byp
   healthy(small)
   healthy(large)
   healthy(smallBypass)
+  expect(small.indexStatements).toBeGreaterThan(0)
+  expect(large.indexStatements).toBe(small.indexStatements)
+  expect(largeBypass.indexStatements).toBe(0)
   const bound = small.rowsRead + Math.max(100, small.rowsRead * 0.05)
   expect(large.rowsRead).toBeLessThanOrEqual(bound)
   const bypassBound =
@@ -4476,4 +4498,135 @@ test('caller policy preserves the allowed-ID ranking and group oracle, with cons
       visibility: { ...visibility, protocol: 2 as 1 },
     }),
   ).toEqual({ error: { code: 'search_capacity_exceeded' } })
+})
+
+test('stale restrictive workspace policy reports lower bounds until dispatch, with a live denied control', async () => {
+  const workspace = `pending-policy-${crypto.randomUUID()}`
+  const env = await worker.getEnv()
+  const invoke = async (
+    action: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    const response = await worker.fetch('/__test/search-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, workspace, ...extra }),
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return response.json<{
+      result: {
+        items: Array<{ id: string }>
+        total: { value: number; relation: string }
+      }
+    }>()
+  }
+  await invoke('seedVisibilitySearch', { size: 2 })
+  const probe = searchProbe(workspace)
+  await probe.ensureSchema()
+  const storage = await worker.getDurableObjectStorage(
+    'WORKSPACE_SEARCH_INDEX',
+    { name: `${workspace}:0@apac-ne` },
+  )
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM shareable_grants WHERE shareable_id=?').bind(
+      `${workspace}-0`,
+    ),
+    env.DB.prepare("UPDATE shareables SET visibility='link' WHERE id=?").bind(
+      `${workspace}-0`,
+    ),
+    env.DB.prepare(
+      'UPDATE workspaces SET link_sharing_enabled=0 WHERE id=?',
+    ).bind(workspace),
+    env.DB.prepare(
+      'INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES(?,?,?,?)',
+    ).bind(
+      `${workspace}-0`,
+      `${workspace}-actor`,
+      '2026-09-15T00:00:00.000Z',
+      '2026-09-15T00:00:00.000Z',
+    ),
+    env.DB.prepare(
+      'UPDATE search_index_workspace_rebuilds SET completed=1 WHERE workspace_id=?',
+    ).bind(workspace),
+  ])
+  // Synthetic complete local state, including a deliberately permissive denied control.
+  await storage.exec(
+    'UPDATE state SET dirty=0,scanned_format=?',
+    INDEX_FORMAT_VERSION,
+  )
+  await storage.exec(
+    "UPDATE file_policy SET visibility='workspace' WHERE id=?",
+    `${workspace}-1`,
+  )
+  await storage.exec(
+    "UPDATE file_policy SET visibility='link' WHERE id=?",
+    `${workspace}-0`,
+  )
+  await storage.exec('UPDATE workspace_policy SET links=0')
+  await env.DB.batch([
+    env.DB.prepare(
+      'DELETE FROM search_index_changes WHERE workspace_id=?',
+    ).bind(workspace),
+    env.DB.prepare(
+      'DELETE FROM search_index_policy_changes WHERE workspace_id=?',
+    ).bind(workspace),
+  ])
+  expect((await invoke('measureVisibilitySearch')).result).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'eq' },
+  })
+  // Real D1 policy mutation: the local restrictive policy cannot emit the newly eligible file yet.
+  await env.DB.prepare(
+    'UPDATE workspaces SET link_sharing_enabled=1 WHERE id=?',
+  )
+    .bind(workspace)
+    .run()
+  const readState = await probe.queryState()
+  expect((await invoke('measureVisibilitySearch')).result).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'gte' },
+  })
+  expect(await probe.queryState()).toEqual(readState)
+  // Run the actual dispatcher, then separately exercise its durable handoff/replay gap.
+  await probe.resume()
+  expect((await invoke('measureVisibilitySearch')).result).toMatchObject({
+    items: [{ id: `${workspace}-0` }],
+    total: { value: 1, relation: 'eq' },
+  })
+  await storage.exec('UPDATE workspace_policy SET links=0')
+  await env.DB.prepare(
+    'UPDATE workspaces SET link_sharing_enabled=0 WHERE id=?',
+  )
+    .bind(workspace)
+    .run()
+  await env.DB.prepare(
+    'UPDATE workspaces SET link_sharing_enabled=1 WHERE id=?',
+  )
+    .bind(workspace)
+    .run()
+  const queued = await env.DB.prepare(
+    'SELECT id FROM search_index_policy_changes WHERE workspace_id=?',
+  )
+    .bind(workspace)
+    .first<{ id: number }>()
+  expect(queued).not.toBeNull()
+  // Exercise the persisted handoff before exact-ID acknowledgement and its replay.
+  await storage.exec(
+    "INSERT INTO policy_pending(kind,key) VALUES('workspace',?)",
+    workspace,
+  )
+  await env.DB.prepare('DELETE FROM search_index_policy_changes WHERE id=?')
+    .bind(queued!.id)
+    .run()
+  expect((await invoke('measureVisibilitySearch')).result).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'gte' },
+  })
+  await probe.resume()
+  const settled = (await invoke('measureVisibilitySearch')).result
+  expect(settled).toMatchObject({
+    items: [{ id: `${workspace}-0` }],
+    total: { value: 1, relation: 'eq' },
+  })
+  expect(JSON.stringify(settled)).not.toContain(`${workspace}-1`)
 })

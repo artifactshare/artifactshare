@@ -303,18 +303,40 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
-  private policyRebuilding(): boolean {
-    return (
+  private async visibilityPending(input: IndexSearchInput): Promise<boolean> {
+    if (!input.visibility) return false
+    const workspace =
+      input.workspaceId ??
+      (this.#schemaReady
+        ? this.ctx.storage.sql
+            .exec<State>('SELECT workspace,dirty FROM state WHERE singleton=1')
+            .toArray()[0]?.workspace
+        : undefined)
+    const durable = workspace
+      ? await this.env.DB.prepare(`SELECT
+      EXISTS(SELECT 1 FROM search_index_changes WHERE workspace_id=?) OR
+      EXISTS(SELECT 1 FROM search_index_policy_changes WHERE workspace_id=?) OR
+      EXISTS(SELECT 1 FROM search_index_workspace_rebuilds WHERE workspace_id=? AND completed=0) AS pending`)
+          .bind(workspace, workspace, workspace)
+          .all<{ pending: number }>()
+      : null
+    // Read local state AFTER D1: dispatch persists pending before deleting the
+    // exact feed ID. This also covers replay and work awaiting object IO.
+    const local =
+      this.#schemaReady &&
       this.ctx.storage.sql
-        .exec(
-          'SELECT 1 FROM rebuild WHERE target=? AND EXISTS(SELECT 1 FROM state WHERE scanned_format<?)',
-          INDEX_FORMAT_VERSION,
-          INDEX_FORMAT_VERSION,
-        )
-        .toArray().length > 0
-    )
+        .exec<{ pending: number }>(`SELECT
+      EXISTS(SELECT 1 FROM pending) OR EXISTS(SELECT 1 FROM policy_pending) OR
+      EXISTS(SELECT 1 FROM staging) OR
+      EXISTS(SELECT 1 FROM rebuild WHERE scanned=0 OR swept=0) OR
+      EXISTS(SELECT 1 FROM state WHERE dirty>0) OR
+      EXISTS(SELECT 1 FROM intentions) OR EXISTS(SELECT 1 FROM reclaims) OR
+      EXISTS(SELECT 1 FROM cleanup) AS pending`)
+        .one().pending
+    return Boolean(durable?.results[0]?.pending || local)
   }
-  search(input: IndexSearchInput): IndexSearchResult {
+  async search(input: IndexSearchInput): Promise<IndexSearchResult> {
+    const incomplete = await this.visibilityPending(input)
     if (input.visibility && input.visibility.protocol !== 1)
       return { error: { code: 'search_capacity_exceeded' } }
     if (!this.#schemaReady)
@@ -322,10 +344,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         items: [],
         nextCursor: null,
         visibilityProtocol: 1,
-        incomplete: false,
+        incomplete,
       }
     try {
-      return this.searchPage(input)
+      return { ...this.searchPage(input), incomplete }
     } catch (error) {
       if (error instanceof SearchCapacityError)
         return { error: { code: 'search_capacity_exceeded' } }
@@ -363,7 +385,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     const rows = titles.length > limit ? titles : read(false)
     return {
       visibilityProtocol: 1 as const,
-      incomplete: Boolean(input.visibility && this.policyRebuilding()),
       items: rows.slice(0, limit),
       nextCursor: rows.length > limit ? cursor + limit : null,
       ...(input.includeActiveDocumentCount
@@ -376,7 +397,11 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     }
   }
 
-  groupMembers(input: IndexSearchInput, keys: string[]): IndexSearchResult {
+  async groupMembers(
+    input: IndexSearchInput,
+    keys: string[],
+  ): Promise<IndexSearchResult> {
+    const incomplete = await this.visibilityPending(input)
     if (input.visibility && input.visibility.protocol !== 1)
       return { error: { code: 'search_capacity_exceeded' } }
     if (!this.#schemaReady)
@@ -384,7 +409,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         items: [],
         nextCursor: null,
         visibilityProtocol: 1,
-        incomplete: false,
+        incomplete,
       }
     try {
       const query = this.#matchingPages({ ...input, groupKeys: keys })
@@ -408,7 +433,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .toArray()
       return {
         visibilityProtocol: 1 as const,
-        incomplete: Boolean(input.visibility && this.policyRebuilding()),
+        incomplete,
         items: rows
           .filter((row) => row.groupRank <= end)
           .map(({ id, tier, rank, activityAt }) => ({
