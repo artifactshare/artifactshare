@@ -17,8 +17,11 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
 import {
+  AUTOMATIC_PORT_RANGE,
+  automaticPort,
   checkoutStoreDir,
   createRuntimeRoot,
+  DEFAULT_DEV_PORTS,
   exportSource,
   localCaptureCommands,
   localInputs,
@@ -128,6 +131,19 @@ test('automatic ports avoid the pnpm dev ports, occupied ports and each other', 
     sandboxInspector: 41006,
     ogImageInspector: 41007,
   })
+})
+
+test('automatic ports stay below the Linux, macOS and Windows ephemeral ranges', () => {
+  assert.equal(
+    automaticPort(() => 0),
+    AUTOMATIC_PORT_RANGE.first,
+  )
+  assert.equal(
+    automaticPort(() => 0.999_999_999),
+    AUTOMATIC_PORT_RANGE.last,
+  )
+  assert.ok(AUTOMATIC_PORT_RANGE.first > Math.max(...DEFAULT_DEV_PORTS))
+  assert.ok(AUTOMATIC_PORT_RANGE.last < 32768)
 })
 
 test('a port held on only one loopback family is not free', async () => {
