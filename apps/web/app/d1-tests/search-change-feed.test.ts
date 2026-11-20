@@ -601,6 +601,25 @@ test('one persistently failing item cannot monopolize healthy changes or create 
   ).toEqual(['failure-000'])
 })
 
+test('a page with a start tag larger than the HTML parser limit is indexed', async () => {
+  await seed('largetag')
+  await (
+    await worker.getEnv()
+  ).BUCKET.put(
+    'largetag-000',
+    `<p>largetagneedle</p><img alt="largetagalt" src="data:image/png;base64,${'A'.repeat(4 * 1024 * 1024)}">`,
+  )
+  await invoke('largetag')
+  await settle('largetag')
+  expect(
+    await (await storage('largetag')).exec('SELECT id FROM pending'),
+  ).toEqual([])
+  for (const query of ['largetagneedle', 'largetagalt'])
+    expect(
+      (await invoke('largetag', 'search', query)).items.map((row) => row.id),
+    ).toEqual(['largetag-000'])
+})
+
 test('D1 dispatch uses the ready index, bounds and rotates failed work, and never revisits settled inventory', async () => {
   await run("UPDATE search_index_rebuilds SET phase='done',cursor=''")
   await run('DELETE FROM search_index_ready')

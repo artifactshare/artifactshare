@@ -79,7 +79,181 @@ function entities(value: string, attribute = false): string {
   )
 }
 
+const INDEXED_ATTRIBUTES = ['alt', 'title', 'aria-label', 'placeholder']
+// Elements whose content the HTML tokenizer reads as text, not markup.
+const RAW_TEXT_ELEMENTS = new Set([
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'plaintext',
+])
+const OTHER_ATTRIBUTE_LIMIT = 1024
+const INDEXED_ATTRIBUTE_LIMIT = 65536
+const SPACE = /[\t\n\f\r ]/u
+
+/**
+ * HTMLRewriter rejects a start tag larger than its fixed per-tag memory limit
+ * (about 2-3 MB) with "Parser error: The memory limit has been exceeded", so
+ * one embedded data URI made a whole page unindexable. This pass reads only
+ * start tags, the way the HTML tokenizer does, and shortens attribute values
+ * there: values of attributes that are not indexed are emptied above 1 KiB,
+ * and indexed attribute values are cut at 64 KiB. Text, comments and the
+ * content of raw-text elements such as script are left unchanged.
+ */
+export function withoutLongAttributeValues(html: string): string {
+  const parts: string[] = []
+  // ASCII-only lowercasing keeps every index aligned with `html`.
+  let lower: string | undefined
+  let copied = 0
+  let at = 0
+  // Inside <svg> or <math>, script, style and title are markup, not raw text.
+  let foreign = 0
+  let bangEnd = -2
+  const skipTo = (marker: string, from: number) => {
+    const found = html.indexOf(marker, from)
+    return found < 0 ? html.length : found + marker.length
+  }
+  const tagName = (from: number) => {
+    let end = from
+    while (
+      end < html.length &&
+      !SPACE.test(html[end]) &&
+      html[end] !== '/' &&
+      html[end] !== '>'
+    )
+      end++
+    return [
+      html.slice(from, end).replace(/[A-Z]+/gu, (c) => c.toLowerCase()),
+      end,
+    ] as const
+  }
+  while (at < html.length) {
+    const open = html.indexOf('<', at)
+    if (open < 0) break
+    if (html.startsWith('<!--', open)) {
+      // The tokenizer also ends a comment at <!-->, <!---> and --!>.
+      if (html.startsWith('>', open + 4)) at = open + 5
+      else if (html.startsWith('->', open + 4)) at = open + 6
+      else {
+        // Each marker is searched for again only once the scan passes it.
+        if (bangEnd === -2 || (bangEnd !== -1 && bangEnd < open + 4))
+          bangEnd = html.indexOf('--!>', open + 4)
+        const end = skipTo('-->', open + 4)
+        at = bangEnd >= 0 && bangEnd + 4 < end ? bangEnd + 4 : end
+      }
+      continue
+    }
+    const next = html[open + 1] ?? ''
+    if (next === '/') {
+      const [name] = tagName(open + 2)
+      if (foreign > 0 && (name === 'svg' || name === 'math')) foreign--
+      at = skipTo('>', open + 1)
+      continue
+    }
+    if (next === '!' || next === '?') {
+      at = skipTo('>', open + 1)
+      continue
+    }
+    if (!/[A-Za-z]/u.test(next)) {
+      at = open + 1
+      continue
+    }
+    let [tag, i] = tagName(open + 1)
+    let selfClosing = false
+    while (i < html.length && html[i] !== '>') {
+      if (SPACE.test(html[i]) || html[i] === '/') {
+        selfClosing = html[i] === '/' && html[i + 1] === '>'
+        i++
+        continue
+      }
+      const nameStart = i
+      while (
+        i < html.length &&
+        !SPACE.test(html[i]) &&
+        html[i] !== '/' &&
+        html[i] !== '>' &&
+        (html[i] !== '=' || i === nameStart)
+      )
+        i++
+      const name = html.slice(nameStart, i).toLowerCase()
+      let j = i
+      while (j < html.length && SPACE.test(html[j])) j++
+      if (html[j] !== '=') continue
+      j++
+      while (j < html.length && SPACE.test(html[j])) j++
+      let valueStart = j
+      let valueEnd: number
+      const quote = html[j]
+      if (quote === '"' || quote === "'") {
+        valueStart = j + 1
+        const close = html.indexOf(quote, valueStart)
+        valueEnd = close < 0 ? html.length : close
+        i = close < 0 ? html.length : close + 1
+      } else {
+        while (j < html.length && !SPACE.test(html[j]) && html[j] !== '>') j++
+        valueEnd = j
+        i = j
+      }
+      const limit = INDEXED_ATTRIBUTES.includes(name)
+        ? INDEXED_ATTRIBUTE_LIMIT
+        : OTHER_ATTRIBUTE_LIMIT
+      if (valueEnd - valueStart > limit) {
+        parts.push(html.slice(copied, valueStart))
+        parts.push(
+          limit !== OTHER_ATTRIBUTE_LIMIT
+            ? html.slice(valueStart, valueStart + limit)
+            : quote === '"' || quote === "'"
+              ? ''
+              : // An empty unquoted value would make the next attribute its value.
+                '""',
+        )
+        copied = valueEnd
+      }
+    }
+    at = i + 1
+    if (tag === 'svg' || tag === 'math') {
+      if (!selfClosing) foreign++
+    } else if (foreign === 0 && RAW_TEXT_ELEMENTS.has(tag)) {
+      if (tag === 'plaintext') break
+      lower ??= html.replace(/[A-Z]+/gu, (c) => c.toLowerCase())
+      // Only `</tag` followed by whitespace, '/' or '>' ends the element.
+      let closing = lower.indexOf(`</${tag}`, at)
+      while (
+        closing >= 0 &&
+        closing + tag.length + 2 < html.length &&
+        !/[\t\n\f\r />]/u.test(html[closing + tag.length + 2])
+      )
+        closing = lower.indexOf(`</${tag}`, closing + 1)
+      at = closing < 0 ? html.length : closing
+    }
+  }
+  if (copied === 0) return html
+  parts.push(html.slice(copied))
+  return parts.join('')
+}
+
 export async function extractHtml(html: string): Promise<ExtractedText> {
+  try {
+    return await extractParsedHtml(html)
+  } catch (error) {
+    // Only a page the parser rejects for a start tag over its memory limit is
+    // rewritten, so pages that already index are never affected by the scan.
+    if (
+      !(error instanceof TypeError) ||
+      !error.message.includes('memory limit has been exceeded')
+    )
+      throw error
+    return extractParsedHtml(withoutLongAttributeValues(html))
+  }
+}
+
+async function extractParsedHtml(html: string): Promise<ExtractedText> {
   let node = ''
   let rawScript = ''
   let scriptType = ''
@@ -106,7 +280,11 @@ export async function extractHtml(html: string): Promise<ExtractedText> {
         element.replace(' ')
       },
     })
-    .transform(new Response(html, { headers: { 'content-type': 'text/html' } }))
+    .transform(
+      new Response(html, {
+        headers: { 'content-type': 'text/html' },
+      }),
+    )
   const rewriter = new HTMLRewriter()
     .on('*', {
       element(element) {
