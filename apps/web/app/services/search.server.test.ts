@@ -2171,18 +2171,57 @@ test('a revoked first representative refills page one without losing a cursor sl
   })
 })
 
-test('an indexed match that loses its details is replaced by the next result', async () => {
+test('a changed index match is replaced without repeating a result on the next page', async () => {
   fixture.sqlite.exec("UPDATE shareables SET name='First' WHERE id='a'")
   const stub = index()
+  const originalSearch = stub.search
   const details = stub.details
-  stub.details = async (...args) =>
-    (await details(...args)).filter((row) => row.id !== 'a')
+  let replaced = false
+  stub.details = async (...args) => {
+    replaced = true
+    return (await details(...args)).filter((row) => row.id !== 'a')
+  }
+  stub.search = async (request) => {
+    const page = await originalSearch(request)
+    if ('error' in page || !replaced) return page
+    return { ...page, items: page.items.filter((row) => row.id !== 'a') }
+  }
 
   const result = await search(fixture.db, () => stub, 'viewer', input)
   if ('error' in result) throw new Error('Expected results')
   expect(result.items).toMatchObject([{ id: 'b', rank: 1 }])
   expect(result.total).toEqual({ value: 2, relation: 'eq' })
   expect(result.nextCursor).not.toBeNull()
+  const next = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    cursor: result.nextCursor!,
+  })
+  expect(next).toMatchObject({
+    items: [{ id: 'c', rank: 2 }],
+    total: { value: 2, relation: 'eq' },
+    nextCursor: null,
+  })
+})
+
+test('a vanished representative is excluded from the replacement group size', async () => {
+  const stub = index()
+  const details = stub.details
+  const originalSearch = stub.search
+  stub.details = async (...args) =>
+    (await details(...args)).filter((row) => row.id !== 'a')
+  stub.search = async (request) => {
+    const page = await originalSearch(request)
+    if ('error' in page) return page
+    const items = request.allowedIds
+      ? page.items.filter((row) => row.id !== 'a')
+      : page.items.map((row) => (row.id === 'c' ? { ...row, rank: 2 } : row))
+    return { ...page, items }
+  }
+  const result = await search(fixture.db, () => stub, 'viewer', input)
+  expect(result).toMatchObject({
+    items: [{ id: 'c', rank: 1, groupSize: 1, groupSizeRelation: 'eq' }],
+    total: { value: 2, relation: 'eq' },
+  })
 })
 
 test('unstable detail materialization has a bounded safe outcome', async () => {

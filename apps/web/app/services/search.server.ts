@@ -671,6 +671,7 @@ export async function search(
             metadata(db, ids, actor),
           ])
           return {
+            workspace,
             visible,
             details: new Map(details.map((row) => [row.id, row])),
             current: new Map(current.map((row) => [row.id, row])),
@@ -723,20 +724,36 @@ export async function search(
   // Retry only this page. Each promotion needs details and group completion,
   // followed by another live check after those awaits. Unchanged pages do no extra work.
   let finalSelected = selected
+  const discarded = new Set<string>()
   for (let attempt = 0; ; attempt++) {
-    // The file may still be authorized after a new generation stops matching.
-    // A successfully read but missing detail cannot occupy a result slot.
-    const missing = new Set(
-      pages.flatMap(({ visible, details, current }) =>
-        visible
-          .filter((row) => !details.has(row.id) || !current.has(row.id))
-          .map((row) => row.id),
-      ),
+    const missing = pages.flatMap(
+      ({ workspace, visible, details, current }) => {
+        const ids = visible
+          .filter(
+            (row) =>
+              finalIds.has(row.id) &&
+              (!details.has(row.id) || !current.has(row.id)),
+          )
+          .map((row) => row.id)
+        return ids.length ? [{ workspace, ids }] : []
+      },
     )
-    for (const id of missing) {
-      finalDomain.delete(id)
-      finalIds.delete(id)
+    if (missing.length) {
+      // A transient details omission must not shift the next cursor. Remove
+      // an ID only after the current index also stops returning it as a match.
+      await Promise.all(
+        missing.map(async ({ workspace, ids }) => {
+          const page = await indexPage(indexes(workspace), {
+            ...indexInput(input, any),
+            allowedIds: ids,
+          })
+          const matching = new Set(page.items.map((row) => row.id))
+          for (const id of ids) if (!matching.has(id)) discarded.add(id)
+        }),
+      )
+      ;[finalIds, selectedRows] = await reauthorize()
     }
+    for (const id of discarded) finalIds.delete(id)
     result.knownHits = result.knownHits.filter((row) => finalIds.has(row.id))
     result.groups = groupSearchHits(result.knownHits)
     finalSelected = result.groups.slice(
@@ -748,8 +765,6 @@ export async function search(
         [...details.keys()].filter((id) => current.has(id)),
       ),
     )
-    if (attempt >= 2 && missing.size && !finalSelected.length)
-      throw new SearchCapacityError()
     if (
       finalSelected.every(
         (row) =>

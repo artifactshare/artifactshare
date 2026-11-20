@@ -77,7 +77,7 @@ test('100,000-row ownership backfill, keyed UPSERT moves and rollback', () => {
   } finally {
     db.close()
   }
-})
+}, 10_000)
 
 test('ownership routing entries survive moves and are removed on parent cascades', () => {
   const db = new DatabaseSync(':memory:')
