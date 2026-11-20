@@ -89,11 +89,16 @@ test('Slack disconnect names the connection, dismissal writes nothing and confir
       connectionId: 'slack',
     })
     await expect.element(dialog).toHaveAttribute('data-state', 'open')
-    await expect.element(confirm).toBeDisabled()
+    const busyAction = dialog.getByRole('button', {
+      name: 'Disconnecting…',
+      exact: true,
+    })
+    await expect.element(busyAction).toBeDisabled()
+    await expect.element(busyAction).toHaveAttribute('aria-busy', 'true')
     await expect
       .element(dialog.getByRole('button', { name: 'Cancel', exact: true }))
       .toBeDisabled()
-    const disabledTrigger = confirm.element()
+    const disabledTrigger = busyAction.element()
     if (!(disabledTrigger instanceof HTMLButtonElement))
       throw new Error('Expected disconnect button')
     disabledTrigger.click()
@@ -115,7 +120,7 @@ test('Slack disconnect names the connection, dismissal writes nothing and confir
     await confirm.click()
     await vi.waitFor(() => expect(submissions).toHaveLength(2))
     await expect.element(dialog).toHaveAttribute('data-state', 'open')
-    await expect.element(confirm).toBeDisabled()
+    await expect.element(busyAction).toBeDisabled()
     await act(async () =>
       release!(
         new Response(null, {

@@ -114,6 +114,7 @@ export type TaskLedgerScreenReference =
   | 'settings-external-access/preview-failed'
   | 'settings-external-access/reduction-failed'
   | 'settings-external-access/reduction-pending'
+  | 'settings-external-access/reduction-success'
   | 'settings-external-access/unlimited-reduction'
   | 'settings-external-access/zero-reduction'
   | 'settings-general/default'

@@ -279,6 +279,7 @@ function BotActionDialog({
       description={t(`team.bots.${intent}Confirm.body`)}
       action={t(`team.bots.${intent}Confirm.action`)}
       pending={pending}
+      pendingLabel={t(`team.bots.${intent}Confirm.pending`)}
       result={
         <FetcherError
           fetcher={fetcher}
@@ -716,9 +717,16 @@ export function BotTokenDialog({
           >
             {copied ? t('team.bots.token.copied') : t('team.bots.token.copy')}
           </Button>
-          <TeamMuted>{t('team.bots.token.boundary')}</TeamMuted>
-          <TeamMuted>{t('team.bots.token.expiry')}</TeamMuted>
-          <TeamMuted>{t('team.bots.token.stdin')}</TeamMuted>
+          <TeamMutedParagraph>
+            {t('team.bots.token.boundary')}
+          </TeamMutedParagraph>
+          <TeamMutedParagraph>{t('team.bots.token.expiry')}</TeamMutedParagraph>
+          <TeamMutedParagraph>
+            {t('team.bots.token.stdin')}
+            <code className="block break-words">
+              {`printf '%s' "$TOKEN" | artifactshare profiles import-token --profile bot`}
+            </code>
+          </TeamMutedParagraph>
           <label className="flex items-center gap-[var(--spacing-2)] text-sm">
             <input
               type="checkbox"

@@ -29,7 +29,8 @@ export const screen = {
   states: [
     {
       id: 'stop-pending',
-      description: 'stop pending',
+      description:
+        'Stopping the bot with a busy confirmation and disabled controls',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -57,7 +58,8 @@ export const screen = {
     },
     {
       id: 'stop-failed',
-      description: 'stop failed',
+      description:
+        'Stopping the bot failed with an alert inside the open confirmation',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -84,7 +86,7 @@ export const screen = {
     },
     {
       id: 'stop-success',
-      description: 'stop success',
+      description: 'Stopped bot in the table after successful confirmation',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -105,7 +107,8 @@ export const screen = {
     },
     {
       id: 'cancel-pending',
-      description: 'cancel pending',
+      description:
+        'Cancelling bot creation with a busy confirmation and disabled controls',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -132,7 +135,8 @@ export const screen = {
     },
     {
       id: 'cancel-failed',
-      description: 'cancel failed',
+      description:
+        'Cancelling bot creation failed with an alert inside the open confirmation',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -158,7 +162,7 @@ export const screen = {
     },
     {
       id: 'cancel-success',
-      description: 'cancel success',
+      description: 'Unused bot removed after successful creation cancellation',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -178,7 +182,8 @@ export const screen = {
     },
     {
       id: 'reissue-pending',
-      description: 'reissue pending',
+      description:
+        'Reissuing the bot token with a busy confirmation and disabled controls',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -206,7 +211,8 @@ export const screen = {
     },
     {
       id: 'reissue-failed',
-      description: 'reissue failed',
+      description:
+        'Reissuing the bot token failed with an alert inside the open confirmation',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -233,7 +239,8 @@ export const screen = {
     },
     {
       id: 'reissue-success',
-      description: 'reissue success',
+      description:
+        'One-time replacement token and full import instructions after reissue',
       setup: {
         scenario: 'settings/with-bots',
         reseedBeforeCapture: true,
@@ -254,7 +261,8 @@ export const screen = {
     },
     {
       id: 'create-populated-destinations',
-      description: 'create populated destinations',
+      description:
+        'Bot creation with an added destination and replacement-primary guidance',
       setup: {
         scenario: 'settings/with-bots',
         interactions: [

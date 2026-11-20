@@ -56,7 +56,9 @@ export async function loader({
   }
 }
 
-export default function SettingsLayout({ loaderData }: Route.ComponentProps) {
+export default function SettingsLayout({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const [searchParams] = useSearchParams()
   const status = searchParams.get('status')
   const { t } = useT()
@@ -69,7 +71,6 @@ export default function SettingsLayout({ loaderData }: Route.ComponentProps) {
         joinedProjects={loaderData.joinedProjects}
       />
       <main className={settingsMainClassName}>
-        {status ? <StatusBanner status={status} /> : null}
         <SettingsPage>
           <div>
             <PageBreadcrumb aria-label={t('project.location')}>
@@ -92,6 +93,7 @@ export default function SettingsLayout({ loaderData }: Route.ComponentProps) {
             currentUserIsAdmin={loaderData.currentUserIsAdmin}
             workspaceKind={loaderData.kind}
           >
+            {status ? <StatusBanner status={status} /> : null}
             <Outlet context={loaderData} />
           </SettingsNav>
         </SettingsPage>

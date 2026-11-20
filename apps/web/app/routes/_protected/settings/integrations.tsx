@@ -68,7 +68,8 @@ export const screen = {
   states: [
     {
       id: 'slack-disconnect-confirmation',
-      description: 'slack disconnect confirmation',
+      description:
+        'Destructive Slack disconnect confirmation explaining lost previews and notifications',
       setup: {
         scenario: 'settings-integrations/slack-connected',
         reseedBeforeCapture: true,
@@ -140,7 +141,8 @@ export const screen = {
     },
     {
       id: 'slack-disconnected',
-      description: 'slack disconnected',
+      description:
+        'Disconnected Slack connection with an explicit success notice',
       setup: {
         scenario: 'settings-integrations/slack-disconnected',
         reseedBeforeCapture: true,
@@ -189,7 +191,7 @@ export const screen = {
     },
     {
       id: 'slack-member-empty',
-      description: 'slack member empty',
+      description: 'Member guidance to ask a workspace admin to connect Slack',
       setup: {
         auth: 'team-member',
         scenario: 'settings-integrations/slack-disconnected',
@@ -198,7 +200,8 @@ export const screen = {
     },
     {
       id: 'slack-member-connected',
-      description: 'slack member connected',
+      description:
+        'Connected Slack workspace with visible admin guidance for members',
       setup: {
         scenario: 'settings-integrations/slack-connected',
         reseedBeforeCapture: true,
@@ -551,6 +554,7 @@ function SlackDisconnectDialog({
       })}
       description={t('team.integrations.slack.disconnectBody')}
       action={t('team.integrations.slack.disconnect')}
+      pendingLabel={t('team.integrations.slack.disconnecting')}
       result={error ? <StatusBanner status={error} /> : undefined}
       onConfirm={() => {
         setDialogState('submitted')

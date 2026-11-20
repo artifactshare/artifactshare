@@ -20,6 +20,7 @@ export function ConfirmActionDialog({
   description,
   action,
   pending,
+  pendingLabel,
   trigger,
   destructive = false,
   dismissLabel,
@@ -33,6 +34,7 @@ export function ConfirmActionDialog({
   title: string
   description: string
   action: string
+  pendingLabel?: string
   pending: boolean
   destructive?: boolean
   dismissLabel?: string
@@ -73,6 +75,7 @@ export function ConfirmActionDialog({
             {dismissLabel ?? t('confirm.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
+            aria-busy={pending}
             variant={destructive ? 'destructive' : 'default'}
             disabled={pending}
             onClick={(event) => {
@@ -80,7 +83,7 @@ export function ConfirmActionDialog({
               if (!pending) onConfirm()
             }}
           >
-            {action}
+            {pending ? (pendingLabel ?? action) : action}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

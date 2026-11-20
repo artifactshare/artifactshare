@@ -37,17 +37,19 @@ export const screen = {
   states: [
     {
       id: 'result-success',
-      description: 'result success',
+      description:
+        'Successful settings action announced above the page content',
       setup: { query: '?status=ok' },
     },
     {
       id: 'result-warning',
-      description: 'result warning',
+      description: 'Informational settings warning above the page content',
       setup: { query: '?status=removed-transfer-failed' },
     },
     {
       id: 'result-error',
-      description: 'result error',
+      description:
+        'Failed settings action with an error alert above the page content',
       setup: { query: '?status=forbidden' },
     },
     {

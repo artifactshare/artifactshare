@@ -41,8 +41,19 @@ export const screen = {
   primaryAction: 'アクセスを設定する',
   states: [
     {
+      id: 'reduction-success',
+      description:
+        'Saved policy notice and the count of existing links shortened',
+      setup: {
+        scenario: 'settings-external-access/finite',
+        reseedBeforeCapture: true,
+        query: '?status=ok&shortened=1',
+      },
+    },
+    {
       id: 'dirty',
-      description: 'dirty',
+      description:
+        'Edited external-sharing toggle with unsaved changes beside the controls and save action',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -56,7 +67,8 @@ export const screen = {
     },
     {
       id: 'external-save-failed',
-      description: 'external save failed',
+      description:
+        'Save failure alert with the edited external-sharing policy retained',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -81,7 +93,8 @@ export const screen = {
     },
     {
       id: 'finite-reduction',
-      description: 'finite reduction',
+      description:
+        'Confirmation showing the affected links when reducing a finite maximum',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -97,7 +110,8 @@ export const screen = {
     },
     {
       id: 'reduction-pending',
-      description: 'Expiry confirmation reduction-pending',
+      description:
+        'Expiry confirmation stays open while the policy save is running',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -118,14 +132,15 @@ export const screen = {
             action: 'click',
             selector: '[role="alertdialog"] button:text-is("Save changes")',
             readySelector:
-              '[role="alertdialog"] button:disabled:text-is("Save changes")',
+              '[role="alertdialog"] button:disabled[aria-busy="true"]:text-is("Saving…")',
           },
         ],
       },
     },
     {
       id: 'reduction-failed',
-      description: 'Expiry confirmation reduction-failed',
+      description:
+        'Expiry save failure remains inside the confirmation with edits retained',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -152,7 +167,8 @@ export const screen = {
     },
     {
       id: 'unlimited-reduction',
-      description: 'unlimited reduction',
+      description:
+        'Confirmation of a finite maximum replacing unlimited link expiration',
       setup: {
         scenario: 'settings-external-access/unlimited',
         reseedBeforeCapture: true,
@@ -169,7 +185,7 @@ export const screen = {
     },
     {
       id: 'zero-reduction',
-      description: 'zero reduction',
+      description: 'Lower maximum confirmation with no existing links affected',
       setup: {
         scenario: 'settings-external-access/zero',
         reseedBeforeCapture: true,
@@ -185,7 +201,8 @@ export const screen = {
     },
     {
       id: 'preview-failed',
-      description: 'preview failed',
+      description:
+        'Refused expiry count request displays an error without opening confirmation',
       setup: {
         scenario: 'settings-external-access/finite',
         reseedBeforeCapture: true,
@@ -335,7 +352,7 @@ function ExternalAccessForm({
   policy: Route.ComponentProps['loaderData']['policy']
 }) {
   const shell = useOutletContext<SettingsLayoutContext>()
-  const { t } = useT()
+  const { t, tPlural } = useT()
   const submission = useExternalAccessSubmission(policy.linkExpiryMaxDays)
   const { save, pending, previewResult, failure } = submission
   const [draft, setDraft] = useExternalAccessDraft(policy)
@@ -407,12 +424,25 @@ function ExternalAccessForm({
         onOpenChange={(open) => {
           if (!open) submission.clearPreview()
         }}
-        title={t('externalAccess.expiry.confirmTitle')}
-        description={t('externalAccess.expiry.confirmBody', {
-          days: previewResult?.maximumDays ?? '',
-          count: previewResult?.shortenedLinkCount ?? 0,
-        })}
+        title={t(
+          previewResult?.shortenedLinkCount === 0
+            ? 'externalAccess.expiry.confirmZeroTitle'
+            : 'externalAccess.expiry.confirmTitle',
+          { days: previewResult?.maximumDays ?? '' },
+        )}
+        description={
+          previewResult?.shortenedLinkCount === 0
+            ? t('externalAccess.expiry.confirmZeroBody')
+            : tPlural(
+                'externalAccess.expiry.confirmBody',
+                previewResult?.shortenedLinkCount ?? 0,
+                {
+                  days: previewResult?.maximumDays ?? '',
+                },
+              )
+        }
         action={t('externalAccess.save')}
+        pendingLabel={t('externalAccess.saving')}
         dismissLabel={t('externalAccess.keepEditing')}
         pending={pending}
         result={error}
@@ -560,9 +590,13 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     { kind: 'preview' }
   > | null>(nativeResult?.kind === 'preview' ? nativeResult : null)
   useEffect(() => {
-    if (active.state === 'idle' && active.data?.kind === 'preview')
+    if (
+      active.state === 'idle' &&
+      active.data !== lastOperation.previousData &&
+      active.data?.kind === 'preview'
+    )
       setReceivedPreview(active.data)
-  }, [active.state, active.data])
+  }, [active.state, active.data, lastOperation.previousData])
   const previewResult = submittedDraft ? receivedPreview : null
   // Redirects retain fetcher data; only a new result belongs to this submission.
   const fetcherFailure =
@@ -627,7 +661,10 @@ function useExternalAccessSubmission(maximumDays: number | null) {
         : fetcherFailure,
     submit,
     confirm,
-    clearPreview: () => setSubmittedDraft(null),
+    clearPreview: () => {
+      setSubmittedDraft(null)
+      setReceivedPreview(null)
+    },
   }
 }
 

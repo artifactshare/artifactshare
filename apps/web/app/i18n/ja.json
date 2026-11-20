@@ -347,7 +347,7 @@
   "team.bots.token.body": "このトークンが表示されるのは今回だけです。閉じた後にトークンを取り戻す方法はなく、再発行するしかありません。",
   "team.bots.token.boundary": "このトークンは 1 つの自動化処理（1 つの接続）だけで使ってください。複数の人やジョブで共有することは禁止です。漏えいや取り違えが疑われたら、再発行して旧トークンをすぐに失効させてください。",
   "team.bots.token.expiry": "資格情報は 180 日間使われないと期限切れになります。期限切れになったら再発行してください。",
-  "team.bots.token.stdin": "自動化処理を実行するホストでの取り込み: printf '%s' \"$TOKEN\" | artifactshare profiles import-token --profile bot",
+  "team.bots.token.stdin": "自動化の実行環境でインポートしてください：",
   "team.bots.token.copy": "トークンをコピー",
   "team.bots.token.copied": "コピーしました",
   "team.bots.token.confirm": "トークンを保存しました",
@@ -1852,8 +1852,16 @@
   "externalAccess.saveInstructions": "このページの変更には「変更を保存」が必要です。保存せずにページを離れると、変更内容は失われます。",
   "externalAccess.unsaved": "未保存の変更があります",
   "externalAccess.expiry.confirmTitle": "既存リンクの期限を短縮しますか？",
-  "externalAccess.expiry.confirmBody": "最長期限を {days} 日にします。確認時点で、既存の {count} 件のリンクの期限が短縮されます。保存時に対象件数を再確認します。",
   "externalAccess.keepEditing": "編集を続ける",
   "externalAccess.externalPosting.comparePlans": "外部からの投稿は Plus・Team プランで利用できます。プランと請求を見る。",
-  "team.integrations.slack.reauthorization.memberBody": "Slack の再認可が必要です。ワークスペース管理者に再認可を依頼してください。"
+  "team.integrations.slack.reauthorization.memberBody": "Slack の再認可が必要です。ワークスペース管理者に再認可を依頼してください。",
+  "team.bots.stopConfirm.pending": "停止中…",
+  "team.bots.cancelConfirm.pending": "作成を取り消し中…",
+  "team.bots.reissueConfirm.pending": "再発行中…",
+  "team.integrations.slack.disconnecting": "接続を解除中…",
+  "externalAccess.saving": "保存中…",
+  "externalAccess.expiry.confirmZeroTitle": "有効期限の上限を{days}日に短縮しますか？",
+  "externalAccess.expiry.confirmZeroBody": "現在、影響を受ける既存のリンクはありません。",
+  "externalAccess.expiry.confirmBodyOne": "既存のリンク1件の有効期限を{days}日に短縮します。保存時に件数を再確認します。",
+  "externalAccess.expiry.confirmBodyOther": "既存のリンク{n}件の有効期限を{days}日に短縮します。保存時に件数を再確認します。"
 }

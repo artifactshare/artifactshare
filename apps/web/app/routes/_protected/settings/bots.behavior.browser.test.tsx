@@ -462,7 +462,12 @@ test.each([
           )
           .toBeVisible()
       await confirm.click()
-      await expect.element(confirm).toBeDisabled()
+      const busyAction = dialog.getByRole('button', {
+        name: bindI18n('en').t(`team.bots.${intent}Confirm.pending`),
+        exact: true,
+      })
+      await expect.element(busyAction).toBeDisabled()
+      await expect.element(busyAction).toHaveAttribute('aria-busy', 'true')
       // Capture readiness must identify the action, not both disabled buttons.
       expect(
         dialog
@@ -471,7 +476,7 @@ test.each([
       ).toHaveLength(1)
       await expect.element(dialog).toBeVisible()
       await vi.waitFor(() => expect(submissions).toHaveLength(1))
-      const disabledConfirm = confirm.element()
+      const disabledConfirm = busyAction.element()
       if (!(disabledConfirm instanceof HTMLButtonElement))
         throw new Error('Expected confirmation button')
       disabledConfirm.click()
@@ -490,7 +495,7 @@ test.each([
       expect(bounds.right).toBeLessThanOrEqual(390)
       expect(window.scrollY).toBe(scroll)
       await confirm.click()
-      await expect.element(confirm).toBeDisabled()
+      await expect.element(busyAction).toBeDisabled()
       // Capture readiness must identify the action, not both disabled buttons.
       expect(
         dialog
@@ -517,6 +522,23 @@ test.each([
         expect(
           document.querySelectorAll('[data-testid="bot-token"]'),
         ).toHaveLength(1)
+        const command = page
+          .getByRole('dialog')
+          .element()
+          .querySelector('p code')
+        expect(command).not.toBeNull()
+        expect(command?.textContent).toBe(
+          `printf '%s' "$TOKEN" | artifactshare profiles import-token --profile bot`,
+        )
+        if (!command) throw new Error('Missing token import command')
+        expect(getComputedStyle(command).whiteSpace).toBe('normal')
+        expect(command.scrollWidth).toBeLessThanOrEqual(command.clientWidth)
+        for (const paragraph of page
+          .getByRole('dialog')
+          .element()
+          .querySelectorAll('p')) {
+          expect(getComputedStyle(paragraph).textOverflow).not.toBe('ellipsis')
+        }
         await page.getByRole('checkbox').click()
         await page
           .getByRole('button', { name: 'Close', exact: true })

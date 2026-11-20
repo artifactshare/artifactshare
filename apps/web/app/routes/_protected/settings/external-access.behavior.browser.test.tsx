@@ -141,7 +141,7 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
 })
 
 test.each([
-  [90, 2, 30],
+  [90, 1, 30],
   [null, 0, 30],
   [90, 2, 120],
 ] as const)(
@@ -156,6 +156,7 @@ test.each([
     }
     const submissions: FormData[] = []
     let saveAttempts = 0
+    let previewAttempts = 0
     const router = createMemoryRouter(
       [
         {
@@ -172,18 +173,21 @@ test.each([
               action: async ({ request }) => {
                 const form = await request.formData()
                 submissions.push(form)
+                if (saveAttempts >= 2) return { kind: 'forbidden' }
                 if (proposed === 120)
                   policy = { ...policy, linkExpiryMaxDays: 180 }
                 if (
                   form.get('intent') === 'preview-external-access' ||
                   !form.has('confirmedMaximum')
-                )
+                ) {
+                  if (++previewAttempts === 2) return { kind: 'forbidden' }
                   return {
                     kind: 'preview',
                     previousMaximumDays: proposed === 120 ? 180 : maximum,
                     maximumDays: Number(form.get('maxDays')),
                     shortenedLinkCount: count,
                   }
+                }
                 if (++saveAttempts === 1) return { kind: 'forbidden' }
                 policy = {
                   ...policy,
@@ -220,7 +224,11 @@ test.each([
       await expect
         .element(dialog)
         .toMatchTextContent(
-          new RegExp(`Existing links to shorten at preview time: ${count}`),
+          new RegExp(
+            count === 0
+              ? 'No existing links are affected right now'
+              : `${count} existing link${count === 1 ? '' : 's'} will be shortened to ${proposed} days`,
+          ),
         )
       expect(submissions.map((form) => form.get('intent'))).toEqual([
         proposed === 120 ? 'update-external-access' : 'preview-external-access',
@@ -239,6 +247,11 @@ test.each([
       await page
         .getByRole('button', { name: 'Save changes', exact: true })
         .click()
+      await expect.element(page.getByRole('alert')).toBeVisible()
+      await expect.element(dialog).not.toBeInTheDocument()
+      await page
+        .getByRole('button', { name: 'Save changes', exact: true })
+        .click()
       await expect
         .element(dialog)
         .toMatchTextContent(new RegExp(`${proposed + 10} days`))
@@ -250,16 +263,24 @@ test.each([
       expect(submissions.map((form) => form.get('intent'))).toEqual([
         proposed === 120 ? 'update-external-access' : 'preview-external-access',
         'preview-external-access',
+        'preview-external-access',
         'update-external-access',
         'update-external-access',
       ])
-      expect(submissions[2].get('maxDays')).toBe(String(proposed + 10))
-      expect(submissions[2].get('confirmedMaximum')).toBe(String(proposed + 10))
-      expect(submissions[2].get('confirmedPreviousMaximum')).toBe(
+      expect(submissions[3].get('maxDays')).toBe(String(proposed + 10))
+      expect(submissions[3].get('confirmedMaximum')).toBe(String(proposed + 10))
+      expect(submissions[3].get('confirmedPreviousMaximum')).toBe(
         String(proposed === 120 ? 180 : maximum),
       )
-      expect(submissions[2].getAll('linkSharingEnabled')).toEqual(['false'])
+      expect(submissions[3].getAll('linkSharingEnabled')).toEqual(['false'])
       expect(policy.linkExpiryMaxDays).toBe(proposed + 10)
+      await maxInput.fill('30')
+      await page
+        .getByRole('button', { name: 'Save changes', exact: true })
+        .click()
+      await expect.element(page.getByRole('alert')).toBeVisible()
+      await expect.element(dialog).not.toBeInTheDocument()
+      expect(submissions.at(-1)?.get('intent')).toBe('preview-external-access')
     } finally {
       await act(async () => root.unmount())
       router.dispose()
@@ -487,7 +508,7 @@ test.each(['preview', 'forbidden'] as const)(
       }
       await expect
         .element(dialog)
-        .toMatchTextContent(/Existing links to shorten at preview time: 2/)
+        .toMatchTextContent(/2 existing links will be shortened to 30 days/)
       await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
       await dialog
         .getByRole('button', { name: 'Save changes', exact: true })
