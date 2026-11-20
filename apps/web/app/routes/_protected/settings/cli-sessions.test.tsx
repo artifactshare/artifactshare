@@ -1,3 +1,4 @@
+import { RouterContextProvider } from 'react-router'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { bindI18n } from '~/lib/i18n'
 import type { Locale } from '~/i18n/messages'
@@ -26,12 +27,23 @@ vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useActionData: () => null,
+  useSubmit: () => vi.fn(),
   useNavigation: () => ({ state: 'idle' }),
   Form: ({ children }: { children: import('react').ReactNode }) => (
     <form>{children}</form>
   ),
 }))
-import CliSessionsPage, { action } from './cli-sessions'
+import { CliSessionsSection } from './+components/cli-sessions-section'
+import { action } from './tokens'
+function CliSessionsPage({
+  loaderData,
+}: {
+  loaderData: {
+    cliFamilies: import('~/services/cli-refresh-credentials.server').CliRefreshCredentialFamily[]
+  }
+}) {
+  return <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
+}
 
 test.each([
   [
@@ -127,4 +139,17 @@ describe('/settings/cli-sessions actions', () => {
       'current-user',
     )
   })
+})
+
+test('old CLI sessions URL redirects after authentication', async () => {
+  const { loader } = await import('./cli-sessions')
+  const response = loader({
+    context: new RouterContextProvider(),
+    params: {},
+    pattern: '/settings/cli-sessions',
+    url: new URL('https://example.test/settings/cli-sessions'),
+    request: new Request('https://example.test/settings/cli-sessions'),
+  })
+  expect(response.status).toBe(302)
+  expect(response.headers.get('Location')).toBe('/settings/tokens')
 })

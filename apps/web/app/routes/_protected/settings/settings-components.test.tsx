@@ -1,6 +1,7 @@
+vi.mock('~/hooks/use-t', () => ({ useT: () => ({ t: (key: string) => key }) }))
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { NavigationLinkDisabled } from '~/components/app/navigation-link'
 import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
@@ -24,18 +25,28 @@ describe('settings shared components', () => {
     expect(html).toContain('Empty')
   })
   test.each([
-    [50, 100, '50'],
-    [10, 0, '0'],
-    [200, 100, '100'],
-  ])(
-    'storage meter calculates %s/%s as %s%%',
-    (usedBytes, quotaBytes, percent) => {
+    [0, 100, '0', '0%', false],
+    [50, 100, '50', '50%', false],
+    [90, 100, '90', '90%', true],
+    [100, 100, '100', '100%', true],
+    [200, 100, '100', '200%', true],
+    [10, 0, '0', 'storage.unavailable', false],
+    [10, -1, '0', 'storage.unavailable', false],
+    [10, Number.NaN, '0', 'storage.unavailable', false],
+    [10, Number.POSITIVE_INFINITY, '0', 'storage.unavailable', false],
+  ] as const)(
+    'meter %s/%s has bounded fill and an honest visible value',
+    (usedBytes, quotaBytes, fill, text, warning) => {
       const html = renderToStaticMarkup(
         <StorageMeter usedBytes={usedBytes} quotaBytes={quotaBytes} />,
       )
-      expect(html).toContain(`translateX(-${100 - Number(percent)}%)`)
-      expect(html).toContain('aria-hidden="true"')
-      expect(html).toContain('progress-indicator')
+      expect(html).toContain(`width:${fill}%`)
+      expect(html).toContain('role="progressbar"')
+      expect(html).toContain('aria-label="team.usage.storageUsed"')
+      expect(html).toContain(`aria-valuetext="${text}"`)
+      expect(html).toContain(`>${text}</span>`)
+      expect(html).toContain('bg-muted')
+      expect(html.includes('bg-warning')).toBe(warning)
     },
   )
   test('settings subsection wires a unique labelled section', () => {

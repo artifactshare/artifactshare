@@ -80,6 +80,7 @@ describe('Topbar navigation', () => {
         <Topbar workspaceName="Workspace" user={user} />
       </MemoryRouter>,
     )
+    expect(html).toContain('href="/settings/tokens"')
     expect(html).toContain('href="/recent"')
     expect(html).toContain('href="/files"')
     expect(html).toContain('href="/projects"')

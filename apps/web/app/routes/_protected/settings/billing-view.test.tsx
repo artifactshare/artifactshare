@@ -1,5 +1,4 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ComponentType } from 'react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
@@ -50,8 +49,13 @@ const teamMonthlyContract: SubscriptionContract = {
 function renderBillingPage(
   projectLimit: number | null,
   contract = projectLimit === null ? teamMonthlyContract : null,
+  overrides: Partial<Parameters<typeof BillingPage>[0]['loaderData']> = {},
 ) {
-  const loaderData = {
+  const loaderData: Parameters<typeof BillingPage>[0]['loaderData'] = {
+    showOverageProjection: false,
+    includedBytes: 100 * 1024 ** 3,
+    overageProjection: null,
+    contributorCount: null,
     contract,
     canManage: true,
     plan: projectLimit === null ? 'team' : 'free',
@@ -68,15 +72,13 @@ function renderBillingPage(
     entryContext: 'default',
     externalPostingEnabled: true,
     monthlyEstimate: null,
-  } as const
-  const TestBillingPage = BillingPage as ComponentType<{
-    loaderData: typeof loaderData
-  }>
+    ...overrides,
+  }
   const router = createMemoryRouter(
     [
       {
         path: '/',
-        element: <TestBillingPage loaderData={loaderData} />,
+        element: <BillingPage loaderData={loaderData} />,
       },
     ],
     { initialEntries: ['/'] },
@@ -89,7 +91,7 @@ describe('billing plan comparison', () => {
     const html = renderBillingPage(null)
 
     expect(html).toContain('保存容量の使用状況')
-    expect(html).toContain('使用量ページで詳しく見る')
+    expect(html).not.toContain('href="/settings/usage"')
     expect(html).not.toContain('アクティブなプロジェクト')
   })
 
@@ -226,4 +228,38 @@ describe('subscribed contract management', () => {
 
     expect(html).not.toContain('超えています')
   })
+})
+
+test('Team without a subscription has no purchase offer while Free retains checkout', () => {
+  const team = renderBillingPage(null, null, {
+    hasSubscription: false,
+    stripeSubscriptionStatus: 'none',
+  })
+  expect(team).toContain('Team（サブスクリプションなし）')
+  expect(team).not.toContain('value="checkout"')
+  expect(renderBillingPage(1)).toContain('value="checkout"')
+})
+test('near-limit warning applies to capped plans while continuing subscriptions show overage guidance', () => {
+  const capped = renderBillingPage(1, null, {
+    storageUsedBytes: 90,
+    storageQuotaBytes: 100,
+  })
+  expect(capped).toContain('role="alert"')
+  const continuing = renderBillingPage(null, null, {
+    storageUsedBytes: 90,
+    storageQuotaBytes: 100,
+    showOverageProjection: true,
+    overageProjection: { gb: 3, currency: 'usd', amount: 0.3 },
+    contributorCount: 2,
+  })
+  expect(continuing).not.toContain('role="alert"')
+  expect(continuing).toContain('3 GB')
+  expect(continuing).toContain('90%')
+  expect(continuing.match(/role="progressbar"/g)).toHaveLength(1)
+  expect(
+    renderBillingPage(1, null, {
+      storageUsedBytes: 89,
+      storageQuotaBytes: 100,
+    }),
+  ).not.toContain('role="alert"')
 })

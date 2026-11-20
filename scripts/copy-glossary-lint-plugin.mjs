@@ -211,6 +211,9 @@ export const COPY_GLOSSARY_ALLOW = {
     // Owner-specified publisher consent sentence uses the API resource name.
     'en.device.publisher.capability': ['artifacts'],
     'ja.footer.connect': ['ツール'],
+    // Owner-approved name for personal AI connections.
+    'ja.settings.connections': ['ツール'],
+    'ja.settings.connections.body': ['ツール'],
     'ja.team.members': ['メンバー'],
     'ja.team.members.body': ['メンバー'],
     'ja.team.members.empty': ['メンバー'],

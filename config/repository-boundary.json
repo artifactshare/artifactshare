@@ -86,6 +86,7 @@
     "scripts/dev-setup.test.mjs",
     "scripts/interactive-spacing-annotation-policy.mjs",
     "scripts/in-app-navigation.mjs",
+    "scripts/lib/browser-analytics.mjs",
     "scripts/lib/dev-sign-in.mjs",
     "scripts/lib/scan-patterns.mjs",
     "scripts/lib/vars.mjs",

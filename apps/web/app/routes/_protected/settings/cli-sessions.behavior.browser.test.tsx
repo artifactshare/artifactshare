@@ -30,18 +30,29 @@ vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useActionData: () => null,
+  useSubmit: () => vi.fn(),
   useNavigation: () => ({ state: 'idle' }),
   Form: ({ children }: { children: import('react').ReactNode }) => (
     <form>{children}</form>
   ),
 }))
-import CliSessionsPage from './cli-sessions'
+import { CliSessionsSection } from './+components/cli-sessions-section'
+function CliSessionsPage({
+  loaderData,
+}: {
+  loaderData: {
+    cliFamilies: import('~/services/cli-refresh-credentials.server').CliRefreshCredentialFamily[]
+  }
+}) {
+  return <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
+}
 
 test.each(['light', 'dark'])(
-  'publisher access wraps while long names truncate and Revoke stays visible on phones (%s)',
+  'publisher access wraps while long names wrap and Revoke stays visible on phones (%s)',
   async (theme) => {
     await page.viewport(390, 844)
-    document.documentElement.classList.toggle('dark', theme === 'dark')
+    const previousTheme = document.documentElement.dataset.theme
+    document.documentElement.dataset.theme = theme
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -69,12 +80,10 @@ test.each(['light', 'dark'])(
           />,
         ),
       )
-      const label =
-        container.querySelector<HTMLElement>('[title]')!.parentElement!
-      expect(label.textContent).toBe(name)
-      expect(label.scrollWidth).toBeGreaterThan(label.clientWidth)
-      expect(getComputedStyle(label).textOverflow).toBe('ellipsis')
-      const access = label.parentElement!.nextElementSibling as HTMLElement
+      const label = container.querySelector<HTMLElement>('td .font-medium')!
+      expect(label.textContent).toContain(name)
+      expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth)
+      const access = label.parentElement!.lastElementChild as HTMLElement
       expect(access.textContent).toBe(
         `${en['team.tokens.cli.preset']}: ${en['team.tokens.cli.preset.publisher']}`,
       )
@@ -84,15 +93,34 @@ test.each(['light', 'dark'])(
       expect(access.getBoundingClientRect().height).toBeGreaterThan(
         Number.parseFloat(getComputedStyle(access).lineHeight),
       )
-      const revoke = page.getByRole('button', { name: 'Revoke', exact: true })
+      const revoke = page.getByRole('button', {
+        name: `Revoke ${name} · ublisher`,
+        exact: true,
+      })
       await expect.element(revoke).toBeVisible()
       expect(
         revoke.element().getBoundingClientRect().right,
       ).toBeLessThanOrEqual(390)
+      await revoke.click()
+      await expect.element(page.getByRole('alertdialog')).toBeVisible()
+      const dialog = document.querySelector('[role="alertdialog"]')!
+      expect(dialog.textContent).toContain(name)
+      await vi.waitFor(() =>
+        expect(dialog.contains(document.activeElement)).toBe(true),
+      )
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await vi.waitFor(() =>
+        expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+      )
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(revoke.element()),
+      )
     } finally {
       await act(async () => root.unmount())
       container.remove()
-      document.documentElement.classList.remove('dark')
+      if (previousTheme === undefined)
+        delete document.documentElement.dataset.theme
+      else document.documentElement.dataset.theme = previousTheme
       await page.viewport(1280, 800)
     }
   },

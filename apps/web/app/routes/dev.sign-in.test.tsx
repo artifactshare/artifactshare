@@ -34,7 +34,7 @@ describe('/dev/sign-in loader', () => {
     )
   })
 
-  test('defaults next to general settings', async () => {
+  test('defaults next to AI tools and CLI', async () => {
     isViteDevMock.mockReturnValueOnce(true)
 
     const result = await loader({
@@ -42,7 +42,7 @@ describe('/dev/sign-in loader', () => {
     } as never)
 
     expect(result).toEqual({
-      next: '/settings/general',
+      next: '/settings/tokens',
       scenario: null,
       scenarios: expect.arrayContaining(['home/content-rich']),
     })
@@ -72,7 +72,7 @@ describe('/dev/sign-in loader', () => {
     expect(result.next).toBe('/')
   })
 
-  test('sanitizes an unsafe next path to general settings', async () => {
+  test('sanitizes an unsafe next path to AI tools and CLI', async () => {
     isViteDevMock.mockReturnValueOnce(true)
 
     const result = await loader({
@@ -82,7 +82,7 @@ describe('/dev/sign-in loader', () => {
     } as never)
 
     expect(result).toEqual({
-      next: '/settings/general',
+      next: '/settings/tokens',
       scenario: null,
       scenarios: expect.any(Array),
     })
@@ -356,6 +356,6 @@ describe('/dev/sign-in action', () => {
       }),
     } as never)
 
-    expect(response.headers.get('Location')).toBe('/settings/general')
+    expect(response.headers.get('Location')).toBe('/settings/tokens')
   })
 })

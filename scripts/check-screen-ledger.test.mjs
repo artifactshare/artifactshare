@@ -197,10 +197,10 @@ test('discovers typed screen specifications from route modules', () => {
         screen.route.ja === '/ja/guides/search',
     ),
   )
-  assert.equal(screenSpecModules.length, 42)
+  assert.equal(screenSpecModules.length, 41)
   assert.equal(
     new Set(screenSpecModules.map(({ screen }) => screen.id)).size,
-    42,
+    41,
   )
 })
 

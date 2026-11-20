@@ -1,3 +1,4 @@
+import { SettingsFixture } from './settings-fixture'
 import { SearchFixture } from './search-fixture'
 import type { ElementType } from 'react'
 import { FocusedConsentFixture } from './focused-consent-fixture'
@@ -16,6 +17,12 @@ import {
 } from './viewer-fixture'
 
 export const SCENARIO_IDS = [
+  'settings-menu-free-owner',
+  'settings-menu-team-admin',
+  'settings-menu-team-member',
+  'settings-menu-open',
+  'settings-ai-tools-cli',
+
   'search-mobile-search',
   'search-mobile-filters',
   'search-mobile-search-ja',
@@ -62,6 +69,42 @@ export interface ScenarioDefinition {
 }
 
 export const scenarioRegistry: Record<ScenarioId, ScenarioDefinition> = {
+  'settings-menu-free-owner': {
+    title: 'settings-menu-free-owner',
+    component: () => <SettingsFixture role="owner" credentials={false} />,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'settings-menu-team-admin': {
+    title: 'settings-menu-team-admin',
+    component: () => <SettingsFixture role="admin" credentials={false} />,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'settings-menu-team-member': {
+    title: 'settings-menu-team-member',
+    component: () => <SettingsFixture role="member" credentials={false} />,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'settings-menu-open': {
+    title: 'settings-menu-open',
+    component: () => <SettingsFixture role="owner" credentials={false} />,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+  'settings-ai-tools-cli': {
+    title: 'settings-ai-tools-cli',
+    component: () => <SettingsFixture role="owner" credentials={true} />,
+    requiredRegions: ['main'],
+    requiresHeading: true,
+    requiresPrimary: false,
+  },
+
   'search-mobile-search': {
     title: 'search-mobile-search',
     component: () => <SearchFixture state="results" />,

@@ -145,13 +145,11 @@ describe('/settings/general rendered page', () => {
     )
   })
 
-  test('shows the personal analytics section outside the admin gate', () => {
+  test('keeps analytics outside General for non-admins', () => {
     // Consent is a per-browser personal setting, so it must render for
     // non-admins too (unlike the workspace-name / role-guide sections).
     const html = renderPage(false)
-    expect(html).toContain('<h2>Analytics</h2>')
-    expect(html).toContain('Opted out.')
-    expect(html).toContain('>On</button>')
-    expect(html).toContain('>Off</button>')
+    expect(html).not.toContain('<h2>Analytics</h2>')
+    expect(html).toContain('Workspace owner')
   })
 })

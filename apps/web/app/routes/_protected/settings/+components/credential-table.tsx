@@ -20,7 +20,7 @@ export function CredentialTable({
 }) {
   const { t } = useT()
   return (
-    <Table>
+    <Table className="[&_td]:whitespace-normal">
       <TableHeader>
         <TableRow>
           <TableHead>{t('team.tokens.table.name')}</TableHead>

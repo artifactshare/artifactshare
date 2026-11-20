@@ -299,7 +299,10 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   }
-  if (scenario === 'settings-billing/subscribed') {
+  if (
+    scenario === 'settings-billing/subscribed' ||
+    scenario === 'settings-billing/continuing-near-limit'
+  ) {
     await db
       .updateTable('workspaces')
       .set({
@@ -310,13 +313,36 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   }
-  if (scenario === 'settings-usage/near-limit') {
+  if (
+    scenario === 'settings-billing/near-limit' ||
+    scenario === 'settings-billing/continuing-near-limit'
+  ) {
     await db
       .updateTable('workspaces')
-      .set({ storage_used_bytes: 90_000_000_000 })
+      .set({
+        storage_used_bytes: 90_000_000_000,
+        storage_quota_bytes: 100_000_000_000,
+        ...(scenario === 'settings-billing/near-limit'
+          ? {
+              plan: 'free',
+              stripe_subscription_id: null,
+              stripe_subscription_status: 'none',
+            }
+          : {}),
+      })
       .where('id', '=', workspaceId)
       .execute()
   }
+  if (scenario === 'settings-billing/team-unsubscribed')
+    await db
+      .updateTable('workspaces')
+      .set({
+        plan: 'team',
+        stripe_subscription_id: null,
+        stripe_subscription_status: 'none',
+      })
+      .where('id', '=', workspaceId)
+      .execute()
   return { workspaceId }
 }
 
@@ -653,7 +679,7 @@ export async function seedDevScreenState(
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
   }
-  if (scenario === 'settings-cli-sessions/mixed-presets') {
+  if (scenario === 'settings-tokens/mixed-presets') {
     for (const preset of ['unrestricted', 'agent', 'publisher'] as const) {
       const familyId = `${workspaceId}-${preset}`
       const clientId = `${workspaceId}-publisher-client`

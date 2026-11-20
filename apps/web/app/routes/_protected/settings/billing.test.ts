@@ -99,6 +99,10 @@ describe('/settings/billing loader', () => {
       'sub_1',
     )
     expect(result).toEqual({
+      showOverageProjection: true,
+      includedBytes: 10 * 1024 ** 3,
+      contributorCount: null,
+      overageProjection: { gb: 0, currency: 'usd', amount: 0 },
       contract,
       canManage: true,
       plan: 'plus',
@@ -177,6 +181,10 @@ describe('/settings/billing loader', () => {
     } as never)
 
     expect(result).toEqual({
+      showOverageProjection: true,
+      includedBytes: 100 * 1024 ** 3,
+      contributorCount: 0,
+      overageProjection: { gb: 0, currency: null, amount: null },
       contract: null,
       canManage: false,
       plan: 'team',

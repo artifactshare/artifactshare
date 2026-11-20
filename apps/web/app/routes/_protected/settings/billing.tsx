@@ -1,3 +1,11 @@
+import {
+  loadUsage,
+  type UsageLoaderData,
+} from './+components/billing-usage.server'
+import {
+  OverageCostStat,
+  shouldShowUsageWarning,
+} from './+components/billing-usage'
 import { env } from 'cloudflare:workers'
 import { useEffect, useState } from 'react'
 import {
@@ -101,6 +109,21 @@ export const screen = {
   primaryAction: 'プランを管理する',
   states: [
     {
+      id: 'continuing-near-limit',
+      description: 'Continuing subscription near included storage',
+      setup: { scenario: 'settings-billing/continuing-near-limit' },
+    },
+    {
+      id: 'team-unsubscribed',
+      description: 'Team without a subscription',
+      setup: { scenario: 'settings-billing/team-unsubscribed' },
+    },
+    {
+      id: 'near-limit',
+      description: 'Storage near limit',
+      setup: { scenario: 'settings-billing/near-limit' },
+    },
+    {
       id: 'default',
       description: '請求設定',
       setup: {},
@@ -115,7 +138,7 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-type BillingLoaderData = {
+type BillingLoaderData = UsageLoaderData & {
   canManage: boolean
   plan: string
   stripeSubscriptionStatus: string
@@ -158,11 +181,16 @@ export async function loader({
     hasActiveSubscription(workspace.stripe_subscription_status),
   )
   const billingConfigured = isBillingConfigured(env)
-  // 非オーナーの閲覧で Stripe を呼ばないよう、認可を確定してから契約を取得する。
+  // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
   const billingAuthorization = await requireWorkspaceBillingOwner(db, user)
   const canManage = billingAuthorization.kind === 'ok'
   const useDevFixture =
-    canManage && isDevScreenStateRequest(request, 'settings-billing/subscribed')
+    canManage &&
+    (isDevScreenStateRequest(request, 'settings-billing/subscribed') ||
+      isDevScreenStateRequest(
+        request,
+        'settings-billing/continuing-near-limit',
+      ))
   const devContract: SubscriptionContract = {
     plan: 'team',
     interval: 'monthly',
@@ -230,6 +258,7 @@ export async function loader({
           ? ('plusOverage' as const)
           : ('default' as const)
   return {
+    ...(await loadUsage({ context, ...(canManage ? { contract } : {}) })),
     canManage,
     plan: workspace.plan,
     stripeSubscriptionStatus: workspace.stripe_subscription_status,
@@ -349,7 +378,11 @@ export async function action({ request, context }: Route.ActionArgs) {
   return redirect('/settings/billing?status=invalid')
 }
 
-export default function BillingPage({ loaderData }: Route.ComponentProps) {
+export default function BillingPage({
+  loaderData,
+}: {
+  loaderData: BillingLoaderData
+}) {
   const navigation = useNavigation()
   const [searchParams] = useSearchParams()
   const { t, locale } = useT()
@@ -362,7 +395,11 @@ export default function BillingPage({ loaderData }: Route.ComponentProps) {
     loaderData.plan !== 'plus' &&
     loaderData.plan !== 'team'
 
-  const planLabel = planDisplayName(loaderData.plan, t)
+  const presentation = billingPresentation(loaderData)
+  const planLabel =
+    presentation === 'team-without-subscription'
+      ? t('billing.plan.teamUnsubscribed')
+      : planDisplayName(loaderData.plan, t)
 
   return (
     <SettingsPage>
@@ -404,6 +441,7 @@ export default function BillingPage({ loaderData }: Route.ComponentProps) {
 
           <BillingActions
             loaderData={loaderData}
+            presentation={presentation}
             isPending={isPending}
             awaitingCheckoutReflection={awaitingCheckoutReflection}
           />
@@ -413,30 +451,72 @@ export default function BillingPage({ loaderData }: Route.ComponentProps) {
             <MonthlyEstimate estimate={loaderData.monthlyEstimate} />
           </section>
         ) : null}
-        {loaderData.canManage ? (
-          <SettingsSubsection title={t('billing.usage.storageTitle')}>
-            <UsageStats columns={2}>
-              <UsageStat
-                label={t('team.usage.storageUsed')}
-                value={formatBytes(loaderData.storageUsedBytes)}
-              />
-              <UsageStat
-                label={t('team.usage.storageLimit')}
-                value={formatBytes(loaderData.storageQuotaBytes)}
-              >
-                <StorageMeter
-                  usedBytes={loaderData.storageUsedBytes}
-                  quotaBytes={loaderData.storageQuotaBytes}
-                />
-              </UsageStat>
-            </UsageStats>
-            <Link className={inlineLinkClassName} to="/settings/usage">
-              {t('billing.usage.storageLink')}
-            </Link>
-          </SettingsSubsection>
-        ) : null}
+        <BillingStorageSection loaderData={loaderData} />
       </SettingsSection>
     </SettingsPage>
+  )
+}
+
+function BillingStorageSection({
+  loaderData,
+}: {
+  loaderData: Pick<
+    BillingLoaderData,
+    | keyof UsageLoaderData
+    | 'storageUsedBytes'
+    | 'storageQuotaBytes'
+    | 'monthlyEstimate'
+  >
+}) {
+  const { t } = useT()
+  return (
+    <SettingsSubsection title={t('billing.usage.storageTitle')}>
+      {!loaderData.showOverageProjection &&
+      shouldShowUsageWarning(
+        loaderData.storageUsedBytes,
+        loaderData.storageQuotaBytes,
+      ) ? (
+        <SettingsBanner role="alert">
+          {t('team.usage.nearLimit')}
+        </SettingsBanner>
+      ) : null}
+      <UsageStats columns={2}>
+        <UsageStat
+          label={t('team.usage.storageUsed')}
+          value={formatBytes(loaderData.storageUsedBytes)}
+        >
+          <StorageMeter
+            usedBytes={loaderData.storageUsedBytes}
+            quotaBytes={loaderData.storageQuotaBytes}
+          />
+        </UsageStat>
+        <UsageStat
+          label={t('team.usage.storageLimit')}
+          value={formatBytes(loaderData.storageQuotaBytes)}
+        />
+        {loaderData.showOverageProjection ? (
+          <UsageStat
+            label={t('team.usage.includedStorage')}
+            value={formatBytes(loaderData.includedBytes)}
+          />
+        ) : null}
+        {loaderData.overageProjection && !loaderData.monthlyEstimate ? (
+          <>
+            <UsageStat
+              label={t('team.usage.projectedOverage')}
+              value={`${loaderData.overageProjection.gb} GB`}
+            />
+            <OverageCostStat projection={loaderData.overageProjection} />
+          </>
+        ) : null}
+        {loaderData.contributorCount !== null ? (
+          <UsageStat
+            label={t('team.usage.contributors')}
+            value={String(loaderData.contributorCount)}
+          />
+        ) : null}
+      </UsageStats>
+    </SettingsSubsection>
   )
 }
 
@@ -1019,17 +1099,30 @@ function subscriptionStatusLabel(
   return t('billing.subscription.other')
 }
 
+function billingPresentation(
+  data: Pick<BillingLoaderData, 'plan' | 'hasSubscription'>,
+) {
+  return data.hasSubscription
+    ? 'subscribed'
+    : data.plan === 'team'
+      ? 'team-without-subscription'
+      : 'purchase'
+}
+
 function BillingActions({
   loaderData,
+  presentation,
   isPending,
   awaitingCheckoutReflection,
 }: {
-  loaderData: Route.ComponentProps['loaderData']
+  loaderData: BillingLoaderData
+  presentation: ReturnType<typeof billingPresentation>
   isPending: boolean
   awaitingCheckoutReflection: boolean
 }) {
   const { locale } = useT()
   if (!loaderData.canManage) return <ReadOnlyNotice />
+  if (presentation === 'team-without-subscription') return null
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
   if (loaderData.hasSubscription)
     return (

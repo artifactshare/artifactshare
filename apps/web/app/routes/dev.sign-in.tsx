@@ -13,7 +13,7 @@ import {
 import { IconShield, IconUser } from '@tabler/icons-react'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 
-const DEFAULT_NEXT = '/settings/general'
+const DEFAULT_NEXT = '/settings/tokens'
 
 function safeDevSignInTarget(next: unknown): string {
   if (next == null) return DEFAULT_NEXT

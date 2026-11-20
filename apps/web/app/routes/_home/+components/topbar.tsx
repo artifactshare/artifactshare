@@ -77,7 +77,7 @@ export function Topbar({
           <TooltipTrigger asChild>
             <NavigationLink
               variant="topbar"
-              to="/settings/general"
+              to="/settings/tokens"
               icon={IconSettings}
               label={settingsLabel}
               aria-label={settingsLabel}
