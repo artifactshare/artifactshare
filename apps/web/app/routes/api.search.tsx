@@ -23,7 +23,9 @@ export async function loader({ url, context }: Route.LoaderArgs) {
     result.headers.set('Server-Timing', serverTiming)
     return result
   }
-  return Response.json(result, {
+  // Returning to a screen search also names the signed-in viewer, so the page
+  // never labels results with a viewer remembered in the tab.
+  return Response.json(input.resume ? { ...result, actor: user.id } : result, {
     status: 'error' in result ? 400 : 200,
     headers: { ...headers, 'Server-Timing': serverTiming },
   })

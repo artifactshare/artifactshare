@@ -2323,6 +2323,23 @@ test('returning to a screen search reuses its log and daily count, rechecks acce
   fixture.sqlite.exec(
     "UPDATE shareables SET owner_user_id='viewer' WHERE id='a'",
   )
+  // Returning adds nothing, but is refused once the day's limit is reached.
+  fixture.sqlite.exec(
+    "UPDATE search_actor_daily_usage SET requests=1000 WHERE actor_id='viewer'",
+  )
+  await expect(
+    search(
+      fixture.db,
+      () => stub,
+      'viewer',
+      { ...input, resume: first.resume },
+      'screen',
+      clock,
+    ),
+  ).rejects.toHaveProperty('code', 'search_daily_limit_exceeded')
+  fixture.sqlite.exec(
+    "UPDATE search_actor_daily_usage SET requests=1 WHERE actor_id='viewer'",
+  )
   // Another viewer, changed conditions, another source and an expired token
   // each make a new search with its own log and count.
   for (const [actor, changed, source, at] of [

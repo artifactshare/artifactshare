@@ -1,5 +1,9 @@
 import { searchVisibilitySources } from './search-visibility.server'
-import { admitSearch, meterSearchIndexes } from './search-quota.server'
+import {
+  checkSearchAllowance,
+  admitSearch,
+  meterSearchIndexes,
+} from './search-quota.server'
 import { createHash } from 'node:crypto'
 import {
   newSearchTokenKey,
@@ -552,6 +556,7 @@ export async function search(
       resumed.log.filters_json === canonical &&
       resumed.log.source === source
     ) {
+      await checkSearchAllowance(db, actor, now)
       anchor = new Date(resumed.log.created_at)
       searchLogId = resumed.log.id
       tokenKey = resumed.log.token_key

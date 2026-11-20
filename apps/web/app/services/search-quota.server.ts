@@ -37,6 +37,21 @@ export class SearchDailyLimitError extends Error {
   }
 }
 
+/** Searches one person may run in a UTC day. */
+const DAILY_SEARCH_LIMIT = 1000
+
+/** Returning to a search adds nothing, but is refused once the day's limit is reached. */
+export async function checkSearchAllowance(db: Db, actor: string, now: string) {
+  const row = await db
+    .selectFrom('search_actor_daily_usage')
+    .select('requests')
+    .where('actor_id', '=', actor)
+    .where('day', '=', now.slice(0, 10))
+    .executeTakeFirst()
+  if ((row?.requests ?? 0) >= DAILY_SEARCH_LIMIT)
+    throw new SearchDailyLimitError(now)
+}
+
 /** One atomic indexed write; a storage exception deliberately remains an exception. */
 export async function admitSearch(db: Db, actor: string, now: string) {
   const row = await db
@@ -48,7 +63,7 @@ export async function admitSearch(db: Db, actor: string, now: string) {
         .doUpdateSet({
           requests: sql<number>`search_actor_daily_usage.requests + 1`,
         })
-        .where('search_actor_daily_usage.requests', '<', 1000),
+        .where('search_actor_daily_usage.requests', '<', DAILY_SEARCH_LIMIT),
     )
     .returning('requests')
     .executeTakeFirst()
