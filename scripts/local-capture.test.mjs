@@ -146,6 +146,15 @@ test('automatic ports stay below the Linux, macOS and Windows ephemeral ranges',
   assert.ok(AUTOMATIC_PORT_RANGE.last < 32768)
 })
 
+test('selectPorts takes automatic ports from the automatic range by default', async () => {
+  const ports = await selectPorts({ env: {}, isFree: () => true })
+  for (const [name, port] of Object.entries(ports))
+    assert.ok(
+      port >= AUTOMATIC_PORT_RANGE.first && port <= AUTOMATIC_PORT_RANGE.last,
+      `${name}=${port}`,
+    )
+})
+
 test('a port held on only one loopback family is not free', async () => {
   for (const host of ['127.0.0.1', '::1']) {
     const server = await listening(host)
