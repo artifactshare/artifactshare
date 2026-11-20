@@ -944,11 +944,15 @@ describe('Worker integration harness', () => {
     // The source object never exists, so every attempt fails.
     await worker.scheduled({ cron: '*/5 * * * *' })
     const probe = searchProbe(owner.workspaceId)
-    // After a counted failure the index waits minutes, not a second.
-    expect(await probe.nextAlarm()).toBeGreaterThan(Date.now() + 60_000)
-    // The unfinished bootstrap remains ready; cron retries it once the source returns.
+    const retryAt = await probe.nextAlarm()
+    expect(retryAt).toEqual(expect.any(Number))
+    expect(retryAt!).toBeGreaterThan(Date.now() + 60_000)
+    // Cron can find this workspace but honors the saved retry deadline.
     await env.BUCKET.put('artifacts/backoff/missing', '<p>backoffneedle</p>')
     await worker.scheduled({ cron: '*/5 * * * *' })
+    expect(await probe.nextAlarm()).toBe(retryAt)
+    expect((await probe.search({ query: 'backoffneedle' })).items).toEqual([])
+    await probe.resumeAt(retryAt!)
     expect(
       (await probe.search({ query: 'backoffneedle' })).items.map(
         (row) => row.id,

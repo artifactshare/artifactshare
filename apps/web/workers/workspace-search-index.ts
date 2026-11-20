@@ -764,7 +764,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             const source = sources[position]
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
             if (source) {
-              // react-doctor-disable-next-line react-doctor/async-await-in-loop
               const active = this.ctx.storage.sql
                 .exec<Active>('SELECT * FROM active WHERE id=?', id)
                 .toArray()[0]
@@ -774,6 +773,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               ) {
                 this.ctx.storage.sql.exec('DELETE FROM staging WHERE id=?', id)
                 this.reclaim(id)
+                // react-doctor-disable-next-line react-doctor/async-await-in-loop
                 await this.cleanObjects(source)
               } else if (!(await this.replace(source))) continue
             }
