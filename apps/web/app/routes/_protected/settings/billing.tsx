@@ -14,7 +14,6 @@ import {
   redirect,
   useFetcher,
   useNavigation,
-  useOutletContext,
   useSearchParams,
 } from 'react-router'
 import { BillingSelection } from '~/components/app/billing-toggle'
@@ -63,7 +62,6 @@ import {
 import { Button } from '~/components/ui/button'
 import { SettingsSection } from '~/components/form/settings-section'
 import { SettingsSubsection } from '~/components/form/settings-subsection'
-import type { SettingsLayoutContext } from './_layout'
 import type { Route } from './+types/billing'
 import { useT } from '~/hooks/use-t'
 import { stringValue } from '~/lib/form'
@@ -453,7 +451,10 @@ export default function BillingPage({
             <MonthlyEstimate estimate={loaderData.monthlyEstimate} />
           </section>
         ) : null}
-        <BillingStorageSection loaderData={loaderData} />
+        <BillingStorageSection
+          loaderData={loaderData}
+          presentation={presentation}
+        />
       </SettingsSection>
     </SettingsPage>
   )
@@ -461,6 +462,7 @@ export default function BillingPage({
 
 function BillingStorageSection({
   loaderData,
+  presentation,
 }: {
   loaderData: Pick<
     BillingLoaderData,
@@ -468,10 +470,11 @@ function BillingStorageSection({
     | 'storageUsedBytes'
     | 'storageQuotaBytes'
     | 'monthlyEstimate'
+    | 'canManage'
   >
+  presentation: ReturnType<typeof billingPresentation>
 }) {
   const { t } = useT()
-  const { currentUserIsAdmin } = useOutletContext<SettingsLayoutContext>()
   return (
     <SettingsSubsection title={t('billing.usage.storageTitle')}>
       {!loaderData.showOverageProjection &&
@@ -495,15 +498,12 @@ function BillingStorageSection({
           </p>
           <p>
             {t(
-              currentUserIsAdmin
-                ? 'team.usage.nearLimitAdmin'
-                : 'team.usage.nearLimitMember',
-            )}{' '}
-            {currentUserIsAdmin ? (
-              <Link className={inlineLinkClassName} to="/settings/billing">
-                {t('team.usage.nearLimitBillingLink')}
-              </Link>
-            ) : null}
+              !loaderData.canManage
+                ? 'team.usage.nearLimitMember'
+                : presentation === 'team-without-subscription'
+                  ? 'team.usage.nearLimitSupport'
+                  : 'team.usage.nearLimitAdmin',
+            )}
           </p>
         </SettingsBanner>
       ) : null}

@@ -269,7 +269,7 @@ test('near-limit warning applies to capped plans while continuing subscriptions 
 })
 
 test.each([true, false])(
-  'capped near-limit banner retains storage details and admin=%s guidance',
+  'capped near-limit banner retains storage details for admin=%s without billing permission',
   (admin) => {
     const html = renderBillingPage(
       1,
@@ -284,12 +284,36 @@ test.each([true, false])(
     const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
     expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
     expect(banner).toContain(
-      admin
-        ? '上限を増やすには請求設定を確認してください。'
-        : 'ワークスペース管理者に保存容量の上限を確認してもらってください。',
+      'ワークスペースのオーナーに保存容量の上限を確認してもらってください。',
     )
-    expect(banner?.match(/href="([^"]+)"/)?.[1] ?? null).toBe(
-      admin ? '/settings/billing' : null,
-    )
+    expect(banner).not.toContain('上限を増やすには請求設定を確認してください。')
+    expect(banner).not.toContain('href=')
   },
 )
+
+test('near-limit Team owner without a subscription gets support guidance without a billing offer', () => {
+  const html = renderBillingPage(null, null, {
+    hasSubscription: false,
+    stripeSubscriptionStatus: 'none',
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+  })
+  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+  expect(banner).toContain(
+    '保存容量の上限についてはサポートにお問い合わせください。',
+  )
+  expect(banner).not.toContain('上限を増やすには請求設定を確認してください。')
+  expect(banner).not.toContain('href=')
+  expect(html).not.toContain('value="checkout"')
+})
+
+test('near-limit Free owner keeps billing guidance and checkout without a self-link', () => {
+  const html = renderBillingPage(1, null, {
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+  })
+  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+  expect(banner).toContain('上限を増やすには請求設定を確認してください。')
+  expect(banner).not.toContain('href=')
+  expect(html).toContain('value="checkout"')
+})
