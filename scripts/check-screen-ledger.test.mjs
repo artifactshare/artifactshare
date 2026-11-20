@@ -852,6 +852,28 @@ test('classifies a missing interaction target as a precondition failure', async 
   )
 })
 
+test('says a single target never became visible instead of calling it missing', async () => {
+  const page = {
+    locator: () => ({
+      waitFor: () => Promise.reject(new Error('Timeout 30000ms exceeded.')),
+      count: () => Promise.resolve(1),
+    }),
+  }
+
+  await assert.rejects(
+    waitForInteractionTarget(page, {
+      action: 'click',
+      selector: '[data-hidden-menu]',
+    }),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'interaction_precondition' &&
+      error.message ===
+        'interaction target was found but did not become visible: [data-hidden-menu]' &&
+      error.details.matches === 1,
+  )
+})
+
 test('names a selector that matches several targets instead of calling it missing', async () => {
   const page = {
     locator: () => ({
