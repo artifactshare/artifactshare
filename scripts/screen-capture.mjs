@@ -200,17 +200,29 @@ export async function waitForReady(page, ready) {
 }
 
 export async function waitForInteractionTarget(page, interaction) {
+  const target = page.locator(interaction.selector)
   try {
-    await page.locator(interaction.selector).waitFor({
+    await target.waitFor({
       state: interaction.action === 'setInputFiles' ? 'attached' : 'visible',
     })
-  } catch {
+  } catch (error) {
+    // A selector that matches several elements fails at once (strict mode),
+    // not because nothing appeared; name which one it was so the definition
+    // can be narrowed instead of searched for.
+    const matches = await target.count().catch(() => null)
+    const cause = (error instanceof Error ? error.message : String(error))
+      .split('\n')[0]
+      .trim()
     throw new CaptureFailure(
       'interaction_precondition',
-      `interaction target was not found: ${interaction.selector}`,
+      matches > 1
+        ? `interaction target matched ${matches} elements; narrow the selector to one: ${interaction.selector}`
+        : `interaction target was not found: ${interaction.selector}`,
       {
         action: interaction.action,
         selector: interaction.selector,
+        matches,
+        cause,
       },
     )
   }

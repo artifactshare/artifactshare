@@ -88,7 +88,8 @@ export const screen = {
         interactions: [
           {
             action: 'click',
-            selector: 'tbody button:has-text("Stop")',
+            selector:
+              'tr:has-text("Nightly report bot") button:has-text("Stop")',
           },
         ],
       },

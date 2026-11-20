@@ -830,7 +830,10 @@ test('waits for a delayed interaction target before acting', async () => {
 
 test('classifies a missing interaction target as a precondition failure', async () => {
   const page = {
-    locator: () => ({ waitFor: () => Promise.reject(new Error('timeout')) }),
+    locator: () => ({
+      waitFor: () => Promise.reject(new Error('Timeout 30000ms exceeded.')),
+      count: () => Promise.resolve(0),
+    }),
   }
 
   await assert.rejects(
@@ -841,8 +844,40 @@ test('classifies a missing interaction target as a precondition failure', async 
     (error) =>
       error instanceof CaptureFailure &&
       error.kind === 'interaction_precondition' &&
+      error.message === 'interaction target was not found: [data-help]' &&
       error.details.action === 'hover' &&
-      error.details.selector === '[data-help]',
+      error.details.selector === '[data-help]' &&
+      error.details.matches === 0 &&
+      error.details.cause === 'Timeout 30000ms exceeded.',
+  )
+})
+
+test('names a selector that matches several targets instead of calling it missing', async () => {
+  const page = {
+    locator: () => ({
+      waitFor: () =>
+        Promise.reject(
+          new Error(
+            'strict mode violation: locator(\'tbody button:has-text("Stop")\') resolved to 2 elements:\n    1) <button>Stop</button>',
+          ),
+        ),
+      count: () => Promise.resolve(2),
+    }),
+  }
+
+  await assert.rejects(
+    waitForInteractionTarget(page, {
+      action: 'click',
+      selector: 'tbody button:has-text("Stop")',
+    }),
+    (error) =>
+      error instanceof CaptureFailure &&
+      error.kind === 'interaction_precondition' &&
+      error.message ===
+        'interaction target matched 2 elements; narrow the selector to one: tbody button:has-text("Stop")' &&
+      error.details.matches === 2 &&
+      error.details.cause.startsWith('strict mode violation') &&
+      !error.details.cause.includes('\n'),
   )
 })
 
