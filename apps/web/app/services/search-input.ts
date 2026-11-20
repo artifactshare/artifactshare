@@ -6,6 +6,8 @@ export type SearchInput = {
   pageSize: number
   relativeDays?: number
   cursor?: string
+  /** A screen search the same viewer returns to; never a new search. */
+  resume?: string
 }
 export type SearchValidation = {
   error: { code: 'validation_error'; fields: string[] }
@@ -104,6 +106,13 @@ export function parseSearchInput(
     (!params.get('cursor') || params.get('cursor')!.length > 200)
   )
     fields.push('cursor')
+  if (
+    params.has('resume') &&
+    (!params.get('resume') ||
+      params.get('resume')!.length > 200 ||
+      params.has('cursor'))
+  )
+    fields.push('resume')
   const sort = params.get('sort') ?? 'relevance'
   if (sort !== 'relevance' && sort !== 'newest') fields.push('sort')
   const pageSize = Number(params.get('pageSize') ?? 20)
@@ -118,6 +127,7 @@ export function parseSearchInput(
     pageSize,
     relativeDays: days ? Number(days) : undefined,
     cursor: params.get('cursor') ?? undefined,
+    resume: params.get('resume') ?? undefined,
   }
 }
 export function canonicalSearch(input: SearchInput) {

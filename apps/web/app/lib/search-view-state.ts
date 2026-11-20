@@ -1,3 +1,4 @@
+import { searchApiParams } from './search-query'
 /** Navigation metadata only. Never cache titles, snippets or other result bodies. */
 export type SearchViewState = {
   depth: number
@@ -15,6 +16,29 @@ export function rememberSearchView(key: string, value: SearchViewState) {
 }
 export function recallSearchView(key: string) {
   return entries.get(key)
+}
+
+/**
+ * The search a history entry showed, so going Back to it continues that
+ * search instead of starting a new one. The token is bound to the viewer and
+ * expires; it is navigation metadata, not result content.
+ */
+const searches = new Map<string, { resume: string; actor: string }>()
+export function rememberSearch(key: string, resume: string, actor: string) {
+  searches.set(key, { resume, actor })
+}
+// The history entry the browser last moved to with Back or Forward.
+let popped: string | undefined
+if (typeof window !== 'undefined')
+  window.addEventListener('popstate', () => {
+    popped = (window.history.state as { key?: string } | null)?.key
+  })
+/** The search to continue, only when this load comes from Back or Forward. */
+function returnedSearch() {
+  const key = (window.history.state as { key?: string } | null)?.key
+  const wasPopped = popped !== undefined && popped === key
+  popped = undefined
+  return wasPopped && key ? searches.get(key) : undefined
 }
 
 /**
@@ -68,4 +92,31 @@ export function searchExit(state: unknown): { back: number } | { to: string } {
         ? value.searchReturnTo
         : '/',
   }
+}
+
+/**
+ * Going Back to search results continues the search that entry showed: the
+ * same log and no new daily count, with access checked again on the server.
+ * Every other load, including a reload, is a new search on the server.
+ */
+export async function continueReturnedSearch<
+  T extends { result: unknown; actor: string },
+>(request: Request, serverLoader: () => Promise<T>): Promise<T> {
+  const returned = returnedSearch()
+  if (!returned) return serverLoader()
+  const api = searchApiParams(new URL(request.url).searchParams)
+  api.set('resume', returned.resume)
+  try {
+    const response = await fetch(`/api/search?${api}`, {
+      signal: request.signal,
+    })
+    if (response.ok)
+      return {
+        result: (await response.json()) as T['result'],
+        actor: returned.actor,
+      } as T
+  } catch (error) {
+    if (request.signal.aborted) throw error
+  }
+  return serverLoader()
 }

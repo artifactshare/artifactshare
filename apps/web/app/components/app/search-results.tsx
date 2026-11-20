@@ -62,6 +62,7 @@ import {
   readSearchJson,
 } from '~/lib/search-query'
 import {
+  rememberSearch,
   rememberSearchView,
   recallSearchView,
   searchNavigationState,
@@ -181,6 +182,9 @@ function ResultBody({
     result: Result
   }>()
   const initial = restarted?.source === loaded ? restarted.result : loaded
+  useEffect(() => {
+    if (initial.resume) rememberSearch(location.key, initial.resume, actor)
+  }, [initial.resume, location.key, actor])
   async function restartSearch() {
     const response = await fetch(
       `/api/search?${searchApiParams(new URLSearchParams(location.search))}`,

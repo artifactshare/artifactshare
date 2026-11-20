@@ -19,6 +19,7 @@ import { Topbar } from '~/routes/_home/+components/topbar'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { SearchPalette } from '~/components/app/search-palette'
 import { parseSearchQuery } from '~/lib/search-query'
+import { continueReturnedSearch } from '~/lib/search-view-state'
 import { viewerReturnTo, viewerReturnState } from '~/lib/viewer-return'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
@@ -584,6 +585,76 @@ test('Back and viewer return reload later pages before restoring their visible a
   await waitForBrowserLayout()
   expect(document.activeElement?.tagName).toBe('H1')
   expect(window.location.search).toBe('?q=beta')
+})
+
+test('Back to results continues the shown search; a new search for the same words starts over', async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/opens')) return new Response(null, { status: 204 })
+    if (url.includes('/search-suggestions'))
+      return Response.json({ files: [], recent: [], owners: [], projects: [] })
+    if (url.includes('/search-logs')) return Response.json({ searches: [] })
+    if (url.startsWith('/api/search?'))
+      return Response.json({ ...result, resume: 'resume-a' })
+    throw new Error(`unexpected fetch ${url}`)
+  })
+  vi.stubGlobal('fetch', fetcher)
+  const server = vi.fn(async () => ({
+    result: { ...result, resume: 'resume-a' },
+    actor: 'viewer',
+  }))
+  window.history.replaceState(
+    { key: crypto.randomUUID() },
+    '',
+    '/search?q=alpha',
+  )
+  const router = createBrowserRouter([
+    {
+      path: '/',
+      element: <Outlet />,
+      children: [
+        {
+          path: 'search',
+          loader: ({ request }) => continueReturnedSearch(request, server),
+          Component: () => {
+            const data = useLoaderData<{
+              result: SearchResponse
+              actor: string
+            }>()
+            return <SearchResults result={data.result} actor={data.actor} />
+          },
+        },
+        { path: 'a/:id', Component: () => <p>Viewer</p> },
+      ],
+    },
+  ])
+  historyRouter = router
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(<RouterProvider router={router} />)
+  await expect
+    .element(page.getByRole('link', { name: 'Alpha report', exact: true }))
+    .toBeInTheDocument()
+  expect(server).toHaveBeenCalledTimes(1)
+  await page.getByRole('link', { name: 'Alpha report', exact: true }).click()
+  await expect.element(page.getByText('Viewer')).toBeVisible()
+  window.history.back()
+  await expect
+    .element(page.getByRole('link', { name: 'Alpha report', exact: true }))
+    .toBeInTheDocument()
+  // Back continues the search through its token instead of a new search.
+  expect(
+    fetcher.mock.calls.some(
+      ([url]) =>
+        String(url).startsWith('/api/search?') &&
+        String(url).includes('resume=resume-a'),
+    ),
+  ).toBe(true)
+  expect(server).toHaveBeenCalledTimes(1)
+  // Searching again for the same words is a new search.
+  await router.navigate('/search?q=alpha')
+  await vi.waitFor(() => expect(server).toHaveBeenCalledTimes(2))
 })
 
 test('custom date replay displays inclusive days and clear filters reconciles the editor', async () => {
