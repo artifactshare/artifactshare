@@ -300,6 +300,9 @@ test.each([false, true])(
 )
 
 test.each([
+  ...['abc', 'NaN', '0', '-1', '1.5', 'Infinity'].map(
+    (count) => ['en', count, null] as const,
+  ),
   [
     'en',
     1,
@@ -356,9 +359,12 @@ test.each([
       { initialEntries: [`/?status=ok&shortened=${count}`] },
     )
     try {
-      expect(
-        renderToStaticMarkup(<RouterProvider router={router} />),
-      ).toContain(expected)
+      const html = renderToStaticMarkup(<RouterProvider router={router} />)
+      if (expected === null) {
+        expect(html).not.toContain('role="status"')
+      } else {
+        expect(html).toContain(expected)
+      }
     } finally {
       router.dispose()
     }

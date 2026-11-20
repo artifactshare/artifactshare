@@ -352,9 +352,9 @@ function ExternalAccessForm({
   policy: Route.ComponentProps['loaderData']['policy']
 }) {
   const shell = useOutletContext<SettingsLayoutContext>()
-  const { t, tPlural } = useT()
+  const { t } = useT()
   const submission = useExternalAccessSubmission(policy.linkExpiryMaxDays)
-  const { save, pending, previewResult, receivedPreview, failure } = submission
+  const { save, pending, previewResult, failure } = submission
   const [draft, setDraft] = useExternalAccessDraft(policy)
   const [searchParams] = useSearchParams()
   const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
@@ -416,39 +416,53 @@ function ExternalAccessForm({
           </div>
         ) : null}
       </save.Form>
-      <ConfirmActionDialog
-        open={previewResult !== null}
-        returnFocusId={submission.returnFocusId}
-        awaitResult
-        destructive={(receivedPreview?.shortenedLinkCount ?? 0) > 0}
-        onOpenChange={(open) => {
-          if (!open) submission.clearPreview()
-        }}
-        title={t(
-          receivedPreview?.shortenedLinkCount === 0
-            ? 'externalAccess.expiry.confirmZeroTitle'
-            : 'externalAccess.expiry.confirmTitle',
-          { days: receivedPreview?.maximumDays ?? '' },
-        )}
-        description={
-          receivedPreview?.shortenedLinkCount === 0
-            ? t('externalAccess.expiry.confirmZeroBody')
-            : tPlural(
-                'externalAccess.expiry.confirmBody',
-                receivedPreview?.shortenedLinkCount ?? 0,
-                {
-                  days: receivedPreview?.maximumDays ?? '',
-                },
-              )
-        }
-        action={t('externalAccess.save')}
-        pendingLabel={t('externalAccess.saving')}
-        dismissLabel={t('externalAccess.keepEditing')}
-        pending={pending}
-        result={error}
-        onConfirm={submission.confirm}
-      />
+      <ExpiryConfirmation submission={submission} error={error} />
     </SettingsPage>
+  )
+}
+
+function ExpiryConfirmation({
+  submission,
+  error,
+}: {
+  submission: ReturnType<typeof useExternalAccessSubmission>
+  error: React.ReactNode
+}) {
+  const { t, tPlural } = useT()
+  const { previewResult, receivedPreview, pending } = submission
+  return (
+    <ConfirmActionDialog
+      open={previewResult !== null}
+      returnFocusId={submission.returnFocusId}
+      awaitResult
+      destructive={(receivedPreview?.shortenedLinkCount ?? 0) > 0}
+      onOpenChange={(open) => {
+        if (!open) submission.clearPreview()
+      }}
+      title={t(
+        receivedPreview?.shortenedLinkCount === 0
+          ? 'externalAccess.expiry.confirmZeroTitle'
+          : 'externalAccess.expiry.confirmTitle',
+        { days: receivedPreview?.maximumDays ?? '' },
+      )}
+      description={
+        receivedPreview?.shortenedLinkCount === 0
+          ? t('externalAccess.expiry.confirmZeroBody')
+          : tPlural(
+              'externalAccess.expiry.confirmBody',
+              receivedPreview?.shortenedLinkCount ?? 0,
+              {
+                days: receivedPreview?.maximumDays ?? '',
+              },
+            )
+      }
+      action={t('externalAccess.save')}
+      pendingLabel={t('externalAccess.saving')}
+      dismissLabel={t('externalAccess.keepEditing')}
+      pending={pending}
+      result={previewResult !== null ? error : null}
+      onConfirm={submission.confirm}
+    />
   )
 }
 
@@ -594,9 +608,26 @@ function useExternalAccessSubmission(maximumDays: number | null) {
       active.state === 'idle' &&
       active.data !== lastOperation.previousData &&
       active.data?.kind === 'preview'
-    )
-      setReceivedPreview(active.data)
-  }, [active.state, active.data, lastOperation.previousData])
+    ) {
+      if (
+        submittedDraft &&
+        (active.data.maximumDays === null ||
+          (active.data.previousMaximumDays !== null &&
+            active.data.maximumDays >= active.data.previousMaximumDays))
+      ) {
+        setLastOperation({ kind: 'save', previousData: save.data })
+        void save.submit(submittedDraft, { method: 'post' })
+      } else {
+        setReceivedPreview(active.data)
+      }
+    }
+  }, [
+    active.state,
+    active.data,
+    lastOperation.previousData,
+    submittedDraft,
+    save,
+  ])
   const previewResult = submittedDraft ? receivedPreview : null
   // Redirects retain fetcher data; only a new result belongs to this submission.
   const fetcherFailure =
@@ -819,7 +850,7 @@ function ExternalAccessExpiryFields({
             </label>
           </div>
         </SettingsSubsection>
-        {shortened ? (
+        {Number.isSafeInteger(Number(shortened)) && Number(shortened) > 0 ? (
           <TeamMutedParagraph role="status">
             {tPlural('externalAccess.expiry.shortened', Number(shortened))}
           </TeamMutedParagraph>

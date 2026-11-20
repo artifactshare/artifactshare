@@ -555,3 +555,112 @@ test.each(['preview', 'forbidden'] as const)(
     }
   },
 )
+
+// The real router and Radix exit animation expose duplicate alerts during dismissal.
+test.each([30, 90])(
+  'server maximum %s controls confirmation and failed-save dismissal has one alert',
+  async (storedMaximum) => {
+    const policy: WorkspaceLinkPolicy = {
+      plan: 'team',
+      linkSharingEnabled: true,
+      externalPostingEnabled: true,
+      linkExpiryDefaultDays: 30,
+      linkExpiryMaxDays: 90,
+    }
+    const submissions: string[] = []
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <Outlet
+              context={{ currentUserIsAdmin: true, currentUserRole: 'owner' }}
+            />
+          ),
+          children: [
+            {
+              path: '/settings/external-access',
+              Component: Page,
+              loader: () => policy,
+              action: async ({ request }) => {
+                const form = await request.formData()
+                const intent = String(form.get('intent'))
+                submissions.push(intent)
+                return intent === 'preview-external-access'
+                  ? {
+                      kind: 'preview',
+                      previousMaximumDays: storedMaximum,
+                      maximumDays: 60,
+                      shortenedLinkCount: 0,
+                    }
+                  : { kind: 'forbidden' }
+              },
+            },
+          ],
+        },
+      ],
+      { initialEntries: ['/settings/external-access'] },
+    )
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      await page
+        .getByRole('spinbutton', { name: 'Maximum expiration', exact: true })
+        .fill('60')
+      await page
+        .getByRole('button', { name: 'Save changes', exact: true })
+        .click()
+      const dialog = page.getByRole('alertdialog')
+      if (storedMaximum === 90) {
+        await expect.element(dialog).toBeVisible()
+        expect(submissions).toEqual(['preview-external-access'])
+        await dialog
+          .getByRole('button', { name: 'Save changes', exact: true })
+          .click()
+        await expect.element(dialog.getByRole('alert')).toBeVisible()
+        const closingAlertCounts: number[] = []
+        const content = dialog.element()
+        const observer = new MutationObserver(() => {
+          if (content.getAttribute('data-state') === 'closed')
+            closingAlertCounts.push(
+              document.querySelectorAll('[role="alert"]').length,
+            )
+        })
+        observer.observe(document.body, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+        })
+        try {
+          await dialog
+            .getByRole('button', { name: 'Keep editing', exact: true })
+            .click()
+          await expect.element(dialog).not.toBeInTheDocument()
+          expect(closingAlertCounts.length).toBeGreaterThan(0)
+          expect(closingAlertCounts.every((count) => count === 1)).toBe(true)
+        } finally {
+          observer.disconnect()
+        }
+      }
+      await expect.element(page.getByRole('alert')).toBeVisible()
+      await expect.element(dialog).not.toBeInTheDocument()
+      expect(submissions).toEqual([
+        'preview-external-access',
+        'update-external-access',
+      ])
+      await expect
+        .element(
+          page.getByRole('spinbutton', {
+            name: 'Maximum expiration',
+            exact: true,
+          }),
+        )
+        .toHaveValue(60)
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+    }
+  },
+)
