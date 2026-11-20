@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createMemoryRouter, RouterProvider } from 'react-router'
+import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -50,6 +50,7 @@ function renderBillingPage(
   projectLimit: number | null,
   contract = projectLimit === null ? teamMonthlyContract : null,
   overrides: Partial<Parameters<typeof BillingPage>[0]['loaderData']> = {},
+  currentUserIsAdmin = true,
 ) {
   const loaderData: Parameters<typeof BillingPage>[0]['loaderData'] = {
     showOverageProjection: false,
@@ -78,7 +79,10 @@ function renderBillingPage(
     [
       {
         path: '/',
-        element: <BillingPage loaderData={loaderData} />,
+        element: <Outlet context={{ currentUserIsAdmin }} />,
+        children: [
+          { index: true, element: <BillingPage loaderData={loaderData} /> },
+        ],
       },
     ],
     { initialEntries: ['/'] },
@@ -263,3 +267,29 @@ test('near-limit warning applies to capped plans while continuing subscriptions 
     }),
   ).not.toContain('role="alert"')
 })
+
+test.each([true, false])(
+  'capped near-limit banner retains storage details and admin=%s guidance',
+  (admin) => {
+    const html = renderBillingPage(
+      1,
+      null,
+      {
+        storageUsedBytes: 95,
+        storageQuotaBytes: 100,
+        canManage: false,
+      },
+      admin,
+    )
+    const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+    expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
+    expect(banner).toContain(
+      admin
+        ? '上限を増やすには請求設定を確認してください。'
+        : 'ワークスペース管理者に保存容量の上限を確認してもらってください。',
+    )
+    expect(banner?.match(/href="([^"]+)"/)?.[1] ?? null).toBe(
+      admin ? '/settings/billing' : null,
+    )
+  },
+)

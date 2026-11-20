@@ -69,7 +69,9 @@ export async function loadUsage({
   }
 
   const [projection, contract] = await Promise.all([
-    loadCurrentMonthOverageProjection(db, workspace.id, new Date()),
+    loadCurrentMonthOverageProjection(db, workspace.id, new Date()).catch(
+      () => null,
+    ),
     knownContract !== undefined
       ? Promise.resolve(knownContract)
       : workspace.stripe_subscription_id && isBillingConfigured(env)
@@ -85,16 +87,18 @@ export async function loadUsage({
   return {
     showOverageProjection: true,
     includedBytes,
-    overageProjection: {
-      gb: projection.projectedOverageGb,
-      currency,
-      amount:
-        currency === 'jpy'
-          ? Math.round(projection.projectedOverageJpy)
-          : currency === 'usd'
-            ? Math.round(projection.projectedOverageUsd * 100) / 100
-            : null,
-    },
+    overageProjection: projection
+      ? {
+          gb: projection.projectedOverageGb,
+          currency,
+          amount:
+            currency === 'jpy'
+              ? Math.round(projection.projectedOverageJpy)
+              : currency === 'usd'
+                ? Math.round(projection.projectedOverageUsd * 100) / 100
+                : null,
+        }
+      : null,
     contributorCount,
   }
 }

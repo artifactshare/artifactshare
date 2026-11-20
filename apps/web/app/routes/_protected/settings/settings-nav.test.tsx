@@ -45,3 +45,29 @@ test.each(['en', 'ja'] as const)(
     }
   },
 )
+
+test.each([
+  ['/settings/', '/settings', 'Members', 'Workspace'],
+  [
+    '/settings/general/details',
+    '/settings/general',
+    'General',
+    'Workspace info',
+  ],
+  ['/settings/unknown', null, 'Settings', null],
+])('marks only the matching item for %s', (path, activePath, label, group) => {
+  language.locale = 'en'
+  const html = renderToStaticMarkup(
+    <MemoryRouter initialEntries={[path]}>
+      <SettingsNav currentUserIsAdmin workspaceKind="team">
+        Content
+      </SettingsNav>
+    </MemoryRouter>,
+  )
+  const active = [
+    ...html.matchAll(/aria-current="page"[^>]*href="([^"]+)"/g),
+  ].map((match) => match[1])
+  expect(active).toEqual(activePath ? [activePath] : [])
+  const trigger = html.match(/<button[^>]*>(.*?)<\/button>/)?.[1]
+  expect(trigger?.replace(/<[^>]+>/g, '')).toBe(label + (group ?? ''))
+})

@@ -1,3 +1,4 @@
+import * as billingUsage from '~/services/billing-usage.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SessionUser } from '~/lib/user'
@@ -68,6 +69,7 @@ describe('/settings/billing loader', () => {
 
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     dbState.db = null
     await db.destroy()
   })
@@ -121,6 +123,33 @@ describe('/settings/billing loader', () => {
       monthlyEstimate: expect.objectContaining({ totalAmount: 5 }),
     })
   })
+
+  test.each(['u-a', 'u-c'])(
+    'projection failure preserves billing data for %s',
+    async (userId) => {
+      await seedAdmin(db, 'u-a', 'ws-a')
+      await updateWorkspacePlan(db, 'ws-a', 'plus', 'active', 'sub_1')
+      requireUserMock.mockReturnValue(sessionUser(userId, 'ws-a'))
+      vi.spyOn(
+        billingUsage,
+        'loadCurrentMonthOverageProjection',
+      ).mockRejectedValue(new Error('projection unavailable'))
+
+      const result = await loader({
+        context: {},
+        request: new Request('https://example.test/settings/billing'),
+      } as never)
+
+      expect(result).toMatchObject({
+        plan: 'plus',
+        canManage: userId === 'u-a',
+        storageUsedBytes: 0,
+        showOverageProjection: true,
+        overageProjection: null,
+        monthlyEstimate: null,
+      })
+    },
+  )
 
   test('loader returns jpy defaultCurrency for JP requests', async () => {
     await seedAdmin(db, 'u-a', 'ws-a')

@@ -11,7 +11,7 @@ import {
   IconChevronDown,
 } from '@tabler/icons-react'
 import { useState, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router'
+import { Link, matchPath, useLocation } from 'react-router'
 import { useT } from '~/hooks/use-t'
 import type { TKey } from '~/i18n/messages'
 import { Button } from '~/components/ui/button'
@@ -124,22 +124,10 @@ export function SettingsNavigation({
         (!item.teamOnly || workspaceKind === 'team'),
     ),
   })).filter((group) => group.items.length)
-  const currentGroup =
-    groups.find((group) =>
-      group.items.some(
-        (item) =>
-          item.to === pathname ||
-          (item.to === '/settings/inventory' &&
-            pathname.startsWith(item.to + '/')),
-      ),
-    ) ?? groups[0]
-  const current =
-    currentGroup.items.find(
-      (item) =>
-        item.to === pathname ||
-        (item.to === '/settings/inventory' &&
-          pathname.startsWith(item.to + '/')),
-    ) ?? currentGroup.items[0]
+  const matchesItem = (item: { to: string }) =>
+    matchPath({ path: item.to, end: item.to === '/settings' }, pathname)
+  const currentGroup = groups.find((group) => group.items.some(matchesItem))
+  const current = currentGroup?.items.find(matchesItem)
   const menu = (
     <nav aria-label={t('team.nav.label')} className="flex flex-col gap-4">
       {groups.map((group) => (
@@ -151,7 +139,7 @@ export function SettingsNavigation({
             <Link
               key={to}
               to={to}
-              aria-current={current.to === to ? 'page' : undefined}
+              aria-current={current?.to === to ? 'page' : undefined}
               onClick={() => setOpenPath(null)}
               className="text-muted-foreground hover:bg-accent hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:text-foreground focus-visible:outline-ring stack:min-h-8 flex min-h-11 items-center gap-2 rounded-md px-3 text-sm no-underline focus-visible:outline-2"
             >
@@ -176,10 +164,12 @@ export function SettingsNavigation({
               variant="outline"
               className="min-h-11 w-full justify-between"
             >
-              <span>{t(current.label)}</span>
-              <span className="text-muted-foreground text-xs">
-                {t(currentGroup.label)}
-              </span>
+              <span>{t(current?.label ?? 'team.settings')}</span>
+              {currentGroup ? (
+                <span className="text-muted-foreground text-xs">
+                  {t(currentGroup.label)}
+                </span>
+              ) : null}
               <IconChevronDown aria-hidden="true" size={16} />
             </Button>
           </SheetTrigger>
