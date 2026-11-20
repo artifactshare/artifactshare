@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { answerAnalyticsLocally } from './lib/browser-analytics.mjs'
 import {
   appFetch,
   cookieHeader,
@@ -125,6 +126,7 @@ async function main() {
       locale: 'en',
       reducedMotion: 'reduce',
     })
+    await answerAnalyticsLocally(context)
     await context.addCookies(
       cookies.map((cookie) => ({ ...cookie, url: baseUrl })),
     )
