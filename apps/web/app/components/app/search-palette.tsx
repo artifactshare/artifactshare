@@ -808,9 +808,11 @@ function PaletteCandidates({
           </div>
         ))}
       </div>
-      <p className="max-nav:hidden text-muted-foreground border-t px-3 py-2 text-xs">
-        {t('search.keyboardHint')}
-      </p>
+      {!retryAt && (
+        <p className="max-nav:hidden text-muted-foreground border-t px-3 py-2 text-xs">
+          {t('search.keyboardHint')}
+        </p>
+      )}
     </Command>
   )
 }

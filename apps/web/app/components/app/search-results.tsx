@@ -752,7 +752,12 @@ function SearchResultRow({
           onClick={() => {
             setExpanded((value) => !value)
             onExpand(item.id, !expanded)
-            if (!group && !expanded && !retryAt) void loadGroup()
+            if (
+              !group &&
+              !expanded &&
+              (!retryAt || Date.now() >= Date.parse(retryAt))
+            )
+              void loadGroup()
           }}
         >
           <IconChevronRight className={expanded ? 'rotate-90' : ''} />
@@ -955,6 +960,7 @@ function useSearchGroup(
   async function loadGroup(cursor?: string, restoring = false) {
     setPending(true)
     setError('')
+    setRetryAt(undefined)
     try {
       do {
         const response = await fetch(

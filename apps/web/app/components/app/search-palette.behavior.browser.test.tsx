@@ -16,6 +16,7 @@ afterEach(() => {
   document.body.replaceChildren()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 test('unselected Enter searches, while arrow-selected Enter opens an authorized file', async () => {
@@ -870,8 +871,7 @@ test('choosing a suggested person clears the partial name and keeps a row that r
 })
 
 test('daily refusal retains keywords, shows UTC reset and suppresses retry; empty history remains available', async () => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-  vi.setSystemTime(new Date('2026-11-20T23:59:59.999Z'))
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-20T23:59:59.999Z'))
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
@@ -902,6 +902,7 @@ test('daily refusal retains keywords, shows UTC reset and suppresses retry; empt
         </AppTopbar>
       ),
     },
+    { path: '/search', element: <p>Results screen</p> },
   ])
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -929,8 +930,9 @@ test('daily refusal retains keywords, shows UTC reset and suppresses retry; empt
 })
 
 test('daily refusal allows deliberate Enter at UTC reset without changing keywords or retrying automatically', async () => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-  vi.setSystemTime(new Date('2026-11-20T23:59:59.999Z'))
+  const now = vi
+    .spyOn(Date, 'now')
+    .mockReturnValue(Date.parse('2026-11-20T23:59:59.999Z'))
   const fetcher = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'https://example.com')
     if (url.pathname.includes('search-logs'))
@@ -959,7 +961,7 @@ test('daily refusal allows deliberate Enter at UTC reset without changing keywor
   expect(fetcher).toHaveBeenCalledTimes(requests)
   await expect.element(field).toHaveValue('alpha')
 
-  vi.setSystemTime(new Date('2026-11-21T00:00:00.000Z'))
+  now.mockReturnValue(Date.parse('2026-11-21T00:00:00.000Z'))
   await waitForBrowserLayout()
   expect(router.state.location.pathname).toBe('/')
   expect(fetcher).toHaveBeenCalledTimes(requests)
@@ -973,4 +975,5 @@ test('daily refusal allows deliberate Enter at UTC reset without changing keywor
     'alpha',
   )
   expect(fetcher).toHaveBeenCalledTimes(requests)
+  await expect.element(page.getByText('Results screen')).toBeVisible()
 })
