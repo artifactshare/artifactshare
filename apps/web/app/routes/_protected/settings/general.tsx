@@ -146,12 +146,13 @@ function WorkspaceNameSection({
 }) {
   const navigation = useNavigation()
   const { t } = useT()
+  const guidanceId = canManage ? undefined : 'name-guidance'
   const pending = navigation.formData?.get('intent') === 'update-workspace-name'
   return (
     <SettingsSection
       title={t('team.workspace.name')}
       description={t('team.workspace.name.body')}
-      guidanceId="name-guidance"
+      guidanceId={guidanceId}
       readOnlyGuidance={
         canManage ? undefined : t('team.workspace.name.readOnly')
       }
@@ -170,10 +171,16 @@ function WorkspaceNameSection({
               defaultValue={name}
               maxLength={WORKSPACE_NAME_MAX_LENGTH}
               disabled={!canManage || pending}
+              aria-describedby={guidanceId}
               required
             />
           </Field>
-          <Button size="sm" type="submit" disabled={!canManage || pending}>
+          <Button
+            size="sm"
+            type="submit"
+            disabled={!canManage || pending}
+            aria-describedby={guidanceId}
+          >
             {t('team.workspace.name.save')}
           </Button>
         </InlineFields>

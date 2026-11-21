@@ -46,7 +46,13 @@ test.each(['en', 'ja'] as const)(
       const section = field.closest('section')!
       expect(field.getAttribute('value')).toBe('Reports')
       expect(field.hasAttribute('disabled')).toBe(restricted)
-      expect(section.querySelector('button')!.disabled).toBe(restricted)
+      const save = section.querySelector('button')!
+      expect(save.disabled).toBe(restricted)
+      const guidance = section.querySelector('#name-guidance')
+      for (const control of [field, save])
+        expect(control.getAttribute('aria-describedby')).toBe(
+          restricted ? guidance!.id : null,
+        )
       expect(
         section.textContent.includes(t('team.workspace.name.readOnly')),
       ).toBe(restricted)

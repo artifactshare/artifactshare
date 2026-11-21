@@ -1331,17 +1331,20 @@ test.each(['members', 'artifacts'] as const)(
         await page.getByRole('option', { name: nextLabel, exact: true }).click()
         await expect.element(trigger).toHaveTextContent(nextLabel)
       }
-      const form = page
-        .getByRole('combobox', { name: fields[0].label, exact: true })
-        .element()
-        .closest('form')!
-      await page
-        .elementLocator(form)
-        .getByRole('button', {
-          name: t('team.members.filter.apply'),
-          exact: true,
-        })
-        .click()
+      const search = () => {
+        const form = page
+          .getByRole('combobox', { name: fields[0].label, exact: true })
+          .element()
+          .closest('form')!
+        return page
+          .elementLocator(form)
+          .getByRole('button', {
+            name: t('team.members.filter.apply'),
+            exact: true,
+          })
+          .click()
+      }
+      await search()
       await vi.waitFor(() => {
         expect(router.state.location.pathname).toBe(path)
         for (const { key, nextValue } of fields)
@@ -1361,6 +1364,14 @@ test.each(['members', 'artifacts'] as const)(
         await expect
           .element(page.getByRole('combobox', { name: label, exact: true }))
           .toHaveTextContent(initialLabel)
+      if (!members) {
+        const restoredKey = router.state.location.key
+        await search()
+        await vi.waitFor(() => {
+          expect(router.state.location.key).not.toBe(restoredKey)
+          expect(router.state.location.search).toBe('?' + initialSearch)
+        })
+      }
     } finally {
       await act(async () => root.unmount())
       router.dispose()

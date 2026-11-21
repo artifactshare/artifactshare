@@ -1,4 +1,4 @@
-import { Window } from 'happy-dom'
+import { FormData, Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { expect, test, vi } from 'vitest'
@@ -32,6 +32,11 @@ test.each(['en', 'ja'] as const)(
         <RouterProvider router={router} />,
       )
       router.dispose()
+      const entries = new FormData(doc.querySelector('form')!)
+      expect(entries.getAll('visibility')).toEqual([
+        filtered ? 'private' : 'all',
+      ])
+      expect(entries.getAll('sort')).toEqual([filtered ? 'size' : 'updated'])
       const pairs = [
         [
           'inventory-visibility-filter',

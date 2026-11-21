@@ -432,7 +432,7 @@ test.each(['en', 'ja'] as const)(
                         linkSharingEnabled,
                         externalPostingEnabled: false,
                         linkExpiryDefaultDays: 14,
-                        linkExpiryMaxDays: 90,
+                        linkExpiryMaxDays: null,
                       },
                     }}
                   />
@@ -458,6 +458,23 @@ test.each(['en', 'ja'] as const)(
           ),
         ).toBe(restricted)
         expect(expiry.hasAttribute('disabled')).toBe(restricted)
+        const guidance = section.querySelector('#expiry-guidance')
+        for (const name of ['defaultDays', 'maxDays']) {
+          const input = section.querySelector(`input[name="${name}"]`)!
+          const ids = input.getAttribute('aria-describedby')!.split(' ')
+          expect(doc.getElementById(ids[0])?.textContent).toBe(
+            t('externalAccess.expiry.days'),
+          )
+          expect(ids.slice(1)).toEqual(restricted ? [guidance!.id] : [])
+        }
+        for (const name of ['defaultUnlimited', 'maxUnlimited']) {
+          const checkbox = section.querySelector(
+            `[data-policy-control="${name}"]`,
+          )!
+          expect(checkbox.getAttribute('aria-describedby')).toBe(
+            restricted ? guidance!.id : null,
+          )
+        }
         expect(doc.querySelector('#save-external-access') !== null).toBe(
           !restricted,
         )

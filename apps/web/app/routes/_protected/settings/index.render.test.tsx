@@ -1,4 +1,4 @@
-import { Window } from 'happy-dom'
+import { FormData, Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { expect, test, vi } from 'vitest'
@@ -108,6 +108,9 @@ test.each(['en', 'ja'] as const)(
         role: filtered ? 'admin' : 'all',
         activity: filtered ? 'active' : 'all',
       })
+      const entries = new FormData(doc.querySelector('form')!)
+      expect(entries.getAll('role')).toEqual([filtered ? 'admin' : 'all'])
+      expect(entries.getAll('activity')).toEqual([filtered ? 'active' : 'all'])
       const pairs = [
         [
           'member-role-filter',

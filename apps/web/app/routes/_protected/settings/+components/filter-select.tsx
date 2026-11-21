@@ -27,7 +27,8 @@ export function FilterSelect({
   return (
     <Field className={className}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Select name={name} value={value} onValueChange={setValue}>
+      <input type="hidden" name={name} value={value} />
+      <Select value={value} onValueChange={setValue}>
         <SelectTrigger id={id} className="w-full">
           <SelectValue>{options[value]}</SelectValue>
         </SelectTrigger>
