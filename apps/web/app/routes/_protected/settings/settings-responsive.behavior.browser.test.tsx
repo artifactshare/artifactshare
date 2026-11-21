@@ -828,8 +828,8 @@ const ledgerPages = () => [
         loaderData={{
           owner: {
             id: 'owner',
-            name: 'Owner',
-            email: 'owner@example.test',
+            name: 'Synthetic owner with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+            email: memberEmails[2],
             image: null,
           },
         }}
@@ -930,6 +930,27 @@ for (const theme of ['light', 'dark'])
                   `${path}: ${element.tagName} ${element.className}`,
                 ).toBeLessThanOrEqual(391)
               }
+              if (path === '/settings/general') {
+                const address = page
+                  .getByText(memberEmails[2], { exact: true })
+                  .element()
+                if (!(address instanceof HTMLElement))
+                  throw new Error('Missing owner address')
+                const name = address.previousElementSibling!
+                const ownerFits = () => [name, address].every(fits)
+                expect(ownerFits()).toBe(true)
+                const originals = [name, address].map((el) => el.className)
+                try {
+                  name.className = 'text-foreground truncate font-medium'
+                  address.className = 'truncate'
+                  expect(ownerFits()).toBe(false)
+                } finally {
+                  ;[name, address].forEach((el, index) => {
+                    el.className = originals[index]
+                  })
+                }
+                expect(ownerFits()).toBe(true)
+              }
               if (path === '/settings') {
                 for (const email of memberEmails) {
                   const address = page
@@ -977,9 +998,9 @@ for (const theme of ['light', 'dark'])
                     throw new Error('Missing member group')
                   const originals = [group, address].map((el) => el.className)
                   try {
-                    // Restore the overflow-relevant markup from a43a3a88:
-                    // only badge-bearing rows had a
-                    // horizontal group; removed members already wrapped anywhere
+                    // Restore the horizontal flex group and remove break-all:
+                    // only badge-bearing rows had a horizontal group.
+                    // Removed members already wrapped anywhere
                     // and fit without the added break-all class.
                     if (badges.length)
                       group.className =

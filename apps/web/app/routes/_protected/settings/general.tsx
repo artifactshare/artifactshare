@@ -107,6 +107,7 @@ export default function GeneralPage({
       <SettingsSection title={t('team.members.owner')}>
         {loaderData.owner ? (
           <TeamUser
+            wrapOnPhone
             name={displayName(loaderData.owner)}
             email={loaderData.owner.email}
           />

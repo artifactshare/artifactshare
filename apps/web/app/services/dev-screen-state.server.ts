@@ -377,8 +377,8 @@ export async function seedDevScreenState(
         email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
         name:
           status === 'active'
-            ? 'Synthetic active member with a deliberately long display name for phone wrapping'
-            : 'Removed member',
+            ? 'Synthetic active member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones'
+            : 'Synthetic removed member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
         image: null,
       }
       await db

@@ -2577,8 +2577,8 @@ test('long-member capture restores active and removed rows without changing unre
           email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
           name:
             status === 'active'
-              ? 'Synthetic active member with a deliberately long display name for phone wrapping'
-              : 'Removed member',
+              ? 'Synthetic active member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones'
+              : 'Synthetic removed member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
           status,
           role: status === 'active' ? 'admin' : 'member',
         })),
@@ -2600,6 +2600,12 @@ test('long-member capture restores active and removed rows without changing unre
         .updateTable('users')
         .set({ email: 'edited@example.test', name: 'Edited member' })
         .where('id', '=', `${workspaceId}-long-member-active`)
+        .execute()
+      await db
+        .updateTable('workspace_members')
+        .set({ role: 'member' })
+        .where('workspace_id', '=', workspaceId)
+        .where('user_id', '=', `${workspaceId}-long-member-active`)
         .execute()
       await db
         .updateTable('workspace_members')
