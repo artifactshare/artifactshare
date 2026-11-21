@@ -38,13 +38,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
+import { FilterSelect } from './+components/filter-select'
 import {
   Table,
   TableBody,
@@ -94,6 +88,17 @@ export const screen = {
   role: 'メンバーと権限を管理する',
   primaryAction: 'メンバーを管理する',
   states: [
+    {
+      id: 'team-member-read-only',
+      description: 'Role guidance for a Team member',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector: '#members-guidance',
+          description: 'Read-only guidance is visible',
+        },
+      },
+    },
     {
       id: 'long-member-addresses',
       description: 'Long active and removed member addresses on phone cards',
@@ -299,6 +304,17 @@ function MemberSection({
     <SettingsSection
       title={t('team.members')}
       description={t('team.members.body')}
+      guidanceId="members-guidance"
+      readOnlyGuidance={
+        currentUserRole === 'owner'
+          ? undefined
+          : canManage
+            ? t('team.members.ownerActions')
+            : [
+                t('team.members.managerActions'),
+                t('team.members.ownerActions'),
+              ].join(' ')
+      }
     >
       <Form
         key={filterKey}
@@ -318,51 +334,31 @@ function MemberSection({
             placeholder={t('team.members.search.placeholder')}
           />
         </Field>
-        <Field className="w-36">
-          <FieldLabel htmlFor="member-role-filter" className="sr-only">
-            {t('team.members.filter.role')}
-          </FieldLabel>
-          <Select name="role" defaultValue={filters.role}>
-            <SelectTrigger id="member-role-filter" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                {t('team.members.filter.role.all')}
-              </SelectItem>
-              <SelectItem value="owner">
-                {t('team.members.role.owner')}
-              </SelectItem>
-              <SelectItem value="admin">
-                {t('team.members.role.admin')}
-              </SelectItem>
-              <SelectItem value="member">
-                {t('team.members.role.member')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field className="w-36">
-          <FieldLabel htmlFor="member-activity-filter" className="sr-only">
-            {t('team.members.filter.activity')}
-          </FieldLabel>
-          <Select name="activity" defaultValue={filters.activity}>
-            <SelectTrigger id="member-activity-filter" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                {t('team.members.filter.activity.all')}
-              </SelectItem>
-              <SelectItem value="active">
-                {t('team.members.filter.activity.active')}
-              </SelectItem>
-              <SelectItem value="inactive">
-                {t('team.members.filter.activity.inactive')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
+        <FilterSelect
+          id="member-role-filter"
+          name="role"
+          label={t('team.members.filter.role')}
+          initialValue={filters.role}
+          className="w-36"
+          options={{
+            all: t('team.members.filter.role.all'),
+            owner: t('team.members.role.owner'),
+            admin: t('team.members.role.admin'),
+            member: t('team.members.role.member'),
+          }}
+        />
+        <FilterSelect
+          id="member-activity-filter"
+          name="activity"
+          label={t('team.members.filter.activity')}
+          initialValue={filters.activity}
+          className="w-36"
+          options={{
+            all: t('team.members.filter.activity.all'),
+            active: t('team.members.filter.activity.active'),
+            inactive: t('team.members.filter.activity.inactive'),
+          }}
+        />
         <Button type="submit" variant="outline" size="sm">
           {t('team.members.filter.apply')}
         </Button>

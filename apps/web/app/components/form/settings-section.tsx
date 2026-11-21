@@ -6,12 +6,16 @@ export function SettingsSection({
   id,
   title,
   description,
+  readOnlyGuidance,
+  guidanceId,
   actions,
   children,
 }: {
   id?: string
   title: ReactNode
   description?: ReactNode
+  readOnlyGuidance?: string
+  guidanceId?: string
   actions?: ReactNode
   children?: ReactNode
 }) {
@@ -26,6 +30,11 @@ export function SettingsSection({
                 {description}
               </TeamMutedParagraph>
             ) : null}
+            {readOnlyGuidance && (
+              <TeamMutedParagraph id={guidanceId} className="m-0 mt-1">
+                {readOnlyGuidance}
+              </TeamMutedParagraph>
+            )}
           </div>
           {actions}
         </div>

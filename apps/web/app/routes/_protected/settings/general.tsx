@@ -43,6 +43,17 @@ export const screen = {
   primaryAction: '設定を更新する',
   states: [
     {
+      id: 'team-member-read-only',
+      description: 'Role guidance for a Team member',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector: '#name-guidance',
+          description: 'Read-only guidance is visible',
+        },
+      },
+    },
+    {
       id: 'long-owner',
       description: 'Long owner name and email wrap within the phone layout',
       setup: {
@@ -140,6 +151,10 @@ function WorkspaceNameSection({
     <SettingsSection
       title={t('team.workspace.name')}
       description={t('team.workspace.name.body')}
+      guidanceId="name-guidance"
+      readOnlyGuidance={
+        canManage ? undefined : t('team.workspace.name.readOnly')
+      }
     >
       <Form method="post">
         <input type="hidden" name="intent" value="update-workspace-name" />

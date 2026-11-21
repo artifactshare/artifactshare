@@ -324,7 +324,8 @@ export const componentCatalog: ComponentCatalogEntry[] = [
   {
     file: 'form/settings-section',
     name: 'SettingsSection',
-    purpose: 'h2 + 説明 + 右端 actions + 内容。内容の gap-field を所有する。',
+    purpose:
+      'h2 + 説明 + 読み取り専用の理由（任意） + 右端 actions + 内容。内容の gap-field を所有する。',
     variants: [],
     upstreamDiff: null,
   },

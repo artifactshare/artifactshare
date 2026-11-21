@@ -42,6 +42,17 @@ export const screen = {
   primaryAction: 'アクセスを設定する',
   states: [
     {
+      id: 'team-member-read-only',
+      description: 'Role guidance for a Team member',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector: '#expiry-guidance',
+          description: 'Read-only guidance is visible',
+        },
+      },
+    },
+    {
       id: 'no-expiration',
       description: 'Unlimited default and maximum expiry',
       setup: {
@@ -433,6 +444,15 @@ function ExternalAccessForm({
           draft={draft}
           onChange={setDraft}
           disabled={expiryDisabled}
+          guidance={
+            canEditExpiry
+              ? undefined
+              : t(
+                  policy.plan === 'team'
+                    ? 'externalAccess.expiry.managerOnly'
+                    : 'externalAccess.expiry.ownerOnly',
+                )
+          }
           shortened={shortened}
         />
         {previewResult === null ? error : null}
@@ -504,6 +524,20 @@ function ExpiryConfirmation({
   )
 }
 
+function resumeGuidanceKey(
+  policy: Route.ComponentProps['loaderData']['policy'],
+  isOwner: boolean,
+) {
+  if (isOwner || policy.plan === 'team') return
+  if (policy.plan === 'plus' && !policy.externalPostingEnabled) {
+    return policy.linkSharingEnabled
+      ? 'externalAccess.resume.ownerOnly.externalPosting'
+      : 'externalAccess.resume.ownerOnly.both'
+  }
+  if (!policy.linkSharingEnabled)
+    return 'externalAccess.resume.ownerOnly.linkSharing'
+}
+
 function ExternalAccessPolicySection({
   policy,
   draft,
@@ -525,10 +559,12 @@ function ExternalAccessPolicySection({
 }) {
   const { t } = useT()
   const switchesDisabled = !canEditSwitches || pending
+  const resumeGuidance = resumeGuidanceKey(policy, isOwner)
   return (
     <SettingsSection
       title={t('externalAccess.title')}
       description={t('externalAccess.body')}
+      readOnlyGuidance={resumeGuidance && t(resumeGuidance)}
     >
       {canEdit ? (
         <div className="space-y-2">
@@ -780,11 +816,13 @@ function ExternalAccessExpiryFields({
   draft,
   onChange,
   disabled,
+  guidance,
   shortened,
 }: {
   draft: ExternalAccessDraft
   onChange: (draft: ExternalAccessDraft) => void
   disabled: boolean
+  guidance?: string
   shortened: string | null
 }) {
   const { t, tPlural } = useT()
@@ -794,6 +832,8 @@ function ExternalAccessExpiryFields({
     <SettingsSection
       title={t('externalAccess.expiry.title')}
       description={t('externalAccess.expiry.body')}
+      guidanceId="expiry-guidance"
+      readOnlyGuidance={guidance}
     >
       <div className="gap-field flex flex-col">
         <SettingsSubsection title={t('externalAccess.expiry.default')}>
