@@ -7,32 +7,32 @@ function pair(model, effort) {
 }
 
 const orchestration = Object.freeze({
-  primary: pair('gpt-6.1-sol', 'medium'),
+  primary: pair('gpt-6.2-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const specificationAuthoring = Object.freeze({
-  codex: pair('gpt-6.1-sol', 'medium'),
+  codex: pair('gpt-6.2-sol', 'medium'),
 })
 
 const specificationReviews = Object.freeze({
-  codex: pair('gpt-6.1-sol', 'medium'),
+  codex: pair('gpt-6.2-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const initialImplementation = Object.freeze({
-  codex: pair('gpt-6-astra', 'medium'),
+  codex: pair('gpt-6.2-astra', 'medium'),
 })
 
 const reviewFindingRepairs = Object.freeze({
-  codex: pair('gpt-6-astra', 'medium'),
+  codex: pair('gpt-6.2-astra', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 // The Claude side runs Claude Code's `/code-review`; its effort is the
 // review level, an owner-approved exception to the medium Claude default.
 const finalReviews = Object.freeze({
-  codex: pair('gpt-6.1-sol', 'medium'),
+  codex: pair('gpt-6.2-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
@@ -42,12 +42,12 @@ const roundCapConsultation = Object.freeze({
 })
 
 const supportingExploration = Object.freeze({
-  codex: pair('gpt-6.1-sol', 'medium'),
+  codex: pair('gpt-6.2-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
 const uiCritique = Object.freeze({
-  codex: pair('gpt-6-astra', 'medium'),
+  codex: pair('gpt-6.2-astra', 'medium'),
   claude: Object.freeze({
     visual: pair('claude-opus-5-5', 'medium'),
     task: pair('claude-opus-5-5', 'medium'),

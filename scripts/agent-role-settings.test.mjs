@@ -35,7 +35,7 @@ test('role settings are deeply frozen data consumed by review launchers', () => 
 
 test('the Claude final review runs /code-review medium and the cap consults Fable', () => {
   assert.deepEqual(finalReviews, {
-    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.2-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.deepEqual(roundCapConsultation, {
@@ -45,34 +45,34 @@ test('the Claude final review runs /code-review medium and the cap consults Fabl
 
 test('initial implementation uses one Astra profile', () => {
   assert.deepEqual(initialImplementation, {
-    codex: { model: 'gpt-6-astra', effort: 'medium' },
+    codex: { model: 'gpt-6.2-astra', effort: 'medium' },
   })
 })
 
 test('orchestration and specification roles keep their approved pairs', () => {
   assert.deepEqual(orchestration, {
-    primary: { model: 'gpt-6.1-sol', effort: 'medium' },
+    primary: { model: 'gpt-6.2-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.deepEqual(specificationAuthoring, {
-    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.2-sol', effort: 'medium' },
   })
   assert.deepEqual(specificationReviews, {
-    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.2-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
 })
 
 test('review-finding repairs use Astra and Claude at medium', () => {
   assert.deepEqual(reviewFindingRepairs, {
-    codex: { model: 'gpt-6-astra', effort: 'medium' },
+    codex: { model: 'gpt-6.2-astra', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.equal(Object.isFrozen(reviewFindingRepairs.codex), true)
 })
 
 test('UI aliases remain separate from the final implementation pair', () => {
-  assert.equal(uiCritique.codex.model, 'gpt-6-astra')
+  assert.equal(uiCritique.codex.model, 'gpt-6.2-astra')
   assert.equal(uiCritique.codex.effort, 'medium')
   assert.equal(uiCritique.claude.visual.model, 'claude-opus-5-5')
   assert.equal(uiCritique.claude.visual.effort, 'medium')
@@ -83,7 +83,7 @@ test('UI aliases remain separate from the final implementation pair', () => {
 
 test('supporting exploration uses Sol and Claude at medium', () => {
   assert.deepEqual(supportingExploration, {
-    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
+    codex: { model: 'gpt-6.2-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
 })
