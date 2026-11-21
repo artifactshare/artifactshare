@@ -465,7 +465,7 @@ function MemberRow({
   return (
     <TableRow className="flex min-w-0 flex-col md:table-row">
       <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
-        <div className="flex min-w-0 items-center gap-[var(--spacing-2)]">
+        <div className="flex min-w-0 flex-col items-start gap-[var(--spacing-2)] md:flex-row md:items-center">
           <TeamUser
             name={displayName(member)}
             email={member.email}

@@ -16,7 +16,6 @@ import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import type { Visibility } from '~/lib/shareable-types'
 import type { InventoryArtifactEntry } from '~/lib/team-management'
 import { nameCellClassName } from './inventory'
-import { truncateCellClassName } from '~/components/form/settings-text-styles'
 
 const ARTIFACT_HEADERS = [
   'team.inventory.name',
@@ -145,16 +144,25 @@ function ArtifactRow({
       </TableCell>
       <TableCell>
         <span
-          className={truncateCellClassName}
+          className="block max-w-40 truncate"
           title={row.owner.name ?? row.owner.email}
         >
           {row.owner.name ?? row.owner.email}
         </span>
       </TableCell>
       <TableCell>
-        {row.location.kind === 'inbox'
-          ? t('team.inventory.home')
-          : row.location.name}
+        <span
+          className="block max-w-40 truncate"
+          title={
+            row.location.kind === 'inbox'
+              ? t('team.inventory.home')
+              : row.location.name
+          }
+        >
+          {row.location.kind === 'inbox'
+            ? t('team.inventory.home')
+            : row.location.name}
+        </span>
       </TableCell>
       <TableCell>
         <VisibilityChip

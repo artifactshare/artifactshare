@@ -20,7 +20,7 @@ export function TeamUser({
         <TeamMuted
           className={cn(
             wrapOnPhone &&
-              'max-md:overflow-visible max-md:[overflow-wrap:anywhere] max-md:whitespace-normal',
+              'max-md:overflow-visible max-md:[overflow-wrap:anywhere] max-md:break-all max-md:whitespace-normal',
           )}
         >
           {email}

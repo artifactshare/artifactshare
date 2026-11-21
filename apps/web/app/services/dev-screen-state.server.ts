@@ -423,8 +423,7 @@ export async function seedDevScreenState(
     await db
       .updateTable('users')
       .set({
-        email:
-          'nightly-report-automation-with-a-long-destination-address@bots.artifactshare.invalid',
+        email: `nightly-report-automation-with-a-long-destination-address-${workspaceId}@bots.artifactshare.invalid`,
       })
       .where('id', '=', `${workspaceId}-bot-active`)
       .execute()

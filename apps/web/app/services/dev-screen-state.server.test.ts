@@ -2482,7 +2482,7 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
       expect(
         bots.find((bot) => bot.id === `${workspaceId}-bot-active`)?.email,
       ).toBe(
-        'nightly-report-automation-with-a-long-destination-address@bots.artifactshare.invalid',
+        `nightly-report-automation-with-a-long-destination-address-${workspaceId}@bots.artifactshare.invalid`,
       )
       await seedDevScreenState(
         db,
@@ -2598,6 +2598,50 @@ test('long-member capture restores active and removed rows without changing unre
         .where('user_id', '=', `${workspaceId}-long-member-removed`)
         .execute()
     }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('long bot email capture can be seeded in two plan workspaces', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    const emails = []
+    for (const plan of ['plus', 'team'] as const) {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings-bots/long-email',
+        now,
+        plan,
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: `${userId}@example.test`,
+          name: 'Owner',
+          email_verified: 1,
+          workspace_id: workspaceId,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        'settings-bots/long-email',
+        workspaceId,
+        userId,
+        now,
+      )
+      const bots = await listWorkspaceBots(db, workspaceId, now)
+      const email = bots.find(
+        (bot) => bot.id === `${workspaceId}-bot-active`,
+      )?.email
+      emails.push(email)
+    }
+    expect(new Set(emails).size).toBe(2)
   } finally {
     await db.destroy()
   }

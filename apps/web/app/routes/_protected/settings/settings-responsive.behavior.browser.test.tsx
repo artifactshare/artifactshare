@@ -200,6 +200,10 @@ const artifact = {
 }
 const longEmail =
   'nightly-report-automation-with-a-long-destination-address@bots.artifactshare.invalid'
+const memberEmails = ['active', 'removed', 'owner'].map(
+  (status) =>
+    `${status}-member-with-a-long-synthetic-address-dev-screen-team-settings-long-member-addresses@example.test`,
+)
 const bot = {
   id: 'bot',
   name: 'W'.repeat(30),
@@ -779,7 +783,7 @@ const ledgerPages = () => [
               {
                 id: 'long-member',
                 name: 'Active member',
-                email: longEmail,
+                email: memberEmails[0],
                 image: null,
                 role: 'admin',
                 isAdmin: true,
@@ -787,15 +791,26 @@ const ledgerPages = () => [
                 lastContributedAt: null,
                 pendingUploads: 0,
               },
+              {
+                id: 'owner',
+                name: 'Team Owner',
+                email: memberEmails[2],
+                image: null,
+                role: 'owner',
+                isAdmin: true,
+                firstContributedAt: null,
+                lastContributedAt: null,
+                pendingUploads: 0,
+              },
             ],
-            total: 1,
+            total: 2,
             page: 1,
           },
           removedMembers: [
             {
               id: 'long-removed-member',
               name: 'Removed member',
-              email: `removed-${longEmail}`,
+              email: memberEmails[1],
               image: null,
               ownedArtifactCount: 2,
             },
@@ -916,7 +931,7 @@ for (const theme of ['light', 'dark'])
                 ).toBeLessThanOrEqual(391)
               }
               if (path === '/settings') {
-                for (const email of [longEmail, `removed-${longEmail}`]) {
+                for (const email of memberEmails) {
                   const address = page
                     .getByText(email, { exact: true })
                     .element()
@@ -925,33 +940,66 @@ for (const theme of ['light', 'dark'])
                   const table = address.closest(
                     '[data-slot="table-container"]',
                   )!
-                  const memberFits = () => fits(address) && fits(table)
-                  expect(memberFits()).toBe(true)
+                  const badges = [
+                    ...cell.querySelectorAll('[data-slot="badge"]'),
+                  ]
+                  const memberFits = () => {
+                    const text = document.createRange()
+                    text.selectNodeContents(address)
+                    const cellBounds = cell.getBoundingClientRect()
+                    return (
+                      [row, cell, address, table, ...badges].every(fits) &&
+                      badges.every(
+                        (badge) =>
+                          badge.getBoundingClientRect().top >=
+                          address.getBoundingClientRect().bottom - 1,
+                      ) &&
+                      [...text.getClientRects()].every(
+                        (rect) =>
+                          rect.left >= cellBounds.left - 1 &&
+                          rect.right <= cellBounds.right + 1,
+                      )
+                    )
+                  }
+                  expect(memberFits(), email).toBe(true)
+                  for (const badge of badges) {
+                    expect(
+                      badge.getBoundingClientRect().top,
+                    ).toBeGreaterThanOrEqual(
+                      address.getBoundingClientRect().bottom - 1,
+                    )
+                  }
                   expect(
                     address.getBoundingClientRect().height,
                   ).toBeGreaterThan(
                     parseFloat(getComputedStyle(address).lineHeight),
                   )
-                  const originals = [row, cell, address].map(
+                  const group = cell.firstElementChild!
+                  if (!(group instanceof HTMLElement))
+                    throw new Error('Missing member group')
+                  const originals = [group, address].map(
                     (el) => el.style.cssText,
                   )
                   try {
-                    // Restore the original table row, nowrap cell and truncated
-                    // unconstrained address. The same bounds check must reject it.
-                    row.style.display = 'table-row'
-                    cell.style.whiteSpace = 'nowrap'
-                    address.style.whiteSpace = 'nowrap'
-                    address.style.overflowWrap = 'normal'
-                    address.style.overflow = 'hidden'
+                    // Restore the reviewed horizontal badges; for the badge-free
+                    // removed row, inject an unbreakable address to check text bounds.
+                    group.style.flexDirection = 'row'
+                    group.style.alignItems = 'center'
+                    address.style.wordBreak = 'normal'
+                    if (!badges.length) {
+                      address.style.overflowWrap = 'normal'
+                      address.style.whiteSpace = 'nowrap'
+                    }
                     expect(memberFits()).toBe(false)
                   } finally {
-                    ;[row, cell, address].forEach((el, index) => {
+                    ;[group, address].forEach((el, index) => {
                       el.style.cssText = originals[index]
                     })
                   }
                   expect(memberFits()).toBe(true)
                 }
               }
+
               if (
                 locale === 'en' &&
                 [
@@ -1062,6 +1110,50 @@ test.each(
       if (previousTheme === undefined)
         delete document.documentElement.dataset.theme
       else document.documentElement.dataset.theme = previousTheme
+      await page.viewport(1280, 800)
+    }
+  },
+)
+
+// Native table sizing and clipping cannot be established by static HTML tests.
+test.each(['en', 'ja'] as const)(
+  'desktop Files keeps all six columns visible (%s)',
+  async (locale) => {
+    language.locale = locale
+    await page.viewport(1440, 900)
+    try {
+      const entry = ledgerPages().find(
+        ({ path }) => path === '/settings/inventory/artifacts',
+      )!
+      await withScreen(
+        entry.content,
+        async (container) => {
+          const table = container.querySelector('table')!
+          const wrapper = table.parentElement!
+          const cells = [...table.querySelectorAll('th, td')]
+          const columnsFit = () => fits(wrapper) && cells.every(fits)
+          expect(table.querySelectorAll('th')).toHaveLength(6)
+          expect(columnsFit()).toBe(true)
+          const row = table.querySelector('tbody tr')!
+          const owner = row.children[1].querySelector('span')!
+          const location = row.children[2].querySelector('span')!
+          expect(owner.title).toBe(artifact.owner.name)
+          expect(location.title).toBe(artifact.location.name)
+          const originals = [owner, location].map((el) => el.style.cssText)
+          try {
+            owner.style.maxWidth = '24rem'
+            location.style.maxWidth = 'none'
+            expect(columnsFit()).toBe(false)
+          } finally {
+            ;[owner, location].forEach((el, index) => {
+              el.style.cssText = originals[index]
+            })
+          }
+          expect(columnsFit()).toBe(true)
+        },
+        entry.path,
+      )
+    } finally {
       await page.viewport(1280, 800)
     }
   },
