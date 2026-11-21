@@ -480,6 +480,8 @@ it('search presentation joins keep actor recency and authorized facet counts on 
     }),
     actor,
     { query: 'presentation', filters: {}, sort: 'relevance', pageSize: 20 },
+    'screen',
+    () => new Date(now),
   )
   expect(result).toMatchObject({
     items: [

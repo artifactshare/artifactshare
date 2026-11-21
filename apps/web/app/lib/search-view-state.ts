@@ -92,8 +92,10 @@ export function showSearch(key: string) {
   }
 }
 function returnedSearch(url: URL) {
-  const key = (window.history.state as { key?: string } | null)?.key
-  if (!key || key === shown) return undefined
+  // React Router reads an entry without a stored key as "default".
+  const key =
+    (window.history.state as { key?: string } | null)?.key ?? 'default'
+  if (key === shown) return undefined
   if (
     url.pathname + url.search !==
     window.location.pathname + window.location.search
