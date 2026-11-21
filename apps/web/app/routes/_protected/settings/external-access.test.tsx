@@ -402,11 +402,11 @@ test.each(['en', 'ja'] as const)(
               '外部からの投稿を再開できるのは、ワークスペースのオーナーだけです。',
             both: 'リンク共有と外部からの投稿を再開できるのは、ワークスペースのオーナーだけです。',
           }
-    for (const [plan, linkSharingEnabled] of [
-      ['free', false],
-      ['plus', false],
-      ['plus', true],
-      ['team', false],
+    for (const [plan, linkSharingEnabled, linkExpiryMaxDays] of [
+      ['free', false, 90],
+      ['plus', false, 90],
+      ['plus', true, null],
+      ['team', false, 90],
     ] as const) {
       for (const role of ['member', 'admin', 'owner'] as const) {
         const restricted =
@@ -432,7 +432,7 @@ test.each(['en', 'ja'] as const)(
                         linkSharingEnabled,
                         externalPostingEnabled: false,
                         linkExpiryDefaultDays: 14,
-                        linkExpiryMaxDays: null,
+                        linkExpiryMaxDays,
                       },
                     }}
                   />
@@ -457,20 +457,27 @@ test.each(['en', 'ja'] as const)(
             ),
           ),
         ).toBe(restricted)
-        expect(expiry.hasAttribute('disabled')).toBe(restricted)
         const guidance = section.querySelector('#expiry-guidance')
         for (const name of ['defaultDays', 'maxDays']) {
           const input = section.querySelector(`input[name="${name}"]`)!
+          expect(input.hasAttribute('disabled')).toBe(
+            restricted || (name === 'maxDays' && linkExpiryMaxDays === null),
+          )
           const ids = input.getAttribute('aria-describedby')!.split(' ')
           expect(doc.getElementById(ids[0])?.textContent).toBe(
             t('externalAccess.expiry.days'),
           )
           expect(ids.slice(1)).toEqual(restricted ? [guidance!.id] : [])
         }
-        for (const name of ['defaultUnlimited', 'maxUnlimited']) {
+        const unlimitedControls =
+          linkExpiryMaxDays === null
+            ? ['defaultUnlimited', 'maxUnlimited']
+            : ['maxUnlimited']
+        for (const name of unlimitedControls) {
           const checkbox = section.querySelector(
             `[data-policy-control="${name}"]`,
           )!
+          expect(checkbox.hasAttribute('disabled')).toBe(restricted)
           expect(checkbox.getAttribute('aria-describedby')).toBe(
             restricted ? guidance!.id : null,
           )
