@@ -42,6 +42,17 @@ export const screen = {
   primaryAction: 'アクセスを設定する',
   states: [
     {
+      id: 'team-member-read-only',
+      description: 'Role guidance for a Team member',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector: '#expiry-guidance',
+          description: 'Read-only guidance is visible',
+        },
+      },
+    },
+    {
       id: 'no-expiration',
       description: 'Unlimited default and maximum expiry',
       setup: {
@@ -433,6 +444,15 @@ function ExternalAccessForm({
           draft={draft}
           onChange={setDraft}
           disabled={expiryDisabled}
+          guidance={
+            canEditExpiry
+              ? undefined
+              : t(
+                  policy.plan === 'team'
+                    ? 'externalAccess.expiry.managerOnly'
+                    : 'externalAccess.expiry.ownerOnly',
+                )
+          }
           shortened={shortened}
         />
         {previewResult === null ? error : null}
@@ -504,6 +524,20 @@ function ExpiryConfirmation({
   )
 }
 
+function resumeGuidanceKey(
+  policy: Route.ComponentProps['loaderData']['policy'],
+  isOwner: boolean,
+) {
+  if (isOwner || policy.plan === 'team') return
+  if (policy.plan === 'plus' && !policy.externalPostingEnabled) {
+    return policy.linkSharingEnabled
+      ? 'externalAccess.resume.ownerOnly.externalPosting'
+      : 'externalAccess.resume.ownerOnly.both'
+  }
+  if (!policy.linkSharingEnabled)
+    return 'externalAccess.resume.ownerOnly.linkSharing'
+}
+
 function ExternalAccessPolicySection({
   policy,
   draft,
@@ -525,10 +559,12 @@ function ExternalAccessPolicySection({
 }) {
   const { t } = useT()
   const switchesDisabled = !canEditSwitches || pending
+  const resumeGuidance = resumeGuidanceKey(policy, isOwner)
   return (
     <SettingsSection
       title={t('externalAccess.title')}
       description={t('externalAccess.body')}
+      readOnlyGuidance={resumeGuidance && t(resumeGuidance)}
     >
       {canEdit ? (
         <div className="space-y-2">
@@ -780,20 +816,25 @@ function ExternalAccessExpiryFields({
   draft,
   onChange,
   disabled,
+  guidance,
   shortened,
 }: {
   draft: ExternalAccessDraft
   onChange: (draft: ExternalAccessDraft) => void
   disabled: boolean
+  guidance?: string
   shortened: string | null
 }) {
   const { t, tPlural } = useT()
+  const guidanceId = guidance ? 'expiry-guidance' : undefined
   const defaultExpirationUnitId = useId()
   const maximumExpirationUnitId = useId()
   return (
     <SettingsSection
       title={t('externalAccess.expiry.title')}
       description={t('externalAccess.expiry.body')}
+      guidanceId={guidanceId}
+      readOnlyGuidance={guidance}
     >
       <div className="gap-field flex flex-col">
         <SettingsSubsection title={t('externalAccess.expiry.default')}>
@@ -816,7 +857,11 @@ function ExternalAccessExpiryFields({
                 disabled={disabled || draft.defaultUnlimited}
                 required={!draft.defaultUnlimited}
                 aria-label={t('externalAccess.expiry.default')}
-                aria-describedby={defaultExpirationUnitId}
+                aria-describedby={
+                  guidanceId
+                    ? `${defaultExpirationUnitId} ${guidanceId}`
+                    : defaultExpirationUnitId
+                }
               />
               <span
                 id={defaultExpirationUnitId}
@@ -830,6 +875,7 @@ function ExternalAccessExpiryFields({
                 <Checkbox
                   name="defaultUnlimited"
                   data-policy-control="defaultUnlimited"
+                  aria-describedby={guidanceId}
                   value="true"
                   checked={draft.defaultUnlimited}
                   disabled={disabled}
@@ -862,7 +908,11 @@ function ExternalAccessExpiryFields({
                 disabled={disabled || draft.maxUnlimited}
                 required={!draft.maxUnlimited}
                 aria-label={t('externalAccess.expiry.max')}
-                aria-describedby={maximumExpirationUnitId}
+                aria-describedby={
+                  guidanceId
+                    ? `${maximumExpirationUnitId} ${guidanceId}`
+                    : maximumExpirationUnitId
+                }
               />
               <span
                 id={maximumExpirationUnitId}
@@ -875,6 +925,7 @@ function ExternalAccessExpiryFields({
               <Checkbox
                 name="maxUnlimited"
                 data-policy-control="maxUnlimited"
+                aria-describedby={guidanceId}
                 value="true"
                 checked={draft.maxUnlimited}
                 disabled={disabled}

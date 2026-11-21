@@ -696,7 +696,10 @@ export function BotTokenDialog({
         if (!open && stored) onClose()
       }}
     >
-      <DialogContent>
+      <DialogContent
+        className="max-h-dvh overflow-y-auto"
+        showCloseButton={stored}
+      >
         <DialogHeader>
           <DialogTitle>{t('team.bots.token.title')}</DialogTitle>
           <DialogDescription>{t('team.bots.token.body')}</DialogDescription>

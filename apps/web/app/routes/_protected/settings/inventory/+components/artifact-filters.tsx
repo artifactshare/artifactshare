@@ -1,13 +1,6 @@
 import { Button } from '~/components/ui/button'
 import { Form } from 'react-router'
-import { Field, FieldLabel } from '~/components/ui/field'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
+import { FilterSelect } from '../../+components/filter-select'
 import { useT } from '~/hooks/use-t'
 import { visibilityLabel } from './artifacts-table'
 
@@ -23,45 +16,31 @@ export function ArtifactFilters({
       method="get"
       className="flex flex-wrap items-end gap-[var(--spacing-3)]"
     >
-      <Field className="w-36">
-        <FieldLabel htmlFor="inventory-visibility-filter" className="sr-only">
-          {t('team.inventory.filter')}
-        </FieldLabel>
-        <Select name="visibility" defaultValue={filters.visibility}>
-          <SelectTrigger id="inventory-visibility-filter" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(['all', 'link', 'workspace', 'project', 'private'] as const).map(
-              (v) => (
-                <SelectItem key={v} value={v}>
-                  {v === 'all'
-                    ? t('team.inventory.filter.all')
-                    : visibilityLabel(v, t)}
-                </SelectItem>
-              ),
-            )}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field className="w-44">
-        <FieldLabel htmlFor="inventory-sort-filter" className="sr-only">
-          {t('team.inventory.sort')}
-        </FieldLabel>
-        <Select name="sort" defaultValue={filters.sort}>
-          <SelectTrigger id="inventory-sort-filter" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="updated">
-              {t('team.inventory.sort.updated')}
-            </SelectItem>
-            <SelectItem value="size">
-              {t('team.inventory.sort.size')}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
+      <FilterSelect
+        id="inventory-visibility-filter"
+        name="visibility"
+        label={t('team.inventory.filter')}
+        initialValue={filters.visibility}
+        className="w-36"
+        options={{
+          all: t('team.inventory.filter.all'),
+          link: visibilityLabel('link', t),
+          workspace: visibilityLabel('workspace', t),
+          project: visibilityLabel('project', t),
+          private: visibilityLabel('private', t),
+        }}
+      />
+      <FilterSelect
+        id="inventory-sort-filter"
+        name="sort"
+        label={t('team.inventory.sort')}
+        initialValue={filters.sort}
+        className="w-44"
+        options={{
+          updated: t('team.inventory.sort.updated'),
+          size: t('team.inventory.sort.size'),
+        }}
+      />
       <Button type="submit" variant="outline" size="sm">
         {t('team.members.filter.apply')}
       </Button>

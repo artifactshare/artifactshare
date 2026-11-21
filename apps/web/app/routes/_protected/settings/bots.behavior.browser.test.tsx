@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import { BotSection } from './+components/bot-section'
 import '~/app.css'
@@ -539,12 +539,66 @@ test.each([
           .querySelectorAll('p')) {
           expect(getComputedStyle(paragraph).textOverflow).not.toBe('ellipsis')
         }
-        await page.getByRole('checkbox').click()
-        await page
-          .getByRole('button', { name: 'Close', exact: true })
-          .first()
-          .click()
-        await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
+        const tokenDialog = page.getByRole('dialog')
+        const token = page.getByTestId('bot-token')
+        const panel = tokenDialog.element()
+        const close = tokenDialog.getByRole('button', {
+          name: 'Close',
+          exact: true,
+        })
+        const checkbox = tokenDialog.getByRole('checkbox')
+        await waitForBrowserLayout()
+        await Promise.all(
+          panel.getAnimations().map((animation) => animation.finished),
+        )
+        expect(panel.getBoundingClientRect().top).toBeGreaterThanOrEqual(0)
+        expect(panel.getBoundingClientRect().bottom).toBeLessThanOrEqual(844)
+        await page.viewport(844, 390)
+        await waitForBrowserLayout()
+        await vi.waitFor(() => {
+          const rect = panel.getBoundingClientRect()
+          expect(rect.top).toBeGreaterThanOrEqual(0)
+          expect(rect.bottom).toBeLessThanOrEqual(390)
+        })
+        const panelBounds = panel.getBoundingClientRect()
+        expect(panel.scrollHeight).toBeGreaterThan(panel.clientHeight)
+        for (const text of [
+          'Bot token',
+          bindI18n('en').t('team.bots.token.body'),
+        ]) {
+          const rect = tokenDialog
+            .getByText(text, { exact: true })
+            .element()
+            .getBoundingClientRect()
+          expect(rect.top).toBeGreaterThanOrEqual(panelBounds.top)
+          expect(rect.bottom).toBeLessThanOrEqual(panelBounds.bottom)
+        }
+        expect(panel.querySelector('[data-slot="dialog-close"]')).toBeNull()
+        await expect.element(close).toBeDisabled()
+        await userEvent.keyboard('{Escape}')
+        await waitForBrowserLayout()
+        await expect.element(token).toBeVisible()
+        await expect.element(tokenDialog).toBeVisible()
+        const overlay = document.querySelector('[data-slot="dialog-overlay"]')!
+        await userEvent.click(overlay, { position: { x: 5, y: 5 } })
+        await waitForBrowserLayout()
+        await expect.element(token).toBeVisible()
+        await expect.element(tokenDialog).toBeVisible()
+        panel.scrollTop = panel.scrollHeight
+        await waitForBrowserLayout()
+        for (const element of [command, checkbox.element(), close.element()]) {
+          const rect = element.getBoundingClientRect()
+          expect(rect.top).toBeGreaterThanOrEqual(panelBounds.top)
+          expect(rect.bottom).toBeLessThanOrEqual(panelBounds.bottom)
+        }
+        await checkbox.click()
+        const footerClose = page.elementLocator(
+          panel.querySelector('[data-slot="dialog-footer"] button')!,
+        )
+        await expect.element(footerClose).toBeEnabled()
+        await footerClose.click()
+        await expect.element(tokenDialog).not.toBeInTheDocument()
+        await expect.element(token).not.toBeInTheDocument()
       }
       await page
         .getByRole('button', { name: triggerLabel, exact: true })
@@ -558,6 +612,7 @@ test.each([
       await act(async () => root.unmount())
       router.dispose()
       container.remove()
+      await page.viewport(1280, 800)
     }
   },
 )

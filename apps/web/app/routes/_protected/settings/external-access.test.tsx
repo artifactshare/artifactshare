@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   createMemoryRouter,
@@ -379,6 +380,141 @@ test.each([
       }
     } finally {
       router.dispose()
+    }
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'expiry and paused sharing explain plan-specific permissions in %s',
+  (locale) => {
+    language.locale = locale
+    const { t } = bindI18n(locale)
+    const resumeGuidance =
+      locale === 'en'
+        ? {
+            link: 'Only the workspace owner can resume link sharing.',
+            posting: 'Only the workspace owner can resume external posting.',
+            both: 'Only the workspace owner can resume link sharing and external posting.',
+          }
+        : {
+            link: 'リンク共有を再開できるのは、ワークスペースのオーナーだけです。',
+            posting:
+              '外部からの投稿を再開できるのは、ワークスペースのオーナーだけです。',
+            both: 'リンク共有と外部からの投稿を再開できるのは、ワークスペースのオーナーだけです。',
+          }
+    for (const [plan, linkSharingEnabled, linkExpiryMaxDays] of [
+      ['free', false, 90],
+      ['plus', false, 90],
+      ['plus', true, null],
+      ['team', false, 90],
+    ] as const) {
+      for (const role of ['member', 'admin', 'owner'] as const) {
+        const restricted =
+          plan === 'team' ? role === 'member' : role !== 'owner'
+        const router = createMemoryRouter([
+          {
+            element: (
+              <Outlet
+                context={{
+                  currentUserRole: role,
+                  currentUserIsAdmin: role !== 'member',
+                }}
+              />
+            ),
+            children: [
+              {
+                path: '/',
+                element: (
+                  <ExternalAccessPage
+                    loaderData={{
+                      policy: {
+                        plan,
+                        linkSharingEnabled,
+                        externalPostingEnabled: false,
+                        linkExpiryDefaultDays: 14,
+                        linkExpiryMaxDays,
+                      },
+                    }}
+                  />
+                ),
+              },
+            ],
+          },
+        ])
+        const doc = new Window().document
+        doc.body.innerHTML = renderToStaticMarkup(
+          <RouterProvider router={router} />,
+        )
+        router.dispose()
+        const expiry = doc.querySelector('[name="defaultDays"]')!
+        const section = expiry.closest('section:has(h2)')!
+        expect(
+          section.textContent.includes(
+            t(
+              plan === 'team'
+                ? 'externalAccess.expiry.managerOnly'
+                : 'externalAccess.expiry.ownerOnly',
+            ),
+          ),
+        ).toBe(restricted)
+        const guidance = section.querySelector('#expiry-guidance')
+        for (const name of ['defaultDays', 'maxDays']) {
+          const input = section.querySelector(`input[name="${name}"]`)!
+          expect(input.hasAttribute('disabled')).toBe(
+            restricted || (name === 'maxDays' && linkExpiryMaxDays === null),
+          )
+          const ids = input.getAttribute('aria-describedby')!.split(' ')
+          expect(doc.getElementById(ids[0])?.textContent).toBe(
+            t('externalAccess.expiry.days'),
+          )
+          expect(ids.slice(1)).toEqual(restricted ? [guidance!.id] : [])
+        }
+        const unlimitedControls =
+          linkExpiryMaxDays === null
+            ? ['defaultUnlimited', 'maxUnlimited']
+            : ['maxUnlimited']
+        for (const name of unlimitedControls) {
+          const checkbox = section.querySelector(
+            `[data-policy-control="${name}"]`,
+          )!
+          expect(checkbox.hasAttribute('disabled')).toBe(restricted)
+          expect(checkbox.getAttribute('aria-describedby')).toBe(
+            restricted ? guidance!.id : null,
+          )
+        }
+        expect(doc.querySelector('#save-external-access') !== null).toBe(
+          !restricted,
+        )
+        const policy = doc.querySelector('section')!
+        const expectedGuidance =
+          plan === 'free'
+            ? resumeGuidance.link
+            : linkSharingEnabled
+              ? resumeGuidance.posting
+              : resumeGuidance.both
+        const paragraphs = [...policy.querySelectorAll('p')].map(
+          (p) => p.textContent,
+        )
+        expect(
+          Object.values(resumeGuidance).filter((note) =>
+            paragraphs.includes(note),
+          ),
+        ).toEqual(plan !== 'team' && restricted ? [expectedGuidance] : [])
+        expect(policy.querySelector('#resume-linkSharing') !== null).toBe(
+          plan !== 'team' && !restricted && !linkSharingEnabled,
+        )
+        expect(policy.querySelector('#resume-externalPosting') !== null).toBe(
+          plan === 'plus' && !restricted,
+        )
+        if (plan === 'team')
+          expect(
+            policy.textContent.includes(t('externalAccess.readOnly')),
+          ).toBe(restricted)
+        if (plan === 'free')
+          expect(policy.textContent).toContain(
+            t('externalAccess.externalPosting.comparePlans'),
+          )
+      }
     }
   },
 )

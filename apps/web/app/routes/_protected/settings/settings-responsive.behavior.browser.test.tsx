@@ -5,7 +5,12 @@ import { commands } from 'vitest/browser'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 import { type ReactNode } from 'react'
-import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
+import {
+  createMemoryRouter,
+  Outlet,
+  RouterProvider,
+  useLoaderData,
+} from 'react-router'
 import { vi } from 'vitest'
 import { page } from 'vitest/browser'
 import axe from 'axe-core'
@@ -770,51 +775,55 @@ const billingData = {
   overageProjection: null,
   contributorCount: 1,
 }
+const memberRows = {
+  currentUserIsAdmin: true,
+  currentUserRole: 'owner',
+  membersPage: {
+    members: [
+      {
+        id: 'long-member',
+        name: 'Active member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+        email: memberEmails[0],
+        image: null,
+        role: 'admin',
+        isAdmin: true,
+        firstContributedAt: null,
+        lastContributedAt: null,
+        pendingUploads: 0,
+      },
+      {
+        id: 'owner',
+        name: 'Team Owner',
+        email: memberEmails[2],
+        image: null,
+        role: 'owner',
+        isAdmin: true,
+        firstContributedAt: null,
+        lastContributedAt: null,
+        pendingUploads: 0,
+      },
+    ],
+    total: 2,
+    page: 1,
+  },
+  removedMembers: [
+    {
+      id: 'long-removed-member',
+      name: 'Removed member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+      email: memberEmails[1],
+      image: null,
+      ownedArtifactCount: 2,
+    },
+  ],
+} satisfies Omit<Parameters<typeof MembersPage>[0]['loaderData'], 'filters'>
+
 const ledgerPages = () => [
   {
     path: '/settings',
     content: (
       <MembersPage
         loaderData={{
-          currentUserIsAdmin: true,
-          currentUserRole: 'owner',
-          membersPage: {
-            members: [
-              {
-                id: 'long-member',
-                name: 'Active member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
-                email: memberEmails[0],
-                image: null,
-                role: 'admin',
-                isAdmin: true,
-                firstContributedAt: null,
-                lastContributedAt: null,
-                pendingUploads: 0,
-              },
-              {
-                id: 'owner',
-                name: 'Team Owner',
-                email: memberEmails[2],
-                image: null,
-                role: 'owner',
-                isAdmin: true,
-                firstContributedAt: null,
-                lastContributedAt: null,
-                pendingUploads: 0,
-              },
-            ],
-            total: 2,
-            page: 1,
-          },
-          removedMembers: [
-            {
-              id: 'long-removed-member',
-              name: 'Removed member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
-              email: memberEmails[1],
-              image: null,
-              ownedArtifactCount: 2,
-            },
-          ],
+          ...memberRows,
           filters: { query: '', role: 'all', activity: 'all', page: 1 },
         }}
       />
@@ -1181,6 +1190,193 @@ test.each(['en', 'ja'] as const)(
       )
     } finally {
       await page.viewport(1280, 800)
+    }
+  },
+)
+
+test.each(['members', 'artifacts'] as const)(
+  '%s filter drafts submit and reset on Back',
+  async (kind) => {
+    const members = kind === 'members'
+    language.locale = members ? 'en' : 'ja'
+    const { t } = bindI18n(language.locale)
+    const path = members ? '/settings' : '/settings/inventory/artifacts'
+    const fields = members
+      ? [
+          {
+            key: 'role',
+            label: t('team.members.filter.role'),
+            initialValue: 'admin',
+            initialLabel: t('team.members.role.admin'),
+            nextValue: 'member',
+            nextLabel: t('team.members.role.member'),
+          },
+          {
+            key: 'activity',
+            label: t('team.members.filter.activity'),
+            initialValue: 'active',
+            initialLabel: t('team.members.filter.activity.active'),
+            nextValue: 'inactive',
+            nextLabel: t('team.members.filter.activity.inactive'),
+          },
+        ]
+      : [
+          {
+            key: 'visibility',
+            label: t('team.inventory.filter'),
+            initialValue: 'private',
+            initialLabel: t('table.visibilityPrivate'),
+            nextValue: 'workspace',
+            nextLabel: t('table.visibilityWorkspace'),
+          },
+          {
+            key: 'sort',
+            label: t('team.inventory.sort'),
+            initialValue: 'size',
+            initialLabel: t('team.inventory.sort.size'),
+            nextValue: 'updated',
+            nextLabel: t('team.inventory.sort.updated'),
+          },
+        ]
+    const initialSearch = new URLSearchParams(
+      fields.map(({ key, initialValue }) => [key, initialValue]),
+    ).toString()
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <TooltipProvider>
+              <SettingsLayout loaderData={shell} />
+            </TooltipProvider>
+          ),
+          children: [
+            {
+              path,
+              loader: ({ request }) => new URL(request.url).search,
+              Component: () => {
+                const params = new URLSearchParams(useLoaderData<string>())
+                const role = params.get('role'),
+                  activity = params.get('activity'),
+                  visibility = params.get('visibility')
+                return members ? (
+                  <MembersPage
+                    loaderData={{
+                      ...memberRows,
+                      filters: {
+                        query: params.get('q') ?? '',
+                        page: 1,
+                        role:
+                          role === 'admin' ||
+                          role === 'member' ||
+                          role === 'owner'
+                            ? role
+                            : 'all',
+                        activity:
+                          activity === 'active' || activity === 'inactive'
+                            ? activity
+                            : 'all',
+                      },
+                    }}
+                  />
+                ) : (
+                  <ArtifactsPage
+                    loaderData={{
+                      artifacts: { artifacts: [artifact], total: 1, page: 1 },
+                      filters: {
+                        page: 1,
+                        visibility:
+                          visibility === 'private' ||
+                          visibility === 'workspace' ||
+                          visibility === 'link' ||
+                          visibility === 'project'
+                            ? visibility
+                            : 'all',
+                        sort:
+                          params.get('sort') === 'size' ? 'size' : 'updated',
+                      },
+                    }}
+                  />
+                )
+              },
+            },
+          ],
+        },
+      ],
+      { initialEntries: [path + '?' + initialSearch] },
+    )
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      await waitForBrowserLayout()
+      for (const { label, initialLabel } of fields) {
+        const trigger = page.getByRole('combobox', { name: label, exact: true })
+        await expect.element(trigger).toHaveTextContent(initialLabel)
+        const fieldLabel = container.querySelector(
+          `label[for="${trigger.element().id}"]`,
+        )!
+        expect(fieldLabel.textContent).toBe(label)
+        await expect.element(page.elementLocator(fieldLabel)).toBeVisible()
+        // A screen-reader-only label still has a layout box, just one pixel high.
+        expect(
+          fieldLabel.getBoundingClientRect().height,
+        ).toBeGreaterThanOrEqual(
+          Number.parseFloat(getComputedStyle(fieldLabel).fontSize),
+        )
+      }
+      for (const { label, nextLabel } of fields) {
+        const trigger = page.getByRole('combobox', { name: label, exact: true })
+        await trigger.click()
+        await page.getByRole('option', { name: nextLabel, exact: true }).click()
+        await expect.element(trigger).toHaveTextContent(nextLabel)
+      }
+      const search = () => {
+        const form = page
+          .getByRole('combobox', { name: fields[0].label, exact: true })
+          .element()
+          .closest('form')!
+        return page
+          .elementLocator(form)
+          .getByRole('button', {
+            name: t('team.members.filter.apply'),
+            exact: true,
+          })
+          .click()
+      }
+      await search()
+      await vi.waitFor(() => {
+        expect(router.state.location.pathname).toBe(path)
+        for (const { key, nextValue } of fields)
+          expect(
+            new URLSearchParams(router.state.location.search).get(key),
+          ).toBe(nextValue)
+      })
+      for (const { label, nextLabel } of fields)
+        await expect
+          .element(page.getByRole('combobox', { name: label, exact: true }))
+          .toHaveTextContent(nextLabel)
+      await act(async () => router.navigate(-1))
+      expect(
+        router.state.location.pathname + router.state.location.search,
+      ).toBe(path + '?' + initialSearch)
+      for (const { label, initialLabel } of fields)
+        await expect
+          .element(page.getByRole('combobox', { name: label, exact: true }))
+          .toHaveTextContent(initialLabel)
+      if (!members) {
+        const restoredKey = router.state.location.key
+        await search()
+        await vi.waitFor(() => {
+          expect(router.state.location.key).not.toBe(restoredKey)
+          expect(router.state.location.search).toBe('?' + initialSearch)
+        })
+      }
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+      language.locale = 'en'
     }
   },
 )

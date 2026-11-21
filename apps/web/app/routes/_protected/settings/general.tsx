@@ -43,6 +43,17 @@ export const screen = {
   primaryAction: '設定を更新する',
   states: [
     {
+      id: 'team-member-read-only',
+      description: 'Role guidance for a Team member',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector: '#name-guidance',
+          description: 'Read-only guidance is visible',
+        },
+      },
+    },
+    {
       id: 'long-owner',
       description: 'Long owner name and email wrap within the phone layout',
       setup: {
@@ -135,11 +146,16 @@ function WorkspaceNameSection({
 }) {
   const navigation = useNavigation()
   const { t } = useT()
+  const guidanceId = canManage ? undefined : 'name-guidance'
   const pending = navigation.formData?.get('intent') === 'update-workspace-name'
   return (
     <SettingsSection
       title={t('team.workspace.name')}
       description={t('team.workspace.name.body')}
+      guidanceId={guidanceId}
+      readOnlyGuidance={
+        canManage ? undefined : t('team.workspace.name.readOnly')
+      }
     >
       <Form method="post">
         <input type="hidden" name="intent" value="update-workspace-name" />
@@ -155,10 +171,16 @@ function WorkspaceNameSection({
               defaultValue={name}
               maxLength={WORKSPACE_NAME_MAX_LENGTH}
               disabled={!canManage || pending}
+              aria-describedby={guidanceId}
               required
             />
           </Field>
-          <Button size="sm" type="submit" disabled={!canManage || pending}>
+          <Button
+            size="sm"
+            type="submit"
+            disabled={!canManage || pending}
+            aria-describedby={guidanceId}
+          >
             {t('team.workspace.name.save')}
           </Button>
         </InlineFields>

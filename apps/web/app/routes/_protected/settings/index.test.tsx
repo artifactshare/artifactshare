@@ -186,18 +186,6 @@ vi.mock('~/components/ui/alert-dialog', () => ({
   ),
 }))
 
-vi.mock('~/components/ui/select', () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectContent: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => (
-    <button type="button">{children}</button>
-  ),
-  SelectValue: () => null,
-}))
-
 vi.mock('~/components/form/settings-page', () => ({
   SettingsPage: ({ children }: { children: ReactNode }) => (
     <main>{children}</main>
