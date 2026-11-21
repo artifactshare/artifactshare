@@ -4,6 +4,7 @@ import { Button } from '~/components/ui/button'
 import { SearchCapacityError } from '~/services/search-index/query'
 import { requireUser } from '~/middleware/context'
 import { parseSearchQuery } from '~/lib/search-query'
+import { continueReturnedSearch } from '~/lib/search-view-state'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { search } from '~/services/search.server'
 import { withSearchTiming } from '~/services/search-timing.server'
@@ -208,6 +209,13 @@ export async function loader({ url, context, request }: Route.LoaderArgs) {
       },
     },
   )
+}
+/** Going Back to search results continues that search; see continueReturnedSearch. */
+export function clientLoader({
+  request,
+  serverLoader,
+}: Route.ClientLoaderArgs) {
+  return continueReturnedSearch(request, serverLoader)
 }
 // Only the search breakdown passes through; parent headers stay as they are.
 export const headers: HeadersFunction = ({ parentHeaders, loaderHeaders }) => {

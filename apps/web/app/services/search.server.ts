@@ -1,5 +1,9 @@
 import { searchVisibilitySources } from './search-visibility.server'
-import { admitSearch, meterSearchIndexes } from './search-quota.server'
+import {
+  checkSearchAllowance,
+  admitSearch,
+  meterSearchIndexes,
+} from './search-quota.server'
 import { createHash } from 'node:crypto'
 import {
   newSearchTokenKey,
@@ -529,15 +533,35 @@ export async function search(
   let anchor = new Date(now)
   let position = 0,
     searchLogId: string | undefined
-  const [searchActor, cursor] = await Promise.all([
+  // Only the screen returns to a search through its history entry.
+  const resumeToken = source === 'screen' ? input.resume : undefined
+  const [searchActor, cursor, resumed] = await Promise.all([
     loadSearchActor(db, actor),
     input.cursor
       ? readSearchToken(db, actor, input.cursor, 'cursor', now)
       : undefined,
+    resumeToken
+      ? readSearchToken(db, actor, resumeToken, 'resume', now)
+      : undefined,
     // Authentication and deterministic parsing are complete at the boundary.
-    // A continuation must first authenticate its token below.
-    input.cursor ? undefined : admitSearch(db, actor, now),
+    // A continuation or a return must first authenticate its token below.
+    input.cursor || resumeToken ? undefined : admitSearch(db, actor, now),
   ])
+  // Returning to the same search (going Back to the results) reuses its log
+  // and is not a new search: no new log row and no daily search count. An
+  // expired, foreign or mismatched token makes it a new search instead.
+  if (resumeToken) {
+    if (
+      resumed &&
+      resumed.log.filters_json === canonical &&
+      resumed.log.source === source
+    ) {
+      await checkSearchAllowance(db, actor, now)
+      anchor = new Date(resumed.log.created_at)
+      searchLogId = resumed.log.id
+      tokenKey = resumed.log.token_key
+    } else await admitSearch(db, actor, now)
+  }
   if (input.cursor) {
     if (
       !cursor ||
@@ -889,6 +913,14 @@ export async function search(
     relaxations,
     nextCursor,
     searchLogId,
+    ...(source === 'screen' && !input.cursor
+      ? {
+          resume: sealSearchToken(searchLogId, tokenKey, {
+            kind: 'resume',
+            rank: 0,
+          }),
+        }
+      : {}),
     facets,
     ...(selectedScope ? { selectedScope } : {}),
   }

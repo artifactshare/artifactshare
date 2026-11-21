@@ -2254,3 +2254,114 @@ test('selected owner label stops after its first live witness page', async () =>
   })
   expect(witnessRequests).toEqual([undefined])
 })
+
+test('returning to a screen search reuses its log and daily count, rechecks access, and falls back to a new search otherwise', async () => {
+  fixture.sqlite.exec(
+    `UPDATE workspace_members SET role='member' WHERE user_id='viewer'; INSERT INTO workspace_members(workspace_id,user_id,role,status,created_at,updated_at) VALUES('ws','owner','admin','active','${now}','${now}')`,
+  )
+  const stub = index()
+  // Open receipts are checked against the real clock, so the search uses it too.
+  const clock = () => new Date()
+  const later = () => new Date(Date.now() + 31 * 60_000)
+  const daily = async (actor: string) =>
+    (
+      await fixture.db
+        .selectFrom('search_actor_daily_usage')
+        .select('requests')
+        .where('actor_id', '=', actor)
+        .executeTakeFirst()
+    )?.requests ?? 0
+  const first = await search(
+    fixture.db,
+    () => stub,
+    'viewer',
+    input,
+    'screen',
+    clock,
+  )
+  if ('error' in first || !first.resume) throw new Error('no resume token')
+  expect(await daily('viewer')).toBe(1)
+  // Going Back to the results: same log, facets, no new count.
+  const back = await search(
+    fixture.db,
+    () => stub,
+    'viewer',
+    { ...input, resume: first.resume },
+    'screen',
+    clock,
+  )
+  if ('error' in back) throw new Error('resume failed')
+  expect(back.searchLogId).toBe(first.searchLogId)
+  expect(back.facets).toEqual(first.facets)
+  expect(back.items.map((item) => item.id)).toEqual(['a'])
+  expect(await readSearchLogs(fixture.db, 'viewer')).toHaveLength(1)
+  expect(await daily('viewer')).toBe(1)
+  // A file opened after going Back is recorded on the original search.
+  expect(
+    await recordSearchOpen(
+      fixture.db,
+      'viewer',
+      first.searchLogId,
+      back.items[0].receipt,
+    ),
+  ).toBe(true)
+  // Access removed in between is rechecked.
+  fixture.sqlite.exec(
+    "UPDATE shareables SET owner_user_id='owner' WHERE id='a'",
+  )
+  const revoked = await search(
+    fixture.db,
+    () => stub,
+    'viewer',
+    { ...input, resume: first.resume },
+    'screen',
+    clock,
+  )
+  if ('error' in revoked) throw new Error('resume failed')
+  expect(revoked.searchLogId).toBe(first.searchLogId)
+  expect(revoked.items.map((item) => item.id)).not.toContain('a')
+  fixture.sqlite.exec(
+    "UPDATE shareables SET owner_user_id='viewer' WHERE id='a'",
+  )
+  // Returning adds nothing, but is refused once the day's limit is reached.
+  fixture.sqlite.exec(
+    "UPDATE search_actor_daily_usage SET requests=1000 WHERE actor_id='viewer'",
+  )
+  await expect(
+    search(
+      fixture.db,
+      () => stub,
+      'viewer',
+      { ...input, resume: first.resume },
+      'screen',
+      clock,
+    ),
+  ).rejects.toHaveProperty('code', 'search_daily_limit_exceeded')
+  fixture.sqlite.exec(
+    "UPDATE search_actor_daily_usage SET requests=1 WHERE actor_id='viewer'",
+  )
+  // Another viewer, changed conditions, another source and an expired token
+  // each make a new search with its own log and count.
+  for (const [actor, changed, source, at] of [
+    ['owner', input, 'screen', clock],
+    ['viewer', { ...input, sort: 'newest' as const }, 'screen', clock],
+    ['viewer', input, 'mcp', clock],
+    ['viewer', input, 'screen', later],
+  ] as const) {
+    const before = await daily(actor)
+    const logs = (await readSearchLogs(fixture.db, actor)).length
+    const result = await search(
+      fixture.db,
+      () => stub,
+      actor,
+      { ...changed, resume: first.resume },
+      source,
+      at,
+    )
+    if ('error' in result) throw new Error('fallback failed')
+    expect(result.searchLogId).not.toBe(first.searchLogId)
+    expect(await daily(actor)).toBe(before + 1)
+    expect((await readSearchLogs(fixture.db, actor)).length).toBe(logs + 1)
+    if (source !== 'screen') expect(result).not.toHaveProperty('resume')
+  }
+})
