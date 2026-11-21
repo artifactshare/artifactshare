@@ -33,6 +33,7 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-tokens/created-secret',
   'settings-billing/subscribed',
+  'settings-billing/purchase',
   'settings-billing/past-due',
   'viewer/revisit-context',
   'viewer/bridge-attribution',
@@ -66,6 +67,12 @@ function scenarioWorkspaceId(
 }
 
 export function devScreenUserEmail(persona: string, scenario: string): string {
+  if (
+    scenario === 'settings-general/long-owner' &&
+    persona.endsWith('-owner')
+  ) {
+    return `${persona}-with-a-long-synthetic-owner-address-for-phone-layout@example.test`
+  }
   return `dev-${persona}+${scenario.replaceAll('/', '-')}@artifactshare.local`
 }
 
@@ -336,6 +343,19 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   }
+  if (scenario === 'settings-billing/purchase') {
+    await db
+      .updateTable('workspaces')
+      .set({
+        plan: 'free',
+        stripe_subscription_id: null,
+        stripe_subscription_status: 'none',
+        storage_used_bytes: 0,
+        storage_quota_bytes: 5_000_000_000,
+      })
+      .where('id', '=', workspaceId)
+      .execute()
+  }
   if (scenario === 'settings-billing/team-unsubscribed')
     await db
       .updateTable('workspaces')
@@ -356,6 +376,142 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (scenario === 'settings/long-member-addresses') {
+    for (const status of ['active', 'removed'] as const) {
+      const memberId = `${workspaceId}-long-member-${status}`
+      const profile = {
+        email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
+        name:
+          status === 'active'
+            ? 'Synthetic active member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones'
+            : 'Synthetic removed member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+        image: null,
+      }
+      await db
+        .insertInto('users')
+        .values({
+          id: memberId,
+          ...profile,
+          email_verified: 1,
+          workspace_id: workspaceId,
+          created_at: now,
+          updated_at: now,
+        })
+        .onConflict((oc) => oc.column('id').doUpdateSet(profile))
+        .execute()
+      const membership = {
+        role: status === 'active' ? ('admin' as const) : ('member' as const),
+        status,
+        removed_at: status === 'removed' ? now : null,
+        removed_by: status === 'removed' ? userId : null,
+        updated_at: now,
+      }
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: workspaceId,
+          user_id: memberId,
+          ...membership,
+          created_at: now,
+        })
+        .onConflict((oc) =>
+          oc.columns(['workspace_id', 'user_id']).doUpdateSet(membership),
+        )
+        .execute()
+    }
+    return { containerId: null, containerKind: 'inbox' }
+  }
+  if (scenario === 'settings-bots/long-email') {
+    const result = await seedDevScreenState(
+      db,
+      'settings/with-bots',
+      workspaceId,
+      userId,
+      now,
+    )
+    await db
+      .updateTable('users')
+      .set({
+        email: `nightly-report-automation-with-a-long-destination-address-${workspaceId}@bots.artifactshare.invalid`,
+      })
+      .where('id', '=', `${workspaceId}-bot-active`)
+      .execute()
+    return result
+  }
+  if (scenario === 'settings-general/long-owner') {
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select('plan')
+      .where('id', '=', workspaceId)
+      .executeTakeFirstOrThrow()
+    await db
+      .updateTable('users')
+      .set({
+        name: 'Synthetic workspace owner with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+        email: devScreenUserEmail(`${workspace.plan}-owner`, scenario),
+      })
+      .where('workspace_id', '=', workspaceId)
+      .where('id', 'in', (eb) =>
+        eb
+          .selectFrom('workspace_members')
+          .select('user_id')
+          .where('workspace_id', '=', workspaceId)
+          .where('role', '=', 'owner')
+          .where('status', '=', 'active'),
+      )
+      .execute()
+  }
+  if (scenario === 'settings-general/initial-avatar') {
+    await db
+      .updateTable('users')
+      .set({ image: null })
+      .where('id', '=', userId)
+      .execute()
+  }
+  if (scenario.startsWith('settings-inventory-')) {
+    const projectId = `${workspaceId}-inventory-project`
+    const fileId = devShareableId(`${workspaceId}-inventory-file`)
+    // These ids belong only to this scenario. Preserve unrelated user content.
+    await db.deleteFrom('shareables').where('id', '=', fileId).execute()
+    await db
+      .deleteFrom('artifact_containers')
+      .where('id', '=', projectId)
+      .execute()
+    if (scenario.endsWith('/populated')) {
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: projectId,
+          workspace_id: workspaceId,
+          kind: 'project',
+          created_by_id: userId,
+          name: 'Quarterly reports and review materials for the whole workspace',
+          base_visibility: 'workspace',
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: fileId,
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: projectId,
+          name: 'Quarterly report.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: now,
+          updated_at: now,
+          last_accessed_at: now,
+        })
+        .execute()
+    }
+    return {
+      containerId: scenario.endsWith('/populated') ? projectId : null,
+      containerKind: 'project',
+    }
+  }
   if (scenario.startsWith('search/'))
     return seedDevScreenState(
       db,

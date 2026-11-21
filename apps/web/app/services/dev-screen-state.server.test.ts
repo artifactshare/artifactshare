@@ -15,6 +15,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
   devShareableId,
+  devScreenUserEmail,
   ensureDevScreenState,
   isDevScreenStateRequest,
   isScreenScenario,
@@ -34,6 +35,7 @@ import {
   unopenedOwnedPredicate,
   latestPublishedAtSelect,
 } from './home.server'
+import { loadRemovedWorkspaceMembers } from './team-management.server'
 import { listWorkspaceBots } from './bot-members.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
 import { recordViewerRecency } from './views.server'
@@ -2335,6 +2337,416 @@ test('external access fixture recreates a deleted shareable with retained public
         .where('shareable_id', '=', shareableId)
         .executeTakeFirstOrThrow(),
     ).toEqual(publication)
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('inventory captures refresh only owned rows and empty states have zero matching rows', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    for (const kind of ['projects', 'artifacts']) {
+      const prefix = `settings-inventory-${kind}`
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        `${prefix}/populated`,
+        now,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: `${kind}@example.test`,
+          email_verified: 1,
+          image: null,
+          locale: null,
+          name: 'Owner',
+          workspace_id: workspaceId,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        `${prefix}/populated`,
+        workspaceId,
+        userId,
+        now,
+      )
+      const {
+        loadWorkspaceInventoryProjectsPage,
+        loadWorkspaceInventoryArtifactsPage,
+      } = await import('./team-management.server')
+      const projects = () =>
+        loadWorkspaceInventoryProjectsPage(db, workspaceId, 1)
+      const files = () =>
+        loadWorkspaceInventoryArtifactsPage(db, workspaceId, {
+          visibility: 'all',
+          sort: 'updated',
+          page: 1,
+        })
+      expect((await projects()).projects[0]).toMatchObject({
+        artifactCount: 1,
+        name: 'Quarterly reports and review materials for the whole workspace',
+      })
+      expect((await files()).total).toBe(1)
+      await db
+        .updateTable('artifact_containers')
+        .set({ name: 'Edited capture' })
+        .where('id', '=', `${workspaceId}-inventory-project`)
+        .execute()
+      await seedDevScreenState(
+        db,
+        `${prefix}/populated`,
+        workspaceId,
+        userId,
+        now,
+      )
+      expect((await projects()).projects[0].name).toBe(
+        'Quarterly reports and review materials for the whole workspace',
+      )
+      await seedDevScreenState(db, `${prefix}/empty`, workspaceId, userId, now)
+      expect((await projects()).total).toBe(0)
+      expect((await files()).total).toBe(0)
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: `${workspaceId}-unrelated`,
+          workspace_id: workspaceId,
+          kind: 'project',
+          created_by_id: userId,
+          name: 'User project',
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        `${prefix}/populated`,
+        workspaceId,
+        userId,
+        now,
+      )
+      expect((await projects()).projects.map((row) => row.name)).toContain(
+        'User project',
+      )
+      expect(
+        await db
+          .selectFrom('users')
+          .select('name')
+          .where('id', '=', userId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ name: 'Owner' })
+    }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('responsive capture fixtures restore the long email, initial avatar and purchase state', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'settings-bots/long-email',
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'owner@example.test',
+        email_verified: 1,
+        name: 'Owner',
+        image: 'https://example.test/avatar.png',
+        locale: null,
+        workspace_id: workspaceId,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    for (let repetition = 0; repetition < 2; repetition++) {
+      await seedDevScreenState(
+        db,
+        'settings-bots/long-email',
+        workspaceId,
+        userId,
+        now,
+      )
+      const bots = await listWorkspaceBots(db, workspaceId, now)
+      expect(
+        bots.find((bot) => bot.id === `${workspaceId}-bot-active`)?.email,
+      ).toBe(
+        `nightly-report-automation-with-a-long-destination-address-${workspaceId}@bots.artifactshare.invalid`,
+      )
+      await seedDevScreenState(
+        db,
+        'settings-general/initial-avatar',
+        workspaceId,
+        userId,
+        now,
+      )
+      expect(
+        await db
+          .selectFrom('users')
+          .select(['image', 'name'])
+          .where('id', '=', userId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ image: null, name: 'Owner' })
+    }
+    const purchase = await ensureDevScreenState(
+      db,
+      'settings-billing/purchase',
+      now,
+      'team',
+    )
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team', stripe_subscription_id: 'fixture-subscription' })
+      .where('id', '=', purchase.workspaceId)
+      .execute()
+    await ensureDevScreenState(db, 'settings-billing/purchase', now, 'team')
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select([
+          'plan',
+          'stripe_subscription_id',
+          'stripe_subscription_status',
+        ])
+        .where('id', '=', purchase.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      plan: 'free',
+      stripe_subscription_id: null,
+      stripe_subscription_status: 'none',
+    })
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('long-member capture restores active and removed rows without changing unrelated users', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  const scenario = 'settings/long-member-addresses'
+  try {
+    expect(isScreenScenario(scenario)).toBe(true)
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'owner@example.test',
+        email_verified: 1,
+        image: null,
+        locale: null,
+        name: 'Owner',
+        workspace_id: workspaceId,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    for (let repetition = 0; repetition < 2; repetition++) {
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      const rows = await db
+        .selectFrom('workspace_members')
+        .innerJoin('users', 'users.id', 'workspace_members.user_id')
+        .select([
+          'users.email',
+          'users.name',
+          'workspace_members.status',
+          'workspace_members.role',
+        ])
+        .where('workspace_members.workspace_id', '=', workspaceId)
+        .orderBy('workspace_members.status')
+        .execute()
+      expect(rows).toEqual(
+        ['active', 'removed'].map((status) => ({
+          email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
+          name:
+            status === 'active'
+              ? 'Synthetic active member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones'
+              : 'Synthetic removed member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+          status,
+          role: status === 'active' ? 'admin' : 'member',
+        })),
+      )
+      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toMatchObject([
+        {
+          id: `${workspaceId}-long-member-removed`,
+          email: `removed-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
+        },
+      ])
+      expect(
+        await db
+          .selectFrom('users')
+          .select(['name', 'email'])
+          .where('id', '=', userId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ name: 'Owner', email: 'owner@example.test' })
+      await db
+        .updateTable('users')
+        .set({ email: 'edited@example.test', name: 'Edited member' })
+        .where('id', '=', `${workspaceId}-long-member-active`)
+        .execute()
+      await db
+        .updateTable('workspace_members')
+        .set({ role: 'member' })
+        .where('workspace_id', '=', workspaceId)
+        .where('user_id', '=', `${workspaceId}-long-member-active`)
+        .execute()
+      await db
+        .updateTable('workspace_members')
+        .set({ status: 'active' })
+        .where('workspace_id', '=', workspaceId)
+        .where('user_id', '=', `${workspaceId}-long-member-removed`)
+        .execute()
+    }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('long bot email capture can be seeded in two plan workspaces', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  try {
+    const emails = []
+    for (const plan of ['plus', 'team'] as const) {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings-bots/long-email',
+        now,
+        plan,
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: `${userId}@example.test`,
+          name: 'Owner',
+          email_verified: 1,
+          workspace_id: workspaceId,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        'settings-bots/long-email',
+        workspaceId,
+        userId,
+        now,
+      )
+      const bots = await listWorkspaceBots(db, workspaceId, now)
+      const email = bots.find(
+        (bot) => bot.id === `${workspaceId}-bot-active`,
+      )?.email
+      emails.push(email)
+    }
+    expect(new Set(emails).size).toBe(2)
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('long-owner capture restores its owner profile without changing other users', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  const scenario = 'settings-general/long-owner'
+  try {
+    expect(isScreenScenario(scenario)).toBe(true)
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const other = await ensureDevScreenState(
+      db,
+      'settings-general/initial-avatar',
+      now,
+      'team',
+    )
+    for (const [id, workspace, role] of [
+      ['capture-owner', workspaceId, 'owner'],
+      ['capture-member', workspaceId, 'member'],
+      ['other-owner', other.workspaceId, 'owner'],
+    ] as const) {
+      await db
+        .insertInto('users')
+        .values({
+          id,
+          workspace_id: workspace,
+          name: 'Original name',
+          email: `${id}@example.test`,
+          email_verified: 1,
+          image: null,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: workspace,
+          user_id: id,
+          role,
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+    }
+    for (let repetition = 0; repetition < 2; repetition++) {
+      await seedDevScreenState(db, scenario, workspaceId, 'capture-owner', now)
+      expect(
+        await db
+          .selectFrom('users')
+          .select(['id', 'name', 'email'])
+          .orderBy('id')
+          .execute(),
+      ).toEqual([
+        {
+          id: 'capture-member',
+          name: 'Original name',
+          email: 'capture-member@example.test',
+        },
+        {
+          id: 'capture-owner',
+          name: 'Synthetic workspace owner with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+          email:
+            'team-owner-with-a-long-synthetic-owner-address-for-phone-layout@example.test',
+        },
+        {
+          id: 'other-owner',
+          name: 'Original name',
+          email: 'other-owner@example.test',
+        },
+      ])
+      expect(devScreenUserEmail('team-owner', scenario)).toBe(
+        'team-owner-with-a-long-synthetic-owner-address-for-phone-layout@example.test',
+      )
+      await db
+        .updateTable('users')
+        .set({ name: 'Edited owner', email: 'edited@example.test' })
+        .where('id', '=', 'capture-owner')
+        .execute()
+    }
   } finally {
     await db.destroy()
   }

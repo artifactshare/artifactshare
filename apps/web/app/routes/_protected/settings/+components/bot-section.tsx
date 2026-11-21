@@ -113,12 +113,14 @@ export function BotSection({
                 <TableRow
                   key={bot.id}
                   data-testid="bot-row"
-                  className="flex flex-col md:table-row"
+                  className="flex min-w-0 flex-col md:table-row"
                 >
-                  <TableCell>
+                  <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
                     <div className="flex flex-col gap-[var(--spacing-1)]">
                       <span className="flex flex-wrap items-center gap-[var(--spacing-2)]">
-                        {bot.name}
+                        <span className="min-w-0 max-md:max-w-full max-md:[overflow-wrap:anywhere]">
+                          {bot.name}
+                        </span>
                         <BotBadge />
                         <BotStatusBadge status={status} />
                       </span>
@@ -131,7 +133,7 @@ export function BotSection({
                   <TableCell className="hidden md:table-cell">
                     <BotDestinations bot={bot} />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
                     <TeamMuted>
                       <span className="md:hidden">
                         {t('team.bots.lastAuth')}:{' '}
@@ -141,7 +143,7 @@ export function BotSection({
                         : '—'}
                     </TeamMuted>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
                     {status !== 'stopped' || bot.cancelable ? (
                       <div className="flex flex-wrap gap-[var(--spacing-2)]">
                         {status !== 'stopped' ? (
@@ -326,7 +328,7 @@ function CopyableEmail({ email }: { email: string }) {
   return (
     <button
       type="button"
-      className="text-muted-foreground w-fit text-left text-xs hover:underline"
+      className="text-muted-foreground w-fit max-w-full text-left text-xs [overflow-wrap:anywhere] whitespace-normal hover:underline"
       title={t('team.bots.copyEmail')}
       onClick={() => {
         void writeClipboardText(email)

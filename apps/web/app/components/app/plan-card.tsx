@@ -43,10 +43,10 @@ export function PlanCard({
           {plan[0].toUpperCase() + plan.slice(1)}
         </Heading>
       </div>
-      <p className="text-muted-foreground mt-2 mb-5 min-h-11 text-sm">
+      <p className="text-muted-foreground mt-2 mb-5 text-sm md:min-h-11">
         {copy.plans[plan].description}
       </p>
-      <div className="min-h-24">
+      <div className="md:min-h-24">
         <p className="m-0 text-3xl font-bold tracking-tight">
           {formatPrice(currency, price)}{' '}
           <span className="text-muted-foreground text-sm">

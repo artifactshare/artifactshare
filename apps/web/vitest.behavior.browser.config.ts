@@ -1,3 +1,7 @@
+import {
+  settingsContrastCapture,
+  settingsContrastReport,
+} from './app/test/settings-contrast-browser-command'
 import { previewSecurity } from './app/test/preview-security-browser-command'
 import { usercontentDelivery } from './app/test/usercontent-browser-command'
 import {
@@ -39,6 +43,7 @@ export default defineConfig({
     // split its hook state. Keep these dependencies in the initial bundle.
     include: [
       '@mozilla/readability',
+      'axe-core',
       '@tabler/icons-react',
       'class-variance-authority',
       'clsx',
@@ -52,6 +57,7 @@ export default defineConfig({
       'react/jsx-runtime',
       'react-router',
       'sonner',
+      'stripe',
       'tailwind-merge',
       'turndown',
     ],
@@ -78,6 +84,8 @@ export default defineConfig({
       enabled: true,
       provider: playwright({ contextOptions: { locale: 'en-US' } }),
       commands: {
+        settingsContrastCapture,
+        settingsContrastReport,
         previewSecurity,
         usercontentDelivery,
         projectPlacementDestinations,

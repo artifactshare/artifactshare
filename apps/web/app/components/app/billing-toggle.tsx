@@ -7,7 +7,7 @@ import type { PricingCopy } from '~/lib/pricing-content'
 const groupClassName =
   'border-border bg-muted m-0 flex rounded-[var(--r-md)] border p-1 max-sm:w-full'
 const buttonClassName =
-  'aria-pressed:bg-background aria-pressed:text-foreground text-muted-foreground flex-1 aria-pressed:shadow-sm'
+  'border border-transparent aria-pressed:border-foreground aria-pressed:bg-background aria-pressed:text-foreground text-muted-foreground flex-1 aria-pressed:shadow-sm'
 
 export function BillingSelection({
   copy,

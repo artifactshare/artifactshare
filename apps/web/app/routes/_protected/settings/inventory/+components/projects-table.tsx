@@ -33,25 +33,69 @@ export function ProjectsTable({
 }) {
   const { t } = useT()
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          {PROJECT_HEADERS.map((key) => (
-            <TableHead key={key}>{t(key)}</TableHead>
+    <>
+      <Table className="max-nav:hidden">
+        <TableHeader>
+          <TableRow>
+            {PROJECT_HEADERS.map((key) => (
+              <TableHead key={key}>{t(key)}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <ProjectRow key={row.id} row={row} locale={locale} />
           ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => (
-          <ProjectRow key={row.id} row={row} locale={locale} />
-        ))}
+          {!rows.length ? (
+            <TableEmptyRow colSpan={PROJECT_HEADERS.length}>
+              {t('team.inventory.empty')}
+            </TableEmptyRow>
+          ) : null}
+        </TableBody>
+      </Table>
+      <div className="max-nav:block max-nav:space-y-3 hidden">
         {!rows.length ? (
-          <TableEmptyRow colSpan={PROJECT_HEADERS.length}>
+          <p className="text-muted-foreground py-6 text-center text-sm">
             {t('team.inventory.empty')}
-          </TableEmptyRow>
+          </p>
         ) : null}
-      </TableBody>
-    </Table>
+        {rows.map((row) => (
+          <article
+            key={row.id}
+            className="border-border bg-card rounded-lg border p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <Link
+                className="text-link min-w-0 font-medium [overflow-wrap:anywhere] underline"
+                to={`/projects/${row.id}`}
+              >
+                {row.name}
+              </Link>
+              <ProjectScopeChip baseVisibility={row.baseVisibility} />
+            </div>
+            {row.archivedAt ? (
+              <TeamMuted>{t('team.inventory.archived')}</TeamMuted>
+            ) : null}
+            <dl className="text-muted-foreground mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div>
+                <dt className="text-xs">{t('team.inventory.count')}</dt>
+                <dd>{row.artifactCount}</dd>
+              </div>
+              <div>
+                <dt className="text-xs">{t('team.inventory.size')}</dt>
+                <dd>
+                  {row.sizeBytes == null ? '—' : formatBytes(row.sizeBytes)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs">{t('team.inventory.updated')}</dt>
+                <dd>{formatRelative(row.updatedAt, locale)}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+    </>
   )
 }
 

@@ -29,6 +29,7 @@
   "projects/stress-states",
   "projects-archived/with-archived-project",
   "settings/with-bots",
+  "settings/long-member-addresses",
   "settings-external-access/finite",
   "settings-external-access/unlimited",
   "settings-external-access/zero",
@@ -60,5 +61,13 @@
   "search/palette-daily-limit",
   "search/continuation-error",
   "settings-billing/continuing-near-limit",
-  "settings-billing/team-unsubscribed"
+  "settings-billing/team-unsubscribed",
+  "settings-billing/purchase",
+  "settings-bots/long-email",
+  "settings-general/initial-avatar",
+  "settings-general/long-owner",
+  "settings-inventory-projects/populated",
+  "settings-inventory-projects/empty",
+  "settings-inventory-artifacts/populated",
+  "settings-inventory-artifacts/empty"
 ]

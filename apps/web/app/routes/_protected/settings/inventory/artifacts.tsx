@@ -27,6 +27,22 @@ export const screen = {
   primaryAction: '成果物を確認する',
   states: [
     {
+      id: 'populated',
+      description: 'populated responsive controls and content',
+      setup: {
+        scenario: 'settings-inventory-artifacts/populated',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
+      id: 'empty',
+      description: 'empty responsive controls and content',
+      setup: {
+        scenario: 'settings-inventory-artifacts/empty',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'result-success',
       description:
         'Successful settings action announced above the page content',
@@ -67,7 +83,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     filters,
   }
 }
-export default function ArtifactsPage({ loaderData }: Route.ComponentProps) {
+export default function ArtifactsPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { t, locale } = useT()
   const { artifacts, filters } = loaderData
   return (

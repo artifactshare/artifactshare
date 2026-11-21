@@ -95,6 +95,14 @@ export const screen = {
   primaryAction: 'メンバーを管理する',
   states: [
     {
+      id: 'long-member-addresses',
+      description: 'Long active and removed member addresses on phone cards',
+      setup: {
+        scenario: 'settings/long-member-addresses',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'result-success',
       description:
         'Successful settings action announced above the page content',
@@ -221,7 +229,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   return redirect(`/settings?status=${result.kind}`)
 }
 
-export default function TeamMembersPage({ loaderData }: Route.ComponentProps) {
+export default function TeamMembersPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const shell = useOutletContext<SettingsLayoutContext>()
   const isUpgrade = shell.kind === 'upgrade'
   const canManage = loaderData.currentUserIsAdmin
@@ -359,7 +369,7 @@ function MemberSection({
       </Form>
 
       <Table>
-        <TableHeader>
+        <TableHeader className="hidden md:table-header-group">
           <TableRow>
             <TableHead>{t('team.members.user')}</TableHead>
             <TableHead className="max-phone:hidden">
@@ -453,10 +463,14 @@ function MemberRow({
   } = memberPermissions(member, currentUserId, canManage, currentUserRole)
 
   return (
-    <TableRow>
-      <TableCell>
-        <div className="flex items-center gap-[var(--spacing-2)]">
-          <TeamUser name={displayName(member)} email={member.email} />
+    <TableRow className="flex min-w-0 flex-col md:table-row">
+      <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
+        <div className="flex min-w-0 flex-col items-start gap-[var(--spacing-2)] md:flex-row md:items-center">
+          <TeamUser
+            name={displayName(member)}
+            email={member.email}
+            wrapOnPhone
+          />
           {isOwner ? (
             <Badge variant="default">{t('team.members.role.owner')}</Badge>
           ) : null}
@@ -467,6 +481,7 @@ function MemberRow({
       </TableCell>
       <TableCell className="max-phone:hidden">
         <TeamMuted>
+          <span className="md:hidden">{t('team.members.lastUpload')}: </span>
           {member.lastContributedAt
             ? formatRelative(member.lastContributedAt, locale)
             : '—'}
@@ -622,7 +637,7 @@ function RemovedMemberSection({
       description={t('team.removedMembers.body')}
     >
       <Table>
-        <TableHeader>
+        <TableHeader className="hidden md:table-header-group">
           <TableRow>
             <TableHead>{t('team.members.user')}</TableHead>
             <TableHead>{t('team.removedMembers.artifacts')}</TableHead>
@@ -676,12 +691,17 @@ function RemovedMemberRow({
   const restorePending = pendingForMember && pendingIntent === 'restore-member'
 
   return (
-    <TableRow>
-      <TableCell>
-        <TeamUser name={displayName(member)} email={member.email} />
+    <TableRow className="flex min-w-0 flex-col md:table-row">
+      <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
+        <TeamUser name={displayName(member)} email={member.email} wrapOnPhone />
       </TableCell>
       <TableCell>
-        <TeamMuted>{member.ownedArtifactCount}</TeamMuted>
+        <TeamMuted>
+          <span className="md:hidden">
+            {t('team.removedMembers.artifacts')}:{' '}
+          </span>
+          {member.ownedArtifactCount}
+        </TeamMuted>
       </TableCell>
       <TableCell>
         <TeamActions>

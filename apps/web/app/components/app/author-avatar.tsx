@@ -37,7 +37,7 @@ export function AuthorAvatar({
   return (
     <Avatar
       className={cn(
-        'text-card inline-flex overflow-hidden text-xs font-medium after:hidden',
+        'inline-flex overflow-hidden text-xs font-medium text-white after:hidden',
         sizeClassName[size],
         className,
       )}

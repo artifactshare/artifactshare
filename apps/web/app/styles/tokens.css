@@ -7,13 +7,13 @@
  */
 
 :root {
-  /* Gradients cannot be exposed through Tailwind's background-color utilities. */
-  --avatar-1: linear-gradient(135deg, #ff8a65, #ff6f61);
-  --avatar-2: linear-gradient(135deg, #34d399, #059669);
-  --avatar-3: linear-gradient(135deg, #fbbf24, #d97706);
-  --avatar-4: linear-gradient(135deg, #fb7185, #e11d48);
-  --avatar-5: linear-gradient(135deg, #818cf8, #4f46e5);
-  --avatar-6: linear-gradient(135deg, #38bdf8, #0284c7);
+  /* Uniform backgrounds keep white avatar initials above WCAG AA. */
+  --avatar-1: #b34228;
+  --avatar-2: #047857;
+  --avatar-3: #925900;
+  --avatar-4: #be123c;
+  --avatar-5: #5145b8;
+  --avatar-6: #036b9f;
 
   /* ── component size ── */
   --project-mark-size: 26px;

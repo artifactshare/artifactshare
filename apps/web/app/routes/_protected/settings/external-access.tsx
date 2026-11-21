@@ -13,6 +13,7 @@ import type { SettingsLayoutContext } from './_layout'
 import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { SettingsBanner, settingsNotice } from './+components/settings-banner'
 import { Button } from '~/components/ui/button'
+import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -41,6 +42,37 @@ export const screen = {
   primaryAction: 'アクセスを設定する',
   states: [
     {
+      id: 'no-expiration',
+      description: 'Unlimited default and maximum expiry',
+      setup: {
+        scenario: 'settings-external-access/unlimited',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'button[data-policy-control="defaultUnlimited"][data-slot="checkbox"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'finite',
+      description: 'Finite expiry inputs with adjacent day units',
+      setup: {
+        scenario: 'settings-external-access/finite',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
+      id: 'unlimited',
+      description: 'Unlimited maximum expiry with a finite default',
+      setup: {
+        scenario: 'settings-external-access/unlimited',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'reduction-success',
       description:
         'Saved policy notice and the count of existing links shortened',
@@ -60,7 +92,8 @@ export const screen = {
         interactions: [
           {
             action: 'click',
-            selector: 'input[name="linkSharingEnabled"][type="checkbox"]',
+            selector:
+              'button[data-policy-control="linkSharingEnabled"][data-slot="checkbox"]',
           },
         ],
       },
@@ -75,7 +108,8 @@ export const screen = {
         interactions: [
           {
             action: 'click',
-            selector: 'input[name="linkSharingEnabled"][type="checkbox"]',
+            selector:
+              'button[data-policy-control="linkSharingEnabled"][data-slot="checkbox"]',
           },
           {
             action: 'click',
@@ -173,7 +207,11 @@ export const screen = {
         scenario: 'settings-external-access/unlimited',
         reseedBeforeCapture: true,
         interactions: [
-          { action: 'click', selector: 'input[name="maxUnlimited"]' },
+          {
+            action: 'click',
+            selector:
+              'button[data-policy-control="maxUnlimited"][data-slot="checkbox"]',
+          },
           { action: 'fill', selector: 'input[name="maxDays"]', value: '30' },
           {
             action: 'click',
@@ -506,7 +544,7 @@ function ExternalAccessPolicySection({
       ) : null}
       <div className="gap-field flex flex-col">
         <div className="border-divider flex items-start justify-between gap-4 border-b pb-3">
-          <div>
+          <div className="min-w-0">
             <h3 className="m-0 text-sm font-semibold">
               {t('externalAccess.plan')}
             </h3>
@@ -514,7 +552,7 @@ function ExternalAccessPolicySection({
               {t(`externalAccess.plan.${policy.plan}`)}
             </TeamMutedParagraph>
           </div>
-          <span className="bg-muted rounded-full px-2 py-1 text-xs font-semibold">
+          <span className="bg-muted shrink-0 rounded-full px-2 py-1 text-xs font-semibold whitespace-nowrap">
             {t(`externalAccess.planLabel.${policy.plan}`)}
           </span>
         </div>
@@ -760,43 +798,45 @@ function ExternalAccessExpiryFields({
       <div className="gap-field flex flex-col">
         <SettingsSubsection title={t('externalAccess.expiry.default')}>
           <div className="max-stack:flex-col gap-inline flex items-start">
-            <Input
-              className="max-stack:w-full w-24 flex-none"
-              name="defaultDays"
-              type="number"
-              min={1}
-              max={365}
-              step={1}
-              value={draft.defaultDays}
-              onChange={(event) =>
-                onChange({
-                  ...draft,
-                  defaultDays: event.currentTarget.value,
-                })
-              }
-              disabled={disabled || draft.defaultUnlimited}
-              required={!draft.defaultUnlimited}
-              aria-label={t('externalAccess.expiry.default')}
-              aria-describedby={defaultExpirationUnitId}
-            />
-            <span
-              id={defaultExpirationUnitId}
-              className="text-muted-foreground pt-1.5 text-sm"
-            >
-              {t('externalAccess.expiry.days')}
-            </span>
+            <div className="gap-inline flex items-center">
+              <Input
+                className="w-24 flex-none"
+                name="defaultDays"
+                type="number"
+                min={1}
+                max={365}
+                step={1}
+                value={draft.defaultDays}
+                onChange={(event) =>
+                  onChange({
+                    ...draft,
+                    defaultDays: event.currentTarget.value,
+                  })
+                }
+                disabled={disabled || draft.defaultUnlimited}
+                required={!draft.defaultUnlimited}
+                aria-label={t('externalAccess.expiry.default')}
+                aria-describedby={defaultExpirationUnitId}
+              />
+              <span
+                id={defaultExpirationUnitId}
+                className="text-muted-foreground text-sm"
+              >
+                {t('externalAccess.expiry.days')}
+              </span>
+            </div>
             {draft.maxUnlimited ? (
               <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
-                <input
-                  type="checkbox"
+                <Checkbox
                   name="defaultUnlimited"
+                  data-policy-control="defaultUnlimited"
                   value="true"
                   checked={draft.defaultUnlimited}
                   disabled={disabled}
-                  onChange={(event) =>
+                  onCheckedChange={(checked) =>
                     onChange({
                       ...draft,
-                      defaultUnlimited: event.currentTarget.checked,
+                      defaultUnlimited: checked === true,
                     })
                   }
                 />
@@ -807,41 +847,43 @@ function ExternalAccessExpiryFields({
         </SettingsSubsection>
         <SettingsSubsection title={t('externalAccess.expiry.max')}>
           <div className="max-stack:flex-col gap-inline flex items-start">
-            <Input
-              className="max-stack:w-full w-24 flex-none"
-              name="maxDays"
-              type="number"
-              min={1}
-              max={365}
-              step={1}
-              value={draft.maxDays}
-              onChange={(event) =>
-                onChange({ ...draft, maxDays: event.currentTarget.value })
-              }
-              disabled={disabled || draft.maxUnlimited}
-              required={!draft.maxUnlimited}
-              aria-label={t('externalAccess.expiry.max')}
-              aria-describedby={maximumExpirationUnitId}
-            />
-            <span
-              id={maximumExpirationUnitId}
-              className="text-muted-foreground pt-1.5 text-sm"
-            >
-              {t('externalAccess.expiry.days')}
-            </span>
+            <div className="gap-inline flex items-center">
+              <Input
+                className="w-24 flex-none"
+                name="maxDays"
+                type="number"
+                min={1}
+                max={365}
+                step={1}
+                value={draft.maxDays}
+                onChange={(event) =>
+                  onChange({ ...draft, maxDays: event.currentTarget.value })
+                }
+                disabled={disabled || draft.maxUnlimited}
+                required={!draft.maxUnlimited}
+                aria-label={t('externalAccess.expiry.max')}
+                aria-describedby={maximumExpirationUnitId}
+              />
+              <span
+                id={maximumExpirationUnitId}
+                className="text-muted-foreground text-sm"
+              >
+                {t('externalAccess.expiry.days')}
+              </span>
+            </div>
             <label className="flex items-center gap-2 pt-1.5 text-sm whitespace-nowrap">
-              <input
-                type="checkbox"
+              <Checkbox
                 name="maxUnlimited"
+                data-policy-control="maxUnlimited"
                 value="true"
                 checked={draft.maxUnlimited}
                 disabled={disabled}
-                onChange={(event) => {
+                onCheckedChange={(checked) => {
                   onChange({
                     ...draft,
-                    maxUnlimited: event.currentTarget.checked,
+                    maxUnlimited: checked === true,
                     defaultUnlimited:
-                      event.currentTarget.checked && draft.defaultUnlimited,
+                      checked === true && draft.defaultUnlimited,
                   })
                 }}
               />
@@ -962,12 +1004,12 @@ function PolicyToggle({
   return (
     <label className="border-divider flex items-start gap-3 border-b pb-3 last:border-b-0 last:pb-0">
       {includeHidden ? <input type="hidden" name={name} value="false" /> : null}
-      <input
-        type="checkbox"
+      <Checkbox
+        data-policy-control={name}
         name={name}
         value="true"
         checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
+        onCheckedChange={(value) => onChange(value === true)}
         disabled={disabled}
         className="size-4 self-start"
       />
