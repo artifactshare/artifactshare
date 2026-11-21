@@ -109,6 +109,54 @@ export const screen = {
   primaryAction: 'プランを管理する',
   states: [
     {
+      id: 'monthly-jpy',
+      description: 'monthly jpy plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        ready: {
+          selector: '[data-plan="plus"]',
+          description: 'Checkout plan cards are visible',
+        },
+        query: '?interval=monthly&currency=jpy',
+      },
+    },
+    {
+      id: 'monthly-usd',
+      description: 'monthly usd plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        ready: {
+          selector: '[data-plan="plus"]',
+          description: 'Checkout plan cards are visible',
+        },
+        query: '?interval=monthly&currency=usd',
+      },
+    },
+    {
+      id: 'yearly-jpy',
+      description: 'yearly jpy plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        ready: {
+          selector: '[data-plan="plus"]',
+          description: 'Checkout plan cards are visible',
+        },
+        query: '?interval=yearly&currency=jpy',
+      },
+    },
+    {
+      id: 'yearly-usd',
+      description: 'yearly usd plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        ready: {
+          selector: '[data-plan="plus"]',
+          description: 'Checkout plan cards are visible',
+        },
+        query: '?interval=yearly&currency=usd',
+      },
+    },
+    {
       id: 'past-due',
       description: 'Past-due billing warning',
       setup: { scenario: 'settings-billing/past-due' },
@@ -202,7 +250,9 @@ export async function loader({
     workspace.stripe_subscription_id &&
     hasActiveSubscription(workspace.stripe_subscription_status),
   )
-  const billingConfigured = isBillingConfigured(env)
+  const billingConfigured =
+    isBillingConfigured(env) ||
+    isDevScreenStateRequest(request, 'settings-billing/purchase')
   // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
   const billingAuthorization = await requireWorkspaceBillingOwner(db, user)
   const canManage = billingAuthorization.kind === 'ok'

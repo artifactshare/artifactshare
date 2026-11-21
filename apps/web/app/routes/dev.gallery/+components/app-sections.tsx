@@ -4,6 +4,7 @@ import {
   IconStack2 as Layers,
 } from '@tabler/icons-react'
 
+import { avatarSlotFor } from '~/lib/user'
 import { AuthorAvatar } from '~/components/app/author-avatar'
 import { BrandMark } from '~/components/app/brand-mark'
 import { PublicFooter } from '~/components/app/public-footer'
@@ -20,6 +21,11 @@ import { Labeled } from './kit'
 
 const BRAND_MARK_SIZES = [16, 20, 24, 32] as const
 const AVATAR_SIZES = ['xs', 'sm', 'menu'] as const
+const AVATAR_PALETTE_IDS = Array.from({ length: 6 }, (_, slot) => {
+  let id = 0
+  while (avatarSlotFor(`gallery-${id}`) !== slot + 1) id++
+  return `gallery-${id}`
+})
 
 export const appSections: GallerySection[] = [
   {
@@ -39,17 +45,30 @@ export const appSections: GallerySection[] = [
     title: 'Author Avatar',
     file: 'app/author-avatar',
     element: (
-      <Labeled label="size">
-        {AVATAR_SIZES.map((size) => (
-          <AuthorAvatar
-            key={size}
-            id={`gallery-${size}`}
-            image={null}
-            initial="A"
-            size={size}
-          />
-        ))}
-      </Labeled>
+      <>
+        <Labeled label="size">
+          {AVATAR_SIZES.map((size) => (
+            <AuthorAvatar
+              key={size}
+              id={`gallery-${size}`}
+              image={null}
+              initial="A"
+              size={size}
+            />
+          ))}
+        </Labeled>
+        <Labeled label="palette">
+          {AVATAR_PALETTE_IDS.map((id) => (
+            <AuthorAvatar
+              key={id}
+              id={id}
+              image={null}
+              initial="A"
+              size="menu"
+            />
+          ))}
+        </Labeled>
+      </>
     ),
   },
   {

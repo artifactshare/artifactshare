@@ -24,6 +24,22 @@ export const screen = {
   primaryAction: 'プロジェクトを確認する',
   states: [
     {
+      id: 'populated',
+      description: 'populated responsive controls and content',
+      setup: {
+        scenario: 'settings-inventory-projects/populated',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
+      id: 'empty',
+      description: 'empty responsive controls and content',
+      setup: {
+        scenario: 'settings-inventory-projects/empty',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'result-success',
       description:
         'Successful settings action announced above the page content',
@@ -61,7 +77,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ),
   }
 }
-export default function ProjectsPage({ loaderData }: Route.ComponentProps) {
+export default function ProjectsPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { t, locale } = useT()
   const { projects } = loaderData
   return (

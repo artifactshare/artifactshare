@@ -142,7 +142,7 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 ### 3.7 Avatar palette (deterministic)
 
-`user.id` (or `google_sub`) を hash して 6 色のうち 1 つを選ぶ。**workspace mark** にも同じ palette を使う。`--avatar-1`〜`--avatar-6` は gradient のため、色 named utility にできない唯一の raw gradient 例外として `tokens.css` に置く。
+`user.id` (or `google_sub`) を hash して 6 色のうち 1 つを選ぶ。**workspace mark** にも同じ palette を使う。`--avatar-1`〜`--avatar-6` は白いイニシャルと 4.5:1 以上のコントラストを持つ単色で、`tokens.css` に置く。
 
 ---
 
@@ -387,6 +387,7 @@ shareable の公開範囲 (`Visibility`) を表す pill 形バッジ。shadcn `B
 - 余白は部品が gap で所有する。ページ (routes) 側に余白ユーティリティ・余白のインライン style を書かない (データ表示の `width` 等は可)。
 - 隠しラベルは `FieldLabel` に `sr-only` を付ける。エラーは `FieldError` (`role="alert"`) をフィールド直下に置き、`aria-describedby` / `aria-invalid` を入力へ配線する。
 - ボタンは shadcn `Button` を使う (§11.1)。
+- チェックボックスは共有 `Checkbox` を使う。境界線は light / dark とも隣接する背景に対して 3:1 以上のコントラストを保ち、disabled 時も薄くしない。disabled は破線の境界で示し、チェック済みの disabled は `bg-muted` の塗りと `text-foreground` のチェック印を使う。
 - 表示系も shadcn 公式を使う: バッジ / ステータス pill は `Badge`、バナーは `Alert` (ARIA role は用途に合わせ使用側で上書き)、アバターは `Avatar` (§11.2)、使用量メーターは `Progress` (装飾扱いなら `aria-hidden`)、radio は `RadioGroup` (非制御フォームでは Root に `name` + `defaultValue`)。
 - 構造系も shadcn 公式を使う: ページ内状態切替は `Tabs`、URL 駆動の切替 (ネステッドルート切替) はリンクの `TabNav` を使う。設定メニューは目的別の見出しで分けたリンク一覧を使い、狭い画面では `Sheet` に収める。`TabNav` はページナビゲーションであり `role="tablist"` を付けない。その他は `Table` (semantic `<table>`)、`Breadcrumb`、`Empty` (§11.7)、`Card`、`Tooltip` (§11.1 のルール)。手組みの `role="tablist"` / `role="table"` を新設しない。
 

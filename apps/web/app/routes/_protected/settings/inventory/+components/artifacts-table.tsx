@@ -64,6 +64,11 @@ export function ArtifactsTable({
         </TableBody>
       </Table>
       <div className="max-nav:block max-nav:space-y-3 hidden">
+        {!rows.length ? (
+          <p className="text-muted-foreground py-6 text-center text-sm">
+            {t('team.inventory.empty')}
+          </p>
+        ) : null}
         {rows.map((row) => (
           <article
             key={row.id}
@@ -82,13 +87,11 @@ export function ArtifactsTable({
               />
             </div>
             <dl className="text-muted-foreground mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <dt className="text-xs">{t('team.inventory.owner')}</dt>
-                <dd className="truncate">
-                  {row.owner.name ?? row.owner.email}
-                </dd>
+                <dd>{row.owner.name ?? row.owner.email}</dd>
               </div>
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <dt className="text-xs">{t('team.inventory.location')}</dt>
                 <dd>
                   {row.location.kind === 'inbox'
@@ -96,13 +99,13 @@ export function ArtifactsTable({
                     : row.location.name}
                 </dd>
               </div>
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <dt className="text-xs">{t('team.inventory.size')}</dt>
                 <dd>
                   {row.sizeBytes == null ? '—' : formatBytes(row.sizeBytes)}
                 </dd>
               </div>
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <dt className="text-xs">{t('team.inventory.updated')}</dt>
                 <dd>{formatRelative(row.updatedAt, locale)}</dd>
               </div>

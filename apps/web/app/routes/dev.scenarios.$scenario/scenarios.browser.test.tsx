@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import '~/app.css'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import { auditGaps } from '~/lib/gap-audit'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { ScenarioPage } from './index'
@@ -232,6 +233,32 @@ describe('scenario visual regression', () => {
           ).not.toMatch(/Searching|検索中/),
         )
 
+      // Element screenshots are clipped outside Vitest's iframe viewport.
+      // Expand document-flow pages before capture so lower cards are painted.
+      if (SCENARIO_CONTRACTS[scenario].fullHeight) {
+        await page.viewport(
+          size.width,
+          Math.max(
+            size.height,
+            Math.ceil(document.documentElement.scrollHeight),
+          ),
+        )
+        await waitForBrowserLayout()
+        for (const plan of ['free', 'plus', 'team']) {
+          const card = document.querySelector(`[data-plan="${plan}"]`)
+          if (!card) throw new Error(`Pricing card missing: ${plan}`)
+          const rect = card.getBoundingClientRect()
+          expect(rect.bottom).toBeLessThanOrEqual(innerHeight)
+          expect(
+            card.contains(
+              document.elementFromPoint(
+                rect.left + rect.width / 2,
+                rect.top + rect.height / 2,
+              ),
+            ),
+          ).toBe(true)
+        }
+      }
       if (VISUAL_FAULT === 'header') {
         const header = document.querySelector('#viewer-topbar')
         if (header) {

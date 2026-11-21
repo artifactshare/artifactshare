@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { Toaster } from '~/components/ui/sonner'
 import '~/app.css'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import {
   headingSnapshotExpression,
   validateHeadingSnapshot,
@@ -42,8 +43,38 @@ async function renderGallery(theme: 'light' | 'dark') {
   await vi.waitFor(() =>
     expect(document.querySelector('#gallery-heading')).not.toBeNull(),
   )
-  await document.fonts.ready
-  await new Promise(requestAnimationFrame)
+  await waitForBrowserLayout()
+}
+
+async function prepareGalleryCapture() {
+  // Vitest renders in an iframe. An element screenshot can extend beyond that
+  // frame, but pixels outside its viewport are clipped. Resize the actual test
+  // viewport before capturing the full gallery, then verify the painted targets.
+  await page.viewport(1440, Math.ceil(document.documentElement.scrollHeight))
+  await waitForBrowserLayout()
+  expect(galleryControlsArePainted()).toBe(true)
+}
+
+function galleryControlsArePainted() {
+  const controls = [
+    ...document.querySelectorAll(
+      '#app-author-avatar [data-slot="avatar-fallback"], #ui-checkbox [data-slot="checkbox"]',
+    ),
+  ]
+  return (
+    controls.length === 10 &&
+    controls.every((control) => {
+      const rect = control.getBoundingClientRect()
+      const x = rect.left + rect.width / 2,
+        y = rect.top + rect.height / 2
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        y < innerHeight &&
+        control.contains(document.elementFromPoint(x, y))
+      )
+    })
+  )
 }
 
 afterEach(() => {
@@ -70,6 +101,7 @@ describe('component gallery visual regression', () => {
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-sonner-toast]')).toHaveLength(5),
     )
+    await prepareGalleryCapture()
     expect(validateHeadingSnapshot(headingSnapshotExpression()())).toEqual([])
     const axeResult = await axe.run(document, {
       runOnly: {

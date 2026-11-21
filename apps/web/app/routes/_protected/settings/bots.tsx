@@ -28,6 +28,14 @@ export const screen = {
   primaryAction: 'Botを管理する',
   states: [
     {
+      id: 'long-email',
+      description: 'long-email responsive controls and content',
+      setup: {
+        scenario: 'settings-bots/long-email',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'stop-pending',
       description:
         'Stopping the bot with a busy confirmation and disabled controls',

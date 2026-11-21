@@ -43,6 +43,14 @@ export const screen = {
   primaryAction: '設定を更新する',
   states: [
     {
+      id: 'initial-avatar',
+      description: 'initial-avatar responsive controls and content',
+      setup: {
+        scenario: 'settings-general/initial-avatar',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'result-success',
       description:
         'Successful settings action announced above the page content',
@@ -87,7 +95,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   return redirect(`/settings/general?status=${result.kind}`)
 }
 
-export default function GeneralPage({ loaderData }: Route.ComponentProps) {
+export default function GeneralPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const shell = useOutletContext<SettingsLayoutContext>()
   const { t } = useT()
   const canManage = shell.currentUserIsAdmin

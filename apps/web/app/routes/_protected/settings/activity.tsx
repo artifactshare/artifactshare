@@ -92,7 +92,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   )
 }
 
-export default function ActivityPage({ loaderData }: Route.ComponentProps) {
+export default function ActivityPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { t, locale } = useT()
   const { events, total, page } = loaderData
   return (

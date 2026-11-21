@@ -63,6 +63,8 @@ export interface ScenarioContract {
     waitMs?: number
     readySelector?: string
   }[]
+  // Expand pages whose content runs past one viewport before auditing and capture.
+  fullHeight?: boolean
   headerSelector?: string
   requiresHeading?: boolean
   requiresPrimary?: boolean
@@ -86,6 +88,7 @@ export const SCENARIO_CONTRACTS = Object.fromEntries(
               ],
             }
           : {}),
+        ...(scenario === 'public-pricing' ? { fullHeight: true } : {}),
         requiredRegions: definition.requiredRegions,
         requiresHeading: definition.requiresHeading,
         requiresPrimary: definition.requiresPrimary,

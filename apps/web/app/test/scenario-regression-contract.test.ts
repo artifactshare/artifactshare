@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest'
 vi.stubGlobal('__VISUAL_FAULT__', null)
 vi.mock('~/routes/dev.scenarios.$scenario/+components/scenarios', () => {
   const ids = [
+    'public-pricing',
     'settings-menu-open',
     'settings-menu-free-owner',
     'settings-menu-team-admin',
@@ -15,7 +16,8 @@ vi.mock('~/routes/dev.scenarios.$scenario/+components/scenarios', () => {
     ),
   }
 })
-const { SCENARIO_CONDITIONS } = await import('./scenario-regression-contract')
+const { SCENARIO_CONDITIONS, SCENARIO_CONTRACTS } =
+  await import('./scenario-regression-contract')
 test('settings sheet only runs on mobile while all role menus retain both widths', () => {
   for (const scenario of [
     'settings-menu-open',
@@ -38,4 +40,12 @@ test('settings sheet only runs on mobile while all role menus retain both widths
       (c) => c.scenario === 'search-mobile-search',
     ).some((c) => c.viewport === 'desktop'),
   ).toBe(false)
+})
+
+test('only pricing opts into full-height auditing and capture', () => {
+  expect(
+    Object.entries(SCENARIO_CONTRACTS)
+      .filter(([, contract]) => contract.fullHeight)
+      .map(([id]) => id),
+  ).toEqual(['public-pricing'])
 })

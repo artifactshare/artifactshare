@@ -8,10 +8,10 @@ import {
   useLoaderData,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import type { WorkspaceLinkPolicy } from '~/lib/link-sharing-policy'
-import ExternalAccessPage from './external-access'
+import ExternalAccessPage, { screen } from './external-access'
 import '~/app.css'
 
 vi.mock('~/services/link-sharing.server', () => ({}))
@@ -692,3 +692,132 @@ test.each([30, 90])(
     }
   },
 )
+
+// Radix's hidden input must preserve the native FormData contract, while the
+// visible control supports label and keyboard activation in the real form.
+test('product checkboxes preserve checked, unchecked, disabled and coupled expiry values', async () => {
+  const policy: WorkspaceLinkPolicy = {
+    plan: 'team',
+    linkSharingEnabled: true,
+    externalPostingEnabled: true,
+    linkExpiryDefaultDays: 30,
+    linkExpiryMaxDays: null,
+  }
+  const router = createMemoryRouter([
+    {
+      element: (
+        <Outlet
+          context={{ currentUserIsAdmin: true, currentUserRole: 'owner' }}
+        />
+      ),
+      children: [
+        { path: '/', element: <ExternalAccessPage loaderData={{ policy }} /> },
+      ],
+    },
+  ])
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    const maximum = page.getByRole('checkbox', {
+      name: 'No limit',
+      exact: true,
+    })
+    const defaultUnlimited = page.getByRole('checkbox', {
+      name: 'No expiration',
+      exact: true,
+    })
+    // Exercise the actual ledger selectors: Radix assigns name to its hidden
+    // input, not to the visible button used by capture interactions.
+    const selectors = new Set(
+      screen.states.flatMap((state) =>
+        'interactions' in state.setup
+          ? (state.setup.interactions ?? [])
+              .map((step) => step.selector)
+              .filter((selector) => selector.includes('data-policy-control'))
+          : [],
+      ),
+    )
+    expect(selectors.size).toBe(3)
+    for (const selector of selectors) {
+      const target = container.querySelector(selector)
+      expect(target?.getAttribute('role')).toBe('checkbox')
+      expect(target?.checkVisibility()).toBe(true)
+    }
+    await expect.element(maximum).toBeChecked()
+    const form = maximum.element().closest('form')!
+    const values = () => new FormData(form)
+    expect(values().get('maxUnlimited')).toBe('true')
+    expect(values().has('maxDays')).toBe(false)
+    await defaultUnlimited.click()
+    await expect.element(defaultUnlimited).toBeChecked()
+    expect(values().get('defaultUnlimited')).toBe('true')
+    expect(values().has('defaultDays')).toBe(false)
+    await maximum.click()
+    await expect.element(maximum).not.toBeChecked()
+    await expect.element(defaultUnlimited).not.toBeInTheDocument()
+    expect(values().has('maxUnlimited')).toBe(false)
+    expect(values().has('defaultUnlimited')).toBe(false)
+    expect(values().get('defaultDays')).toBe('30')
+    const sharing = page.getByRole('checkbox', { name: /^Link sharing/ })
+    expect(values().getAll('linkSharingEnabled')).toEqual(['false', 'true'])
+    const label = sharing.element().closest('label')!
+    await page
+      .getByText(label.querySelector('strong')!.textContent!, { exact: true })
+      .click()
+    await expect.element(sharing).not.toBeChecked()
+    expect(values().getAll('linkSharingEnabled')).toEqual(['false'])
+    await sharing.click()
+    await expect.element(sharing).toBeChecked()
+    await userEvent.keyboard(' ')
+    await expect.element(sharing).not.toBeChecked()
+    expect(values().getAll('linkSharingEnabled')).toEqual(['false'])
+  } finally {
+    await act(async () => root.unmount())
+    router.dispose()
+    container.remove()
+  }
+})
+
+test('permission-disabled product checkboxes retain their state and submit no values', async () => {
+  const policy: WorkspaceLinkPolicy = {
+    plan: 'team',
+    linkSharingEnabled: true,
+    externalPostingEnabled: true,
+    linkExpiryDefaultDays: null,
+    linkExpiryMaxDays: null,
+  }
+  const router = createMemoryRouter([
+    {
+      element: (
+        <Outlet
+          context={{ currentUserIsAdmin: false, currentUserRole: 'member' }}
+        />
+      ),
+      children: [
+        { path: '/', element: <ExternalAccessPage loaderData={{ policy }} /> },
+      ],
+    },
+  ])
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    const controls = container.querySelectorAll<HTMLButtonElement>(
+      '[data-slot="checkbox"]',
+    )
+    expect(controls).toHaveLength(4)
+    const values = new FormData(controls[0].closest('form')!)
+    for (const control of controls) {
+      expect(control.disabled).toBe(true)
+      expect(control.getAttribute('aria-checked')).toBe('true')
+      expect(values.has(control.dataset.policyControl!)).toBe(false)
+    }
+  } finally {
+    await act(async () => root.unmount())
+    router.dispose()
+    container.remove()
+  }
+})
