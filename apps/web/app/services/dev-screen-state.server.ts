@@ -375,7 +375,10 @@ export async function seedDevScreenState(
       const memberId = `${workspaceId}-long-member-${status}`
       const profile = {
         email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
-        name: `${status === 'active' ? 'Active' : 'Removed'} member`,
+        name:
+          status === 'active'
+            ? 'Synthetic active member with a deliberately long display name for phone wrapping'
+            : 'Removed member',
         image: null,
       }
       await db

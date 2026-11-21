@@ -977,7 +977,8 @@ for (const theme of ['light', 'dark'])
                     throw new Error('Missing member group')
                   const originals = [group, address].map((el) => el.className)
                   try {
-                    // Restore a43a3a88 exactly: only badge-bearing rows had a
+                    // Restore the overflow-relevant markup from a43a3a88:
+                    // only badge-bearing rows had a
                     // horizontal group; removed members already wrapped anywhere
                     // and fit without the added break-all class.
                     if (badges.length)
