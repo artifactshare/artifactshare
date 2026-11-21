@@ -782,7 +782,7 @@ const ledgerPages = () => [
             members: [
               {
                 id: 'long-member',
-                name: 'Active member',
+                name: 'Active member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
                 email: memberEmails[0],
                 image: null,
                 role: 'admin',
@@ -809,7 +809,7 @@ const ledgerPages = () => [
           removedMembers: [
             {
               id: 'long-removed-member',
-              name: 'Removed member',
+              name: 'Removed member with a long name and AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
               email: memberEmails[1],
               image: null,
               ownedArtifactCount: 2,
@@ -935,6 +935,9 @@ for (const theme of ['light', 'dark'])
                   const address = page
                     .getByText(email, { exact: true })
                     .element()
+                  if (!(address instanceof HTMLElement))
+                    throw new Error('Missing member address')
+                  const name = address.previousElementSibling!
                   const row = address.closest('tr')!
                   const cell = address.closest('td')!
                   const table = address.closest(
@@ -945,10 +948,12 @@ for (const theme of ['light', 'dark'])
                   ]
                   const memberFits = () => {
                     const text = document.createRange()
-                    text.selectNodeContents(address)
+                    text.selectNodeContents(address.parentElement!)
                     const cellBounds = cell.getBoundingClientRect()
                     return (
-                      [row, cell, address, table, ...badges].every(fits) &&
+                      [row, cell, name, address, table, ...badges].every(
+                        fits,
+                      ) &&
                       badges.every(
                         (badge) =>
                           badge.getBoundingClientRect().top >=
@@ -962,13 +967,6 @@ for (const theme of ['light', 'dark'])
                     )
                   }
                   expect(memberFits(), email).toBe(true)
-                  for (const badge of badges) {
-                    expect(
-                      badge.getBoundingClientRect().top,
-                    ).toBeGreaterThanOrEqual(
-                      address.getBoundingClientRect().bottom - 1,
-                    )
-                  }
                   expect(
                     address.getBoundingClientRect().height,
                   ).toBeGreaterThan(
@@ -977,26 +975,32 @@ for (const theme of ['light', 'dark'])
                   const group = cell.firstElementChild!
                   if (!(group instanceof HTMLElement))
                     throw new Error('Missing member group')
-                  const originals = [group, address].map(
-                    (el) => el.style.cssText,
-                  )
+                  const originals = [group, address].map((el) => el.className)
                   try {
-                    // Restore the reviewed horizontal badges; for the badge-free
-                    // removed row, inject an unbreakable address to check text bounds.
-                    group.style.flexDirection = 'row'
-                    group.style.alignItems = 'center'
-                    address.style.wordBreak = 'normal'
-                    if (!badges.length) {
-                      address.style.overflowWrap = 'normal'
-                      address.style.whiteSpace = 'nowrap'
-                    }
-                    expect(memberFits()).toBe(false)
+                    // Restore a43a3a88 exactly: only badge-bearing rows had a
+                    // horizontal group; removed members already wrapped anywhere
+                    // and fit without the added break-all class.
+                    if (badges.length)
+                      group.className =
+                        'flex min-w-0 items-center gap-[var(--spacing-2)]'
+                    address.classList.remove('max-md:break-all')
+                    expect(memberFits()).toBe(!badges.length)
                   } finally {
                     ;[group, address].forEach((el, index) => {
-                      el.style.cssText = originals[index]
+                      el.className = originals[index]
                     })
                   }
                   expect(memberFits()).toBe(true)
+                  if (email !== memberEmails[2]) {
+                    const nameClasses = name.className
+                    try {
+                      name.className = 'text-foreground truncate font-medium'
+                      expect(memberFits()).toBe(false)
+                    } finally {
+                      name.className = nameClasses
+                    }
+                    expect(memberFits()).toBe(true)
+                  }
                 }
               }
 

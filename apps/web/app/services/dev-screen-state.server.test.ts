@@ -2563,7 +2563,11 @@ test('long-member capture restores active and removed rows without changing unre
       const rows = await db
         .selectFrom('workspace_members')
         .innerJoin('users', 'users.id', 'workspace_members.user_id')
-        .select(['users.email', 'workspace_members.status'])
+        .select([
+          'users.email',
+          'workspace_members.status',
+          'workspace_members.role',
+        ])
         .where('workspace_members.workspace_id', '=', workspaceId)
         .orderBy('workspace_members.status')
         .execute()
@@ -2571,6 +2575,7 @@ test('long-member capture restores active and removed rows without changing unre
         ['active', 'removed'].map((status) => ({
           email: `${status}-member-with-a-long-synthetic-address-${workspaceId}@example.test`,
           status,
+          role: status === 'active' ? 'admin' : 'member',
         })),
       )
       expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toMatchObject([

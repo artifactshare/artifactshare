@@ -15,7 +15,15 @@ export function TeamUser({
 }) {
   return (
     <Stack gap="0" className="min-w-0">
-      <span className="text-foreground truncate font-medium">{name}</span>
+      <span
+        className={cn(
+          'text-foreground truncate font-medium',
+          wrapOnPhone &&
+            'max-md:overflow-visible max-md:[overflow-wrap:anywhere] max-md:whitespace-normal',
+        )}
+      >
+        {name}
+      </span>
       {email ? (
         <TeamMuted
           className={cn(

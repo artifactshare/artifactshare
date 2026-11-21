@@ -391,7 +391,7 @@ export async function seedDevScreenState(
         .onConflict((oc) => oc.column('id').doUpdateSet(profile))
         .execute()
       const membership = {
-        role: 'member' as const,
+        role: status === 'active' ? ('admin' as const) : ('member' as const),
         status,
         removed_at: status === 'removed' ? now : null,
         removed_by: status === 'removed' ? userId : null,
