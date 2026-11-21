@@ -43,6 +43,14 @@ export const screen = {
   primaryAction: '設定を更新する',
   states: [
     {
+      id: 'long-owner',
+      description: 'Long owner name and email wrap within the phone layout',
+      setup: {
+        scenario: 'settings-general/long-owner',
+        reseedBeforeCapture: true,
+      },
+    },
+    {
       id: 'initial-avatar',
       description: 'initial-avatar responsive controls and content',
       setup: {

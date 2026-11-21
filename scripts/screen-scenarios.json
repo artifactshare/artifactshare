@@ -65,6 +65,7 @@
   "settings-billing/purchase",
   "settings-bots/long-email",
   "settings-general/initial-avatar",
+  "settings-general/long-owner",
   "settings-inventory-projects/populated",
   "settings-inventory-projects/empty",
   "settings-inventory-artifacts/populated",

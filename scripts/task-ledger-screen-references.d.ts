@@ -127,6 +127,7 @@ export type TaskLedgerScreenReference =
   | 'settings-external-access/zero-reduction'
   | 'settings-general/default'
   | 'settings-general/initial-avatar'
+  | 'settings-general/long-owner'
   | 'settings-general/result-error'
   | 'settings-general/result-success'
   | 'settings-general/result-warning'

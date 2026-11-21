@@ -67,6 +67,12 @@ function scenarioWorkspaceId(
 }
 
 export function devScreenUserEmail(persona: string, scenario: string): string {
+  if (
+    scenario === 'settings-general/long-owner' &&
+    persona.endsWith('-owner')
+  ) {
+    return `${persona}-with-a-long-synthetic-owner-address-for-phone-layout@example.test`
+  }
   return `dev-${persona}+${scenario.replaceAll('/', '-')}@artifactshare.local`
 }
 
@@ -431,6 +437,29 @@ export async function seedDevScreenState(
       .where('id', '=', `${workspaceId}-bot-active`)
       .execute()
     return result
+  }
+  if (scenario === 'settings-general/long-owner') {
+    const workspace = await db
+      .selectFrom('workspaces')
+      .select('plan')
+      .where('id', '=', workspaceId)
+      .executeTakeFirstOrThrow()
+    await db
+      .updateTable('users')
+      .set({
+        name: 'Synthetic workspace owner with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
+        email: devScreenUserEmail(`${workspace.plan}-owner`, scenario),
+      })
+      .where('workspace_id', '=', workspaceId)
+      .where('id', 'in', (eb) =>
+        eb
+          .selectFrom('workspace_members')
+          .select('user_id')
+          .where('workspace_id', '=', workspaceId)
+          .where('role', '=', 'owner')
+          .where('status', '=', 'active'),
+      )
+      .execute()
   }
   if (scenario === 'settings-general/initial-avatar') {
     await db
