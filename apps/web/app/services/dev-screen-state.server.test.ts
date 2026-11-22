@@ -1,3 +1,4 @@
+import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { sql } from 'kysely'
 import { listProjectPins } from './project-pins.server'
@@ -2565,7 +2566,12 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
     )
     await db
       .updateTable('workspaces')
-      .set({ plan: 'team', stripe_subscription_id: 'fixture-subscription' })
+      .set({
+        plan: 'team',
+        stripe_subscription_id: 'fixture-subscription',
+        storage_used_bytes: 123,
+        storage_quota_bytes: 456,
+      })
       .where('id', '=', purchase.workspaceId)
       .execute()
     await ensureDevScreenState(db, 'settings-billing/purchase', now, 'team')
@@ -2574,6 +2580,8 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
         .selectFrom('workspaces')
         .select([
           'plan',
+          'storage_used_bytes',
+          'storage_quota_bytes',
           'stripe_subscription_id',
           'stripe_subscription_status',
         ])
@@ -2581,6 +2589,8 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
         .executeTakeFirstOrThrow(),
     ).toEqual({
       plan: 'free',
+      storage_used_bytes: 0,
+      storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
       stripe_subscription_id: null,
       stripe_subscription_status: 'none',
     })
@@ -2809,10 +2819,41 @@ test('long-owner capture restores its owner profile without changing other users
   }
 })
 
+test.each(['team', 'plus'] as const)(
+  'new %s scenario workspaces use the production plan quota',
+  async (plan) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings/result-warning',
+        '2026-07-31T12:00:00.000Z',
+        plan,
+      )
+      const workspace = await db
+        .selectFrom('workspaces')
+        .select('storage_quota_bytes')
+        .where('id', '=', workspaceId)
+        .executeTakeFirstOrThrow()
+      expect(workspace.storage_quota_bytes).toBe(PLAN_STORAGE_QUOTA_BYTES[plan])
+    } finally {
+      await db.destroy()
+    }
+  },
+)
+
 test.each([
-  ['team-unsubscribed', 0, 100_000_000_000],
-  ['team-unsubscribed-high-usage', 95_000_000_000, 100_000_000_000],
-  ['near-limit', 95_000_000_000, 100_000_000_000],
+  ['team-unsubscribed', 0, PLAN_STORAGE_QUOTA_BYTES.team],
+  [
+    'team-unsubscribed-high-usage',
+    PLAN_STORAGE_QUOTA_BYTES.team * 0.95,
+    PLAN_STORAGE_QUOTA_BYTES.team,
+  ],
+  [
+    'near-limit',
+    PLAN_STORAGE_QUOTA_BYTES.free * 0.95,
+    PLAN_STORAGE_QUOTA_BYTES.free,
+  ],
   ['continuing-near-limit', 100_000_000_000, 120_000_000_000],
 ] as const)(
   'billing capture %s restores usage and quota',
@@ -2837,6 +2878,11 @@ test.each([
         .executeTakeFirstOrThrow()
       expect(row.storage_used_bytes).toBe(used)
       expect(row.storage_quota_bytes).toBe(quota)
+      if (state === 'near-limit')
+        expect(row).toMatchObject({
+          plan: 'free',
+          stripe_subscription_id: null,
+        })
       if (state.startsWith('team-unsubscribed'))
         expect(row).toMatchObject({
           plan: 'team',
@@ -2849,3 +2895,61 @@ test.each([
     }
   },
 )
+
+test('refreshing the transfer warning restores its removed member and owned file', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  const scenario = 'settings/result-warning'
+  try {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const other = await ensureDevScreenState(db, scenario, now, 'plus')
+    for (const id of [workspaceId, other.workspaceId]) {
+      await db
+        .insertInto('users')
+        .values({
+          id,
+          email: id + '@example.test',
+          email_verified: 1,
+          name: 'Owner',
+          workspace_id: id,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      expect(await loadRemovedWorkspaceMembers(db, id)).toEqual([])
+      await seedDevScreenState(db, scenario, id, id, now)
+    }
+    const [member] = await loadRemovedWorkspaceMembers(db, workspaceId)
+    expect(member.ownedArtifactCount).toBe(1)
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: workspaceId })
+      .where('owner_user_id', '=', member.id)
+      .execute()
+    expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toMatchObject([
+      { ownedArtifactCount: 0 },
+    ])
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'active' })
+      .where('user_id', '=', member.id)
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ owner_user_id: other.workspaceId })
+      .where('workspace_id', '=', other.workspaceId)
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, workspaceId, now)
+    expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([member])
+    expect(
+      await loadRemovedWorkspaceMembers(db, other.workspaceId),
+    ).toMatchObject([{ ownedArtifactCount: 0 }])
+  } finally {
+    await db.destroy()
+  }
+})

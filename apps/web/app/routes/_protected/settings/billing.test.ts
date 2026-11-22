@@ -1,6 +1,10 @@
+import { env } from 'cloudflare:workers'
+import { RouterContextProvider } from 'react-router'
+import * as billing from '~/services/billing.server'
 import * as billingUsage from '~/services/billing-usage.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { BILLING_PRICES } from '~/lib/billing-prices'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
@@ -73,6 +77,80 @@ describe('/settings/billing loader', () => {
     dbState.db = null
     await db.destroy()
   })
+
+  test.each([
+    // header, subscribed workspace, owner, dev, configured display, synthetic contract
+    ['subscribed', true, true, true, true, true],
+    ['past-due', true, true, true, true, true],
+    ['continuing-near-limit', true, true, true, true, true],
+    ['near-limit', false, true, true, true, false],
+    ['near-limit', true, true, true, true, false],
+    ['purchase', false, true, true, true, false],
+    ['purchase', false, false, true, false, false],
+    [null, true, true, true, false, false],
+    ['query-only', true, true, true, false, false],
+    ['team-unsubscribed', true, true, true, false, false],
+    ['subscribed', true, false, true, false, false],
+    ['subscribed', true, true, false, false, false],
+  ] as const)(
+    'unconfigured Stripe with header %s, subscribed=%s, owner=%s, dev=%s',
+    async (header, subscribed, owner, dev, configured, synthetic) => {
+      await seedAdmin(db, 'u-a', 'ws-a')
+      if (subscribed)
+        await updateWorkspacePlan(db, 'ws-a', 'team', 'active', 'sub_1')
+      requireUserMock.mockReturnValue(
+        sessionUser(owner ? 'u-a' : 'u-c', 'ws-a'),
+      )
+      const stubClient = billing.createStripeClient(env)
+      const client = vi
+        .spyOn(billing, 'createStripeClient')
+        .mockReturnValue(stubClient)
+      const savedKey = env.STRIPE_SECRET_KEY
+      env.STRIPE_SECRET_KEY = ''
+      loadSubscriptionContractMock.mockClear()
+      vi.stubEnv('DEV', dev)
+      try {
+        const url = new URL(
+          'https://example.test/settings/billing' +
+            (header === 'query-only'
+              ? '?scenario=settings-billing/subscribed'
+              : ''),
+        )
+        const request = new Request(url, {
+          headers:
+            header && header !== 'query-only'
+              ? {
+                  'X-ArtifactShare-Dev-Screen-State':
+                    'settings-billing/' + header,
+                }
+              : {},
+        })
+        const result = await loader({
+          context: new RouterContextProvider(),
+          params: {},
+          url,
+          pattern: '/settings/billing',
+          request,
+        })
+        expect(result.billingConfigured).toBe(configured)
+        expect(result.contract).toEqual(
+          synthetic
+            ? expect.objectContaining({
+                plan: 'team',
+                interval: 'monthly',
+                currency: 'usd',
+                amount: BILLING_PRICES.team.usd.month,
+              })
+            : null,
+        )
+        expect(client).not.toHaveBeenCalled()
+        expect(loadSubscriptionContractMock).not.toHaveBeenCalled()
+      } finally {
+        env.STRIPE_SECRET_KEY = savedKey
+        vi.unstubAllEnvs()
+      }
+    },
+  )
 
   test('admin loader returns manageable billing data', async () => {
     vi.useFakeTimers()
@@ -358,20 +436,26 @@ describe('/settings/billing loader', () => {
 
 describe('billing context visibility', () => {
   test.each([
-    [true, 'free', 'default', true],
-    [true, 'free', 'projectLimit', true],
-    [true, 'plus', 'plusOverage', true],
-    [true, 'plus', 'projectLimit', true],
-    [true, 'plus', 'usage', true],
-    [true, 'plus', 'default', false],
-    [true, 'team', 'plusOverage', false],
-    [false, 'free', 'default', false],
+    [true, 'free', 'default', false, true],
+    [true, 'free', 'default', true, false],
+    [true, 'free', 'projectLimit', false, true],
+    [true, 'plus', 'plusOverage', false, true],
+    [true, 'plus', 'projectLimit', false, true],
+    [true, 'plus', 'usage', false, true],
+    [true, 'plus', 'default', false, false],
+    [true, 'team', 'plusOverage', false, false],
+    [false, 'free', 'default', false, false],
   ] as const)(
-    'canManage=%s plan=%s context=%s returns %s',
-    (canManage, plan, entryContext, expected) => {
-      expect(shouldShowBillingContext({ canManage, plan, entryContext })).toBe(
-        expected,
-      )
+    'canManage=%s plan=%s context=%s awaitingCheckoutReflection=%s returns %s',
+    (canManage, plan, entryContext, awaitingCheckoutReflection, expected) => {
+      expect(
+        shouldShowBillingContext({
+          canManage,
+          plan,
+          entryContext,
+          awaitingCheckoutReflection,
+        }),
+      ).toBe(expected)
     },
   )
 })

@@ -12,6 +12,7 @@ import { type ReactNode } from 'react'
 import {
   createMemoryRouter,
   Outlet,
+  parsePath,
   RouterProvider,
   useLoaderData,
 } from 'react-router'
@@ -39,8 +40,8 @@ vi.mock('~/services/team-management.server', () => ({}))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/db.server', () => ({}))
 vi.mock('~/middleware/context', () => ({}))
-import MembersPage from './index'
-import GeneralPage from './general'
+import MembersPage, { screen as membersScreen } from './index'
+import GeneralPage, { screen as generalScreen } from './general'
 import ActivityPage from './activity'
 import AnalyticsPage from './analytics'
 import IntegrationsPage from './integrations'
@@ -260,7 +261,7 @@ async function withScreen(
             {settingsShell ? <SettingsLayout loaderData={shell} /> : <Outlet />}
           </TooltipProvider>
         ),
-        children: [{ path, element: content }],
+        children: [{ path: parsePath(path).pathname, element: content }],
       },
     ],
     { initialEntries: [path] },
@@ -1041,6 +1042,92 @@ const memberRows = {
     },
   ],
 } satisfies Omit<Parameters<typeof MembersPage>[0]['loaderData'], 'filters'>
+
+test.each([
+  [generalScreen, 'result-success'],
+  [generalScreen, 'result-error'],
+  [membersScreen, 'result-success'],
+  [membersScreen, 'result-warning'],
+  [membersScreen, 'result-error'],
+] as const)('$0.id $1 capture is ready in Japanese', async (screen, id) => {
+  const setup = screen.states.find((state) => state.id === id)?.setup
+  if (!setup?.ready) throw new Error('Missing readiness for ' + id)
+  const ready = setup.ready
+  language.locale = 'ja'
+  await withScreen(
+    screen === generalScreen ? (
+      <GeneralPage loaderData={{ owner: null }} />
+    ) : (
+      <MembersPage
+        loaderData={{
+          ...memberRows,
+          removedMembers: [
+            { ...memberRows.removedMembers[0], ownedArtifactCount: 1 },
+          ],
+          filters: { query: '', role: 'all', activity: 'all', page: 1 },
+        }}
+      />
+    ),
+    async () => {
+      await commands.waitForScreenReady(ready)
+    },
+    screen.route.en + setup.query,
+  )
+})
+
+test('Japanese General result-success waits for the missing banner', async () => {
+  const ready = generalScreen.states.find(
+    (state) => state.id === 'result-success',
+  )?.setup?.ready
+  if (!ready) throw new Error('Missing General result-success readiness')
+  language.locale = 'ja'
+  await withScreen(
+    <GeneralPage loaderData={{ owner: null }} />,
+    async (container) => {
+      expect(container.querySelector('[data-settings-status]')).toBeNull()
+      await expect(
+        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
+      ).rejects.toThrow('ready condition was not met: ' + ready.description)
+    },
+    generalScreen.route.en,
+  )
+})
+
+test('Japanese Members result-warning waits for an enabled transfer retry', async () => {
+  const setup = membersScreen.states.find(
+    (state) => state.id === 'result-warning',
+  )?.setup
+  if (!setup?.ready) throw new Error('Missing Members result-warning readiness')
+  const ready = setup.ready
+  language.locale = 'ja'
+  await withScreen(
+    <MembersPage
+      loaderData={{
+        ...memberRows,
+        removedMembers: [
+          { ...memberRows.removedMembers[0], ownedArtifactCount: 0 },
+        ],
+        filters: { query: '', role: 'all', activity: 'all', page: 1 },
+      }}
+    />,
+    async (container) => {
+      expect(
+        container.querySelector(
+          '[data-settings-status="removed-transfer-failed"]',
+        ),
+      ).not.toBeNull()
+      expect(
+        container.querySelector(
+          '#removed-members [data-transfer-removed-files]:disabled',
+        ),
+      ).not.toBeNull()
+      await expect(
+        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
+      ).rejects.toThrow('ready condition was not met: ' + ready.description)
+    },
+    membersScreen.route.en + setup.query,
+  )
+})
 
 const ledgerPages = () => [
   {

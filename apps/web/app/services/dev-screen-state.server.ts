@@ -1,3 +1,4 @@
+import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
@@ -23,7 +24,10 @@ export function devShareableId(seed: string): string {
     10,
   )
 }
-import { INBOX_CONTAINER_NAME } from './projects.server'
+import {
+  getOrCreateInboxContainerId,
+  INBOX_CONTAINER_NAME,
+} from './projects.server'
 
 const SCREEN_SCENARIO_IDS = scenarioIds as readonly string[]
 const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
@@ -36,6 +40,8 @@ export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-billing/subscribed',
   'settings-billing/purchase',
   'settings-billing/past-due',
+  'settings-billing/near-limit',
+  'settings-billing/continuing-near-limit',
   'viewer/revisit-context',
   'viewer/bridge-attribution',
   'search/capped',
@@ -295,7 +301,8 @@ export async function ensureDevScreenState(
         name: `Screen state: ${scenario}`,
         created_at: now,
         plan,
-        storage_quota_bytes: plan === 'team' ? 100_000_000_000 : 5_000_000_000,
+        storage_quota_bytes:
+          plan === 'free' ? 5_000_000_000 : PLAN_STORAGE_QUOTA_BYTES[plan],
         link_sharing_enabled: 1,
         external_posting_enabled: 0,
         ...linkExpiryStartingColumns(),
@@ -332,10 +339,10 @@ export async function ensureDevScreenState(
       .updateTable('workspaces')
       .set({
         storage_used_bytes: scenario.endsWith('/near-limit')
-          ? 95_000_000_000
+          ? PLAN_STORAGE_QUOTA_BYTES.free * 0.95
           : 100_000_000_000,
         storage_quota_bytes: scenario.endsWith('/near-limit')
-          ? 100_000_000_000
+          ? PLAN_STORAGE_QUOTA_BYTES.free
           : 120_000_000_000,
         ...(scenario === 'settings-billing/near-limit'
           ? {
@@ -356,7 +363,7 @@ export async function ensureDevScreenState(
         stripe_subscription_id: null,
         stripe_subscription_status: 'none',
         storage_used_bytes: 0,
-        storage_quota_bytes: 5_000_000_000,
+        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
       })
       .where('id', '=', workspaceId)
       .execute()
@@ -369,9 +376,9 @@ export async function ensureDevScreenState(
       .updateTable('workspaces')
       .set({
         storage_used_bytes: scenario.endsWith('high-usage')
-          ? 95_000_000_000
+          ? PLAN_STORAGE_QUOTA_BYTES.team * 0.95
           : 0,
-        storage_quota_bytes: 100_000_000_000,
+        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.team,
         plan: 'team',
         stripe_subscription_id: null,
         stripe_subscription_status: 'none',
@@ -379,6 +386,48 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   return { workspaceId }
+}
+
+async function upsertScenarioMember(
+  db: Kysely<DB>,
+  workspaceId: string,
+  userId: string,
+  memberId: string,
+  profile: { email: string; name: string; image: null },
+  status: 'active' | 'removed',
+  now: string,
+) {
+  await db
+    .insertInto('users')
+    .values({
+      id: memberId,
+      ...profile,
+      email_verified: 1,
+      workspace_id: workspaceId,
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflict((oc) => oc.column('id').doUpdateSet(profile))
+    .execute()
+  const membership = {
+    role: status === 'active' ? ('admin' as const) : ('member' as const),
+    status,
+    removed_at: status === 'removed' ? now : null,
+    removed_by: status === 'removed' ? userId : null,
+    updated_at: now,
+  }
+  await db
+    .insertInto('workspace_members')
+    .values({
+      workspace_id: workspaceId,
+      user_id: memberId,
+      ...membership,
+      created_at: now,
+    })
+    .onConflict((oc) =>
+      oc.columns(['workspace_id', 'user_id']).doUpdateSet(membership),
+    )
+    .execute()
 }
 
 export async function seedDevScreenState(
@@ -399,38 +448,58 @@ export async function seedDevScreenState(
             : 'Synthetic removed member with AnUnbrokenFamilyNameThatMustRemainFullyReadableOnPhones',
         image: null,
       }
-      await db
-        .insertInto('users')
-        .values({
-          id: memberId,
-          ...profile,
-          email_verified: 1,
-          workspace_id: workspaceId,
-          created_at: now,
-          updated_at: now,
-        })
-        .onConflict((oc) => oc.column('id').doUpdateSet(profile))
-        .execute()
-      const membership = {
-        role: status === 'active' ? ('admin' as const) : ('member' as const),
+      await upsertScenarioMember(
+        db,
+        workspaceId,
+        userId,
+        memberId,
+        profile,
         status,
-        removed_at: status === 'removed' ? now : null,
-        removed_by: status === 'removed' ? userId : null,
-        updated_at: now,
-      }
-      await db
-        .insertInto('workspace_members')
-        .values({
-          workspace_id: workspaceId,
-          user_id: memberId,
-          ...membership,
-          created_at: now,
-        })
-        .onConflict((oc) =>
-          oc.columns(['workspace_id', 'user_id']).doUpdateSet(membership),
-        )
-        .execute()
+        now,
+      )
     }
+    return { containerId: null, containerKind: 'inbox' }
+  }
+  if (scenario === 'settings/result-warning') {
+    const memberId = `${workspaceId}-removed-member`
+    await upsertScenarioMember(
+      db,
+      workspaceId,
+      userId,
+      memberId,
+      {
+        name: 'Casey Morgan',
+        email: `casey-${workspaceId}@example.test`,
+        image: null,
+      },
+      'removed',
+      now,
+    )
+    const containerId = await getOrCreateInboxContainerId(
+      db,
+      workspaceId,
+      memberId,
+      now,
+    )
+    await db
+      .insertInto('shareables')
+      .values({
+        id: devShareableId(`${workspaceId}-transfer-file`),
+        workspace_id: workspaceId,
+        owner_user_id: memberId,
+        container_id: containerId,
+        name: 'Review notes.html',
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) =>
+        oc
+          .column('id')
+          .doUpdateSet({ owner_user_id: memberId, container_id: containerId }),
+      )
+      .execute()
     return { containerId: null, containerKind: 'inbox' }
   }
   if (scenario === 'settings-bots/long-email') {

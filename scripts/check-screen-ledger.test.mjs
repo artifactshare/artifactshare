@@ -369,6 +369,7 @@ test('requires locale wrappers to have a matching canonical sibling screen', () 
     localeSource.replace('/ja/settings/profile', '/ja/settings/missing'),
   )
   assert.deepEqual(checkScreenLedger(options), [
+    'wrong Settings capture route: profile/default /ja/settings/missing (owner /settings/profile)',
     missingExport,
     'dangling ledger entry: profile (ja) points at /ja/settings/missing which has no route',
   ])
@@ -378,6 +379,25 @@ test('requires locale wrappers to have a matching canonical sibling screen', () 
     'route without screen export: profile.tsx — add an export const screen that satisfies ScreenSpec',
     missingExport,
   ])
+
+  sources.set(
+    'profile.tsx',
+    localeSource
+      .replaceAll('/settings/profile', '/settings/billing')
+      .replace('/ja/settings/billing', '/ja/settings/billing/')
+      .replace('setup: {}', "setup: { query: '?status=invalid' }"),
+  )
+  assert.deepEqual(
+    checkScreenLedger({
+      ...options,
+      loadRouteTree: () => [
+        { path: 'settings/billing', file: 'routes/profile.tsx' },
+        { path: 'ja/settings/billing', file: 'routes/ja.profile.tsx' },
+      ],
+    }),
+    [],
+  )
+  sources.set('profile.tsx', 'export default function Profile() {}')
 
   // An unrelated module with the same paths cannot stand in for the sibling.
   sources.set('unrelated.tsx', localeSource)
@@ -389,7 +409,10 @@ test('requires locale wrappers to have a matching canonical sibling screen', () 
         { path: 'ja/settings/profile', file: 'routes/ja.profile.tsx' },
       ],
     }),
-    [missingExport],
+    [
+      'wrong Settings capture route: profile/default /ja/settings/profile (owner /settings/profile)',
+      missingExport,
+    ],
   )
 })
 
@@ -440,6 +463,7 @@ test('rejects a screen export whose declared route is not in the route tree', ()
       readRouteSource: (file) => sources.get(file),
     }),
     [
+      'wrong Settings capture route: profile/default /settings/missing (owner /settings/profile)',
       'uncovered route: settings/profile.tsx (path /settings/profile) — add it to screens or excludedRoutes in scripts/check-screen-ledger.mjs',
       'dangling ledger entry: profile (en) points at /settings/missing which has no route',
     ],
@@ -1263,4 +1287,64 @@ test('validates typed fill values and same-route action fixtures', () => {
     checkScreenLedger(base).join(' '),
     /invalid action response fixture/,
   )
+})
+
+test('Settings capture URLs must stay on their owning route and use a registered first status', () => {
+  const check = (query) =>
+    checkScreenLedger({
+      screens: [
+        {
+          id: 'billing',
+          route: { en: '/settings/billing' },
+          states: [{ id: 'ordinary', setup: { query } }],
+        },
+      ],
+      excludedRoutes: [],
+      loadRouteTree: () => [
+        { path: 'settings/billing', file: 'routes/billing.tsx' },
+      ],
+      readRouteSource: () => 'export default function Billing() {}',
+    })
+  for (const query of [
+    '?status=checkout-success&status=unknown',
+    '?status=invalid&extra=1',
+    '#details',
+  ])
+    assert.deepEqual(check(query), [])
+  for (const status of [
+    'removed-transfer-failed',
+    'unknown',
+    'forbidden',
+    '',
+  ]) {
+    assert.deepEqual(check('?status=' + status + '&status=invalid'), [
+      'unregistered Settings status: billing/ordinary /settings/billing?status=' +
+        status,
+    ])
+  }
+  assert.deepEqual(check('/../tokens?status=invalid'), [
+    'wrong Settings capture route: billing/ordinary /settings/tokens?status=invalid (owner /settings/billing)',
+  ])
+})
+
+test('Settings captures select only the intended route results', () => {
+  const expected = {
+    settings: ['ok', 'removed-transfer-failed', 'invalid'],
+    'settings-general': ['ok', 'invalid'],
+    'settings-billing': ['checkout-success', 'checkout-cancelled', 'invalid'],
+    'settings-tokens': [],
+    'settings-analytics': [],
+    'settings-activity': [],
+    'settings-inventory-projects': [],
+    'settings-inventory-artifacts': [],
+  }
+  for (const [id, statuses] of Object.entries(expected)) {
+    const screen = ledgerScreens.find((candidate) => candidate.id === id)
+    assert.deepEqual(
+      screen.states.flatMap((state) =>
+        new URLSearchParams(state.setup.query).getAll('status'),
+      ),
+      statuses,
+    )
+  }
 })

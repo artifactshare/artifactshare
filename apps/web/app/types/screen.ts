@@ -16,6 +16,8 @@ export type ScreenLoop =
 
 export type ScreenReady = {
   selector: string
+  /** Additional CSS selectors that must all be visible alongside the ready target. */
+  visibleWith?: string[]
   description: string
   timeoutMs?: number
 }

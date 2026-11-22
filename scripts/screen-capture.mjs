@@ -303,7 +303,13 @@ export async function navigateForCapture(page, url, expectedStatus) {
 export async function waitForReady(page, ready) {
   if (!ready) return
   try {
-    await page.locator(ready.selector).waitFor({
+    let readyTarget = page.locator(ready.selector)
+    for (const cue of ready.visibleWith ?? []) {
+      readyTarget = readyTarget.and(
+        page.locator(`body:has(:is(${cue}):visible) *`),
+      )
+    }
+    await readyTarget.waitFor({
       state: 'visible',
       timeout: ready.timeoutMs ?? 30_000,
     })
@@ -642,6 +648,19 @@ export function fileName(screen, state, viewport, theme, locale, section) {
   return `${screen.id}--${state.id}--${viewport}--${theme}--${locale}${section === undefined ? '' : `--section-${section}`}.png`
 }
 
+// The shared bar follows the content in the DOM. Release its viewport anchor
+// only during the screenshot so it appears at the end of the full document.
+export const fullPageCaptureStyle =
+  '[data-bottom-tab-bar] { position: static !important; }'
+
+// A short page already anchors its fixed bar at the bottom of the image.
+async function bottomBarCaptureStyle(page) {
+  const overflows = await page.evaluate(
+    () => window.document.documentElement.scrollHeight > window.innerHeight,
+  )
+  return overflows ? fullPageCaptureStyle : undefined
+}
+
 /** Full-page failure propagates; crop failures remain individual manifest entries. */
 export async function captureScreenImages({
   page,
@@ -655,7 +674,12 @@ export async function captureScreenImages({
 }) {
   await waitForReady(page, ready)
   await actionResponse?.waitForMatch()
-  await page.screenshot({ path: join(outDir, entry.file), fullPage: true })
+  const style = await bottomBarCaptureStyle(page)
+  await page.screenshot({
+    path: join(outDir, entry.file),
+    style,
+    fullPage: true,
+  })
   const full = { ...entry, ...(await afterFullCapture()) }
   const entries = [full]
   for (const section of sections) {
@@ -688,7 +712,12 @@ export async function captureScreenImages({
         full.locale,
         section.id,
       )
-      await page.screenshot({ path: join(outDir, file), fullPage: true, clip })
+      await page.screenshot({
+        path: join(outDir, file),
+        style,
+        fullPage: true,
+        clip,
+      })
       entries.push({ ...metadata, file, section: section.id })
     } catch (error) {
       const failure = captureFailure(
@@ -1036,6 +1065,7 @@ async function captureScreensLocked({
           try {
             await page.screenshot({
               path: join(outDir, diagnosticFile),
+              style: await bottomBarCaptureStyle(page),
               fullPage: true,
             })
             savedDiagnostic = true

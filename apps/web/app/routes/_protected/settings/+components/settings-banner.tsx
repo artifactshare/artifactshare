@@ -75,7 +75,11 @@ type SettingsStatusKey =
 export function StatusBanner({ status }: { status: string }) {
   const notice = settingsNotice(status)
   const { t } = useT()
-  return <SettingsBanner kind={notice.kind}>{t(notice.message)}</SettingsBanner>
+  return (
+    <SettingsBanner kind={notice.kind} data-settings-status={status}>
+      {t(notice.message)}
+    </SettingsBanner>
+  )
 }
 
 const SETTINGS_STATUS_NOTICES: Record<

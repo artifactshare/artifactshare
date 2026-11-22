@@ -148,6 +148,7 @@
     "scripts/local-capture.integration.mjs",
     "scripts/scenario-route-integration.mjs",
     "scripts/screen-capture-output.mjs",
+    "scripts/screen-capture.integration.mjs",
     "scripts/screen-capture.mjs",
     "scripts/screen-capture-retry.test.mjs",
     "scripts/activity-lock-env.mjs",

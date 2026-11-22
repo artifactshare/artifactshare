@@ -30,6 +30,7 @@
   "projects-archived/with-archived-project",
   "settings/with-bots",
   "settings/long-member-addresses",
+  "settings/result-warning",
   "settings-external-access/finite",
   "settings-external-access/unlimited",
   "settings-external-access/zero",

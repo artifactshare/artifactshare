@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import test from 'node:test'
@@ -26,6 +27,7 @@ import {
   captureRetries,
   shouldRetryCapture,
   captureScreenImages,
+  fullPageCaptureStyle,
   writeCaptureReviewOutput,
   fileName,
   localSandboxOrigin,
@@ -287,7 +289,12 @@ function sectionPage({ height = 900, targets = {}, failFull = false } = {}) {
     evaluate: (fn) => {
       // Exercise the actual browser callback with a scrolled viewport.
       const previous = globalThis.window
-      globalThis.window = { scrollX: 5, scrollY: 1200 }
+      globalThis.window = {
+        scrollX: 5,
+        scrollY: 1200,
+        innerHeight: height,
+        document: { documentElement: { scrollHeight: 8000 } },
+      }
       try {
         return fn()
       } finally {
@@ -370,6 +377,7 @@ test('captures full-page then four bounded crops for all eight guide combination
         assert.deepEqual(entries[0], { ...entry, gapAudit })
         assert.deepEqual(page.shots[0], {
           path: join(outDir, entry.file),
+          style: fullPageCaptureStyle,
           fullPage: true,
         })
         assert.deepEqual(
@@ -387,6 +395,7 @@ test('captures full-page then four bounded crops for all eight guide combination
           })
           assert.deepEqual(page.shots[index + 1], {
             path: join(outDir, file),
+            style: fullPageCaptureStyle,
             fullPage: true,
             clip: {
               x: 25,
@@ -465,7 +474,11 @@ test('omitted and empty sections preserve full-page calls and manifest shape', a
     )
     assert.deepEqual(page.queries, [])
     assert.deepEqual(page.shots, [
-      { path: join(outDir, entry.file), fullPage: true },
+      {
+        path: join(outDir, entry.file),
+        style: fullPageCaptureStyle,
+        fullPage: true,
+      },
     ])
   }
 })
@@ -674,7 +687,6 @@ test('capture action matching isolates route, method, origin and JSON/form inten
 })
 
 test('capture inline failure is router-decodable and matched actions are never forwarded', async () => {
-  const { createRequire } = await import('node:module')
   const requireWeb = createRequire(
     new URL('../apps/web/package.json', import.meta.url),
   )
@@ -793,6 +805,7 @@ for (const duplicate of [false, true]) {
       ready: { selector: '#busy' },
       actionResponse: actionFixture,
       page: {
+        evaluate: () => false,
         locator: () => ({ waitFor: () => events.push('ready') }),
         screenshot: () => {
           assert.deepEqual(events, ['ready', 'read'])

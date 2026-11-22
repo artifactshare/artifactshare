@@ -164,29 +164,88 @@ export const screen = {
     {
       id: 'past-due',
       description: 'Past-due billing warning',
-      setup: { scenario: 'settings-billing/past-due' },
+      setup: {
+        scenario: 'settings-billing/past-due',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])):has([data-billing-past-due][role="alert"]) section > [data-slot="card"]:has([data-slot="card-description"]):has([data-slot="card-content"] button) form:has(input[value="portal"]) button:enabled',
+          visibleWith: [
+            '[data-billing-contract-details]',
+            '[data-billing-change="plan"]',
+            '[data-billing-change="interval"]',
+            '[data-billing-past-due][role="alert"]',
+          ],
+          description: 'Configured past-due billing controls',
+        },
+      },
     },
     {
       id: 'result-success',
-      description:
-        'Successful settings action announced above the page content',
-      setup: { query: '?status=ok' },
+      description: 'Completed checkout awaiting plan sync',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        query: '?status=checkout-success',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])) [data-billing-checkout-pending]',
+          visibleWith: [
+            '[role="status"][data-settings-status="checkout-success"]',
+          ],
+          description: 'Completed checkout awaiting plan sync',
+        },
+      },
     },
     {
       id: 'result-warning',
-      description: 'Informational settings warning above the page content',
-      setup: { query: '?status=removed-transfer-failed' },
+      description: 'Cancelled checkout with plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        query: '?status=checkout-cancelled',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="status"][data-settings-status="checkout-cancelled"]',
+            '[data-plan="plus"]',
+          ],
+          description: 'Cancelled checkout with plan cards',
+        },
+      },
     },
     {
       id: 'result-error',
-      description:
-        'Failed settings action with an error alert above the page content',
-      setup: { query: '?status=forbidden' },
+      description: 'Invalid checkout with plan cards',
+      setup: {
+        scenario: 'settings-billing/purchase',
+        query: '?status=invalid',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="alert"][data-settings-status="invalid"]',
+            '[data-plan="plus"]',
+          ],
+          description: 'Invalid checkout with plan cards',
+        },
+      },
     },
     {
       id: 'continuing-near-limit',
       description: 'Continuing subscription near included storage',
-      setup: { scenario: 'settings-billing/continuing-near-limit' },
+      setup: {
+        scenario: 'settings-billing/continuing-near-limit',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])):has(#billing-estimate-overage) section > [data-slot="card"]:has([data-slot="card-description"]):has([data-slot="card-content"] button) form:has(input[value="portal"]) button:enabled',
+          visibleWith: [
+            '[data-billing-contract-details]',
+            '[data-billing-change="plan"]',
+            '[data-billing-change="interval"]',
+            '#billing-estimate-overage',
+          ],
+          description: 'Configured continuing-near-limit billing controls',
+        },
+      },
     },
     {
       id: 'team-unsubscribed',
@@ -196,7 +255,18 @@ export const screen = {
     {
       id: 'near-limit',
       description: 'Storage near limit',
-      setup: { scenario: 'settings-billing/near-limit' },
+      setup: {
+        scenario: 'settings-billing/near-limit',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="alert"] [data-billing-upgrade-guidance]',
+            '[data-plan="plus"]',
+          ],
+          description: 'Configured near-limit billing controls',
+        },
+      },
     },
     {
       id: 'default',
@@ -208,6 +278,16 @@ export const screen = {
       description: '有効な Team 契約がある状態',
       setup: {
         scenario: 'settings-billing/subscribed',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable])) section > [data-slot="card"]:has([data-slot="card-description"]):has([data-slot="card-content"] button) form:has(input[value="portal"]) button:enabled',
+          visibleWith: [
+            '[data-billing-contract-details]',
+            '[data-billing-change="plan"]',
+            '[data-billing-change="interval"]',
+          ],
+          description: 'Configured subscribed billing controls',
+        },
       },
     },
   ],
@@ -255,9 +335,7 @@ export async function loader({
     workspace.stripe_subscription_id &&
     hasActiveSubscription(workspace.stripe_subscription_status),
   )
-  const billingConfigured =
-    isBillingConfigured(env) ||
-    isDevScreenStateRequest(request, 'settings-billing/purchase')
+  const stripeConfigured = isBillingConfigured(env)
   // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
   const billingAuthorization = await requireWorkspaceBillingOwner(db, user)
   const canManage = billingAuthorization.kind === 'ok'
@@ -269,11 +347,17 @@ export async function loader({
         request,
         'settings-billing/continuing-near-limit',
       ))
+  const billingConfigured =
+    stripeConfigured ||
+    useDevFixture ||
+    (canManage &&
+      (isDevScreenStateRequest(request, 'settings-billing/purchase') ||
+        isDevScreenStateRequest(request, 'settings-billing/near-limit')))
   const devContract: SubscriptionContract = {
     plan: 'team',
     interval: 'monthly',
     currency: 'usd',
-    amount: 20,
+    amount: BILLING_PRICES.team.usd.month,
     renewsAt: '2030-01-01T00:00:00.000Z',
     cancelAtPeriodEnd: false,
   }
@@ -285,7 +369,7 @@ export async function loader({
         ? devContract
         : canManage &&
             hasSubscription &&
-            billingConfigured &&
+            stripeConfigured &&
             workspace.stripe_subscription_id
           ? loadSubscriptionContract(
               createStripeClient(env),
@@ -488,7 +572,7 @@ export default function BillingPage({
   return (
     <SettingsPage>
       {loaderData.stripeSubscriptionStatus === 'past_due' ? (
-        <SettingsBanner kind="warning" urgent>
+        <SettingsBanner kind="warning" urgent data-billing-past-due>
           {t('billing.pastDue.banner')}
         </SettingsBanner>
       ) : null}
@@ -515,6 +599,7 @@ export default function BillingPage({
             activeProjectCount={loaderData.activeProjectCount}
           />
           {shouldShowBillingContext({
+            awaitingCheckoutReflection,
             canManage: loaderData.canManage,
             plan: loaderData.plan,
             entryContext: loaderData.entryContext,
@@ -651,7 +736,7 @@ function NearLimitNextStep({
   if (presentation === 'team-without-subscription')
     return <SupportContact topic="storage" />
   if (billingConfigured && presentation === 'purchase')
-    return <p>{t('team.usage.nearLimitAdmin')}</p>
+    return <p data-billing-upgrade-guidance>{t('team.usage.nearLimitAdmin')}</p>
   return null
 }
 
@@ -766,6 +851,7 @@ function MonthlyEstimate({ estimate }: { estimate: MonthlyEstimate }) {
           />
           {estimate.overageEnabled ? (
             <EstimateRow
+              id="billing-estimate-overage"
               label={t('billing.estimate.overage')}
               note={t('billing.estimate.overageNote', {
                 gb: estimate.overageGb,
@@ -787,11 +873,13 @@ function MonthlyEstimate({ estimate }: { estimate: MonthlyEstimate }) {
 }
 
 function EstimateRow({
+  id,
   label,
   note,
   value,
   total = false,
 }: {
+  id?: string
   label: string
   note: string
   value: string
@@ -801,6 +889,7 @@ function EstimateRow({
     <div
       // These rows form one divided breakdown; only each row's upper border
       // is intentionally flush with the preceding row.
+      id={id}
       data-gap-audit-allow-touch
       className={`flex items-center justify-between gap-[var(--spacing-4)] py-[var(--spacing-3)] ${total ? 'bg-muted px-[var(--spacing-3)] font-semibold' : ''}`}
     >
@@ -817,17 +906,24 @@ function CheckoutPendingNotice() {
   const { t } = useT()
 
   return (
-    <TeamMutedParagraph>{t('billing.checkout.pending')}</TeamMutedParagraph>
+    <TeamMutedParagraph data-billing-checkout-pending>
+      {t('billing.checkout.pending')}
+    </TeamMutedParagraph>
   )
 }
 
 function BillingUnavailableNotice() {
   const { t } = useT()
 
-  return <TeamMutedParagraph>{t('billing.unavailable')}</TeamMutedParagraph>
+  return (
+    <TeamMutedParagraph data-billing-unavailable>
+      {t('billing.unavailable')}
+    </TeamMutedParagraph>
+  )
 }
 
 export function shouldShowBillingContext({
+  awaitingCheckoutReflection,
   canManage,
   plan,
   entryContext,
@@ -835,8 +931,9 @@ export function shouldShowBillingContext({
   canManage: boolean
   plan: string
   entryContext: BillingLoaderData['entryContext']
+  awaitingCheckoutReflection: boolean
 }): boolean {
-  if (!canManage || plan === 'team') return false
+  if (awaitingCheckoutReflection || !canManage || plan === 'team') return false
   return plan !== 'plus' || entryContext !== 'default'
 }
 
@@ -1081,6 +1178,7 @@ function ChangeContractOption({
         variant="outline"
         size="sm"
         disabled={disabled}
+        data-billing-change={plan === contract.plan ? 'interval' : 'plan'}
         className="h-full min-h-7 w-full flex-col py-[var(--spacing-2)] whitespace-normal"
         onClick={() => setOpen(true)}
       >
@@ -1307,7 +1405,7 @@ function ContractDescription({ contract }: { contract: SubscriptionContract }) {
     locale,
   )
   return (
-    <CardDescription>
+    <CardDescription data-billing-contract-details>
       {contract.currency && contract.amount !== null ? (
         <>
           {priceWithInterval(

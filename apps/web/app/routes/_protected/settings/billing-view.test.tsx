@@ -160,6 +160,18 @@ describe('subscribed contract management', () => {
     expect(html).not.toContain('支払い周期</span>')
   })
 
+  test.each([true, false])(
+    'contract controls and the unavailable notice reflect billing configuration %s',
+    (billingConfigured) => {
+      const html = renderBillingPage(null, teamMonthlyContract, {
+        billingConfigured,
+      })
+      expect(html).toContain('¥4,500 / 月払い')
+      expect(html).toContain('カスタマーポータルを開く')
+      expect(html.includes('課金機能は現在準備中です')).toBe(!billingConfigured)
+    },
+  )
+
   test('omits the price when the contract amount is null', () => {
     const html = renderBillingPage(null, {
       ...teamMonthlyContract,

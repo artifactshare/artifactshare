@@ -228,23 +228,6 @@ export const screen = {
       },
     },
     {
-      id: 'result-success',
-      description:
-        'Successful settings action announced above the page content',
-      setup: { query: '?status=ok' },
-    },
-    {
-      id: 'result-warning',
-      description: 'Informational settings warning above the page content',
-      setup: { query: '?status=removed-transfer-failed' },
-    },
-    {
-      id: 'result-error',
-      description:
-        'Failed settings action with an error alert above the page content',
-      setup: { query: '?status=forbidden' },
-    },
-    {
       id: 'active-cli',
       description: 'CLI sessions',
       setup: { scenario: 'settings-tokens/active-cli' },

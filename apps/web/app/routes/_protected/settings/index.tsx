@@ -120,20 +120,41 @@ export const screen = {
     },
     {
       id: 'result-success',
-      description:
-        'Successful settings action announced above the page content',
-      setup: { query: '?status=ok' },
+      description: 'Saved confirmation',
+      setup: {
+        query: '?status=ok',
+        ready: {
+          selector: '[role="status"][data-settings-status="ok"]',
+          description: 'Saved confirmation',
+        },
+      },
     },
     {
       id: 'result-warning',
-      description: 'Informational settings warning above the page content',
-      setup: { query: '?status=removed-transfer-failed' },
+      description: 'Removed member with a file available for transfer',
+      setup: {
+        scenario: 'settings/result-warning',
+        query: '?status=removed-transfer-failed',
+        ready: {
+          selector:
+            '#removed-members tbody tr:has([data-owned-file-count="1"]:visible) [data-transfer-removed-files]:enabled',
+          visibleWith: [
+            '[role="status"][data-settings-status="removed-transfer-failed"]',
+          ],
+          description: 'Removed member with a file available for transfer',
+        },
+      },
     },
     {
       id: 'result-error',
-      description:
-        'Failed settings action with an error alert above the page content',
-      setup: { query: '?status=forbidden' },
+      description: 'Invalid input alert',
+      setup: {
+        query: '?status=invalid',
+        ready: {
+          selector: '[role="alert"][data-settings-status="invalid"]',
+          description: 'Invalid input alert',
+        },
+      },
     },
     {
       id: 'default',
@@ -707,7 +728,7 @@ function RemovedMemberRow({
         <TeamUser name={displayName(member)} email={member.email} wrapOnPhone />
       </TableCell>
       <TableCell>
-        <TeamMuted>
+        <TeamMuted data-owned-file-count={member.ownedArtifactCount}>
           <span className="md:hidden">
             {t('team.removedMembers.artifacts')}:{' '}
           </span>
@@ -723,6 +744,7 @@ function RemovedMemberRow({
             disabled={
               !canManage || member.ownedArtifactCount === 0 || pendingForMember
             }
+            data-transfer-removed-files
             onClick={() => setTransferOpen(true)}
           >
             {t('team.removedMembers.transfer')}
