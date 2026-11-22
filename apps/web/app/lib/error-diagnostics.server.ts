@@ -1,7 +1,7 @@
 import { createContext, RouterContextProvider } from 'react-router'
 
 // Route instrumentation receives a read-only request view without an abort signal.
-export const routerRequestContext = createContext<Request>()
+export const routerRequestContext = createContext<Request | null>(null)
 export function createRequestContext(request: Request) {
   const context = new RouterContextProvider()
   context.set(routerRequestContext, request)
@@ -19,14 +19,36 @@ const ERROR_NAMES = new Set([
   'AggregateError',
 ])
 const METHODS = ['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-// D1 and SQLite put a fixed result code in the message, such as
-// `D1_ERROR` or `SQLITE_CONSTRAINT`. The code is safe to log; the rest of the
-// message can quote values from the request.
-const RESULT_CODE = /\b(?:SQLITE|D1)_[A-Z_]+\b/
-// A stack line is `at name (location)` or `at location`. The frame keeps the
-// function name and the source location without any query or fragment.
+// D1 and SQLite put a result code such as `D1_ERROR` or `SQLITE_CONSTRAINT`
+// in the message. Only codes from this fixed list are logged, so the value
+// never carries text from the message itself.
+const RESULT_CODES = new Set([
+  'D1_ERROR',
+  'D1_EXEC_ERROR',
+  'D1_TYPE_ERROR',
+  'D1_COLUMN_NOTFOUND',
+  'D1_DUMP_ERROR',
+  'SQLITE_ERROR',
+  'SQLITE_BUSY',
+  'SQLITE_LOCKED',
+  'SQLITE_NOMEM',
+  'SQLITE_READONLY',
+  'SQLITE_INTERRUPT',
+  'SQLITE_IOERR',
+  'SQLITE_CORRUPT',
+  'SQLITE_FULL',
+  'SQLITE_TOOBIG',
+  'SQLITE_CONSTRAINT',
+  'SQLITE_MISMATCH',
+  'SQLITE_RANGE',
+  'SQLITE_AUTH',
+])
+const RESULT_CODE = /\b(?:SQLITE|D1)_[A-Z_]+\b/g
+// A stack frame is `at name (file:line:column)` or `at file:line:column`.
+// The frame keeps the function name and the source location without any
+// query or fragment.
 const STACK_FRAME =
-  /^\s*at\s+(?:(.+?)\s+\()?([^()\s]+?)(?:[?#][^:()\s]*)?(:\d+:\d+)?\)?\s*$/
+  /^\s*at\s+(?:(\S.*?)\s+\()?([^()\s]+?)(?:[?#][^:()\s]*)?(:\d+:\d+)\)?\s*$/
 const MAX_FRAMES = 5
 
 function errorName(error: unknown) {
@@ -35,17 +57,27 @@ function errorName(error: unknown) {
 }
 
 function resultCode(error: unknown) {
-  return error instanceof Error
-    ? error.message.match(RESULT_CODE)?.[0]
-    : undefined
+  if (!(error instanceof Error)) return undefined
+  return error.message
+    .match(RESULT_CODE)
+    ?.find((code) => RESULT_CODES.has(code))
 }
 
+// The stack starts with `name: message` (the name the error had when it was
+// created), and the message can span lines that look like frames. Frames are
+// read only after the message, and only when the stack starts that way, so no
+// message text is taken for a frame.
 function stackFrames(error: Error) {
+  const stack = error.stack ?? ''
+  const marker = error.message ? `: ${error.message}` : ''
+  const at = marker ? stack.indexOf(marker) : stack.indexOf('\n')
+  if (at < 0 || stack.slice(0, at).includes('\n')) return []
+  const rest = stack.slice(at + marker.length)
   const frames: string[] = []
-  for (const line of (error.stack ?? '').split('\n')) {
+  for (const line of rest.split('\n')) {
     const match = line.match(STACK_FRAME)
     if (!match) continue
-    const [, name, location, position = ''] = match
+    const [, name, location, position] = match
     if (/^[a-z][a-z0-9+.-]*:\/\/(?!\/)/i.test(location)) continue
     frames.push(
       name ? `${name} (${location}${position})` : `${location}${position}`,

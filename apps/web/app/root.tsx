@@ -22,8 +22,7 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from '~/components/ui/empty'
-import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
-import { getLocale } from '~/lib/i18n.server'
+import { documentLocale } from '~/lib/document-locale.server'
 import { MESSAGES } from '~/i18n/messages'
 import { sandboxBlockReportMiddleware } from '~/middleware/sandbox-block-report.server'
 import { sessionMiddleware } from '~/middleware/auth'
@@ -34,7 +33,6 @@ import { getAppTheme } from '~/lib/app-theme.server'
 import { DEFAULT_APP_THEME, type AppTheme } from '~/lib/app-theme'
 import { isMaintenanceRequest } from '~/lib/maintenance'
 import { readLastLoginMethod } from '~/lib/auth-cookies'
-import { hasSafeArtifactInviteNext } from '~/lib/safe-next'
 import { resolveAnalyticsConsent } from '~/lib/analytics-consent'
 import { getAnalyticsConsent } from '~/lib/analytics-consent.server'
 import { AnalyticsConsentBanner } from '~/components/app/analytics-consent-banner'
@@ -97,15 +95,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     ? `/a/${linkDomainState.shareableId}`
     : null
   const user = context.get(userContext)
-  const pathname = url.pathname
-  const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
-  const forced =
-    linkDomain || (pathname === '/' && (user || hasSafeNext))
-      ? null
-      : isPublicPagePath(pathname)
-        ? pathGuideLocale(pathname)
-        : null
-  const locale = forced ?? getLocale(request, user?.locale)
+  const locale = documentLocale(request, { url, user, linkDomain })
   const appTheme = getAppTheme(request)
   const notice = user ? await getLatestVisibleNotice() : undefined
   const noticeState = readUpdatesNotice(request)

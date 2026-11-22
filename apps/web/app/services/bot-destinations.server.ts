@@ -265,7 +265,7 @@ function isDestinationConflict(error: unknown): boolean {
     return (
       (typeof code === 'string' &&
         /^SQLITE_CONSTRAINT(?:_[A-Z]+)?$/.test(code)) ||
-      /^(?:D1_ERROR: )?(?:link publication mutation missing|(?:UNIQUE|PRIMARY KEY|FOREIGN KEY|CHECK|NOT NULL) constraint failed(?:[:][^\n]+)?)(?:: SQLITE_CONSTRAINT(?:_[A-Z]+)?(?: \(extended: SQLITE_CONSTRAINT_[A-Z]+\))?)?$/.test(
+      /^(?:D1_ERROR: )?(?:link publication mutation missing|invalid bot destination|(?:UNIQUE|PRIMARY KEY|FOREIGN KEY|CHECK|NOT NULL) constraint failed(?:[:][^\n]+)?)(?:: SQLITE_CONSTRAINT(?:_[A-Z]+)?(?: \(extended: SQLITE_CONSTRAINT_[A-Z]+\))?)?$/.test(
         cause.message,
       )
     )

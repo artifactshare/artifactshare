@@ -6,6 +6,8 @@ import {
 import { expect, test, vi } from 'vitest'
 import { Suspense, use, type ReactNode } from 'react'
 import { createRequestContext } from './lib/error-diagnostics.server'
+import { useErrorDocument } from './lib/error-document'
+import { userContext } from './middleware/context'
 import * as serverEntry from './entry.server'
 
 vi.mock('cloudflare:workers', () => ({
@@ -262,5 +264,117 @@ test('aborted requests and handled client statuses do not report server faults',
     request: new Request(args.request, { signal: AbortSignal.abort() }),
   })
   expect(log).not.toHaveBeenCalled()
+  log.mockRestore()
+})
+
+function rootFailureHandler(rootLoader: () => unknown) {
+  const route = (id: string, path: string, parentId?: string) => ({
+    id,
+    path,
+    parentId,
+    module: `${id}.js`,
+    hasAction: false,
+    hasLoader: id === 'root',
+    hasClientAction: false,
+    hasClientLoader: false,
+    hasClientMiddleware: false,
+    hasErrorBoundary: id === 'root',
+    clientActionModule: undefined,
+    clientLoaderModule: undefined,
+    clientMiddlewareModule: undefined,
+    hydrateFallbackModule: undefined,
+  })
+  return createRequestHandler(
+    {
+      entry: { module: serverEntry },
+      routes: {
+        root: {
+          id: 'root',
+          path: '',
+          module: {
+            Layout: ({ children }: { children: ReactNode }) => (
+              <html lang={useErrorDocument().locale}>
+                <body>{children}</body>
+              </html>
+            ),
+            default: Outlet,
+            loader: rootLoader,
+            ErrorBoundary: () => <p>{`locale:${useErrorDocument().locale}`}</p>,
+          },
+        },
+        page: {
+          id: 'page',
+          parentId: 'root',
+          path: '*',
+          module: { default: () => <p>Page</p> },
+        },
+      },
+      assets: {
+        routes: { root: route('root', ''), page: route('page', '*', 'root') },
+        entry: { module: 'entry.js', imports: [] },
+        url: 'manifest.js',
+        version: 'test',
+      },
+      publicPath: '/',
+      assetsBuildDirectory: 'build/client',
+      future: {},
+      ssr: true,
+      isSpaMode: false,
+      prerender: [],
+      routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
+    },
+    'test',
+  )
+}
+
+test('the root error page keeps the public page language when the root loader fails', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const handler = rootFailureHandler(() => {
+    throw new Error('root loader failed')
+  })
+  const request = new Request('https://app.example/ja/pricing', {
+    headers: { 'Accept-Language': 'en' },
+  })
+  const context = createRequestContext(request)
+  context.set(userContext, {
+    id: 'user-en',
+    email: 'user@example.test',
+    emailVerified: true,
+    name: null,
+    image: null,
+    workspaceId: 'ws1',
+    hd: null,
+    msTenantId: null,
+    locale: 'en',
+    kind: 'human',
+  })
+  const response = await handler(request, context)
+  expect(response.status).toBe(500)
+  const html = await response.text()
+  expect(html).toContain('lang="ja"')
+  expect(html).toContain('locale:ja')
+  log.mockRestore()
+})
+
+test('a handler without the request context still reports the failure once', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const handler = rootFailureHandler(() => {
+    throw new RangeError('root loader failed')
+  })
+  const response = await handler(
+    new Request('https://app.example/settings/general'),
+    new RouterContextProvider(),
+  )
+  expect(response.status).toBe(500)
+  expect(log.mock.calls).toEqual([
+    [
+      {
+        operation: 'router.error',
+        cause: 'RangeError',
+        frames: expect.any(Array),
+        method: 'GET',
+      },
+    ],
+  ])
   log.mockRestore()
 })

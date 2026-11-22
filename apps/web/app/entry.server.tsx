@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
-import { getLocale } from '~/lib/i18n.server'
-import { userContext } from '~/middleware/context'
+import { documentLocale } from '~/lib/document-locale.server'
+import { linkDomainContext, userContext } from '~/middleware/context'
 import {
   RequestLocaleContext,
   ApplicationOriginContext,
@@ -33,8 +33,11 @@ export const instrumentations: ServerInstrumentation[] = [
         { context }: { context: Pick<RouterContextProvider, 'get'> },
       ) {
         const result = await run()
-        if (result.status === 'error') {
-          report(result.error, context.get(routerRequestContext), route.id)
+        // A handler built without createRequestContext has no request here;
+        // handleError still reports the error, without the route id.
+        const request = context.get(routerRequestContext)
+        if (result.status === 'error' && request) {
+          report(result.error, request, route.id)
         }
       }
       route.instrument({
@@ -72,7 +75,10 @@ export default async function handleRequest(
 ) {
   const userAgent = request.headers.get('user-agent')
 
-  const requestLocale = getLocale(request, loadContext.get(userContext)?.locale)
+  const requestLocale = documentLocale(request, {
+    user: loadContext.get(userContext),
+    linkDomain: loadContext.get(linkDomainContext) !== null,
+  })
   const body = await renderToReadableStream(
     <RequestLocaleContext.Provider value={requestLocale}>
       <ApplicationOriginContext.Provider value={env.BETTER_AUTH_URL}>
