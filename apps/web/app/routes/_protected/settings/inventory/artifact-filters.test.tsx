@@ -32,6 +32,9 @@ test.each(['en', 'ja'] as const)(
         <RouterProvider router={router} />,
       )
       router.dispose()
+      expect(doc.querySelector('button[type="submit"]')?.textContent).toBe(
+        locale === 'ja' ? '絞り込みを適用' : 'Apply filters',
+      )
       const entries = new FormData(doc.querySelector('form')!)
       expect(entries.getAll('visibility')).toEqual([
         filtered ? 'private' : 'all',

@@ -42,7 +42,7 @@ export function ArtifactFilters({
         }}
       />
       <Button type="submit" variant="outline" size="sm">
-        {t('team.members.filter.apply')}
+        {t('team.inventory.filter.apply')}
       </Button>
     </Form>
   )

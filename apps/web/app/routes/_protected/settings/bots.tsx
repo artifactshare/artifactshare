@@ -108,7 +108,8 @@ export const screen = {
           {
             action: 'click',
             selector: '[role="alertdialog"] button:text-is("Stop bot")',
-            readySelector: 'body:not(:has([role="alertdialog"]))',
+            readySelector:
+              'body:not(:has([role="alertdialog"])) [data-bot-result="stop"]:not(:empty)',
           },
         ],
       },
@@ -183,7 +184,8 @@ export const screen = {
           {
             action: 'click',
             selector: '[role="alertdialog"] button:text-is("Cancel creation")',
-            readySelector: 'body:not(:has([role="alertdialog"]))',
+            readySelector:
+              'body:not(:has([role="alertdialog"],tr[id$="-bot-unused-stopped"])):has(tr[id$="-bot-active"] [data-available="true"] + [data-available="true"]) [data-bot-result="cancel"]:not(:empty)',
           },
         ],
       },
@@ -313,6 +315,14 @@ export const screen = {
           {
             action: 'click',
             selector: 'button:has-text("Add bot")',
+            readySelector: '#bot-name',
+          },
+          {
+            action: 'fill',
+            selector: '#bot-name',
+            value: 'Weekly summary',
+            readySelector:
+              '[role="dialog"]:has([aria-pressed="true"]:has-text("Nightly reports")):not(:has(input[type="radio"])) #bot-create-guidance + button:disabled',
           },
         ],
       },

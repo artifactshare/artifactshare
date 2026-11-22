@@ -60,6 +60,14 @@ test.each(['en', 'ja'] as const)(
     const { t } = bindI18n(locale)
     for (const role of ['member', 'admin', 'owner'] as const) {
       const doc = renderMembers(role)
+      const removed = doc.querySelector('#removed-members')
+      if (role === 'member') expect(removed).toBeNull()
+      else {
+        expect(removed?.querySelector('h2')?.textContent).toBe(
+          t('team.removedMembers'),
+        )
+        expect(removed?.textContent).toContain(t('team.removedMembers.empty'))
+      }
       const section = doc.querySelector('form')!.closest('section')!
       expect(
         section.textContent.includes(t('team.members.managerActions')),

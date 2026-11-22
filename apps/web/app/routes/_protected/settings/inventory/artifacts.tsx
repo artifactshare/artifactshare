@@ -1,3 +1,5 @@
+import { inlineLinkClassName } from '~/components/form/settings-text-styles'
+import { Link } from 'react-router'
 import type { Route } from './+types/artifacts'
 import { Stack } from '~/components/layout/stack'
 import { TeamMutedParagraph } from '~/components/form/team-muted'
@@ -26,6 +28,20 @@ export const screen = {
   role: '成果物を棚卸しする',
   primaryAction: '成果物を確認する',
   states: [
+    {
+      id: 'paginated',
+      description: 'Second page of files',
+      setup: {
+        query: '?page=2',
+        scenario: 'settings-inventory-artifacts/paginated',
+        reseedBeforeCapture: true,
+        ready: {
+          selector:
+            'a[href="/settings/inventory/artifacts"]:text-is("Previous")',
+          description: 'Previous page link',
+        },
+      },
+    },
     {
       id: 'populated',
       description: 'populated responsive controls and content',
@@ -114,6 +130,11 @@ export default function ArtifactsPage({
           return `/settings/inventory/artifacts${query ? `?${query}` : ''}`
         }}
       />
+      <p>
+        <Link className={inlineLinkClassName} to="/settings#removed-members">
+          {t('team.removedMembers')}
+        </Link>
+      </p>
     </Stack>
   )
 }

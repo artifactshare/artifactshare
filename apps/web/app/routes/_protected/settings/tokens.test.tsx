@@ -45,14 +45,15 @@ describe('/settings/tokens actions', () => {
   beforeEach(() => vi.clearAllMocks())
 
   test('revokes one API token for the current user', async () => {
-    await action({
+    services.revokeApiToken.mockResolvedValueOnce(true)
+    const result = await action({
       request: request({ intent: 'revoke', tokenId: 'token-a' }),
       context: new RouterContextProvider(),
       params: {},
       url: new URL('https://example.test/settings/tokens'),
       pattern: '/settings/tokens',
     })
-
+    expect(result).toEqual({ kind: 'revoked', intent: 'revoke' })
     expect(services.revokeApiToken).toHaveBeenCalledWith(
       {},
       'current-user',
@@ -60,8 +61,29 @@ describe('/settings/tokens actions', () => {
     )
   })
 
+  test.each(['stale', 'failed'])(
+    'returns a neutral or retryable result for a %s token',
+    async (state) => {
+      if (state === 'stale')
+        services.revokeApiToken.mockResolvedValueOnce(false)
+      else
+        services.revokeApiToken.mockRejectedValueOnce(new Error('unavailable'))
+      expect(
+        await action({
+          request: request({ intent: 'revoke', tokenId: 'token-a' }),
+          context: new RouterContextProvider(),
+          params: {},
+          url: new URL('https://example.test/settings/tokens'),
+          pattern: '/settings/tokens',
+        }),
+      ).toEqual({
+        kind: state === 'stale' ? 'revoke-unavailable' : 'revoke-failed',
+        intent: 'revoke',
+      })
+    },
+  )
   test('does not dispatch a revoke without a token id', async () => {
-    await action({
+    const result = await action({
       request: request({ intent: 'revoke' }),
       context: new RouterContextProvider(),
       params: {},
@@ -69,6 +91,7 @@ describe('/settings/tokens actions', () => {
       pattern: '/settings/tokens',
     })
 
+    expect(result).toEqual({ kind: 'revoke-failed', intent: 'revoke' })
     expect(services.revokeApiToken).not.toHaveBeenCalled()
   })
 })

@@ -701,8 +701,11 @@ test('capture inline failure is router-decodable and matched actions are never f
     },
     'https://example.test',
   )
-  assert.throws(() => actionFixture.assertMatched(), /expected one request/)
-  await handler({
+  await assert.rejects(
+    actionFixture.waitForMatch(0),
+    /expected one request, received 0/,
+  )
+  const route = {
     request: () => ({
       url: () => 'https://example.test/settings/external-access.data',
       method: () => 'POST',
@@ -715,8 +718,9 @@ test('capture inline failure is router-decodable and matched actions are never f
     fallback: () => {
       forwarded++
     },
-  })
-  actionFixture.assertMatched()
+  }
+  await handler(route)
+  await actionFixture.waitForMatch()
   assert.equal(forwarded, 0)
   assert.equal(fulfilled.contentType, 'text/x-script')
   const decoded = await UNSAFE_decodeViaTurboStream(
@@ -724,55 +728,97 @@ test('capture inline failure is router-decodable and matched actions are never f
     globalThis,
   )
   assert.deepEqual(decoded.value, { data: { kind: 'forbidden' } })
+  await handler(route)
+  await assert.rejects(
+    actionFixture.assertMatched(),
+    /expected one request, received 2/,
+  )
   await actionFixture.cleanup()
   assert.equal(removed, true)
 })
 
-test('held action remains pending through screenshot observation and is aborted before handler removal', async () => {
-  const { installCaptureActionResponse } = await import('./screen-capture.mjs')
-  const events = []
-  let handler
-  const actionFixture = await installCaptureActionResponse(
-    {
-      route: (_pattern, next) => {
-        handler = next
+for (const duplicate of [false, true]) {
+  test(`capture waits for multipart matching and checks requests received during the screenshot (duplicate=${duplicate})`, async (t) => {
+    const { installCaptureActionResponse } =
+      await import('./screen-capture.mjs')
+    const events = []
+    let handler
+    const actionFixture = await installCaptureActionResponse(
+      {
+        route: (_pattern, next) => {
+          handler = next
+        },
+        unroute: () => {
+          events.push('removed')
+        },
       },
-      unroute: () => {
-        events.push('removed')
+      {
+        route: '/settings/bots',
+        method: 'POST',
+        intent: 'stop',
+        pending: true,
       },
-    },
-    { route: '/settings/bots', method: 'POST', intent: 'stop', pending: true },
-    'https://example.test',
-  )
-  const request = handler({
-    request: () => ({
-      url: () => 'https://example.test/settings/bots.data',
-      method: () => 'POST',
-      headers: () => ({ 'content-type': 'application/json' }),
-      postData: () => '{"intent":"stop"}',
-    }),
-    abort: () => {
-      events.push('aborted')
-    },
-    fallback: () => {
-      throw new Error('Matched action forwarded')
-    },
+      'https://example.test',
+    )
+    const form = new FormData()
+    form.set('intent', 'stop')
+    const encoded = new Response(form)
+    const body = await encoded.text()
+    const readForm = Response.prototype.formData
+    t.mock.method(Response.prototype, 'formData', async function () {
+      // Let readiness or the screenshot finish before the body can be matched.
+      await new Promise((nextTurn) => setImmediate(nextTurn))
+      const data = await readForm.call(this)
+      events.push('read')
+      return data
+    })
+    const route = {
+      request: () => ({
+        url: () => 'https://example.test/settings/bots.data',
+        method: () => 'POST',
+        headers: () => ({
+          'content-type': encoded.headers.get('content-type'),
+        }),
+        postData: () => body,
+      }),
+      abort: () => {
+        events.push('aborted')
+      },
+      fallback: () => {
+        throw new Error('Matched action forwarded')
+      },
+    }
+    const requests = [handler(route)]
+    const capture = captureScreenImages({
+      ready: { selector: '#busy' },
+      actionResponse: actionFixture,
+      page: {
+        locator: () => ({ waitFor: () => events.push('ready') }),
+        screenshot: () => {
+          assert.deepEqual(events, ['ready', 'read'])
+          events.push('screenshot')
+          if (duplicate) requests.push(handler(route))
+        },
+      },
+      outDir: '/tmp',
+      sections: [],
+      entry: { file: 'held.png' },
+    })
+    try {
+      if (duplicate)
+        await assert.rejects(capture, /expected one request, received 2/)
+      else await capture
+    } finally {
+      await actionFixture.cleanup()
+      await Promise.all(requests)
+    }
+    assert.deepEqual(events, [
+      'ready',
+      'read',
+      'screenshot',
+      ...(duplicate ? ['read', 'aborted'] : []),
+      'aborted',
+      'removed',
+    ])
   })
-  // Await the match without resolving its deliberately held response.
-  await Promise.resolve()
-  actionFixture.assertMatched()
-  await captureScreenImages({
-    page: {
-      screenshot: () => {
-        assert.deepEqual(events, [])
-        events.push('screenshot')
-      },
-    },
-    outDir: '/tmp',
-    sections: [],
-    entry: { file: 'held.png' },
-  })
-  await actionFixture.cleanup()
-  await request
-  assert.deepEqual(events, ['screenshot', 'aborted', 'removed'])
-})
+}

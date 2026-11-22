@@ -78,17 +78,29 @@ export async function matchesCaptureAction(request, fixture, origin) {
 }
 
 export async function installCaptureActionResponse(page, fixture, origin) {
+  const firstMatch = Promise.withResolvers()
   let matches = 0
   let release
   const held = new Promise((resolveHeld) => {
     release = resolveHeld
   })
+  const inspections = []
   const requests = []
-  const handler = async (route) => {
-    if (!(await matchesCaptureAction(route.request(), fixture, origin)))
-      return route.fallback()
-    matches += 1
-    const response = (async () => {
+  const handler = (route) => {
+    const inspection = matchesCaptureAction(
+      route.request(),
+      fixture,
+      origin,
+    ).then((matched) => {
+      if (matched) {
+        matches += 1
+        firstMatch.resolve()
+      }
+      return matched
+    })
+    inspections.push(inspection)
+    const response = inspection.then(async (matched) => {
+      if (!matched) return route.fallback()
       if (fixture.pending) {
         await held
         await route.abort('aborted')
@@ -96,17 +108,35 @@ export async function installCaptureActionResponse(page, fixture, origin) {
         const body = await encodeCaptureActionData(fixture.data)
         await route.fulfill({ status: 200, contentType: 'text/x-script', body })
       }
-    })()
+    })
     requests.push(response)
-    await response
+    return response
   }
   await page.route('**/*', handler)
+  function assertMatchCount() {
+    if (matches !== 1)
+      throw new Error(
+        'Capture action fixture expected one request, received ' + matches,
+      )
+  }
   return {
-    assertMatched() {
-      if (matches !== 1)
-        throw new Error(
-          'Capture action fixture expected one request, received ' + matches,
-        )
+    async assertMatched() {
+      await Promise.all(inspections)
+      assertMatchCount()
+    },
+    async waitForMatch(timeoutMs = 30_000) {
+      let timer
+      try {
+        await Promise.race([
+          firstMatch.promise,
+          new Promise((onTimeout) => {
+            timer = setTimeout(onTimeout, timeoutMs)
+          }),
+        ])
+        assertMatchCount()
+      } finally {
+        clearTimeout(timer)
+      }
     },
     async cleanup() {
       release()
@@ -617,10 +647,14 @@ export async function captureScreenImages({
   page,
   outDir,
   entry,
+  ready,
+  actionResponse,
   sections = [],
   afterFullCapture = () => ({}),
   reportFailure = (message) => console.error(message),
 }) {
+  await waitForReady(page, ready)
+  await actionResponse?.waitForMatch()
   await page.screenshot({ path: join(outDir, entry.file), fullPage: true })
   const full = { ...entry, ...(await afterFullCapture()) }
   const entries = [full]
@@ -675,6 +709,7 @@ export async function captureScreenImages({
       )
     }
   }
+  await actionResponse?.assertMatched()
   return entries
 }
 
@@ -943,9 +978,9 @@ async function captureScreensLocked({
       )
         await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
-      await waitForReady(page, state.setup?.ready ?? screen.ready)
-      actionResponse?.assertMatched()
       const entries = await captureScreenImages({
+        ready: state.setup?.ready ?? screen.ready,
+        actionResponse,
         page,
         outDir,
         sections: screen.sections,

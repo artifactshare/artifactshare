@@ -1,3 +1,4 @@
+import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
@@ -330,8 +331,12 @@ export async function ensureDevScreenState(
     await db
       .updateTable('workspaces')
       .set({
-        storage_used_bytes: 90_000_000_000,
-        storage_quota_bytes: 100_000_000_000,
+        storage_used_bytes: scenario.endsWith('/near-limit')
+          ? 95_000_000_000
+          : 100_000_000_000,
+        storage_quota_bytes: scenario.endsWith('/near-limit')
+          ? 100_000_000_000
+          : 120_000_000_000,
         ...(scenario === 'settings-billing/near-limit'
           ? {
               plan: 'free',
@@ -356,10 +361,17 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   }
-  if (scenario === 'settings-billing/team-unsubscribed')
+  if (
+    scenario === 'settings-billing/team-unsubscribed' ||
+    scenario === 'settings-billing/team-unsubscribed-high-usage'
+  )
     await db
       .updateTable('workspaces')
       .set({
+        storage_used_bytes: scenario.endsWith('high-usage')
+          ? 95_000_000_000
+          : 0,
+        storage_quota_bytes: 100_000_000_000,
         plan: 'team',
         stripe_subscription_id: null,
         stripe_subscription_status: 'none',
@@ -470,14 +482,20 @@ export async function seedDevScreenState(
   }
   if (scenario.startsWith('settings-inventory-')) {
     const projectId = `${workspaceId}-inventory-project`
-    const fileId = devShareableId(`${workspaceId}-inventory-file`)
+    const paginated = scenario === 'settings-inventory-artifacts/paginated'
+    const populated = paginated || scenario.endsWith('/populated')
+    const fileIds = Array.from(
+      { length: paginated ? INVENTORY_PAGE_SIZE + 1 : 1 },
+      (_, index) =>
+        devShareableId(`${workspaceId}-inventory-file${index || ''}`),
+    )
     // These ids belong only to this scenario. Preserve unrelated user content.
-    await db.deleteFrom('shareables').where('id', '=', fileId).execute()
+    await db.deleteFrom('shareables').where('id', 'in', fileIds).execute()
     await db
       .deleteFrom('artifact_containers')
       .where('id', '=', projectId)
       .execute()
-    if (scenario.endsWith('/populated')) {
+    if (populated) {
       await db
         .insertInto('artifact_containers')
         .values({
@@ -491,24 +509,27 @@ export async function seedDevScreenState(
           updated_at: now,
         })
         .execute()
-      await db
-        .insertInto('shareables')
-        .values({
-          id: fileId,
-          workspace_id: workspaceId,
-          owner_user_id: userId,
-          container_id: projectId,
-          name: 'Quarterly report.html',
-          artifact_kind: 'html_page',
-          visibility: 'project',
-          created_at: now,
-          updated_at: now,
-          last_accessed_at: now,
-        })
-        .execute()
+      for (const [index, id] of fileIds.entries())
+        await db
+          .insertInto('shareables')
+          .values({
+            id,
+            workspace_id: workspaceId,
+            owner_user_id: userId,
+            container_id: projectId,
+            name: paginated
+              ? `Quarterly report ${index + 1}.html`
+              : 'Quarterly report.html',
+            artifact_kind: 'html_page',
+            visibility: 'project',
+            created_at: now,
+            updated_at: now,
+            last_accessed_at: now,
+          })
+          .execute()
     }
     return {
-      containerId: scenario.endsWith('/populated') ? projectId : null,
+      containerId: populated ? projectId : null,
       containerKind: 'project',
     }
   }
@@ -2553,7 +2574,13 @@ export async function seedDevScreenState(
           created_at: createdAt,
           updated_at: createdAt,
         })
-        .onConflict((oc) => oc.doNothing())
+        .onConflict((oc) =>
+          oc.columns(['workspace_id', 'user_id']).doUpdateSet({
+            status: 'active',
+            removed_at: null,
+            removed_by: null,
+          }),
+        )
         .execute()
       await db
         .insertInto('agent_profiles')

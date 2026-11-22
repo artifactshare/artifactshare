@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import {
   AlertDialog,
   AlertDialogTrigger,
@@ -17,6 +17,7 @@ export function ConfirmActionDialog({
   onOpenChange,
   onConfirm,
   title,
+  contentClassName,
   description,
   action,
   pending,
@@ -27,13 +28,16 @@ export function ConfirmActionDialog({
   result,
   awaitResult = false,
   returnFocusId,
+  fallbackFocusId,
+  afterCloseFocus,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
   title: string
+  contentClassName?: string
   description: string
-  action: string
+  action: string | null
   pendingLabel?: string
   pending: boolean
   destructive?: boolean
@@ -41,9 +45,16 @@ export function ConfirmActionDialog({
   result?: ReactNode
   awaitResult?: boolean
   returnFocusId?: string
+  fallbackFocusId?: string
+  afterCloseFocus?: () => void
   trigger?: ReactNode
 }) {
   const { t } = useT()
+  const dismissRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (open && action === null) dismissRef.current?.focus()
+  }, [open, action])
+
   return (
     <AlertDialog
       open={open}
@@ -56,13 +67,17 @@ export function ConfirmActionDialog({
       ) : null}
       <AlertDialogContent
         size="sm"
+        className={contentClassName}
         onCloseAutoFocus={(event) => {
           if (!returnFocusId) return
-          const focusTarget = document.getElementById(returnFocusId)
+          const focusTarget =
+            document.getElementById(returnFocusId) ??
+            (fallbackFocusId && document.getElementById(fallbackFocusId))
           if (focusTarget) {
             event.preventDefault()
             focusTarget.focus()
           }
+          afterCloseFocus?.()
         }}
       >
         <AlertDialogHeader>
@@ -71,20 +86,22 @@ export function ConfirmActionDialog({
         </AlertDialogHeader>
         {result}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>
+          <AlertDialogCancel ref={dismissRef} disabled={pending}>
             {dismissLabel ?? t('confirm.cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction
-            aria-busy={pending}
-            variant={destructive ? 'destructive' : 'default'}
-            disabled={pending}
-            onClick={(event) => {
-              if (awaitResult) event.preventDefault()
-              if (!pending) onConfirm()
-            }}
-          >
-            {pending ? (pendingLabel ?? t('confirm.pending')) : action}
-          </AlertDialogAction>
+          {action !== null && (
+            <AlertDialogAction
+              aria-busy={pending}
+              variant={destructive ? 'destructive' : 'default'}
+              disabled={pending}
+              onClick={(event) => {
+                if (awaitResult) event.preventDefault()
+                if (!pending) onConfirm()
+              }}
+            >
+              {pending ? (pendingLabel ?? t('confirm.pending')) : action}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

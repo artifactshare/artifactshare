@@ -1,3 +1,4 @@
+import { inlineLinkClassName } from '~/components/form/settings-text-styles'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { Link } from 'react-router'
 import {
@@ -34,7 +35,7 @@ export function ProjectsTable({
   const { t } = useT()
   return (
     <>
-      <Table className="max-nav:hidden">
+      <Table className="max-wide:hidden">
         <TableHeader>
           <TableRow>
             {PROJECT_HEADERS.map((key) => (
@@ -53,7 +54,7 @@ export function ProjectsTable({
           ) : null}
         </TableBody>
       </Table>
-      <div className="max-nav:block max-nav:space-y-3 hidden">
+      <div className="max-wide:block max-wide:space-y-3 hidden">
         {!rows.length ? (
           <p className="text-muted-foreground py-6 text-center text-sm">
             {t('team.inventory.empty')}
@@ -111,7 +112,9 @@ function ProjectRow({
     <TableRow>
       <TableCell>
         <span className={nameCellClassName} title={row.name}>
-          <Link to={`/projects/${row.id}`}>{row.name}</Link>
+          <Link className={inlineLinkClassName} to={`/projects/${row.id}`}>
+            {row.name}
+          </Link>
         </span>
         {row.archivedAt ? (
           <TeamMuted> · {t('team.inventory.archived')}</TeamMuted>

@@ -61,6 +61,7 @@
   "search/palette-daily-limit",
   "search/continuation-error",
   "settings-billing/continuing-near-limit",
+  "settings-billing/team-unsubscribed-high-usage",
   "settings-billing/team-unsubscribed",
   "settings-billing/purchase",
   "settings-bots/long-email",
@@ -68,6 +69,7 @@
   "settings-general/long-owner",
   "settings-inventory-projects/populated",
   "settings-inventory-projects/empty",
+  "settings-inventory-artifacts/paginated",
   "settings-inventory-artifacts/populated",
   "settings-inventory-artifacts/empty"
 ]

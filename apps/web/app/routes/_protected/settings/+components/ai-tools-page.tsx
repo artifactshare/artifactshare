@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Form,
-  Link,
-  useActionData,
-  useFetcher,
-  useNavigation,
-} from 'react-router'
+import { Form, Link, useActionData, useNavigation } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -21,7 +15,7 @@ import { withLang } from '~/lib/connect-link'
 import type { ApiTokenListItem } from '~/services/api-tokens.server'
 import { CredentialTable } from './credential-table'
 import { CreatedTokenPanel } from './created-token-panel'
-import { ConfirmActionDialog } from './confirm-action-dialog'
+import { RevokeDialog } from './revoke-dialog'
 import { CliSessionsSection } from './cli-sessions-section'
 import type { action, loader } from '../tokens'
 export const MAX_TOKEN_NAME_LENGTH = 100
@@ -30,6 +24,7 @@ export default function ApiTokensPage({
 }: {
   loaderData: Awaited<ReturnType<typeof loader>>
 }) {
+  const [target, setTarget] = useState<ApiTokenListItem | null>(null)
   const actionData = useActionData<typeof action>()
   const navigation = useNavigation()
   const createFormRef = useRef<HTMLFormElement>(null)
@@ -64,6 +59,7 @@ export default function ApiTokensPage({
       />
       <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
       <SettingsSection
+        headingId="api-tokens-heading"
         title={t('team.tokens.api.title')}
         description={t('team.tokens.body')}
       >
@@ -74,7 +70,7 @@ export default function ApiTokensPage({
               className="min-w-0"
               data-invalid={createError ? true : undefined}
             >
-              <FieldLabel htmlFor="token-name" className="sr-only">
+              <FieldLabel htmlFor="token-name">
                 {t('team.tokens.name')}
               </FieldLabel>
               <Input
@@ -112,9 +108,22 @@ export default function ApiTokensPage({
           emptyMessage={t('team.tokens.empty')}
         >
           {loaderData.tokens.map((token) => (
-            <TokenRow key={token.id} token={token} locale={locale} />
+            <TokenRow
+              key={token.id}
+              token={token}
+              locale={locale}
+              onRevoke={() => setTarget(token)}
+            />
           ))}
         </CredentialTable>
+        {target && (
+          <RevokeDialog
+            target={{ intent: 'revoke', tokenId: target.id, name: target.name }}
+            fallbackFocusId="api-tokens-heading"
+            returnFocusId={`revoke-${target.id}`}
+            onClose={() => setTarget(null)}
+          />
+        )}
         <p className="text-sm">
           <Link
             className="text-link underline"
@@ -131,15 +140,13 @@ export default function ApiTokensPage({
 function TokenRow({
   token,
   locale,
+  onRevoke,
 }: {
+  onRevoke: () => void
   token: ApiTokenListItem
   locale: Locale
 }) {
-  const fetcher = useFetcher()
   const { t } = useT()
-  const [open, setOpen] = useState(false)
-  const pendingForToken = fetcher.state !== 'idle'
-
   return (
     <TableRow>
       <TableCell>
@@ -161,31 +168,16 @@ function TokenRow({
       </TableCell>
       <TableCell>
         <div className="flex justify-end">
-          <ConfirmActionDialog
-            trigger={
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                disabled={pendingForToken}
-                aria-label={`${t('team.tokens.revoke')} ${token.name}`}
-              >
-                {t('team.tokens.revoke')}
-              </Button>
-            }
-            open={open}
-            onOpenChange={setOpen}
-            title={t('team.tokens.revoke')}
-            description={t('settings.revoke.body', { name: token.name })}
-            action={t('team.tokens.revoke')}
-            pending={pendingForToken}
-            onConfirm={() =>
-              fetcher.submit(
-                { intent: 'revoke', tokenId: token.id },
-                { method: 'post', action: '/settings/tokens' },
-              )
-            }
-          />
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            id={`revoke-${token.id}`}
+            onClick={onRevoke}
+            aria-label={`${t('team.tokens.revoke')} ${token.name}`}
+          >
+            {t('team.tokens.revoke')}
+          </Button>
         </div>
       </TableCell>
     </TableRow>

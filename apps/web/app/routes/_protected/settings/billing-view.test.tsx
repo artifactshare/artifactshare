@@ -239,6 +239,10 @@ test('Team without a subscription has no purchase offer while Free retains check
     hasSubscription: false,
     stripeSubscriptionStatus: 'none',
   })
+  expect(team).toContain(
+    'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20billing%20help"',
+  )
+  expect(team.match(/mailto:support@/g)).toHaveLength(1)
   expect(team).toContain('Team（サブスクリプションなし）')
   expect(team).not.toContain('value="checkout"')
   expect(renderBillingPage(1)).toContain('value="checkout"')
@@ -249,16 +253,23 @@ test('near-limit warning applies to capped plans while continuing subscriptions 
     storageQuotaBytes: 100,
   })
   expect(capped).toContain('role="alert"')
+  expect(capped).toContain('>容量上限<')
+  expect(capped).not.toContain('>プラン込み容量<')
+  expect(capped).toContain('bg-warning"')
   const continuing = renderBillingPage(null, null, {
-    storageUsedBytes: 90,
-    storageQuotaBytes: 100,
+    storageUsedBytes: 95,
+    storageQuotaBytes: 120,
+    includedBytes: 100,
     showOverageProjection: true,
     overageProjection: { gb: 3, currency: 'usd', amount: 0.3 },
     contributorCount: 2,
   })
   expect(continuing).not.toContain('role="alert"')
   expect(continuing).toContain('3 GB')
-  expect(continuing).toContain('90%')
+  expect(continuing.match(/>プラン込み容量</g)).toHaveLength(1)
+  expect(continuing).not.toContain('>容量上限<')
+  expect(continuing).toContain('95%')
+  expect(continuing).toContain('bg-link"')
   expect(continuing.match(/role="progressbar"/g)).toHaveLength(1)
   expect(
     renderBillingPage(1, null, {
@@ -301,8 +312,9 @@ test('near-limit Team owner without a subscription gets support guidance without
     storageQuotaBytes: 100,
   })
   const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-  expect(banner).toContain(
-    '保存容量の上限についてはサポートにお問い合わせください。',
+  expect(html.match(/mailto:support@/g)).toHaveLength(1)
+  expect(html).toContain(
+    'このワークスペースの請求については、サポートにお問い合わせください。',
   )
   expect(banner).not.toContain(
     '上限を増やすには、このページのプランから選んでください。',

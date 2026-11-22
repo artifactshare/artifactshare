@@ -3,8 +3,10 @@ import { cn } from '~/lib/utils'
 export function StorageMeter({
   usedBytes,
   quotaBytes,
+  warnNearLimit = true,
 }: {
   usedBytes: number
+  warnNearLimit?: boolean
   quotaBytes: number
 }) {
   const { t } = useT()
@@ -30,7 +32,9 @@ export function StorageMeter({
           data-slot="progress-indicator"
           className={cn(
             'h-full',
-            percent !== null && percent >= 90 ? 'bg-warning' : 'bg-link',
+            warnNearLimit && percent !== null && percent >= 90
+              ? 'bg-warning'
+              : 'bg-link',
           )}
           style={{ width: `${fill}%` }}
         />

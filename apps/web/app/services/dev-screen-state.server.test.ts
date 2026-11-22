@@ -1,3 +1,4 @@
+import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { sql } from 'kysely'
 import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
@@ -36,7 +37,11 @@ import {
   latestPublishedAtSelect,
 } from './home.server'
 import { loadRemovedWorkspaceMembers } from './team-management.server'
-import { listWorkspaceBots } from './bot-members.server'
+import {
+  listWorkspaceBots,
+  stopWorkspaceBot,
+  cancelWorkspaceBot,
+} from './bot-members.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
 import { recordViewerRecency } from './views.server'
 
@@ -1529,17 +1534,30 @@ describe('settings with-bots dev screen state', () => {
       })
       .execute()
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
-    // Reseed restores mutations from a preceding destructive capture.
+    const actor = { id: userId, workspaceId }
     await db
-      .updateTable('users')
-      .set({ bot_stopped_at: now })
-      .where('id', '=', workspaceId + '-bot-active')
+      .insertInto('workspace_members')
+      .values({
+        user_id: userId,
+        workspace_id: workspaceId,
+        role: 'owner',
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+        removed_at: null,
+        removed_by: null,
+        first_contributed_at: null,
+        last_contributed_at: null,
+      })
       .execute()
-    await db
-      .updateTable('cli_refresh_credentials')
-      .set({ revoked_at: now })
-      .where('user_id', '=', workspaceId + '-bot-active')
-      .execute()
+    const activeId = workspaceId + '-bot-active'
+    const destinations = async () =>
+      (await listWorkspaceBots(db, workspaceId, now))
+        .find((row) => row.id === activeId)
+        ?.approvedProjects?.map((project) => project.unavailable)
+    expect(await destinations()).toEqual([false, false])
+    expect(await stopWorkspaceBot(db, actor, activeId)).toEqual({ kind: 'ok' })
+    expect(await destinations()).toEqual([true, true])
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
 
     const bots = await listWorkspaceBots(db, workspaceId, now)
@@ -1566,6 +1584,20 @@ describe('settings with-bots dev screen state', () => {
     const unusedStopped = byId.get(`${workspaceId}-bot-unused-stopped`)
     expect(unusedStopped?.botStoppedAt).not.toBeNull()
     expect(unusedStopped?.cancelable).toBe(true)
+    expect(await destinations()).toEqual([false, false])
+    const target = workspaceId + '-bot-unused-stopped'
+    expect(await cancelWorkspaceBot(db, actor, target)).toEqual({ kind: 'ok' })
+    expect(
+      (await listWorkspaceBots(db, workspaceId, now))
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(
+      bots
+        .map((row) => row.id)
+        .filter((id) => id !== target)
+        .sort(),
+    )
+    expect(await destinations()).toEqual([false, false])
     await db.destroy()
   })
 })
@@ -2433,6 +2465,31 @@ test('inventory captures refresh only owned rows and empty states have zero matc
       expect((await projects()).projects.map((row) => row.name)).toContain(
         'User project',
       )
+      if (kind === 'artifacts') {
+        let previousId: string | undefined
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await seedDevScreenState(
+            db,
+            prefix + '/paginated',
+            workspaceId,
+            userId,
+            now,
+          )
+          const page = await loadWorkspaceInventoryArtifactsPage(
+            db,
+            workspaceId,
+            { page: 2, sort: 'updated', visibility: 'all' },
+          )
+          expect(page.total).toBe(INVENTORY_PAGE_SIZE + 1)
+          expect(page.page).toBe(2)
+          expect(page.artifacts).toHaveLength(1)
+          if (previousId) expect(page.artifacts[0].id).toBe(previousId)
+          previousId = page.artifacts[0].id
+        }
+        expect((await projects()).projects.map((row) => row.name)).toContain(
+          'User project',
+        )
+      }
       expect(
         await db
           .selectFrom('users')
@@ -2751,3 +2808,44 @@ test('long-owner capture restores its owner profile without changing other users
     await db.destroy()
   }
 })
+
+test.each([
+  ['team-unsubscribed', 0, 100_000_000_000],
+  ['team-unsubscribed-high-usage', 95_000_000_000, 100_000_000_000],
+  ['near-limit', 95_000_000_000, 100_000_000_000],
+  ['continuing-near-limit', 100_000_000_000, 120_000_000_000],
+] as const)(
+  'billing capture %s restores usage and quota',
+  async (state, used, quota) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings-billing/' + state,
+        '2026-07-31T12:00:00.000Z',
+        'team',
+      )
+      const row = await db
+        .selectFrom('workspaces')
+        .select([
+          'storage_used_bytes',
+          'storage_quota_bytes',
+          'stripe_subscription_id',
+          'plan',
+        ])
+        .where('id', '=', workspaceId)
+        .executeTakeFirstOrThrow()
+      expect(row.storage_used_bytes).toBe(used)
+      expect(row.storage_quota_bytes).toBe(quota)
+      if (state.startsWith('team-unsubscribed'))
+        expect(row).toMatchObject({
+          plan: 'team',
+          stripe_subscription_id: null,
+        })
+      if (state === 'continuing-near-limit')
+        expect(used / (100 * 1024 ** 3)).toBeGreaterThan(0.9)
+    } finally {
+      await db.destroy()
+    }
+  },
+)

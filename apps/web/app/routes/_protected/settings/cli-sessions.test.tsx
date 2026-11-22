@@ -1,3 +1,4 @@
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import { RouterContextProvider } from 'react-router'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { bindI18n } from '~/lib/i18n'
@@ -24,27 +25,8 @@ vi.mock('~/services/cli-refresh-credentials.server', () => ({
 
 const language = vi.hoisted(() => ({ locale: 'en' as Locale }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  useActionData: () => null,
-  useSubmit: () => vi.fn(),
-  useNavigation: () => ({ state: 'idle' }),
-  Form: ({ children }: { children: import('react').ReactNode }) => (
-    <form>{children}</form>
-  ),
-}))
 import { CliSessionsSection } from './+components/cli-sessions-section'
 import { action } from './tokens'
-function CliSessionsPage({
-  loaderData,
-}: {
-  loaderData: {
-    cliFamilies: import('~/services/cli-refresh-credentials.server').CliRefreshCredentialFamily[]
-  }
-}) {
-  return <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
-}
-
 test.each([
   [
     'en',
@@ -64,13 +46,12 @@ test.each([
   'shows translated access labels in %s, including legacy families',
   (locale, label, unrestricted, agent, publisher) => {
     language.locale = locale
-    const html = renderToStaticMarkup(
-      <CliSessionsPage
-        {...({
-          params: {},
-          matches: [] as never,
-          loaderData: {
-            cliFamilies: (
+    const router = createMemoryRouter([
+      {
+        path: '/',
+        element: (
+          <CliSessionsSection
+            cliFamilies={(
               [undefined, 'unrestricted', 'agent', 'publisher'] as const
             ).map((preset, index) => ({
               familyId: `family-${index}`,
@@ -81,11 +62,13 @@ test.each([
               createdAt: '2026-01-01T00:00:00.000Z',
               lastUsedAt: null,
               expiresAt: '2099-01-01T00:00:00.000Z',
-            })),
-          },
-        } as Parameters<typeof CliSessionsPage>[0])}
-      />,
-    )
+            }))}
+          />
+        ),
+      },
+    ])
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    router.dispose()
     for (const access of [unrestricted, agent, publisher])
       expect(html).toContain(`${label}: ${access}`)
     expect(html).toContain('Employee dashboard')
@@ -107,11 +90,15 @@ describe('/settings/cli-sessions actions', () => {
 
   test('revokes one family for the current user', async () => {
     services.revokeCliRefreshCredentialFamily.mockResolvedValue('ok')
-    await action({
+    const result = await action({
       request: request({ intent: 'revoke-cli-family', familyId: 'family-a' }),
-      context: new Map(),
-    } as never)
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/settings/tokens'),
+      params: {},
+      pattern: '/settings/tokens',
+    })
 
+    expect(result).toEqual({ kind: 'revoked', intent: 'revoke-cli-family' })
     expect(services.revokeCliRefreshCredentialFamily).toHaveBeenCalledWith(
       {},
       'current-user',
@@ -120,25 +107,59 @@ describe('/settings/cli-sessions actions', () => {
   })
 
   test('does not dispatch a family revoke without a family id', async () => {
-    await action({
+    const result = await action({
       request: request({ intent: 'revoke-cli-family' }),
-      context: new Map(),
-    } as never)
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/settings/tokens'),
+      params: {},
+      pattern: '/settings/tokens',
+    })
 
+    expect(result).toEqual({
+      kind: 'revoke-failed',
+      intent: 'revoke-cli-family',
+    })
     expect(services.revokeCliRefreshCredentialFamily).not.toHaveBeenCalled()
   })
 
   test('revokes all families for the current user', async () => {
-    await action({
+    const result = await action({
       request: request({ intent: 'revoke-all-cli-families' }),
-      context: new Map(),
-    } as never)
+      context: new RouterContextProvider(),
+      url: new URL('https://example.test/settings/tokens'),
+      params: {},
+      pattern: '/settings/tokens',
+    })
 
+    expect(result).toEqual({
+      kind: 'revoked',
+      intent: 'revoke-all-cli-families',
+    })
     expect(services.revokeAllCliRefreshCredentialFamilies).toHaveBeenCalledWith(
       {},
       'current-user',
     )
   })
+  test.each(['revoke-cli-family', 'revoke-all-cli-families'] as const)(
+    'failed %s produces retryable data',
+    async (intent) => {
+      const service =
+        intent === 'revoke-cli-family'
+          ? services.revokeCliRefreshCredentialFamily
+          : services.revokeAllCliRefreshCredentialFamilies
+      service.mockRejectedValueOnce(new Error('unavailable'))
+      const req = request({ intent, familyId: 'family-a' })
+      expect(
+        await action({
+          request: req,
+          context: new RouterContextProvider(),
+          url: new URL(req.url),
+          params: {},
+          pattern: '/settings/tokens',
+        }),
+      ).toEqual({ kind: 'revoke-failed', intent })
+    },
+  )
 })
 
 test('old CLI sessions URL redirects after authentication', async () => {

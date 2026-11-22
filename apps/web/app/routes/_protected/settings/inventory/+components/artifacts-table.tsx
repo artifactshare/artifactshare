@@ -1,3 +1,4 @@
+import { inlineLinkClassName } from '~/components/form/settings-text-styles'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { Link } from 'react-router'
 import {
@@ -43,7 +44,7 @@ export function ArtifactsTable({
   const { t } = useT()
   return (
     <>
-      <Table className="max-nav:hidden">
+      <Table className="max-wide:hidden">
         <TableHeader>
           <TableRow>
             {ARTIFACT_HEADERS.map((key) => (
@@ -62,7 +63,7 @@ export function ArtifactsTable({
           ) : null}
         </TableBody>
       </Table>
-      <div className="max-nav:block max-nav:space-y-3 hidden">
+      <div className="max-wide:block max-wide:space-y-3 hidden">
         {!rows.length ? (
           <p className="text-muted-foreground py-6 text-center text-sm">
             {t('team.inventory.empty')}
@@ -75,7 +76,7 @@ export function ArtifactsTable({
           >
             <div className="flex items-start justify-between gap-3">
               <Link
-                className="text-link min-w-0 truncate font-medium underline"
+                className="text-link min-w-0 font-medium [overflow-wrap:anywhere] underline"
                 to={`/a/${row.id}`}
               >
                 {row.name}
@@ -118,11 +119,6 @@ export function ArtifactsTable({
           </article>
         ))}
       </div>
-      <p className="text-muted-foreground mt-[var(--spacing-4)] text-sm">
-        <Link className="text-link underline" to="/settings#removed-members">
-          {t('team.removedMembers')}
-        </Link>
-      </p>
     </>
   )
 }
@@ -139,7 +135,9 @@ function ArtifactRow({
     <TableRow>
       <TableCell>
         <span className={nameCellClassName} title={row.name}>
-          <Link to={`/a/${row.id}`}>{row.name}</Link>
+          <Link className={inlineLinkClassName} to={`/a/${row.id}`}>
+            {row.name}
+          </Link>
         </span>
       </TableCell>
       <TableCell>

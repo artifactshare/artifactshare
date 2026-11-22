@@ -8,7 +8,8 @@ import { bindI18n } from '~/lib/i18n'
 import { BotSection } from './+components/bot-section'
 import '~/app.css'
 
-vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
+const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
+vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 afterEach(() => vi.restoreAllMocks())
 
 const bot = {
@@ -406,33 +407,43 @@ test('conflict reloads inventory so reopening can save the current revision', as
 // Browser witness: Radix automatic dismissal and alert geometry cannot be
 // established by a service or static-markup test.
 test.each([
-  ['stop', 'Stop', 'Stop bot'],
-  ['cancel', 'Cancel creation', 'Cancel creation'],
-  ['reissue', 'Reissue token', 'Reissue'],
+  ['stop', 'Stop', 'Stop bot', 'en'],
+  ['stop', '停止', 'bot を停止', 'ja'],
+  ['cancel', 'Cancel creation', 'Cancel creation', 'en'],
+  ['cancel', '作成を取り消す', '作成を取り消す', 'ja'],
+  ['reissue', 'Reissue token', 'Reissue', 'en'],
 ] as const)(
   '%s keeps pending and failed confirmation visible on mobile, then retries',
-  async (intent, triggerLabel, actionLabel) => {
+  async (intent, triggerLabel, actionLabel, locale) => {
+    language.locale = locale
     await page.viewport(390, 844)
-    let release: ((result: Response) => void) | undefined
-    const submissions: unknown[] = []
+    let finished = false
+    const submissions: ((response: Response) => void)[] = []
     const router = createMemoryRouter(
       [
         {
           path: '/settings/bots',
-          element: (
-            <BotSection
-              bots={[
-                { ...bot, cancelable: true },
-                { ...bot, id: 'other', name: 'Other bot', cancelable: true },
-              ]}
-              canCreate={false}
-            />
+          loader: () => ({
+            bots: [
+              ...(finished && intent === 'cancel'
+                ? []
+                : [
+                    {
+                      ...bot,
+                      botStoppedAt:
+                        finished && intent === 'stop' ? '2026-01-01' : null,
+                      cancelable: true,
+                    },
+                  ]),
+              { ...bot, id: 'other', name: 'Other bot', cancelable: true },
+            ],
+          }),
+          Component: () => (
+            <BotSection bots={useLoaderData().bots} canCreate={false} />
           ),
           action: async ({ request }) => {
-            submissions.push(await request.json())
-            return new Promise<Response>((resolve) => {
-              release = resolve
-            })
+            expect(await request.json()).toEqual({ intent, botUserId: bot.id })
+            return new Promise<Response>((resolve) => submissions.push(resolve))
           },
         },
       ],
@@ -446,8 +457,37 @@ test.each([
       const trigger = page
         .getByRole('button', { name: triggerLabel, exact: true })
         .first()
-      await trigger.click()
+      const status = container.querySelector(
+        '[data-bot-result], [role="status"]',
+      )!
+      expect(status.textContent).toBe('')
+      const observations: {
+        text: string | null
+        hidden: boolean
+        dialog: boolean
+      }[] = []
+      const observer = new MutationObserver(() =>
+        observations.push({
+          text: status.textContent,
+          hidden: Boolean(status.closest('[aria-hidden="true"],[inert]')),
+          dialog: Boolean(document.querySelector('[role="alertdialog"]')),
+        }),
+      )
+      observer.observe(status, {
+        subtree: true,
+        characterData: true,
+        childList: true,
+      })
       const dialog = page.getByRole('alertdialog')
+      await trigger.click()
+      await expect.element(dialog).toBeVisible()
+      await vi.waitFor(() =>
+        expect(dialog.element().contains(document.activeElement)).toBe(true),
+      )
+      await userEvent.keyboard('{Escape}')
+      await expect.element(dialog).not.toBeInTheDocument()
+      await expect.element(trigger).toHaveFocus()
+      await trigger.click()
       await expect.element(dialog).toBeVisible()
       const confirm = dialog.getByRole('button', {
         name: actionLabel,
@@ -458,12 +498,15 @@ test.each([
       if (intent === 'cancel')
         await expect
           .element(
-            dialog.getByRole('button', { name: 'Keep bot', exact: true }),
+            dialog.getByRole('button', {
+              name: bindI18n(locale).t('team.bots.keep'),
+              exact: true,
+            }),
           )
           .toBeVisible()
       await confirm.click()
       const busyAction = dialog.getByRole('button', {
-        name: bindI18n('en').t(`team.bots.${intent}Confirm.pending`),
+        name: bindI18n(locale).t(`team.bots.${intent}Confirm.pending`),
         exact: true,
       })
       await expect.element(busyAction).toBeDisabled()
@@ -481,9 +524,10 @@ test.each([
         throw new Error('Expected confirmation button')
       disabledConfirm.click()
       expect(submissions).toHaveLength(1)
+      expect(status.textContent).toBe('')
       const scroll = window.scrollY
       await act(async () =>
-        release!(Response.json({ error: { code: 'forbidden' } })),
+        submissions[0](Response.json({ error: { code: 'forbidden' } })),
       )
       const alert = dialog.getByRole('alert')
       await expect.element(alert).toBeVisible()
@@ -504,8 +548,9 @@ test.each([
       ).toHaveLength(1)
       await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
       await vi.waitFor(() => expect(submissions).toHaveLength(2))
+      finished = true
       await act(async () =>
-        release!(
+        submissions[1](
           Response.json({
             ok: true,
             ...(intent === 'reissue'
@@ -515,6 +560,35 @@ test.each([
         ),
       )
       await expect.element(dialog).not.toBeInTheDocument()
+      if (intent !== 'reissue') {
+        const text =
+          locale === 'ja'
+            ? intent === 'stop'
+              ? '「Reporting bot」を停止しました。'
+              : '「Reporting bot」の作成を取り消しました。'
+            : intent === 'stop'
+              ? 'Stopped Reporting bot.'
+              : 'Canceled creation of Reporting bot.'
+        await expect.element(page.getByRole('status')).toHaveTextContent(text)
+        expect(status.isConnected).toBe(true)
+        expect(observations).toEqual([{ text, hidden: false, dialog: false }])
+        expect(document.activeElement?.id).toBe(
+          intent === 'stop' ? 'bot-row-reports' : 'bots-heading',
+        )
+      }
+      observer.disconnect()
+      if (intent === 'stop') {
+        await page
+          .getByRole('button', {
+            name: bindI18n(locale).t('team.bots.reissue'),
+            exact: true,
+          })
+          .click()
+        await expect.element(dialog).toBeVisible()
+        expect(status.textContent).toBe('')
+        await userEvent.keyboard('{Escape}')
+        await expect.element(dialog).not.toBeInTheDocument()
+      }
       if (intent === 'reissue') {
         await expect
           .element(page.getByTestId('bot-token'))
@@ -612,7 +686,118 @@ test.each([
       await act(async () => root.unmount())
       router.dispose()
       container.remove()
+      language.locale = 'en'
       await page.viewport(1280, 800)
     }
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'preferred project needs Add destination before creation (%s)',
+  async (locale) => {
+    language.locale = locale
+    const { t } = bindI18n(locale)
+    const preferred = {
+      id: 'reports',
+      name: 'Reports',
+      baseVisibility: 'private',
+      updatedAt: '2026-01-01',
+    }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({
+        projects: [preferred],
+        preferredProject: preferred,
+        nextCursor: null,
+      }),
+    )
+    const router = createMemoryRouter([
+      { path: '/', element: <BotSection bots={[]} canCreate /> },
+    ])
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      await page
+        .getByRole('button', { name: t('team.bots.add'), exact: true })
+        .click()
+      const dialog = page.getByRole('dialog')
+      await expect
+        .element(dialog.getByRole('button', { name: /Reports/ }))
+        .toHaveAttribute('aria-pressed', 'true')
+      await dialog
+        .getByRole('textbox', { name: t('team.bots.add.nameLabel') })
+        .fill('Weekly reports')
+      await expect
+        .element(dialog.getByText(t('team.bots.emptyDestinations')))
+        .toBeVisible()
+      const create = dialog.getByRole('button', {
+        name: t('team.bots.add.submit'),
+        exact: true,
+      })
+      await expect.element(create).toBeDisabled()
+      const reason = create.element().previousElementSibling!
+      await expect.element(page.elementLocator(reason)).toBeVisible()
+      expect(reason.textContent).toBe(
+        locale === 'en'
+          ? 'Choose a project and click “Add destination” to set the primary destination.'
+          : 'プロジェクトを選び、「投稿先を追加」を押して既定の投稿先を設定してください。',
+      )
+      await dialog
+        .getByRole('button', {
+          name: t('team.bots.addDestination'),
+          exact: true,
+        })
+        .click()
+      await expect
+        .element(dialog.getByRole('radio', { name: /Reports/ }))
+        .toBeChecked()
+      await expect.element(create).toBeEnabled()
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+      language.locale = 'en'
+    }
+  },
+)
+
+test('stop returns focus to the Bots heading when revalidation removes the row', async () => {
+  let bots = [bot]
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/settings/bots',
+        loader: () => bots,
+        Component: () => (
+          <BotSection bots={useLoaderData<typeof bots>()} canCreate={false} />
+        ),
+        action: () => {
+          bots = []
+          return { ok: true }
+        },
+      },
+    ],
+    { initialEntries: ['/settings/bots'] },
+  )
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', { name: 'Stop bot', exact: true })
+      .click()
+    await expect.element(page.getByRole('alertdialog')).not.toBeInTheDocument()
+    await expect.element(page.getByTestId('bot-row')).not.toBeInTheDocument()
+    await expect
+      .element(page.getByRole('heading', { name: 'Bots', exact: true }))
+      .toHaveFocus()
+  } finally {
+    await act(async () => root.unmount())
+    router.dispose()
+    container.remove()
+  }
+})
