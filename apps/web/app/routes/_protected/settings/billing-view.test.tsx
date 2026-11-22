@@ -239,6 +239,9 @@ test('Team without a subscription has no purchase offer while Free retains check
     hasSubscription: false,
     stripeSubscriptionStatus: 'none',
   })
+  expect(team).toContain(
+    'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20billing%20help"',
+  )
   expect(team.match(/mailto:support@/g)).toHaveLength(1)
   expect(team).toContain('Team（サブスクリプションなし）')
   expect(team).not.toContain('value="checkout"')
@@ -316,7 +319,7 @@ test('near-limit Team owner without a subscription gets support guidance without
   expect(banner).not.toContain(
     '上限を増やすには、このページのプランから選んでください。',
   )
-  expect(html).toContain(
+  expect(banner).toContain(
     'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"',
   )
   expect(html).not.toContain('value="checkout"')

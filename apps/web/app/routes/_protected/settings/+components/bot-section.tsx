@@ -103,7 +103,14 @@ export function BotSection({
       </div>
       {canCreate ? (
         <div className="flex justify-end">
-          <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setNotice(null)
+              setCreateOpen(true)
+            }}
+          >
             {t('team.bots.add')}
           </Button>
         </div>
@@ -170,7 +177,10 @@ export function BotSection({
                                 variant="outline"
                                 size="sm"
                                 id={`bot-destinations-${bot.id}`}
-                                onClick={() => setEditTarget(bot)}
+                                onClick={() => {
+                                  setNotice(null)
+                                  setEditTarget(bot)
+                                }}
                               >
                                 {t('team.bots.editDestinations')}
                               </Button>
@@ -180,7 +190,10 @@ export function BotSection({
                               variant="outline"
                               size="sm"
                               id={`bot-reissue-${bot.id}`}
-                              onClick={() => setReissueTarget(bot)}
+                              onClick={() => {
+                                setNotice(null)
+                                setReissueTarget(bot)
+                              }}
                             >
                               {t('team.bots.reissue')}
                             </Button>
@@ -307,6 +320,7 @@ function BotActionDialog({
             : 'bots-heading'
           : `bot-${intent}-${bot.id}`
       }
+      fallbackFocusId="bots-heading"
       afterCloseFocus={complete ? onSuccess : undefined}
       awaitResult
       destructive={intent !== 'reissue'}

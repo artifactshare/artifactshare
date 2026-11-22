@@ -577,6 +577,18 @@ test.each([
         )
       }
       observer.disconnect()
+      if (intent === 'stop') {
+        await page
+          .getByRole('button', {
+            name: bindI18n(locale).t('team.bots.reissue'),
+            exact: true,
+          })
+          .click()
+        await expect.element(dialog).toBeVisible()
+        expect(status.textContent).toBe('')
+        await userEvent.keyboard('{Escape}')
+        await expect.element(dialog).not.toBeInTheDocument()
+      }
       if (intent === 'reissue') {
         await expect
           .element(page.getByTestId('bot-token'))
@@ -749,3 +761,43 @@ test.each(['en', 'ja'] as const)(
     }
   },
 )
+
+test('stop returns focus to the Bots heading when revalidation removes the row', async () => {
+  let bots = [bot]
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/settings/bots',
+        loader: () => bots,
+        Component: () => (
+          <BotSection bots={useLoaderData<typeof bots>()} canCreate={false} />
+        ),
+        action: () => {
+          bots = []
+          return { ok: true }
+        },
+      },
+    ],
+    { initialEntries: ['/settings/bots'] },
+  )
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', { name: 'Stop bot', exact: true })
+      .click()
+    await expect.element(page.getByRole('alertdialog')).not.toBeInTheDocument()
+    await expect.element(page.getByTestId('bot-row')).not.toBeInTheDocument()
+    await expect
+      .element(page.getByRole('heading', { name: 'Bots', exact: true }))
+      .toHaveFocus()
+  } finally {
+    await act(async () => root.unmount())
+    router.dispose()
+    container.remove()
+  }
+})

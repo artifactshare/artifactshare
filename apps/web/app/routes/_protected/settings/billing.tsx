@@ -474,6 +474,12 @@ export default function BillingPage({
     loaderData.plan !== 'team'
 
   const presentation = billingPresentation(loaderData)
+  const showStorageWarning =
+    !loaderData.showOverageProjection &&
+    shouldShowUsageWarning(
+      loaderData.storageUsedBytes,
+      loaderData.storageQuotaBytes,
+    )
   const planLabel =
     presentation === 'team-without-subscription'
       ? t('billing.plan.teamUnsubscribed')
@@ -522,6 +528,7 @@ export default function BillingPage({
           ) : null}
 
           <BillingActions
+            showStorageWarning={showStorageWarning}
             loaderData={loaderData}
             presentation={presentation}
             isPending={isPending}
@@ -534,6 +541,7 @@ export default function BillingPage({
           </section>
         ) : null}
         <BillingStorageSection
+          showStorageWarning={showStorageWarning}
           loaderData={loaderData}
           presentation={presentation}
         />
@@ -543,9 +551,11 @@ export default function BillingPage({
 }
 
 function BillingStorageSection({
+  showStorageWarning,
   loaderData,
   presentation,
 }: {
+  showStorageWarning: boolean
   loaderData: Pick<
     BillingLoaderData,
     | keyof UsageLoaderData
@@ -560,11 +570,7 @@ function BillingStorageSection({
   const { t } = useT()
   return (
     <SettingsSubsection title={t('billing.usage.storageTitle')}>
-      {!loaderData.showOverageProjection &&
-      shouldShowUsageWarning(
-        loaderData.storageUsedBytes,
-        loaderData.storageQuotaBytes,
-      ) ? (
+      {showStorageWarning ? (
         <SettingsBanner kind="warning" urgent>
           <p className="font-medium">{t('team.usage.nearLimit')}</p>
           <p>
@@ -642,6 +648,8 @@ function NearLimitNextStep({
 }) {
   const { t } = useT()
   if (!canManage) return <p>{t('team.usage.nearLimitMember')}</p>
+  if (presentation === 'team-without-subscription')
+    return <SupportContact topic="storage" />
   if (billingConfigured && presentation === 'purchase')
     return <p>{t('team.usage.nearLimitAdmin')}</p>
   return null
@@ -1236,30 +1244,41 @@ function billingPresentation(
       : 'purchase'
 }
 
+function SupportContact({ topic }: { topic: 'billing' | 'storage' }) {
+  const { t } = useT()
+  const subject =
+    topic === 'storage'
+      ? 'Artifact Share upgrade help: storage'
+      : 'Artifact Share billing help'
+  return (
+    <p>
+      <a
+        className={inlineLinkClassName}
+        href={`mailto:support@artifactshare.com?subject=${encodeURIComponent(subject)}`}
+      >
+        {t('billing.contactSupport')}
+      </a>
+    </p>
+  )
+}
+
 function BillingActions({
+  showStorageWarning,
   loaderData,
   presentation,
   isPending,
   awaitingCheckoutReflection,
 }: {
   loaderData: BillingLoaderData
+  showStorageWarning: boolean
   presentation: ReturnType<typeof billingPresentation>
   isPending: boolean
   awaitingCheckoutReflection: boolean
 }) {
-  const { locale, t } = useT()
+  const { locale } = useT()
   if (!loaderData.canManage) return <ReadOnlyNotice />
   if (presentation === 'team-without-subscription')
-    return (
-      <p>
-        <a
-          className={inlineLinkClassName}
-          href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"
-        >
-          {t('billing.contactSupport')}
-        </a>
-      </p>
-    )
+    return showStorageWarning ? null : <SupportContact topic="billing" />
 
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
   if (loaderData.hasSubscription)

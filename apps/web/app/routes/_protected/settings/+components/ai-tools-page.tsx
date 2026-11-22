@@ -59,6 +59,7 @@ export default function ApiTokensPage({
       />
       <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
       <SettingsSection
+        headingId="api-tokens-heading"
         title={t('team.tokens.api.title')}
         description={t('team.tokens.body')}
       >
@@ -118,6 +119,7 @@ export default function ApiTokensPage({
         {target && (
           <RevokeDialog
             target={{ intent: 'revoke', tokenId: target.id, name: target.name }}
+            fallbackFocusId="api-tokens-heading"
             returnFocusId={`revoke-${target.id}`}
             onClose={() => setTarget(null)}
           />

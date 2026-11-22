@@ -27,6 +27,7 @@ export function ConfirmActionDialog({
   result,
   awaitResult = false,
   returnFocusId,
+  fallbackFocusId,
   afterCloseFocus,
 }: {
   open: boolean
@@ -34,7 +35,7 @@ export function ConfirmActionDialog({
   onConfirm: () => void
   title: string
   description: string
-  action: string
+  action: string | null
   pendingLabel?: string
   pending: boolean
   destructive?: boolean
@@ -42,6 +43,7 @@ export function ConfirmActionDialog({
   result?: ReactNode
   awaitResult?: boolean
   returnFocusId?: string
+  fallbackFocusId?: string
   afterCloseFocus?: () => void
   trigger?: ReactNode
 }) {
@@ -60,7 +62,9 @@ export function ConfirmActionDialog({
         size="sm"
         onCloseAutoFocus={(event) => {
           if (!returnFocusId) return
-          const focusTarget = document.getElementById(returnFocusId)
+          const focusTarget =
+            document.getElementById(returnFocusId) ??
+            (fallbackFocusId && document.getElementById(fallbackFocusId))
           if (focusTarget) {
             event.preventDefault()
             focusTarget.focus()
@@ -77,17 +81,19 @@ export function ConfirmActionDialog({
           <AlertDialogCancel disabled={pending}>
             {dismissLabel ?? t('confirm.cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction
-            aria-busy={pending}
-            variant={destructive ? 'destructive' : 'default'}
-            disabled={pending}
-            onClick={(event) => {
-              if (awaitResult) event.preventDefault()
-              if (!pending) onConfirm()
-            }}
-          >
-            {pending ? (pendingLabel ?? t('confirm.pending')) : action}
-          </AlertDialogAction>
+          {action !== null && (
+            <AlertDialogAction
+              aria-busy={pending}
+              variant={destructive ? 'destructive' : 'default'}
+              disabled={pending}
+              onClick={(event) => {
+                if (awaitResult) event.preventDefault()
+                if (!pending) onConfirm()
+              }}
+            >
+              {pending ? (pendingLabel ?? t('confirm.pending')) : action}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

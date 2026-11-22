@@ -307,7 +307,17 @@ for (const locale of ['en', 'ja'] as const)
                 ? 'This token is unavailable.'
                 : 'このトークンは利用できません。',
             )
-          await retry.click()
+          const close = dialog.getByRole('button', {
+            name: copy['common.close'],
+            exact: true,
+          })
+          await expect.element(close).toBeVisible()
+          expect(dialog.getByRole('button').all()).toHaveLength(1)
+          await close.click()
+          await expect.element(dialog).not.toBeInTheDocument()
+          expect(attempts).toBe(2)
+          await trigger.click()
+          await action.click()
           await vi.waitFor(() => expect(attempts).toBe(3))
           await act(async () => release())
         }
@@ -317,6 +327,17 @@ for (const locale of ['en', 'ja'] as const)
         await act(async () => releaseLoader())
         await expect.element(dialog).not.toBeInTheDocument()
         await expect.element(trigger).not.toBeInTheDocument()
+        await expect
+          .element(
+            page.getByRole('heading', {
+              name:
+                intent === 'revoke'
+                  ? copy['team.tokens.api.title']
+                  : copy['settings.cli.title'],
+              exact: true,
+            }),
+          )
+          .toHaveFocus()
       } finally {
         await act(async () => root.unmount())
         router.dispose()

@@ -15,10 +15,12 @@ export function RevokeDialog({
   onClose,
   onAlreadyRevoked,
   returnFocusId,
+  fallbackFocusId,
 }: {
   target: RevokeTarget
   onClose: () => void
   onAlreadyRevoked?: () => void
+  fallbackFocusId: string
   returnFocusId: string
 }) {
   const { t } = useT()
@@ -29,12 +31,32 @@ export function RevokeDialog({
     if (result === 'revoked' || result === 'cli-revoke-noop') onClose()
   }, [result, onAlreadyRevoked, onClose])
   const all = target.intent === 'revoke-all-cli-families'
-  const failed = result === 'revoke-failed' || result === 'revoke-unavailable'
+  const unavailable = result === 'revoke-unavailable'
+  let actionLabel: string | null = t(
+    all ? 'team.tokens.cli.revokeAll' : 'team.tokens.revoke',
+  )
+  let banner
+  if (unavailable) {
+    actionLabel = null
+    banner = (
+      <SettingsBanner kind="warning" urgent>
+        {t('team.tokens.revoke.unavailable')}
+      </SettingsBanner>
+    )
+  } else if (result === 'revoke-failed') {
+    actionLabel = t('dialog.retry')
+    banner = (
+      <SettingsBanner kind="error">
+        {t('team.tokens.revoke.failed')}
+      </SettingsBanner>
+    )
+  }
   return (
     <ConfirmActionDialog
       open
       destructive
       awaitResult
+      fallbackFocusId={fallbackFocusId}
       returnFocusId={returnFocusId}
       onOpenChange={(open) => {
         if (!open) onClose()
@@ -52,28 +74,10 @@ export function RevokeDialog({
               { name: target.name },
             )
       }
-      action={t(
-        failed
-          ? 'dialog.retry'
-          : all
-            ? 'team.tokens.cli.revokeAll'
-            : 'team.tokens.revoke',
-      )}
+      dismissLabel={unavailable ? t('common.close') : undefined}
+      action={actionLabel}
       pending={fetcher.state !== 'idle'}
-      result={
-        failed ? (
-          <SettingsBanner
-            kind={result === 'revoke-unavailable' ? 'warning' : 'error'}
-            urgent
-          >
-            {t(
-              result === 'revoke-unavailable'
-                ? 'team.tokens.revoke.unavailable'
-                : 'team.tokens.revoke.failed',
-            )}
-          </SettingsBanner>
-        ) : undefined
-      }
+      result={banner}
       onConfirm={() => {
         const form = new FormData()
         form.set('intent', target.intent)

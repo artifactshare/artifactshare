@@ -28,6 +28,7 @@ export function CliSessionsSection({
 
   return (
     <SettingsSection
+      headingId="cli-sessions-heading"
       title={t('settings.cli.title')}
       description={t('team.tokens.cli.body')}
       actions={
@@ -85,6 +86,7 @@ export function CliSessionsSection({
       {dialog && (
         <RevokeDialog
           target={dialog.target}
+          fallbackFocusId="cli-sessions-heading"
           returnFocusId={dialog.triggerId}
           onClose={() => setDialog(null)}
           onAlreadyRevoked={() => setNoop(true)}
