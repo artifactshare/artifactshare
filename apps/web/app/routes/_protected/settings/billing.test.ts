@@ -434,20 +434,26 @@ describe('/settings/billing loader', () => {
 
 describe('billing context visibility', () => {
   test.each([
-    [true, 'free', 'default', true],
-    [true, 'free', 'projectLimit', true],
-    [true, 'plus', 'plusOverage', true],
-    [true, 'plus', 'projectLimit', true],
-    [true, 'plus', 'usage', true],
-    [true, 'plus', 'default', false],
-    [true, 'team', 'plusOverage', false],
-    [false, 'free', 'default', false],
+    [true, 'free', 'default', false, true],
+    [true, 'free', 'default', true, false],
+    [true, 'free', 'projectLimit', false, true],
+    [true, 'plus', 'plusOverage', false, true],
+    [true, 'plus', 'projectLimit', false, true],
+    [true, 'plus', 'usage', false, true],
+    [true, 'plus', 'default', false, false],
+    [true, 'team', 'plusOverage', false, false],
+    [false, 'free', 'default', false, false],
   ] as const)(
-    'canManage=%s plan=%s context=%s returns %s',
-    (canManage, plan, entryContext, expected) => {
-      expect(shouldShowBillingContext({ canManage, plan, entryContext })).toBe(
-        expected,
-      )
+    'canManage=%s plan=%s context=%s awaitingCheckoutReflection=%s returns %s',
+    (canManage, plan, entryContext, awaitingCheckoutReflection, expected) => {
+      expect(
+        shouldShowBillingContext({
+          canManage,
+          plan,
+          entryContext,
+          awaitingCheckoutReflection,
+        }),
+      ).toBe(expected)
     },
   )
 })

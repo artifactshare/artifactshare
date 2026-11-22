@@ -599,6 +599,7 @@ export default function BillingPage({
             activeProjectCount={loaderData.activeProjectCount}
           />
           {shouldShowBillingContext({
+            awaitingCheckoutReflection,
             canManage: loaderData.canManage,
             plan: loaderData.plan,
             entryContext: loaderData.entryContext,
@@ -922,6 +923,7 @@ function BillingUnavailableNotice() {
 }
 
 export function shouldShowBillingContext({
+  awaitingCheckoutReflection,
   canManage,
   plan,
   entryContext,
@@ -929,8 +931,9 @@ export function shouldShowBillingContext({
   canManage: boolean
   plan: string
   entryContext: BillingLoaderData['entryContext']
+  awaitingCheckoutReflection: boolean
 }): boolean {
-  if (!canManage || plan === 'team') return false
+  if (awaitingCheckoutReflection || !canManage || plan === 'team') return false
   return plan !== 'plus' || entryContext !== 'default'
 }
 
