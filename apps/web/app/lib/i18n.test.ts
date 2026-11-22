@@ -15,6 +15,7 @@ test.each([
   'team.tokens.cli.revoke.body',
   'team.tokens.cli.revokeAllConfirm.action',
   'team.tokens.cli.revokeAllConfirm.body',
+  'team.tokens.revoke.pending',
   'team.tokens.revoke.failed',
   'team.tokens.revoke.unavailable',
   'team.bots.stop.success',

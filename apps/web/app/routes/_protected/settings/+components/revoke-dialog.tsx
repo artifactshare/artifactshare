@@ -70,15 +70,13 @@ export function RevokeDialog({
       description={
         all
           ? t('team.tokens.cli.revokeAllConfirm.body')
-          : t(
-              target.intent === 'revoke'
-                ? 'team.tokens.revoke.body'
-                : 'team.tokens.cli.revoke.body',
-              { name: target.name },
-            )
+          : target.intent === 'revoke'
+            ? t('team.tokens.revoke.body', { name: target.name })
+            : t('team.tokens.cli.revoke.body')
       }
       dismissLabel={unavailable ? t('common.close') : undefined}
       action={actionLabel}
+      pendingLabel={t('team.tokens.revoke.pending')}
       pending={fetcher.state !== 'idle'}
       result={banner}
       onConfirm={() => {

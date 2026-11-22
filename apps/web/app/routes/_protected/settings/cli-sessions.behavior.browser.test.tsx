@@ -271,14 +271,14 @@ for (const locale of ['en', 'ja'] as const)
             ? {
                 revoke: `Apps using “${tokenName}” will lose API access.`,
                 'revoke-cli-family':
-                  'To use “Reports · 12345678” again, sign in again on that device or publisher client.',
+                  'Revoking this session requires signing in again on that device or publisher client.',
                 'revoke-all-cli-families':
                   'Sign in again on every CLI device and publisher client to restore access.',
               }
             : {
                 revoke: `「${tokenName}」を使った API リクエストは認証に失敗します。`,
                 'revoke-cli-family':
-                  '「Reports · 12345678」を再び使うには、その端末または投稿用クライアントでログインし直してください。',
+                  'このセッションを失効させると、その端末または投稿用クライアントで再ログインが必要になります。',
                 'revoke-all-cli-families':
                   '再び利用するには、すべての CLI 端末と投稿用クライアントでログインし直してください。',
               }
@@ -307,7 +307,7 @@ for (const locale of ['en', 'ja'] as const)
           exact: true,
         })
         const busy = dialog.getByRole('button', {
-          name: copy['confirm.pending'],
+          name: locale === 'en' ? 'Revoking…' : '失効中…',
           exact: true,
         })
         await action.click()
