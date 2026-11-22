@@ -546,6 +546,33 @@ describe('deleteWorkspaceSlackConnection', () => {
     expect(remaining).toEqual([])
   })
 
+  test('logs a safe transport diagnostic and retains the connection on revoke rejection', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('synthetic-private-message'), {
+        token: 'synthetic-private-token',
+      }),
+    )
+    await seedAdmin(db, 'u1', 'ws1')
+    await seedSlackWorkspaceRow(db, 'sw1', 'ws1')
+    expect(
+      await deleteWorkspaceSlackConnection(db, actor('u1', 'ws1'), 'sw1'),
+    ).toEqual({ kind: 'external-failed' })
+    expect(
+      await db.selectFrom('slack_workspaces').select('id').execute(),
+    ).toEqual([{ id: 'sw1' }])
+    expect(log.mock.calls).toEqual([
+      [
+        {
+          operation: 'slack.revoke',
+          cause: 'Error',
+          frames: expect.any(Array),
+        },
+      ],
+    ])
+    log.mockRestore()
+  })
+
   test('keeps the connection when Slack token revoke fails', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: false, error: 'fatal_error' }), {

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useFetcher } from 'react-router'
 import { useT } from '~/hooks/use-t'
-import type { action } from '../tokens'
+import type { action } from '../_content/tokens'
 import { ConfirmActionDialog } from './confirm-action-dialog'
 import { SettingsBanner } from './settings-banner'
 

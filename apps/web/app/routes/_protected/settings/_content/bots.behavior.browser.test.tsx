@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
-import { BotSection } from './+components/bot-section'
+import { BotSection } from '../+components/bot-section'
 import '~/app.css'
 
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))

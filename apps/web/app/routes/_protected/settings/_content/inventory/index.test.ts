@@ -17,9 +17,11 @@ describe('inventory index loader', () => {
         context: {},
         request: new Request('https://x/settings/inventory'),
       } as never),
-    ).rejects.toMatchObject({
-      status: 302,
-      headers: expect.objectContaining({ get: expect.any(Function) }),
-    })
+    ).rejects.toSatisfy(
+      (response: unknown) =>
+        response instanceof Response &&
+        response.status === 302 &&
+        response.headers.get('Location') === '/settings/inventory/projects',
+    )
   })
 })

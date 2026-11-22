@@ -70,6 +70,7 @@
     "scripts/browser-waits.test.mjs",
     "scripts/test-reliability-lint-plugin.mjs",
     "scripts/test-reliability-lint-plugin.test.mjs",
+    "scripts/check-browser-project-membership.mjs",
     "scripts/browser-local-state.mjs",
     "scripts/browser-local-state.test.mjs",
     "scripts/copy-glossary-lint-plugin.mjs",

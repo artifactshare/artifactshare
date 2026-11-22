@@ -10,7 +10,10 @@ const webRoot = new URL('../..', import.meta.url).pathname
 // Cloudflare also writes .wrangler/deploy/config.json and React Router writes
 // generated metadata beneath the project root. Own that root as well as output
 // so the test cannot replace a normal build's deployment redirect or metadata.
-export async function buildUsercontentApp(directory: string): Promise<void> {
+export async function buildUsercontentApp(
+  directory: string,
+  prepare?: (project: string) => Promise<void>,
+): Promise<void> {
   const project = join(directory, 'apps/web')
   await mkdir(join(directory, 'apps'), { recursive: true })
   await cp(webRoot, project, {
@@ -33,6 +36,7 @@ export async function buildUsercontentApp(directory: string): Promise<void> {
   await symlink(resolve(webRoot, '../../scripts'), join(directory, 'scripts'))
   // The behavior command already builds the contract package. Only compile the
   // copied app here; never rebuild shared package output from browser instances.
+  await prepare?.(project)
   await run('pnpm', ['exec', 'react-router', 'build'], {
     cwd: project,
     timeout: 180_000,

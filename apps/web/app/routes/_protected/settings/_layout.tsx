@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import { Link, Outlet, useSearchParams } from 'react-router'
 import type { Route } from './+types/_layout'
 import { requireUser } from '~/middleware/context'
@@ -48,7 +49,10 @@ export async function loader({
           workspaceName: row.workspaceName,
         })),
       )
-      .catch(() => []),
+      .catch((error) => {
+        logErrorDiagnostic('settings.projects', error)
+        return []
+      }),
   ])
   return {
     ...settingsShell,

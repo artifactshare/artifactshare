@@ -15,7 +15,7 @@
   "apps/web/app/routes/_home/files-recent-structure.behavior.browser.test.tsx": 1,
   "apps/web/app/routes/_home/projects-structure.behavior.browser.test.tsx": 1,
   "apps/web/app/routes/_protected/project-files-view.test.tsx": 1,
-  "apps/web/app/routes/_protected/settings/index.test.tsx": 2,
+  "apps/web/app/routes/_protected/settings/_content/index.test.tsx": 2,
   "apps/web/app/routes/a.$id/+components/artifact-view-tracker.test.tsx": 1,
   "apps/web/app/routes/a.$id/+components/history-panel.test.tsx": 2,
   "apps/web/app/routes/a.$id/+components/use-comment-mutations.test.tsx": 1,

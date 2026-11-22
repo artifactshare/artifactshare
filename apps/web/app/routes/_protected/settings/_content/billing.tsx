@@ -1,11 +1,12 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import {
   loadUsage,
   type UsageLoaderData,
-} from './+components/billing-usage.server'
+} from '../+components/billing-usage.server'
 import {
   OverageCostStat,
   shouldShowUsageWarning,
-} from './+components/billing-usage'
+} from '../+components/billing-usage'
 import { env } from 'cloudflare:workers'
 import { useEffect, useState } from 'react'
 import {
@@ -39,9 +40,9 @@ import { withLang } from '~/lib/connect-link'
 import { useHydrated } from '~/hooks/use-hydrated'
 import { PlanCard } from '~/components/app/plan-card'
 import { SettingsPage } from '~/components/form/settings-page'
-import { SettingsBanner } from './+components/settings-banner'
-import { BillingPlanGrid } from './+components/billing-plan-grid'
-import { BillingPlans } from './+components/billing-plans'
+import { SettingsBanner } from '../+components/settings-banner'
+import { BillingPlanGrid } from '../+components/billing-plan-grid'
+import { BillingPlans } from '../+components/billing-plans'
 import { TeamMutedParagraph } from '~/components/form/team-muted'
 import {
   inlineLinkClassName,
@@ -49,7 +50,7 @@ import {
   statLabelClassName,
 } from '~/components/form/settings-text-styles'
 import { StorageMeter } from '~/components/form/storage-meter'
-import { UsageStat, UsageStats } from './+components/usage-stats'
+import { UsageStat, UsageStats } from '../+components/usage-stats'
 import { Badge } from '~/components/ui/badge'
 import {
   Card,
@@ -387,7 +388,10 @@ export async function loader({
           db,
           user.workspaceId,
           estimateNow,
-        ).catch(() => null)
+        ).catch((error) => {
+          logErrorDiagnostic('billing.projection', error)
+          return null
+        })
       : null
   const monthlyEstimate = resolveMonthlyEstimate(
     contract,

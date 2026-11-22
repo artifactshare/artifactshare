@@ -12,7 +12,7 @@ import {
 import { createDb } from '~/services/db.server'
 import { loadSettingsShell } from '~/services/team-management.server'
 import { SettingsPage } from '~/components/form/settings-page'
-import { BotSection } from './+components/bot-section'
+import { BotSection } from '../+components/bot-section'
 import type { Route } from './+types/bots'
 import type { ScreenSpec } from '~/types/screen'
 

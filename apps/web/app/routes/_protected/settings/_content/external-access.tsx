@@ -9,9 +9,9 @@ import {
   useSearchParams,
 } from 'react-router'
 import type { Route } from './+types/external-access'
-import type { SettingsLayoutContext } from './_layout'
-import { ConfirmActionDialog } from './+components/confirm-action-dialog'
-import { SettingsBanner, settingsNotice } from './+components/settings-banner'
+import type { SettingsLayoutContext } from '../_layout'
+import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
+import { SettingsBanner, settingsNotice } from '../+components/settings-banner'
 import { Button } from '~/components/ui/button'
 import { Checkbox } from '~/components/ui/checkbox'
 import { Input } from '~/components/ui/input'

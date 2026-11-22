@@ -41,6 +41,12 @@ vi.mock('cloudflare:workers', () => ({
   env: { DB: createD1MockFromSqliteRef(sqliteRef) },
 }))
 
+import { createRequestHandler, UNSAFE_decodeViaTurboStream } from 'react-router'
+import { createRequestContext } from '~/lib/error-diagnostics.server'
+import { userContext } from '~/middleware/context'
+import * as serverEntry from '~/entry.server'
+import { action as botsAction } from '~/routes/_protected/settings/_content/bots'
+
 const ADMIN = { id: 'admin1', workspaceId: 'ws1' }
 
 let sqlite: DatabaseSync
@@ -196,6 +202,20 @@ describe('createWorkspaceBot', () => {
     },
   )
 
+  test('maps a failed creation batch to the existing conflict', async () => {
+    seedProject('a')
+    d1BatchHook.callback = () => {
+      throw new Error('query failed')
+    }
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(
+      await createWorkspaceBot(db, ADMIN, { name: 'Reports', projectId: 'a' }),
+    ).toEqual({ kind: 'bot-conflict' })
+    expect(log.mock.calls).toEqual([
+      [{ operation: 'bot.create', cause: 'Error', frames: expect.any(Array) }],
+    ])
+    log.mockRestore()
+  })
   test('creates the bot, member, profile, family, credential, and audit', async () => {
     seedProject('proj1')
     const result = await createWorkspaceBot(db, ADMIN, {
@@ -564,6 +584,20 @@ describe('reissueWorkspaceBotCredential', () => {
     return result
   }
 
+  test('keeps a failed reissue retryable', async () => {
+    const bot = await createBot()
+    d1BatchHook.callback = () => {
+      throw new Error('query failed')
+    }
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(
+      await reissueWorkspaceBotCredential(db, ADMIN, bot.botUserId),
+    ).toEqual({ kind: 'bot-conflict' })
+    expect(log.mock.calls).toEqual([
+      [{ operation: 'bot.reissue', cause: 'Error', frames: expect.any(Array) }],
+    ])
+    log.mockRestore()
+  })
   test('supersedes the old family, revokes the unused old token, keeps the profile', async () => {
     const bot = await createBot()
     const profileBefore = sqlite
@@ -921,6 +955,7 @@ describe('ordinary bot approved destinations', () => {
               : ['a', 'b'],
         revision: bot.destinationRevision!,
       })
+      if (mode === 'demoted') expect(result.kind).toBe('bot-conflict')
       expect(result.kind).not.toBe('ok')
       expect(
         await db
@@ -1072,3 +1107,128 @@ test('secondary approval blocks deletion while live and is detached after stop',
   await stopWorkspaceBot(db, ADMIN, created.botUserId)
   expect(await deleteProjectContainer(db, 'ws1', 'b', ADMIN.id)).toBe('ok')
 })
+
+test.each(['healthy', 'constraint', 'placement', 'wrapped', 'unrelated'])(
+  'real destinations action handles %s batch',
+  async (mode) => {
+    seedProject('a')
+    seedProject('b')
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Reports',
+      projectId: 'a',
+    })
+    if (created.kind !== 'ok') throw new Error(created.kind)
+    const [bot] = await listWorkspaceBots(db, 'ws1')
+    if (!bot) throw new Error('Missing bot')
+    d1BatchHook.callback = () => {
+      if (mode === 'constraint')
+        sqlite
+          .prepare(
+            "INSERT INTO workspaces SELECT * FROM workspaces WHERE id = 'ws1'",
+          )
+          .run()
+      if (mode === 'placement')
+        throw new Error('D1_ERROR: link publication mutation missing')
+      if (mode === 'wrapped')
+        throw new Error('D1 batch rejected', {
+          cause: new Error('link publication mutation missing'),
+        })
+      if (mode === 'unrelated')
+        throw new Error('constraint metadata query unavailable')
+    }
+    const handler = createRequestHandler(
+      {
+        entry: {
+          module: { ...serverEntry, default: () => new Response('document') },
+        },
+        routes: {
+          bots: {
+            id: 'bots',
+            path: 'settings/bots',
+            module: {
+              default: () => null,
+              action: (args) =>
+                botsAction({ ...args, params: {}, pattern: '/settings/bots' }),
+            },
+          },
+        },
+        assets: {
+          routes: {},
+          entry: { module: '', imports: [] },
+          url: '',
+          version: 'test',
+        },
+        publicPath: '/',
+        assetsBuildDirectory: 'build/client',
+        future: {},
+        ssr: true,
+        isSpaMode: false,
+        prerender: [],
+        routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
+      },
+      'test',
+    )
+    const request = new Request('https://example.test/settings/bots.data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intent: 'destinations',
+        botUserId: bot.id,
+        projectId: 'a',
+        projectIds: ['a', 'b'],
+        revision: bot.destinationRevision,
+      }),
+    })
+    const context = createRequestContext(request)
+    context.set(userContext, {
+      ...ADMIN,
+      kind: 'human',
+      hd: null,
+      msTenantId: null,
+      email: 'admin@example.test',
+      emailVerified: true,
+      name: null,
+      image: null,
+      locale: null,
+    })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const response = await handler(request, context)
+    expect(response.status).toBe(
+      mode === 'healthy' ? 200 : mode === 'unrelated' ? 500 : 409,
+    )
+    if (!response.body) throw new Error('Missing action result')
+    const result = await UNSAFE_decodeViaTurboStream(response.body, globalThis)
+    if (mode === 'healthy') {
+      expect(result.value).toEqual({ data: { ok: true } })
+      expect(log).not.toHaveBeenCalled()
+    } else if (mode === 'unrelated') {
+      expect(log.mock.calls).toEqual([
+        [
+          {
+            operation: 'router.error',
+            cause: 'Error',
+            frames: expect.any(Array),
+            method: 'POST',
+            routeId: 'bots',
+          },
+        ],
+      ])
+    } else {
+      expect(result.value).toMatchObject({
+        data: { error: { code: 'bot-conflict' } },
+      })
+      expect(log.mock.calls).toEqual([
+        [
+          {
+            operation: 'bot.destinations',
+            cause: 'Error',
+            ...(mode === 'placement' && { code: 'D1_ERROR' }),
+            ...(mode === 'wrapped' && { innerCause: 'Error' }),
+            frames: expect.any(Array),
+          },
+        ],
+      ])
+    }
+    log.mockRestore()
+  },
+)

@@ -142,8 +142,8 @@ export default defineConfig({
             },
           }),
           include: [
-            'app/routes/_protected/settings/billing-readiness.behavior.browser.test.tsx',
-            'app/routes/_protected/settings/bots.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/billing-readiness.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/bots.behavior.browser.test.tsx',
             'app/routes/_protected/settings/cli-sessions.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
@@ -162,8 +162,8 @@ export default defineConfig({
         {
           browser: 'webkit',
           include: [
-            'app/routes/_protected/settings/billing-readiness.behavior.browser.test.tsx',
-            'app/routes/_protected/settings/bots.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/billing-readiness.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/bots.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',

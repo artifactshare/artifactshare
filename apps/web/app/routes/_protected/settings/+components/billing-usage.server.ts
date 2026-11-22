@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import { env } from 'cloudflare:workers'
 import { type BillingCurrency } from '~/lib/billing-prices'
 import {
@@ -70,7 +71,10 @@ export async function loadUsage({
 
   const [projection, contract] = await Promise.all([
     loadCurrentMonthOverageProjection(db, workspace.id, new Date()).catch(
-      () => null,
+      (error) => {
+        logErrorDiagnostic('billing.usage.projection', error)
+        return null
+      },
     ),
     knownContract !== undefined
       ? Promise.resolve(knownContract)

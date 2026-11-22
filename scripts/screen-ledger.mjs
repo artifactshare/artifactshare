@@ -220,6 +220,17 @@ export function validateLedger(
       if (stateIds.has(state.id))
         throw new Error(`duplicate state id: ${screen.id}/${state.id}`)
       stateIds.add(state.id)
+      if (
+        state.expectedError !== undefined &&
+        (typeof state.expectedError !== 'string' ||
+          !state.expectedError.trim() ||
+          !Number.isInteger(state.expectedStatus) ||
+          !state.setup?.ready?.selector)
+      ) {
+        throw new Error(
+          `expected error requires a marker, exact status and readiness: ${screen.id}/${state.id}`,
+        )
+      }
       if (state.setup?.auth !== undefined && !values.auth.has(state.setup.auth))
         throw new Error(`invalid state auth for ${screen.id}/${state.id}`)
       if (

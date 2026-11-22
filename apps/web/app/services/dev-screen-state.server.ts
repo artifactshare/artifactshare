@@ -36,6 +36,10 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 // the capture header. A browser navigation cannot set it, so /dev/sign-in must
 // not offer them: the state would be seeded but never shown.
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
+  'settings-general/forbidden',
+  'settings-general/not-found',
+  'settings-general/unexpected-error',
+  'settings-general/root-error',
   'settings-tokens/created-secret',
   'settings-billing/subscribed',
   'settings-billing/purchase',

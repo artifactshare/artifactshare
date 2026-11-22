@@ -17,7 +17,7 @@ import { CredentialTable } from './credential-table'
 import { CreatedTokenPanel } from './created-token-panel'
 import { RevokeDialog } from './revoke-dialog'
 import { CliSessionsSection } from './cli-sessions-section'
-import type { action, loader } from '../tokens'
+import type { action, loader } from '../_content/tokens'
 export const MAX_TOKEN_NAME_LENGTH = 100
 export default function ApiTokensPage({
   loaderData,

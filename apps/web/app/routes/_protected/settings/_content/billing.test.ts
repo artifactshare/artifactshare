@@ -36,7 +36,7 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const createCheckoutSessionMock = vi.hoisted(() => vi.fn())
 const externalPostingEnabledMock = vi.hoisted(() => vi.fn(() => true))
 const loadSubscriptionContractMock = vi.hoisted(() =>
-  vi.fn(() => Promise.resolve(null)),
+  vi.fn<typeof billing.loadSubscriptionContract>(() => Promise.resolve(null)),
 )
 
 vi.mock('~/middleware/context', () => ({
@@ -166,7 +166,7 @@ describe('/settings/billing loader', () => {
       renewsAt: '2026-08-01T00:00:00.000Z',
       cancelAtPeriodEnd: false,
     }
-    loadSubscriptionContractMock.mockResolvedValueOnce(contract as never)
+    loadSubscriptionContractMock.mockResolvedValueOnce(contract)
 
     const result = await loader({
       context: {},
@@ -208,6 +208,15 @@ describe('/settings/billing loader', () => {
       await seedAdmin(db, 'u-a', 'ws-a')
       await updateWorkspacePlan(db, 'ws-a', 'plus', 'active', 'sub_1')
       requireUserMock.mockReturnValue(sessionUser(userId, 'ws-a'))
+      loadSubscriptionContractMock.mockResolvedValueOnce({
+        plan: 'plus',
+        interval: 'monthly',
+        currency: 'usd',
+        amount: 5,
+        renewsAt: null,
+        cancelAtPeriodEnd: false,
+      })
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
       vi.spyOn(
         billingUsage,
         'loadCurrentMonthOverageProjection',
@@ -218,6 +227,23 @@ describe('/settings/billing loader', () => {
         request: new Request('https://example.test/settings/billing'),
       } as never)
 
+      const operations = log.mock.calls.map(([diagnostic]) => diagnostic)
+      expect(operations).toEqual([
+        ...(userId === 'u-a'
+          ? [
+              {
+                operation: 'billing.projection',
+                cause: 'Error',
+                frames: expect.any(Array),
+              },
+            ]
+          : []),
+        {
+          operation: 'billing.usage.projection',
+          cause: 'Error',
+          frames: expect.any(Array),
+        },
+      ])
       expect(result).toMatchObject({
         plan: 'plus',
         canManage: userId === 'u-a',

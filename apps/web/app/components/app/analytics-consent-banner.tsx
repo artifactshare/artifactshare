@@ -77,6 +77,7 @@ export function AnalyticsConsentBanner() {
       )}
     >
       <Alert
+        data-analytics-consent-banner
         role="region"
         aria-label={t('analyticsConsent.banner.aria')}
         className="pointer-events-auto mx-auto flex max-w-3xl flex-col gap-3 shadow-[var(--shadow-lg)] sm:flex-row sm:items-center"

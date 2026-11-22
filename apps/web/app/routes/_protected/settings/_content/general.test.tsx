@@ -12,6 +12,9 @@ vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'user', workspaceId: 'workspace' }),
 }))
+vi.mock('~/services/dev-screen-state.server', () => ({
+  isDevScreenStateRequest: () => false,
+}))
 vi.mock('~/services/team-management.server', () => services)
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
@@ -69,7 +72,7 @@ vi.mock('~/components/form/settings-section', () => ({
     </section>
   ),
 }))
-vi.mock('./+components/team-user', () => ({
+vi.mock('../+components/team-user', () => ({
   TeamUser: ({ name, email }: { name: string; email: string }) => (
     <div>
       {name} {email}

@@ -71,7 +71,7 @@ export const excludedRoutes = [
     reason: 'RecipientPicker が利用する JSON 専用 route で UI を描画しない',
   },
   {
-    file: '_protected/settings/inventory/index.tsx',
+    file: '_protected/settings/_content/inventory/index.tsx',
     reason: 'inventory/projects への無条件 redirect',
   },
   {

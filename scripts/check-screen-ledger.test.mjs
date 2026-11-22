@@ -1348,3 +1348,44 @@ test('Settings captures select only the intended route results', () => {
     )
   }
 })
+
+test('expected boundary markers must be visible and unique', async () => {
+  for (const [markers, visible, accepted] of [
+    [['settings-error-boundary'], true, true],
+    [['settings-error-boundary'], false, false],
+    [[], true, false],
+    [['route-error-boundary'], true, false],
+    [['settings-error-boundary', 'route-error-boundary'], true, false],
+  ]) {
+    const check = assertNoRouteError(
+      {
+        locator: () => ({
+          count: () => markers.length,
+          first: () => ({
+            getAttribute: () => markers[0],
+            isVisible: () => visible,
+          }),
+        }),
+      },
+      'settings-error-boundary',
+    )
+    if (accepted) await check
+    else await assert.rejects(check, /Expected one visible boundary/)
+  }
+})
+
+test('capture ledger rejects an expected boundary without its exact HTTP status', () => {
+  const state = {
+    id: 'denied',
+    expectedError: 'settings-error-boundary',
+    setup: { ready: { selector: 'main a', description: 'Recovery link' } },
+  }
+  assert.throws(
+    () => validateLedger([ledgerScreen([state])]),
+    /expected error requires a marker, exact status and readiness/,
+  )
+  assert.equal(
+    validateLedger([ledgerScreen([{ ...state, expectedStatus: 403 }])]),
+    true,
+  )
+})

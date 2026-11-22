@@ -6,7 +6,7 @@ import { server } from 'vitest/browser'
 import type { ScreenReady } from '~/types/screen'
 import { bindI18n } from '~/lib/i18n'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
-import { StatusBanner } from './+components/settings-banner'
+import { StatusBanner } from '../+components/settings-banner'
 import BillingPage, { screen } from './billing'
 
 declare module 'vitest/browser' {
