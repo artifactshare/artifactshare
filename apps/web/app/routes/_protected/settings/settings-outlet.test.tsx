@@ -135,3 +135,39 @@ test('a Checkout return notice stays on its own entry when the user opens Billin
     router.dispose()
   }
 })
+
+test('a Slack return notice stays while the router location drops the parameter', async () => {
+  window.history.replaceState(
+    null,
+    '',
+    '/settings/integrations?connected=slack&view=list#slack',
+  )
+  const router = createBrowserRouter([
+    {
+      element: (
+        <TooltipProvider>
+          <SettingsOutlet shell={shell} />
+        </TooltipProvider>
+      ),
+      children: [{ path: '/settings/integrations', element: <p>Slack</p> }],
+    },
+  ])
+  const container = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await act(async () => {})
+    // Later submissions use the router's location; it no longer carries the
+    // consumed parameter, and the rest of the URL is kept.
+    expect(router.state.location.search).toBe('?view=list')
+    expect(router.state.location.hash).toBe('#slack')
+    expect(window.location.search).toBe('?view=list')
+    expect(
+      container.querySelector('[data-settings-status="slack-connected"]'),
+    ).not.toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+    router.dispose()
+  }
+})

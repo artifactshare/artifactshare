@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useLocation, useNavigationType } from 'react-router'
+import {
+  Outlet,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+} from 'react-router'
 import { StatusBanner } from './settings-banner'
 import type { SettingsLoaderData } from '../_layout'
 
@@ -49,31 +54,67 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
       external = code
     else if (params.get('connected') === 'slack') external = 'slack-connected'
   }
-  // Remove the return parameter from this history entry at once, without a
-  // router navigation: the router keeps this entry's location, so the notice
-  // shows here only, and Back, Forward or a reload read the cleaned URL. A
-  // router replace would wait for loaders and could be cancelled by the next
-  // navigation, leaving the parameter in history or the notice on another
-  // entry.
+  // The notice belongs to the return entry. Cleaning its URL takes two steps:
+  // the history entry is rewritten at once, so Back, Forward or a reload never
+  // read the parameter again, and the router replaces its own location so
+  // later submissions do not carry it. The router's replace waits for loaders
+  // and another navigation can cancel it, so the notice follows only the entry
+  // that replace produces and is dropped on any other navigation.
+  const navigate = useNavigate()
+  const navigationType = useNavigationType()
+  const [notice, setNotice] = useState<{
+    code: string
+    pathname: string
+    search: string
+    entry: string | null
+  } | null>(null)
+  // While Stripe has not reported the new plan, Checkout stays replaced by the
+  // pending notice on this page, including its other in-app views, so a second
+  // purchase cannot start. Back, Forward and a reload start over.
+  const [checkoutReturned, setCheckoutReturned] = useState(false)
   useEffect(() => {
-    if (!external) return
-    const search = new URLSearchParams(location.search)
-    search.delete(external === 'slack-connected' ? 'connected' : 'status')
-    const query = search.toString()
+    if (!external) {
+      setNotice((previous) => {
+        if (!previous || previous.entry === location.key) return previous
+        const cleanupLanded =
+          previous.entry === null &&
+          navigationType === 'REPLACE' &&
+          location.pathname === previous.pathname &&
+          location.search === previous.search
+        return cleanupLanded ? { ...previous, entry: location.key } : null
+      })
+      return
+    }
+    const params = new URLSearchParams(location.search)
+    params.delete(external === 'slack-connected' ? 'connected' : 'status')
+    const query = params.toString()
+    const search = query ? `?${query}` : ''
     window.history.replaceState(
       window.history.state,
       '',
-      location.pathname + (query ? `?${query}` : '') + location.hash,
+      location.pathname + search + location.hash,
     )
-  }, [external, location])
-  const result = external
+    if (external === 'checkout-success') setCheckoutReturned(true)
+    setNotice({
+      code: external,
+      pathname: location.pathname,
+      search,
+      entry: null,
+    })
+    void navigate(
+      { pathname: location.pathname, search, hash: location.hash },
+      { replace: true, state: location.state, preventScrollReset: true },
+    )
+  }, [external, location, navigationType, navigate])
+  const result =
+    external ?? (notice?.entry === location.key ? notice.code : null)
   return (
     <>
       {result && <StatusBanner status={result} />}
       <Outlet
         context={{
           ...shell,
-          externalResult: result,
+          externalResult: checkoutReturned ? 'checkout-success' : result,
         }}
       />
     </>
