@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createMemoryRouter, RouterProvider } from 'react-router'
+import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { expect, test, vi } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -37,21 +37,40 @@ test.each(['token', 'session', 'session-noop'] as const)(
         },
       ],
     }
+    let releaseAction!: () => void
+    const actionGate = new Promise<void>((resolve) => {
+      releaseAction = resolve
+    })
+    let releaseLoader!: () => void
+    const loaderGate = new Promise<void>((resolve) => {
+      releaseLoader = resolve
+    })
+    let serverData = data
     const submissions: FormData[] = []
     const action = vi.fn(async ({ request }: { request: Request }) => {
       const form = await request.formData()
       submissions.push(form)
-      if (form.get('intent') === 'revoke') data.tokens = []
-      else data.cliFamilies = []
-      return kind === 'session-noop' ? { kind: 'cli-revoke-noop' } : null
+      if (kind === 'session-noop') await actionGate
+      serverData =
+        form.get('intent') === 'revoke'
+          ? { ...data, tokens: [] }
+          : { ...data, cliFamilies: [] }
+      return kind === 'session-noop'
+        ? { kind: 'cli-revoke-noop' }
+        : { kind: 'revoked', intent: form.get('intent') }
     })
     const router = createMemoryRouter(
       [
         {
           path: '/settings/tokens',
-          loader: () => data,
+          loader: async () => {
+            if (kind === 'session-noop' && serverData !== data) await loaderGate
+            return serverData
+          },
           action,
-          Component: () => <ApiTokensPage loaderData={data} />,
+          Component: () => (
+            <ApiTokensPage loaderData={useLoaderData<typeof data>()} />
+          ),
         },
       ],
       { initialEntries: ['/settings/tokens'] },
@@ -93,18 +112,35 @@ test.each(['token', 'session', 'session-noop'] as const)(
           ? { intent: 'revoke', tokenId: 'token-a' }
           : { intent: 'revoke-cli-family', familyId: 'session-12345678' },
       )
+      if (kind === 'session-noop') {
+        expect(confirm.closest('[role="alertdialog"]')?.isConnected).toBe(true)
+        expect(confirm.disabled).toBe(true)
+        await act(async () => releaseAction())
+        expect(
+          [...router.state.fetchers.values()].map((f) => f.state),
+        ).toContain('loading')
+        expect(confirm.closest('[role="alertdialog"]')?.isConnected).toBe(true)
+        expect(confirm.disabled).toBe(true)
+        expect(button().isConnected).toBe(true)
+        await act(async () => releaseLoader())
+      }
       await vi.waitFor(() =>
         expect(
           container.querySelector(`button[aria-label="Revoke ${name}"]`),
         ).toBeNull(),
       )
       expect(
-        kind === 'token' ? data.cliFamilies.length : data.tokens.length,
-      ).toBe(1)
+        container.querySelector(
+          `button[aria-label="Revoke ${kind === 'token' ? 'CLI session · 12345678' : 'Report automation'}"]`,
+        ),
+      ).not.toBeNull()
+      await vi.waitFor(() =>
+        expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+      )
       if (kind === 'session-noop')
-        expect(container.textContent).toContain(
-          bindI18n('en').t('team.tokens.cli.alreadyRevoked'),
-        )
+        expect(
+          container.querySelector('[role="status"]')?.textContent,
+        ).toContain(bindI18n('en').t('team.tokens.cli.alreadyRevoked'))
     } finally {
       await act(async () => root.unmount())
       router.dispose()

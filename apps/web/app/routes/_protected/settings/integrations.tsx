@@ -328,30 +328,7 @@ export default function IntegrationsPage({
           </p>
         ) : null}
         {connections.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyDescription>
-                {t('team.integrations.slack.empty')}
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              {currentUserIsAdmin ? (
-                <Button asChild size="sm">
-                  <Link to="/integrations/slack/install">
-                    {t('team.integrations.slack.connect')}
-                  </Link>
-                </Button>
-              ) : (
-                <AdminOnlyTooltip
-                  label={t('team.integrations.slack.adminOnly')}
-                >
-                  <Button size="sm" type="button" disabled>
-                    {t('team.integrations.slack.connect')}
-                  </Button>
-                </AdminOnlyTooltip>
-              )}
-            </EmptyContent>
-          </Empty>
+          <SlackEmptyState canManage={currentUserIsAdmin} />
         ) : (
           <>
             <Stack gap="3">
@@ -390,6 +367,38 @@ export default function IntegrationsPage({
         )}
       </SettingsSection>
     </SettingsPage>
+  )
+}
+
+function SlackEmptyState({ canManage }: { canManage: boolean }) {
+  const { t } = useT()
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyDescription>
+          {t(
+            canManage
+              ? 'team.integrations.slack.empty'
+              : 'team.integrations.slack.memberEmpty',
+          )}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        {canManage ? (
+          <Button asChild size="sm">
+            <Link to="/integrations/slack/install">
+              {t('team.integrations.slack.connect')}
+            </Link>
+          </Button>
+        ) : (
+          <AdminOnlyTooltip label={t('team.integrations.slack.adminOnly')}>
+            <Button size="sm" type="button" disabled>
+              {t('team.integrations.slack.connect')}
+            </Button>
+          </AdminOnlyTooltip>
+        )}
+      </EmptyContent>
+    </Empty>
   )
 }
 
@@ -446,7 +455,7 @@ export function SlackConnectionCard({
               <p className="text-sm font-medium">
                 {t('team.integrations.slack.reauthorization.title')}
               </p>
-              <p className="text-muted-foreground text-sm">
+              <p className="text-foreground text-sm">
                 {t(
                   canManage
                     ? 'team.integrations.slack.reauthorization.body'
@@ -553,7 +562,11 @@ function SlackDisconnectDialog({
         name: connection.teamName,
       })}
       description={t('team.integrations.slack.disconnectBody')}
-      action={t('team.integrations.slack.disconnect')}
+      action={t(
+        error === 'external-failed'
+          ? 'dialog.retry'
+          : 'team.integrations.slack.disconnect',
+      )}
       pendingLabel={t('team.integrations.slack.disconnecting')}
       result={error ? <StatusBanner status={error} /> : undefined}
       onConfirm={() => {

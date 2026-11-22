@@ -1,8 +1,12 @@
+import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test } from 'vitest'
 import { commands } from 'vitest/browser'
-import { waitForBrowserLayout } from '~/test/browser-layout'
+import {
+  fits as fitsDimension,
+  waitForBrowserLayout,
+} from '~/test/browser-layout'
 import '~/app.css'
 import { type ReactNode } from 'react'
 import {
@@ -281,7 +285,7 @@ function fits(element: Element) {
   return (
     rect.left >= -1 &&
     rect.right <= innerWidth + 1 &&
-    element.scrollWidth <= element.clientWidth + 1
+    fitsDimension(element.scrollWidth, element.clientWidth)
   )
 }
 function visibleEmpty(container: Element) {
@@ -294,6 +298,207 @@ function visibleEmpty(container: Element) {
     ).length === 1
   )
 }
+
+for (const width of [600, 979, 980])
+  for (const kind of ['artifacts', 'projects'] as const)
+    test(`Inventory ${kind} at ${width}px exposes names and navigation`, async () => {
+      language.locale = 'en'
+      await page.viewport(width, 844)
+      const path = '/settings/inventory/' + kind
+      const rows = Array.from(
+        { length: INVENTORY_PAGE_SIZE + 1 },
+        (_, index) => ({ ...artifact, id: artifact.id + index }),
+      )
+      const projects = Array.from(
+        { length: INVENTORY_PAGE_SIZE + 1 },
+        (_, index) => ({ ...project, id: project.id + index }),
+      )
+      const destination =
+        kind === 'artifacts' ? '/a/report0' : '/projects/reports0'
+      const router = createMemoryRouter(
+        [
+          { path: destination, element: <div /> },
+          {
+            element: (
+              <TooltipProvider>
+                <SettingsLayout loaderData={shell} />
+              </TooltipProvider>
+            ),
+            children: [
+              {
+                path,
+                loader: ({ request }) => new URL(request.url).search,
+                Component: () => {
+                  const params = new URLSearchParams(useLoaderData<string>())
+                  const current = Number(params.get('page') ?? 1)
+                  const start = (current - 1) * INVENTORY_PAGE_SIZE
+                  return kind === 'artifacts' ? (
+                    <ArtifactsPage
+                      loaderData={{
+                        artifacts: {
+                          page: current,
+                          total: rows.length,
+                          artifacts: rows.slice(
+                            start,
+                            start + INVENTORY_PAGE_SIZE,
+                          ),
+                        },
+                        filters: {
+                          sort:
+                            params.get('sort') === 'size' ? 'size' : 'updated',
+                          visibility:
+                            params.get('visibility') === 'project'
+                              ? 'project'
+                              : 'all',
+                          page: current,
+                        },
+                      }}
+                    />
+                  ) : (
+                    <ProjectsPage
+                      loaderData={{
+                        projects: {
+                          page: current,
+                          total: projects.length,
+                          projects: projects.slice(
+                            start,
+                            start + INVENTORY_PAGE_SIZE,
+                          ),
+                        },
+                      }}
+                    />
+                  )
+                },
+              },
+              {
+                path: '/settings',
+                element: (
+                  <MembersPage
+                    loaderData={{
+                      ...memberRows,
+                      removedMembers:
+                        width === 979 ? memberRows.removedMembers : [],
+                      filters: {
+                        query: '',
+                        role: 'all',
+                        activity: 'all',
+                        page: 1,
+                      },
+                    }}
+                  />
+                ),
+              },
+            ],
+          },
+        ],
+        { initialEntries: [path] },
+      )
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      try {
+        await act(async () => root.render(<RouterProvider router={router} />))
+        await waitForBrowserLayout()
+        const table = container.querySelector('table')!,
+          card = container.querySelector('article')!
+        expect(table.checkVisibility()).toBe(width >= 980)
+        expect(card.checkVisibility()).toBe(width < 980)
+        const link = (width >= 980 ? table : card).querySelector('a')!
+        expect(link.getAttribute('href')).toBe(destination)
+        expect(getComputedStyle(link).textDecorationLine).toContain('underline')
+        await expect.element(page.elementLocator(link)).toBeVisible()
+        await page.elementLocator(link).click()
+        await vi.waitFor(() =>
+          expect(router.state.location.pathname).toBe(destination),
+        )
+        await act(async () => router.navigate(-1))
+        await waitForBrowserLayout()
+        const { t } = bindI18n('en')
+        if (kind === 'artifacts') {
+          for (const [field, option] of [
+            ['team.inventory.filter', 'table.visibilityProject'],
+            ['team.inventory.sort', 'team.inventory.sort.size'],
+          ] as const) {
+            const select = page.getByRole('combobox', { name: t(field) })
+            expect(fits(select.element())).toBe(true)
+            await select.click()
+            await page
+              .getByRole('option', { name: t(option), exact: true })
+              .click()
+          }
+          const apply = page.getByRole('button', { name: 'Apply filters' })
+          expect(fits(apply.element())).toBe(true)
+          await apply.click()
+          await vi.waitFor(() =>
+            expect(router.state.location.search).toBe(
+              '?visibility=project&sort=size',
+            ),
+          )
+        }
+        for (const label of ['Next', 'Previous']) {
+          const pager = page.getByRole('link', { name: label, exact: true })
+          await expect.element(pager).toBeVisible()
+          expect(fits(pager.element())).toBe(true)
+          await pager.click()
+          await vi.waitFor(() => {
+            const params = new URLSearchParams(router.state.location.search)
+            expect(params.get('page')).toBe(label === 'Next' ? '2' : null)
+            if (kind === 'artifacts') {
+              expect(params.get('visibility')).toBe('project')
+              expect(params.get('sort')).toBe('size')
+            }
+          })
+        }
+        if (kind === 'artifacts') {
+          const removed = page.getByRole('link', {
+            name: 'Removed members',
+            exact: true,
+          })
+          const next = page.getByRole('link', { name: 'Next', exact: true })
+          await expect.element(next).toBeVisible()
+          const pager = next.element()
+          expect(
+            container.querySelector('table')!.compareDocumentPosition(pager) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+          ).toBeTruthy()
+          expect(
+            pager.compareDocumentPosition(removed.element()) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+          ).toBeTruthy()
+          await removed.click()
+          await vi.waitFor(() =>
+            expect(router.state.location).toMatchObject({
+              pathname: '/settings',
+              hash: '#removed-members',
+            }),
+          )
+          await expect
+            .element(page.getByRole('heading', { name: 'Removed members' }))
+            .toBeVisible()
+          const section = page.elementLocator(
+            container.querySelector('#removed-members')!,
+          )
+          await expect
+            .element(section.getByRole('heading', { name: 'Removed members' }))
+            .toBeVisible()
+          await expect
+            .element(
+              section.getByText(
+                width === 979
+                  ? memberRows.removedMembers[0].name
+                  : 'No removed members.',
+                { exact: true },
+              ),
+            )
+            .toBeVisible()
+        }
+      } finally {
+        await act(async () => root.unmount())
+        router.dispose()
+        container.remove()
+        await page.viewport(1280, 800)
+      }
+    })
 
 for (const theme of ['light', 'dark'])
   for (const locale of ['en', 'ja'] as const) {
@@ -342,24 +547,31 @@ for (const theme of ['light', 'dark'])
             expect(container.querySelector('main')).not.toBeNull()
           },
         )
-        for (const width of [390, 599, 600, 1440]) {
+        for (const width of [390, 599, 600, 979, 980, 1440]) {
           await page.viewport(width, 844)
           await withScreen(
             <ProjectsTable rows={[project]} locale={locale} />,
             async (container) => {
               const card = container.querySelector('article')!
               const table = container.querySelector('table')!
-              expect(card.checkVisibility()).toBe(width < 600)
-              expect(table.checkVisibility()).toBe(width >= 600)
-              if (width < 600) {
+              expect(card.checkVisibility()).toBe(width < 980)
+              expect(table.checkVisibility()).toBe(width >= 980)
+              const link = (width < 980 ? card : table).querySelector('a')!
+              expect(link.getAttribute('href')).toBe('/projects/' + project.id)
+              const style = getComputedStyle(link)
+              expect(style.textDecorationLine).toContain('underline')
+              expect(pixels(style.color)).toEqual(
+                pixels(style.getPropertyValue('--link')),
+              )
+              if (width < 980) {
+                expect(link.textContent).toBe(project.name)
+                expect(fits(link)).toBe(true)
+                expect(style.textOverflow).not.toBe('ellipsis')
                 expect(fits(card)).toBe(true)
                 expect(card.textContent).toContain('7')
                 expect(card.textContent).toContain('2 KB')
                 expect(card.textContent).toContain(
                   bindI18n(locale).t('team.inventory.archived'),
-                )
-                expect(card.querySelector('a')?.getAttribute('href')).toBe(
-                  '/projects/reports',
                 )
               }
             },
@@ -368,8 +580,21 @@ for (const theme of ['light', 'dark'])
           await withScreen(
             <ArtifactsTable rows={[artifact]} locale={locale} />,
             async (container) => {
-              if (width < 600) {
-                const card = container.querySelector('article')!
+              const card = container.querySelector('article')!
+              const table = container.querySelector('table')!
+              expect(card.checkVisibility()).toBe(width < 980)
+              expect(table.checkVisibility()).toBe(width >= 980)
+              const link = (width < 980 ? card : table).querySelector('a')!
+              expect(link.getAttribute('href')).toBe('/a/' + artifact.id)
+              const style = getComputedStyle(link)
+              expect(style.textDecorationLine).toContain('underline')
+              expect(pixels(style.color)).toEqual(
+                pixels(style.getPropertyValue('--link')),
+              )
+              if (width < 980) {
+                expect(link.textContent).toBe(artifact.name)
+                expect(fits(link)).toBe(true)
+                expect(style.textOverflow).not.toBe('ellipsis')
                 expect(fits(card)).toBe(true)
                 for (const field of card.querySelectorAll('dd'))
                   expect(fits(field)).toBe(true)
@@ -386,7 +611,7 @@ for (const theme of ['light', 'dark'])
               ),
               async (container) => {
                 expect(visibleEmpty(container)).toBe(true)
-                if (width < 600) {
+                if (width < 980) {
                   const empty = [...container.querySelectorAll('p')].find(
                     (el) =>
                       el.textContent ===
@@ -1339,7 +1564,11 @@ test.each(['members', 'artifacts'] as const)(
         return page
           .elementLocator(form)
           .getByRole('button', {
-            name: t('team.members.filter.apply'),
+            name: t(
+              members
+                ? 'team.members.filter.apply'
+                : 'team.inventory.filter.apply',
+            ),
             exact: true,
           })
           .click()
@@ -1377,6 +1606,74 @@ test.each(['members', 'artifacts'] as const)(
       router.dispose()
       container.remove()
       language.locale = 'en'
+    }
+  },
+)
+
+test.each(['light', 'dark', 'system-dark'] as const)(
+  'Slack reauthorization explanation meets 7:1 in %s',
+  async (theme) => {
+    const before = document.documentElement.dataset.theme
+    try {
+      if (theme === 'system-dark') {
+        delete document.documentElement.dataset.theme
+        await commands.setMermaidColorScheme('dark')
+        expect(matchMedia('(prefers-color-scheme: dark)').matches).toBe(true)
+      } else document.documentElement.dataset.theme = theme
+      for (const admin of [true, false]) {
+        const router = createMemoryRouter([
+          {
+            element: (
+              <TooltipProvider>
+                <Outlet context={{ currentUserIsAdmin: admin }} />
+              </TooltipProvider>
+            ),
+            children: [
+              {
+                path: '/',
+                element: (
+                  <IntegrationsPage
+                    loaderData={{
+                      connections: [
+                        {
+                          id: 'slack',
+                          teamName: 'Reports',
+                          installedAt: '2026-01-01',
+                          installedByName: 'Owner',
+                          needsReauthorization: true,
+                        },
+                      ],
+                    }}
+                  />
+                ),
+              },
+            ],
+          },
+        ])
+        const container = document.createElement('div')
+        document.body.appendChild(container)
+        const root = createRoot(container)
+        try {
+          await act(async () => root.render(<RouterProvider router={router} />))
+          await waitForBrowserLayout()
+          const body = container.querySelector<HTMLElement>(
+            '.bg-warning-soft p:last-child',
+          )!
+          expect(textContrast(body)).toBeGreaterThanOrEqual(7)
+          if (theme === 'dark') {
+            body.style.color = 'var(--muted-foreground)'
+            expect(textContrast(body)).toBeLessThan(7)
+          }
+        } finally {
+          await act(async () => root.unmount())
+          router.dispose()
+          container.remove()
+        }
+      }
+    } finally {
+      if (before === undefined) delete document.documentElement.dataset.theme
+      else document.documentElement.dataset.theme = before
+      if (theme === 'system-dark') await commands.setMermaidColorScheme(null)
     }
   },
 )

@@ -10,7 +10,7 @@ import { TeamActions } from './+components/team-actions'
 import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
 import { ConfirmActionDialog } from './+components/confirm-action-dialog'
 import { Pager } from '~/components/form/pager'
-import { TeamMuted } from '~/components/form/team-muted'
+import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
 import { TeamUser } from './+components/team-user'
 import { UpgradeNotice } from './+components/upgrade-notice'
 import type { SettingsLayoutContext } from './_layout'
@@ -88,6 +88,17 @@ export const screen = {
   role: 'メンバーと権限を管理する',
   primaryAction: 'メンバーを管理する',
   states: [
+    {
+      id: 'removed-members-empty',
+      description: 'Removed members heading and empty message',
+      setup: {
+        query: '#removed-members',
+        ready: {
+          selector: '#removed-members:has(h2:visible) [data-removed-empty]',
+          description: 'Empty removed members section',
+        },
+      },
+    },
     {
       id: 'team-member-read-only',
       description: 'Role guidance for a Team member',
@@ -624,35 +635,39 @@ function RemovedMemberSection({
 }) {
   const { t } = useT()
 
-  if (members.length === 0) return null
-
   return (
     <SettingsSection
       id="removed-members"
       title={t('team.removedMembers')}
       description={t('team.removedMembers.body')}
     >
-      <Table>
-        <TableHeader className="hidden md:table-header-group">
-          <TableRow>
-            <TableHead>{t('team.members.user')}</TableHead>
-            <TableHead>{t('team.removedMembers.artifacts')}</TableHead>
-            <TableHead className="text-right">
-              {t('team.members.actions')}
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {members.map((member) => (
-            <RemovedMemberRow
-              key={member.id}
-              member={member}
-              canManage={canManage}
-              currentUser={currentUser}
-            />
-          ))}
-        </TableBody>
-      </Table>
+      {members.length === 0 ? (
+        <TeamMutedParagraph data-removed-empty>
+          {t('team.removedMembers.empty')}
+        </TeamMutedParagraph>
+      ) : (
+        <Table>
+          <TableHeader className="hidden md:table-header-group">
+            <TableRow>
+              <TableHead>{t('team.members.user')}</TableHead>
+              <TableHead>{t('team.removedMembers.artifacts')}</TableHead>
+              <TableHead className="text-right">
+                {t('team.members.actions')}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {members.map((member) => (
+              <RemovedMemberRow
+                key={member.id}
+                member={member}
+                canManage={canManage}
+                currentUser={currentUser}
+              />
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </SettingsSection>
   )
 }

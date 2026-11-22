@@ -77,6 +77,9 @@ export function BotSection({
   canCreate: boolean
 }) {
   const { t, locale } = useT()
+  const [notice, setNotice] = useState<{ intent: string; text: string } | null>(
+    null,
+  )
   const [createOpen, setCreateOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<WorkspaceBotRow | null>(null)
   const [stopTarget, setStopTarget] = useState<WorkspaceBotRow | null>(null)
@@ -86,7 +89,18 @@ export function BotSection({
   )
 
   return (
-    <SettingsSection title={t('team.bots')} description={t('team.bots.body')}>
+    <SettingsSection
+      headingId="bots-heading"
+      title={t('team.bots')}
+      description={t('team.bots.body')}
+    >
+      <div
+        role="status"
+        data-bot-result={notice?.intent}
+        className="text-sm empty:sr-only"
+      >
+        {notice?.text}
+      </div>
       {canCreate ? (
         <div className="flex justify-end">
           <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
@@ -111,6 +125,8 @@ export function BotSection({
               const status = botStatus(bot)
               return (
                 <TableRow
+                  id={`bot-row-${bot.id}`}
+                  tabIndex={-1}
                   key={bot.id}
                   data-testid="bot-row"
                   className="flex min-w-0 flex-col md:table-row"
@@ -173,7 +189,10 @@ export function BotSection({
                               variant="destructive"
                               size="sm"
                               id={`bot-stop-${bot.id}`}
-                              onClick={() => setStopTarget(bot)}
+                              onClick={() => {
+                                setNotice(null)
+                                setStopTarget(bot)
+                              }}
                             >
                               {t('team.bots.stop')}
                             </Button>
@@ -185,7 +204,10 @@ export function BotSection({
                             variant="outline"
                             size="sm"
                             id={`bot-cancel-${bot.id}`}
-                            onClick={() => setCancelTarget(bot)}
+                            onClick={() => {
+                              setNotice(null)
+                              setCancelTarget(bot)
+                            }}
                           >
                             {t('team.bots.cancel')}
                           </Button>
@@ -216,6 +238,14 @@ export function BotSection({
           key={cancelTarget.id}
           bot={cancelTarget}
           intent="cancel"
+          onSuccess={() =>
+            setNotice({
+              intent: 'cancel',
+              text: t('team.bots.cancel.success', {
+                name: cancelTarget.name ?? '',
+              }),
+            })
+          }
           onClose={() => setCancelTarget(null)}
         />
       ) : null}
@@ -224,6 +254,14 @@ export function BotSection({
           key={stopTarget.id}
           bot={stopTarget}
           intent="stop"
+          onSuccess={() =>
+            setNotice({
+              intent: 'stop',
+              text: t('team.bots.stop.success', {
+                name: stopTarget.name ?? '',
+              }),
+            })
+          }
           onClose={() => setStopTarget(null)}
         />
       ) : null}
@@ -242,9 +280,11 @@ export function BotSection({
 function BotActionDialog({
   bot,
   intent,
+  onSuccess,
   onClose,
 }: {
   bot: WorkspaceBotRow
+  onSuccess?: () => void
   intent: 'stop' | 'cancel' | 'reissue'
   onClose: () => void
 }) {
@@ -260,7 +300,14 @@ function BotActionDialog({
   return (
     <ConfirmActionDialog
       open
-      returnFocusId={`bot-${intent}-${bot.id}`}
+      returnFocusId={
+        complete && intent !== 'reissue'
+          ? intent === 'stop'
+            ? `bot-row-${bot.id}`
+            : 'bots-heading'
+          : `bot-${intent}-${bot.id}`
+      }
+      afterCloseFocus={complete ? onSuccess : undefined}
       awaitResult
       destructive={intent !== 'reissue'}
       dismissLabel={intent === 'cancel' ? t('team.bots.keep') : undefined}
@@ -474,7 +521,7 @@ function BotDestinations({ bot }: { bot: WorkspaceBotRow }) {
     <>
       {bot.approvedProjects?.length ? (
         bot.approvedProjects.map((project) => (
-          <div key={project.id}>
+          <div data-available={!project.unavailable} key={project.id}>
             {project.name}
             {project.id === bot.projectId ? ` · ${t('team.bots.primary')}` : ''}
             {project.unavailable ? ` · ${t('team.bots.unavailable')}` : ''}
@@ -637,8 +684,20 @@ function BotCreateDialog({
             <FetcherError fetcher={fetcher} />
           </div>
           <DialogFooter>
+            {(!name.trim() || !primary) && (
+              <TeamMutedParagraph id="bot-create-guidance">
+                {t(
+                  !name.trim()
+                    ? 'team.bots.add.nameRequired'
+                    : 'team.bots.add.primaryRequired',
+                )}
+              </TeamMutedParagraph>
+            )}
             <Button
               type="button"
+              aria-describedby={
+                !name.trim() || !primary ? 'bot-create-guidance' : undefined
+              }
               disabled={pending || !name.trim() || !primary}
               onClick={() =>
                 fetcher.submit(

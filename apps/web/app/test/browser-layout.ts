@@ -14,3 +14,8 @@ export async function waitForBrowserLayout() {
   })
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 }
+
+// Allow one CSS pixel for fractional layout and glyph rounding.
+export function fits(size: number, available: number) {
+  return size <= available + 1
+}

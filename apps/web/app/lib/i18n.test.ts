@@ -1,6 +1,35 @@
 import { describe, expect, test } from 'vitest'
 import { bindI18n, t, tPlural } from './i18n'
 
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
+
+test.each([
+  'team.inventory.filter.apply',
+  'team.removedMembers.empty',
+  'billing.teamUnsubscribed.body',
+  'billing.contactSupport',
+  'team.integrations.slack.memberEmpty',
+  'team.tokens.revoke.body',
+  'team.tokens.cli.revoke.body',
+  'team.tokens.cli.revokeAllConfirm.body',
+  'team.tokens.revoke.failed',
+  'team.tokens.revoke.unavailable',
+  'team.bots.stop.success',
+  'team.bots.cancel.success',
+  'team.bots.add.nameRequired',
+  'team.bots.add.primaryRequired',
+] as const)(
+  'Settings copy is localized with matching placeholders: %s',
+  (key) => {
+    expect(en[key].trim()).not.toBe('')
+    expect(ja[key].trim()).not.toBe('')
+    expect(ja[key].match(/\{\w+\}/g)?.sort()).toEqual(
+      en[key].match(/\{\w+\}/g)?.sort(),
+    )
+  },
+)
+
 describe('t', () => {
   test('translates a known key', () => {
     expect(t('en', 'vw.back')).toBe('Back')

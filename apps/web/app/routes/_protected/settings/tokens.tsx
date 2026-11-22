@@ -36,6 +36,198 @@ export const screen = {
   primaryAction: 'トークンを作成する',
   states: [
     {
+      id: 'revoke-all-cli-families-failed',
+      description: 'revoke-all-cli-families confirmation failed',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-all-"]:visible',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke-all-cli-families',
+          data: { kind: 'revoke-failed', intent: 'revoke-all-cli-families' },
+        },
+      },
+    },
+    {
+      id: 'revoke-all-cli-families-pending',
+      description: 'revoke-all-cli-families confirmation pending',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-all-"]:visible',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [aria-busy="true"]:disabled',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke-all-cli-families',
+          pending: true,
+        },
+      },
+    },
+    {
+      id: 'revoke-all-cli-families-open',
+      description: 'revoke-all-cli-families confirmation open',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-all-"]:visible',
+            readySelector: '[role="alertdialog"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'revoke-cli-family-failed',
+      description: 'revoke-cli-family confirmation failed',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-family-"]',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke-cli-family',
+          data: { kind: 'revoke-failed', intent: 'revoke-cli-family' },
+        },
+      },
+    },
+    {
+      id: 'revoke-cli-family-pending',
+      description: 'revoke-cli-family confirmation pending',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-family-"]',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [aria-busy="true"]:disabled',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke-cli-family',
+          pending: true,
+        },
+      },
+    },
+    {
+      id: 'revoke-cli-family-open',
+      description: 'revoke-cli-family confirmation open',
+      setup: {
+        scenario: 'settings-tokens/active-cli',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[id^="revoke-family-"]',
+            readySelector: '[role="alertdialog"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'revoke-failed',
+      description: 'revoke confirmation failed',
+      setup: {
+        scenario: 'settings-tokens/created-secret',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Revoke CLI deploy"]',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [role="alert"]',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke',
+          data: { kind: 'revoke-failed', intent: 'revoke' },
+        },
+      },
+    },
+    {
+      id: 'revoke-pending',
+      description: 'revoke confirmation pending',
+      setup: {
+        scenario: 'settings-tokens/created-secret',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Revoke CLI deploy"]',
+            readySelector: '[role="alertdialog"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="alert-dialog-action"]',
+            readySelector: '[role="alertdialog"] [aria-busy="true"]:disabled',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/tokens',
+          method: 'POST',
+          intent: 'revoke',
+          pending: true,
+        },
+      },
+    },
+    {
+      id: 'revoke-open',
+      description: 'revoke confirmation open',
+      setup: {
+        scenario: 'settings-tokens/created-secret',
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Revoke CLI deploy"]',
+            readySelector: '[role="alertdialog"]',
+          },
+        ],
+      },
+    },
+    {
       id: 'result-success',
       description:
         'Successful settings action announced above the page content',
@@ -80,6 +272,10 @@ export const screen = {
 type ActionData =
   | { kind: 'created'; token: string; name: string }
   | { kind: 'cli-revoke-noop' }
+  | {
+      kind: 'revoked' | 'revoke-failed' | 'revoke-unavailable'
+      intent: 'revoke' | 'revoke-cli-family' | 'revoke-all-cli-families'
+    }
   | { kind: 'name-required' }
   | { kind: 'name-too-long' }
 
@@ -106,16 +302,6 @@ export async function action({
   const intent = stringValue(form.get('intent'))
   const db = createDb()
 
-  if (intent === 'revoke-cli-family') {
-    const familyId = stringValue(form.get('familyId'))
-    if (!familyId) return null
-    const result = await revokeCliRefreshCredentialFamily(db, user.id, familyId)
-    return result === 'noop' ? { kind: 'cli-revoke-noop' } : null
-  }
-  if (intent === 'revoke-all-cli-families') {
-    await revokeAllCliRefreshCredentialFamilies(db, user.id)
-    return null
-  }
   if (intent === 'create') {
     const name = stringValue(form.get('name'))?.trim() ?? ''
     if (!name) return { kind: 'name-required' }
@@ -124,12 +310,29 @@ export async function action({
     return { kind: 'created', token: result.token, name: result.name }
   }
 
-  if (intent === 'revoke') {
-    const tokenId = stringValue(form.get('tokenId'))
-    if (!tokenId) return null
-    await revokeApiToken(db, user.id, tokenId)
+  if (
+    intent !== 'revoke' &&
+    intent !== 'revoke-cli-family' &&
+    intent !== 'revoke-all-cli-families'
+  )
     return null
+  try {
+    if (intent === 'revoke') {
+      const id = stringValue(form.get('tokenId'))
+      if (!id) return { kind: 'revoke-failed', intent }
+      if (!(await revokeApiToken(db, user.id, id)))
+        return { kind: 'revoke-unavailable', intent }
+    } else if (intent === 'revoke-cli-family') {
+      const id = stringValue(form.get('familyId'))
+      if (!id) return { kind: 'revoke-failed', intent }
+      if ((await revokeCliRefreshCredentialFamily(db, user.id, id)) === 'noop')
+        return { kind: 'cli-revoke-noop' }
+    } else {
+      await revokeAllCliRefreshCredentialFamilies(db, user.id)
+    }
+    return { kind: 'revoked', intent }
+  } catch (error) {
+    if (error instanceof Response) throw error
+    return { kind: 'revoke-failed', intent }
   }
-
-  return null
 }

@@ -27,6 +27,7 @@ export function ConfirmActionDialog({
   result,
   awaitResult = false,
   returnFocusId,
+  afterCloseFocus,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -41,6 +42,7 @@ export function ConfirmActionDialog({
   result?: ReactNode
   awaitResult?: boolean
   returnFocusId?: string
+  afterCloseFocus?: () => void
   trigger?: ReactNode
 }) {
   const { t } = useT()
@@ -63,6 +65,7 @@ export function ConfirmActionDialog({
             event.preventDefault()
             focusTarget.focus()
           }
+          afterCloseFocus?.()
         }}
       >
         <AlertDialogHeader>

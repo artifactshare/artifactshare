@@ -109,6 +109,11 @@ export const screen = {
   primaryAction: 'プランを管理する',
   states: [
     {
+      id: 'team-unsubscribed-high-usage',
+      description: 'Team without a subscription at high usage',
+      setup: { scenario: 'settings-billing/team-unsubscribed-high-usage' },
+    },
+    {
       id: 'monthly-jpy',
       description: 'monthly jpy plan cards',
       setup: {
@@ -485,7 +490,11 @@ export default function BillingPage({
       <SettingsSection
         title={t('billing.title')}
         description={
-          loaderData.canManage ? t('billing.body') : t('billing.readOnly.body')
+          !loaderData.canManage
+            ? t('billing.readOnly.body')
+            : presentation === 'team-without-subscription'
+              ? t('billing.teamUnsubscribed.body')
+              : t('billing.body')
         }
       >
         <SettingsSubsection title={t('billing.currentPlan')}>
@@ -584,19 +593,26 @@ function BillingStorageSection({
         >
           <StorageMeter
             usedBytes={loaderData.storageUsedBytes}
-            quotaBytes={loaderData.storageQuotaBytes}
+            quotaBytes={
+              loaderData.showOverageProjection
+                ? loaderData.includedBytes
+                : loaderData.storageQuotaBytes
+            }
+            warnNearLimit={!loaderData.showOverageProjection}
           />
         </UsageStat>
         <UsageStat
-          label={t('team.usage.storageLimit')}
-          value={formatBytes(loaderData.storageQuotaBytes)}
+          label={t(
+            loaderData.showOverageProjection
+              ? 'team.usage.includedStorage'
+              : 'team.usage.storageLimit',
+          )}
+          value={formatBytes(
+            loaderData.showOverageProjection
+              ? loaderData.includedBytes
+              : loaderData.storageQuotaBytes,
+          )}
         />
-        {loaderData.showOverageProjection ? (
-          <UsageStat
-            label={t('team.usage.includedStorage')}
-            value={formatBytes(loaderData.includedBytes)}
-          />
-        ) : null}
         {loaderData.overageProjection && !loaderData.monthlyEstimate ? (
           <>
             <UsageStat
@@ -626,17 +642,6 @@ function NearLimitNextStep({
 }) {
   const { t } = useT()
   if (!canManage) return <p>{t('team.usage.nearLimitMember')}</p>
-  if (presentation === 'team-without-subscription')
-    return (
-      <p>
-        <a
-          className={inlineLinkClassName}
-          href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"
-        >
-          {t('team.usage.nearLimitSupport')}
-        </a>
-      </p>
-    )
   if (billingConfigured && presentation === 'purchase')
     return <p>{t('team.usage.nearLimitAdmin')}</p>
   return null
@@ -1242,9 +1247,20 @@ function BillingActions({
   isPending: boolean
   awaitingCheckoutReflection: boolean
 }) {
-  const { locale } = useT()
+  const { locale, t } = useT()
   if (!loaderData.canManage) return <ReadOnlyNotice />
-  if (presentation === 'team-without-subscription') return null
+  if (presentation === 'team-without-subscription')
+    return (
+      <p>
+        <a
+          className={inlineLinkClassName}
+          href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"
+        >
+          {t('billing.contactSupport')}
+        </a>
+      </p>
+    )
+
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
   if (loaderData.hasSubscription)
     return (

@@ -218,9 +218,7 @@ vi.mock('./+components/team-user', () => ({
     </span>
   ),
 }))
-vi.mock('~/components/form/team-muted', () => ({
-  TeamMuted: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-}))
+
 vi.mock('./+components/upgrade-notice', () => ({ UpgradeNotice: () => null }))
 
 import { action } from './index'
