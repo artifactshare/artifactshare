@@ -171,3 +171,59 @@ test('a Slack return notice stays while the router location drops the parameter'
     router.dispose()
   }
 })
+
+test('an Integrations return keeps one error notice through its cleanup', async () => {
+  window.history.replaceState(
+    null,
+    '',
+    '/settings/integrations?status=forbidden&connected=slack',
+  )
+  let loads = 0
+  const mounts: string[] = []
+  const router = createBrowserRouter([
+    {
+      element: (
+        <TooltipProvider>
+          <SettingsOutlet shell={shell} />
+        </TooltipProvider>
+      ),
+      children: [
+        {
+          path: '/settings/integrations',
+          // The cleanup does not revalidate: only the first load happens.
+          loader: () => {
+            loads += 1
+            return null
+          },
+          element: <p>Slack</p>,
+        },
+      ],
+    },
+  ])
+  const container = document.body.appendChild(document.createElement('div'))
+  const observer = new MutationObserver((records) => {
+    for (const record of records)
+      for (const node of record.addedNodes)
+        if (node instanceof Element && node.matches('[data-settings-status]'))
+          mounts.push(node.getAttribute('data-settings-status') ?? '')
+  })
+  observer.observe(container, { childList: true, subtree: true })
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await act(async () => {})
+    expect(router.state.location.search).toBe('')
+    expect(window.location.search).toBe('')
+    expect(loads).toBe(1)
+    // One forbidden notice, mounted once, and never a Slack success.
+    expect(mounts).toEqual(['forbidden'])
+    expect(
+      container.querySelector('[data-settings-status="forbidden"]'),
+    ).not.toBeNull()
+  } finally {
+    observer.disconnect()
+    await act(async () => root.unmount())
+    container.remove()
+    router.dispose()
+  }
+})

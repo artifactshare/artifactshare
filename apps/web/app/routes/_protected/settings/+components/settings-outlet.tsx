@@ -56,10 +56,10 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
   }
   // The notice belongs to the return entry. Cleaning its URL takes two steps:
   // the history entry is rewritten at once, so Back, Forward or a reload never
-  // read the parameter again, and the router replaces its own location so
-  // later submissions do not carry it. The router's replace waits for loaders
-  // and another navigation can cancel it, so the notice follows only the entry
-  // that replace produces and is dropped on any other navigation.
+  // read the parameter again, and the router replaces its own location, with
+  // no loader revalidation, so later submissions do not carry it. The notice
+  // follows the entry that replace produces and is dropped on any other
+  // navigation.
   const navigate = useNavigate()
   const navigationType = useNavigationType()
   const [notice, setNotice] = useState<{
@@ -85,9 +85,11 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
       })
       return
     }
-    const params = new URLSearchParams(location.search)
-    params.delete(external === 'slack-connected' ? 'connected' : 'status')
-    const query = params.toString()
+    const kept = new URLSearchParams(location.search)
+    kept.delete('status')
+    if (location.pathname === '/settings/integrations')
+      kept.delete('connected')
+    const query = kept.toString()
     const search = query ? `?${query}` : ''
     window.history.replaceState(
       window.history.state,
@@ -103,11 +105,22 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
     })
     void navigate(
       { pathname: location.pathname, search, hash: location.hash },
-      { replace: true, state: location.state, preventScrollReset: true },
+      {
+        replace: true,
+        state: location.state,
+        preventScrollReset: true,
+        defaultShouldRevalidate: false,
+      },
     )
   }, [external, location, navigationType, navigate])
-  const result =
-    external ?? (notice?.entry === location.key ? notice.code : null)
+  const onNoticeEntry =
+    notice !== null &&
+    (notice.entry === location.key ||
+      (notice.entry === null &&
+        navigationType === 'REPLACE' &&
+        location.pathname === notice.pathname &&
+        location.search === notice.search))
+  const result = external ?? (onNoticeEntry ? notice.code : null)
   return (
     <>
       {result && <StatusBanner status={result} />}
