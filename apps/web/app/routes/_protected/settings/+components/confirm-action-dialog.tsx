@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import {
   AlertDialog,
   AlertDialogTrigger,
@@ -48,6 +48,11 @@ export function ConfirmActionDialog({
   trigger?: ReactNode
 }) {
   const { t } = useT()
+  const dismissRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (open && action === null) dismissRef.current?.focus()
+  }, [open, action])
+
   return (
     <AlertDialog
       open={open}
@@ -78,7 +83,7 @@ export function ConfirmActionDialog({
         </AlertDialogHeader>
         {result}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>
+          <AlertDialogCancel ref={dismissRef} disabled={pending}>
             {dismissLabel ?? t('confirm.cancel')}
           </AlertDialogCancel>
           {action !== null && (
