@@ -1075,6 +1075,60 @@ test.each([
   )
 })
 
+test('Japanese General result-success waits for the missing banner', async () => {
+  const ready = generalScreen.states.find(
+    (state) => state.id === 'result-success',
+  )?.setup?.ready
+  if (!ready) throw new Error('Missing General result-success readiness')
+  language.locale = 'ja'
+  await withScreen(
+    <GeneralPage loaderData={{ owner: null }} />,
+    async (container) => {
+      expect(container.querySelector('[data-settings-status]')).toBeNull()
+      await expect(
+        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
+      ).rejects.toThrow('ready condition was not met: ' + ready.description)
+    },
+    generalScreen.route.en,
+  )
+})
+
+test('Japanese Members result-warning waits for an enabled transfer retry', async () => {
+  const setup = membersScreen.states.find(
+    (state) => state.id === 'result-warning',
+  )?.setup
+  if (!setup?.ready) throw new Error('Missing Members result-warning readiness')
+  const ready = setup.ready
+  language.locale = 'ja'
+  await withScreen(
+    <MembersPage
+      loaderData={{
+        ...memberRows,
+        removedMembers: [
+          { ...memberRows.removedMembers[0], ownedArtifactCount: 0 },
+        ],
+        filters: { query: '', role: 'all', activity: 'all', page: 1 },
+      }}
+    />,
+    async (container) => {
+      expect(
+        container.querySelector(
+          '[data-settings-status="removed-transfer-failed"]',
+        ),
+      ).not.toBeNull()
+      expect(
+        container.querySelector(
+          '#removed-members [data-transfer-removed-files]:disabled',
+        ),
+      ).not.toBeNull()
+      await expect(
+        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
+      ).rejects.toThrow('ready condition was not met: ' + ready.description)
+    },
+    membersScreen.route.en + setup.query,
+  )
+})
+
 const ledgerPages = () => [
   {
     path: '/settings',
