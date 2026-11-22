@@ -392,6 +392,17 @@ export async function ensureDevScreenState(
   return { workspaceId }
 }
 
+export function simulateRemovedAssetTransferFailure(
+  request: Request,
+  workspaceId: string,
+  memberId: string,
+) {
+  return (
+    isDevScreenStateRequest(request, 'settings/result-warning') &&
+    memberId === `${workspaceId}-removed-member`
+  )
+}
+
 async function upsertScenarioMember(
   db: Kysely<DB>,
   workspaceId: string,
@@ -400,6 +411,8 @@ async function upsertScenarioMember(
   profile: { email: string; name: string; image: null },
   status: 'active' | 'removed',
   now: string,
+  role: 'member' | 'admin',
+  restoreWorkspace = false,
 ) {
   await db
     .insertInto('users')
@@ -411,10 +424,15 @@ async function upsertScenarioMember(
       created_at: now,
       updated_at: now,
     })
-    .onConflict((oc) => oc.column('id').doUpdateSet(profile))
+    .onConflict((oc) =>
+      oc.column('id').doUpdateSet({
+        ...profile,
+        ...(restoreWorkspace && { workspace_id: workspaceId }),
+      }),
+    )
     .execute()
   const membership = {
-    role: status === 'active' ? ('admin' as const) : ('member' as const),
+    role,
     status,
     removed_at: status === 'removed' ? now : null,
     removed_by: status === 'removed' ? userId : null,
@@ -460,6 +478,7 @@ export async function seedDevScreenState(
         profile,
         status,
         now,
+        status === 'active' ? 'admin' : 'member',
       )
     }
     return { containerId: null, containerKind: 'inbox' }
@@ -476,8 +495,10 @@ export async function seedDevScreenState(
         email: `casey-${workspaceId}@example.test`,
         image: null,
       },
-      'removed',
+      'active',
       now,
+      'member',
+      true,
     )
     const containerId = await getOrCreateInboxContainerId(
       db,

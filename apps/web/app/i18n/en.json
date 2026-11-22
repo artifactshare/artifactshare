@@ -1,4 +1,5 @@
 {
+  "settings.submissionInterrupted": "The response was interrupted. Check your connection and try again.",
   "settings.error.forbidden.title": "Access denied",
   "settings.error.forbidden.description": "You need permission to view these settings.",
   "settings.error.missing.title": "Settings page not found",
@@ -196,6 +197,8 @@
   "team.members.page.prev": "Previous",
   "team.members.page.next": "Next",
   "team.members.noMatches": "No members match your search.",
+  "team.members.grantAdminBody": "Give {name} workspace admin permissions?",
+  "team.members.revokeAdminBody": "Remove workspace admin permissions from {name}?",
   "team.members.makeAdmin": "Make admin",
   "team.members.removeAdmin": "Remove admin",
   "team.members.transferOwner": "Transfer ownership",

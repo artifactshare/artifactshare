@@ -273,8 +273,7 @@ test('plan change serializes immediate proration and conditional payment', async
       'monthly',
     ),
   ).toEqual({
-    kind: 'ok',
-    url: '/settings/billing?status=plan-change-requested',
+    kind: 'accepted',
   })
   expect(requests).toHaveLength(2)
   expect(

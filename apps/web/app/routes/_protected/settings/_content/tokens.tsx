@@ -1,4 +1,8 @@
-import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
+import { data } from 'react-router'
+import {
+  confirmationResult,
+  runConfirmedMutation,
+} from '~/lib/settings-confirmation'
 import type { Route } from './+types/tokens'
 import { stringValue } from '~/lib/form'
 import { requireUser } from '~/middleware/context'
@@ -57,7 +61,12 @@ export const screen = {
           route: '/settings/tokens',
           method: 'POST',
           intent: 'revoke-all-cli-families',
-          data: { kind: 'revoke-failed', intent: 'revoke-all-cli-families' },
+          status: 400,
+          data: {
+            ok: false,
+            code: 'revoke-failed',
+            intent: 'revoke-all-cli-families',
+          },
         },
       },
     },
@@ -121,7 +130,12 @@ export const screen = {
           route: '/settings/tokens',
           method: 'POST',
           intent: 'revoke-cli-family',
-          data: { kind: 'revoke-failed', intent: 'revoke-cli-family' },
+          status: 400,
+          data: {
+            ok: false,
+            code: 'revoke-failed',
+            intent: 'revoke-cli-family',
+          },
         },
       },
     },
@@ -185,7 +199,8 @@ export const screen = {
           route: '/settings/tokens',
           method: 'POST',
           intent: 'revoke',
-          data: { kind: 'revoke-failed', intent: 'revoke' },
+          status: 400,
+          data: { ok: false, code: 'revoke-failed', intent: 'revoke' },
         },
       },
     },
@@ -253,16 +268,6 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-type ActionData =
-  | { kind: 'created'; token: string; name: string }
-  | { kind: 'cli-revoke-noop' }
-  | {
-      kind: 'revoked' | 'revoke-failed' | 'revoke-unavailable'
-      intent: 'revoke' | 'revoke-cli-family' | 'revoke-all-cli-families'
-    }
-  | { kind: 'name-required' }
-  | { kind: 'name-too-long' }
-
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
@@ -277,47 +282,99 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   return { tokens, createdToken, cliFamilies }
 }
 
-export async function action({
-  request,
-  context,
-}: Route.ActionArgs): Promise<ActionData | null> {
-  const user = requireUser(context)
+export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData()
-  const intent = stringValue(form.get('intent'))
+  const intent = stringValue(form.get('intent')) ?? ''
+  const submit = () => submitTokenForm(context, form, intent)
+  return isRevokeIntent(intent) ? runConfirmedMutation(submit) : submit()
+}
+
+async function submitTokenForm(
+  context: Route.ActionArgs['context'],
+  form: FormData,
+  intent: string,
+) {
+  const user = requireUser(context)
   const db = createDb()
 
   if (intent === 'create') {
     const name = stringValue(form.get('name'))?.trim() ?? ''
-    if (!name) return { kind: 'name-required' }
-    if (name.length > MAX_TOKEN_NAME_LENGTH) return { kind: 'name-too-long' }
+    if (!name || name.length > MAX_TOKEN_NAME_LENGTH)
+      return data(
+        {
+          ok: false as const,
+          intent,
+          code: !name ? 'name-required' : 'name-too-long',
+        },
+        { status: 400 },
+      )
     const result = await createApiToken(db, user.id, name)
-    return { kind: 'created', token: result.token, name: result.name }
+    return data(
+      {
+        ok: true as const,
+        code: 'created' as const,
+        intent,
+        token: result.token,
+        name: result.name,
+      },
+      { status: 200 },
+    )
   }
 
-  if (
-    intent !== 'revoke' &&
-    intent !== 'revoke-cli-family' &&
-    intent !== 'revoke-all-cli-families'
-  )
-    return null
-  try {
-    if (intent === 'revoke') {
-      const id = stringValue(form.get('tokenId'))
-      if (!id) return { kind: 'revoke-failed', intent }
-      if (!(await revokeApiToken(db, user.id, id)))
-        return { kind: 'revoke-unavailable', intent }
-    } else if (intent === 'revoke-cli-family') {
-      const id = stringValue(form.get('familyId'))
-      if (!id) return { kind: 'revoke-failed', intent }
-      if ((await revokeCliRefreshCredentialFamily(db, user.id, id)) === 'noop')
-        return { kind: 'cli-revoke-noop' }
-    } else {
-      await revokeAllCliRefreshCredentialFamilies(db, user.id)
-    }
-    return { kind: 'revoked', intent }
-  } catch (error) {
-    if (error instanceof Response) throw error
-    logErrorDiagnostic('tokens.revoke', error)
-    return { kind: 'revoke-failed', intent }
+  if (!isRevokeIntent(intent))
+    return data(
+      { ok: false as const, intent, code: 'invalid' },
+      { status: 400 },
+    )
+
+  if (intent === 'revoke') {
+    const id = stringValue(form.get('tokenId'))
+    if (!id)
+      return data(
+        { ok: false as const, code: 'revoke-failed', intent },
+        { status: 400 },
+      )
+    if (!(await revokeApiToken(db, user.id, id)))
+      return data(
+        { ok: false as const, code: 'revoke-unavailable', intent },
+        { status: 404 },
+      )
+  } else if (intent === 'revoke-cli-family') {
+    const id = stringValue(form.get('familyId'))
+    if (!id)
+      return data(
+        { ok: false as const, code: 'revoke-failed', intent },
+        { status: 400 },
+      )
+    if ((await revokeCliRefreshCredentialFamily(db, user.id, id)) === 'noop')
+      return data(
+        { ok: true as const, code: 'cli-revoke-noop' as const, intent },
+        { status: 200 },
+      )
+  } else {
+    await revokeAllCliRefreshCredentialFamilies(db, user.id)
   }
+  return data(
+    { ok: true as const, code: 'revoked' as const, intent },
+    { status: 200 },
+  )
+}
+
+function isRevokeIntent(intent: string) {
+  return (
+    intent === 'revoke' ||
+    intent === 'revoke-cli-family' ||
+    intent === 'revoke-all-cli-families'
+  )
+}
+
+export async function clientAction({
+  request,
+  serverAction,
+}: Route.ClientActionArgs) {
+  const form = await request.clone().formData()
+  const intent = stringValue(form.get('intent')) ?? ''
+  return isRevokeIntent(intent)
+    ? confirmationResult(intent, serverAction)
+    : serverAction()
 }

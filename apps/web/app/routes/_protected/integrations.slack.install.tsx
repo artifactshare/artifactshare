@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { slackInstallFailure } from '~/lib/slack-install-notice.server'
 import { redirect } from 'react-router'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
@@ -19,7 +20,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const db = createDb()
   const adminCheck = await requireWorkspaceAdmin(db, user)
   if (adminCheck.kind !== 'ok') {
-    return redirect(`/settings/integrations?status=${adminCheck.kind}`)
+    return slackInstallFailure(adminCheck.kind)
   }
 
   const connectionId = new URL(request.url).searchParams.get('connection')
@@ -27,7 +28,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ? await getWorkspaceSlackConnection(db, user.workspaceId, connectionId)
     : null
   if (connectionId && !connection) {
-    return redirect('/settings/integrations?status=not-found')
+    return slackInstallFailure('not-found')
   }
 
   const state = await signSlackInstallState({

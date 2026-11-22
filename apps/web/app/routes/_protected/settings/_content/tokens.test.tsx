@@ -53,7 +53,8 @@ describe('/settings/tokens actions', () => {
       url: new URL('https://example.test/settings/tokens'),
       pattern: '/settings/tokens',
     })
-    expect(result).toEqual({ kind: 'revoked', intent: 'revoke' })
+    expect(result.data).toEqual({ ok: true, code: 'revoked', intent: 'revoke' })
+    expect(result.init?.status).toBe(200)
     expect(services.revokeApiToken).toHaveBeenCalledWith(
       {},
       'current-user',
@@ -64,37 +65,28 @@ describe('/settings/tokens actions', () => {
   test.each(['stale', 'failed'])(
     'returns a neutral or retryable result for a %s token',
     async (state) => {
-      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+      services.revokeApiToken.mockReset()
+      const error = new TypeError('unavailable')
       if (state === 'stale')
         services.revokeApiToken.mockResolvedValueOnce(false)
-      else
-        services.revokeApiToken.mockRejectedValueOnce(new Error('unavailable'))
-      expect(
-        await action({
-          request: request({ intent: 'revoke', tokenId: 'token-a' }),
-          context: new RouterContextProvider(),
-          params: {},
-          url: new URL('https://example.test/settings/tokens'),
-          pattern: '/settings/tokens',
-        }),
-      ).toEqual({
-        kind: state === 'stale' ? 'revoke-unavailable' : 'revoke-failed',
-        intent: 'revoke',
+      else services.revokeApiToken.mockRejectedValueOnce(error)
+      const pending = action({
+        request: request({ intent: 'revoke', tokenId: 'token-a' }),
+        context: new RouterContextProvider(),
+        params: {},
+        url: new URL('https://example.test/settings/tokens'),
+        pattern: '/settings/tokens',
       })
-      expect(log.mock.calls).toEqual(
-        state === 'failed'
-          ? [
-              [
-                {
-                  operation: 'tokens.revoke',
-                  cause: 'Error',
-                  frames: expect.any(Array),
-                },
-              ],
-            ]
-          : [],
-      )
-      log.mockRestore()
+      if (state === 'failed')
+        await expect(pending).rejects.toMatchObject({
+          name: 'Error',
+          cause: error,
+        })
+      else
+        expect(await pending).toMatchObject({
+          data: { ok: false, code: 'revoke-unavailable', intent: 'revoke' },
+          init: { status: 404 },
+        })
     },
   )
   test('does not dispatch a revoke without a token id', async () => {
@@ -106,7 +98,12 @@ describe('/settings/tokens actions', () => {
       pattern: '/settings/tokens',
     })
 
-    expect(result).toEqual({ kind: 'revoke-failed', intent: 'revoke' })
+    expect(result.data).toEqual({
+      ok: false,
+      code: 'revoke-failed',
+      intent: 'revoke',
+    })
+    expect(result.init?.status).toBe(400)
     expect(services.revokeApiToken).not.toHaveBeenCalled()
   })
 })
@@ -166,7 +163,10 @@ test('validates token names and returns a new one-time secret only on create', a
         pattern: '/settings/tokens',
         request: request({ intent: 'create', name }),
       }),
-    ).toEqual({ kind })
+    ).toMatchObject({
+      data: { ok: false, code: kind, intent: 'create' },
+      init: { status: 400 },
+    })
   expect(services.createApiToken).not.toHaveBeenCalled()
   services.createApiToken.mockResolvedValue({
     name: 'Automation',
@@ -180,7 +180,16 @@ test('validates token names and returns a new one-time secret only on create', a
       pattern: '/settings/tokens',
       request: request({ intent: 'create', name: ' Automation ' }),
     }),
-  ).toEqual({ kind: 'created', name: 'Automation', token: 'as_test_one_time' })
+  ).toMatchObject({
+    data: {
+      ok: true,
+      intent: 'create',
+      code: 'created',
+      name: 'Automation',
+      token: 'as_test_one_time',
+    },
+    init: { status: 200 },
+  })
   expect(services.createApiToken).toHaveBeenCalledWith(
     {},
     'current-user',

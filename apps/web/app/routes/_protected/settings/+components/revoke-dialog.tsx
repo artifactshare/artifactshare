@@ -14,22 +14,25 @@ export function RevokeDialog({
   target,
   onClose,
   onAlreadyRevoked,
+  onRevoked,
   returnFocusId,
   fallbackFocusId,
 }: {
   target: RevokeTarget
   onClose: () => void
+  onRevoked: () => void
   onAlreadyRevoked?: () => void
   fallbackFocusId: string
   returnFocusId: string
 }) {
   const { t } = useT()
   const fetcher = useFetcher<typeof action>()
-  const result = fetcher.state === 'idle' ? fetcher.data?.kind : undefined
+  const result = fetcher.state === 'idle' ? fetcher.data?.code : undefined
   useEffect(() => {
+    if (result === 'revoked') onRevoked()
     if (result === 'cli-revoke-noop') onAlreadyRevoked?.()
     if (result === 'revoked' || result === 'cli-revoke-noop') onClose()
-  }, [result, onAlreadyRevoked, onClose])
+  }, [result, onAlreadyRevoked, onRevoked, onClose])
   const all = target.intent === 'revoke-all-cli-families'
   const unavailable = result === 'revoke-unavailable'
   let actionLabel: string | null = t(
@@ -43,11 +46,15 @@ export function RevokeDialog({
         {t('team.tokens.revoke.unavailable')}
       </SettingsBanner>
     )
-  } else if (result === 'revoke-failed') {
+  } else if (result && !fetcher.data?.ok) {
     actionLabel = t('dialog.retry')
     banner = (
       <SettingsBanner kind="error">
-        {t('team.tokens.revoke.failed')}
+        {t(
+          result === 'submission-interrupted'
+            ? 'settings.submissionInterrupted'
+            : 'team.tokens.revoke.failed',
+        )}
       </SettingsBanner>
     )
   }

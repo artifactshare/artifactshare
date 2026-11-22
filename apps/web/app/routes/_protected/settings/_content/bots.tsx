@@ -1,5 +1,9 @@
 import { updateWorkspaceBotDestinations } from '~/services/bot-destinations.server'
-import { errorResponse } from '~/lib/api-errors'
+import { data } from 'react-router'
+import {
+  confirmationResult,
+  runConfirmedMutation,
+} from '~/lib/settings-confirmation'
 import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
 import { requireUser } from '~/middleware/context'
 import {
@@ -75,7 +79,8 @@ export const screen = {
           route: '/settings/bots',
           method: 'POST',
           intent: 'stop',
-          data: { error: { code: 'forbidden' } },
+          status: 403,
+          data: { ok: false, code: 'forbidden', intent: 'stop' },
         },
         interactions: [
           {
@@ -153,7 +158,8 @@ export const screen = {
           route: '/settings/bots',
           method: 'POST',
           intent: 'cancel',
-          data: { error: { code: 'forbidden' } },
+          status: 403,
+          data: { ok: false, code: 'forbidden', intent: 'cancel' },
         },
         interactions: [
           {
@@ -230,7 +236,8 @@ export const screen = {
           route: '/settings/bots',
           method: 'POST',
           intent: 'reissue',
-          data: { error: { code: 'forbidden' } },
+          status: 403,
+          data: { ok: false, code: 'forbidden', intent: 'reissue' },
         },
         interactions: [
           {
@@ -371,7 +378,7 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-// Dedicated JSON action for bot management. Tokens are returned only in this
+// Settings action for bot management. Tokens are returned only in this
 // action's response body — never via redirect, flash/session storage, URL
 // parameters, or logs. The bot-members feature flag gates creation only:
 // stop/reissue keep working for existing bots regardless of the flag.
@@ -390,7 +397,9 @@ export async function loader({ context }: Route.LoaderArgs) {
   return { bots, botCreationEnabled }
 }
 
-export default function BotsPage({ loaderData }: Route.ComponentProps) {
+export default function BotsPage({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   return (
     <SettingsPage>
       <BotSection
@@ -401,171 +410,109 @@ export default function BotsPage({ loaderData }: Route.ComponentProps) {
   )
 }
 
+async function botRequestBody(request: {
+  json: () => Promise<unknown>
+}): Promise<Record<string, unknown>> {
+  const body: unknown = await request.json().catch(() => null)
+  return isObject(body) ? body : {}
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isConfirmation(intent: unknown) {
+  return intent === 'stop' || intent === 'cancel' || intent === 'reissue'
+}
+
+export async function clientAction({
+  request,
+  serverAction,
+}: Route.ClientActionArgs) {
+  const body = await botRequestBody(request.clone())
+  return isConfirmation(body?.intent)
+    ? confirmationResult(body.intent, serverAction)
+    : serverAction()
+}
+
 export async function action({ request, context }: Route.ActionArgs) {
-  if (request.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 })
-  }
+  if (request.method !== 'POST')
+    return data(
+      { ok: false, code: 'method-not-allowed', intent: '' },
+      { status: 405 },
+    )
+  const body = await botRequestBody(request)
+  const intent = typeof body.intent === 'string' ? body.intent : ''
+  const submit = () => submitBotForm(context, body, intent)
+  return isConfirmation(intent) ? runConfirmedMutation(submit) : submit()
+}
+
+async function submitBotForm(
+  context: Route.ActionArgs['context'],
+  body: Record<string, unknown>,
+  intent: string,
+) {
   const user = requireUser(context)
-  const body = (await request.json().catch(() => null)) as {
-    intent?: unknown
-    name?: unknown
-    projectId?: unknown
-    projectIds?: unknown
-    revision?: unknown
-    botUserId?: unknown
-  } | null
-  if (!body || typeof body !== 'object') {
-    return errorResponse('invalid-body', 'Invalid request body.', 400)
-  }
+  const fail = (code: string, status: number) =>
+    data({ ok: false as const, code, intent }, { status })
   const db = createDb()
   const actor = { id: user.id, workspaceId: user.workspaceId }
-
-  if (body.intent === 'destinations') {
-    if (
-      typeof body.botUserId !== 'string' ||
-      typeof body.projectId !== 'string' ||
-      typeof body.revision !== 'string'
-    )
-      return errorResponse('invalid-body', 'Invalid request body.', 400)
-    const result = await updateWorkspaceBotDestinations(db, actor, {
-      botUserId: body.botUserId,
-      projectId: body.projectId,
-      projectIds: body.projectIds,
-      revision: body.revision,
-    })
-    if (result.kind === 'ok') return Response.json({ ok: true })
-    return errorResponse(
-      result.kind,
-      result.kind === 'bot-conflict'
-        ? 'The bot changed. Reload and retry.'
-        : 'The destinations cannot be saved.',
-      result.kind === 'forbidden'
-        ? 403
-        : result.kind === 'not-found'
-          ? 404
-          : result.kind === 'bot-conflict' || result.kind === 'bot-stopped'
-            ? 409
-            : 400,
-    )
-  }
-
-  if (body.intent === 'create') {
-    if (!(await isBotMembersEnabled(user.workspaceId))) {
-      return errorResponse(
-        'feature-not-available',
-        'Bot members are not enabled for this workspace.',
-        403,
-      )
-    }
-    if (typeof body.name !== 'string' || typeof body.projectId !== 'string') {
-      return errorResponse('invalid-body', 'Invalid request body.', 400)
-    }
-    const result = await createWorkspaceBot(db, actor, {
-      name: body.name,
-      projectId: body.projectId,
-      projectIds: body.projectIds,
-    })
-    switch (result.kind) {
-      case 'ok':
-        return Response.json({
-          ok: true,
-          botUserId: result.botUserId,
-          email: result.email,
-          token: result.token,
+  const submit = async () => {
+    switch (intent) {
+      case 'destinations':
+        if (
+          typeof body.botUserId !== 'string' ||
+          typeof body.projectId !== 'string' ||
+          typeof body.revision !== 'string'
+        )
+          return { kind: 'invalid-body' } as const
+        return updateWorkspaceBotDestinations(db, actor, {
+          botUserId: body.botUserId,
+          projectId: body.projectId,
+          projectIds: body.projectIds,
+          revision: body.revision,
         })
-      case 'forbidden':
-        return errorResponse('forbidden', 'Forbidden.', 403)
-      case 'bot-name-invalid':
-        return errorResponse(
-          'bot-name-invalid',
-          'The bot name is invalid or already used by an active bot.',
-          400,
-        )
-      case 'bot-destination-invalid':
-        return errorResponse(
-          'bot-destination-invalid',
-          'The destination project cannot be used.',
-          400,
-        )
-      case 'bot-limit-reached':
-        return errorResponse(
-          'bot-limit-reached',
-          'The workspace has reached its active bot limit.',
-          409,
-        )
-      case 'bot-conflict':
-        return errorResponse(
-          'bot-conflict',
-          'Bot creation collided with another request. Retry.',
-          409,
-        )
+      case 'create':
+        if (!(await isBotMembersEnabled(user.workspaceId)))
+          return { kind: 'feature-not-available' } as const
+        if (typeof body.name !== 'string' || typeof body.projectId !== 'string')
+          return { kind: 'invalid-body' } as const
+        return createWorkspaceBot(db, actor, {
+          name: body.name,
+          projectId: body.projectId,
+          projectIds: body.projectIds,
+        })
+      case 'stop':
+      case 'reissue':
+      case 'cancel':
+        if (typeof body.botUserId !== 'string' || !body.botUserId)
+          return { kind: 'invalid-body' } as const
+        if (intent === 'stop')
+          return stopWorkspaceBot(db, actor, body.botUserId)
+        if (intent === 'cancel')
+          return cancelWorkspaceBot(db, actor, body.botUserId)
+        return reissueWorkspaceBotCredential(db, actor, body.botUserId)
+      default:
+        return { kind: 'invalid-body' } as const
     }
   }
-
-  if (
-    body.intent === 'stop' ||
-    body.intent === 'reissue' ||
-    body.intent === 'cancel'
-  ) {
-    if (typeof body.botUserId !== 'string' || !body.botUserId) {
-      return errorResponse('invalid-body', 'Invalid request body.', 400)
-    }
-    if (body.intent === 'stop') {
-      const result = await stopWorkspaceBot(db, actor, body.botUserId)
-      switch (result.kind) {
-        case 'ok':
-          return Response.json({ ok: true })
-        case 'forbidden':
-          return errorResponse('forbidden', 'Forbidden.', 403)
-        case 'not-found':
-          return errorResponse('not-found', 'Bot not found.', 404)
-      }
-    }
-    if (body.intent === 'cancel') {
-      const result = await cancelWorkspaceBot(db, actor, body.botUserId)
-      switch (result.kind) {
-        case 'ok':
-          return Response.json({ ok: true })
-        case 'forbidden':
-          return errorResponse('forbidden', 'Forbidden.', 403)
-        case 'not-found':
-          return errorResponse('not-found', 'Bot not found.', 404)
-        case 'bot-used':
-          return errorResponse(
-            'bot-used',
-            'This bot has already been used and cannot be canceled.',
-            409,
-          )
-      }
-    }
-    const result = await reissueWorkspaceBotCredential(
-      db,
-      actor,
-      body.botUserId,
+  const result = await submit()
+  if (result.kind === 'ok') {
+    const { kind, ...payload } = result
+    return data(
+      { ok: true as const, code: kind, intent, ...payload },
+      { status: 200 },
     )
-    switch (result.kind) {
-      case 'ok':
-        return Response.json({ ok: true, token: result.token })
-      case 'forbidden':
-        return errorResponse('forbidden', 'Forbidden.', 403)
-      case 'not-found':
-        return errorResponse('not-found', 'Bot not found.', 404)
-      case 'bot-stopped':
-        return errorResponse('bot-stopped', 'This bot has been stopped.', 409)
-      case 'bot-destination-invalid':
-        return errorResponse(
-          'bot-destination-invalid',
-          'The destination project has been deleted. Create a new bot.',
-          400,
-        )
-      case 'bot-conflict':
-        return errorResponse(
-          'bot-conflict',
-          'The reissue hit a temporary conflict. Retry.',
-          409,
-        )
-    }
   }
-
-  return errorResponse('invalid-body', 'Invalid request body.', 400)
+  const code = result.kind
+  if (code === 'forbidden' || code === 'feature-not-available')
+    return fail(code, 403)
+  if (code === 'not-found') return fail(code, 404)
+  if (
+    ['bot-conflict', 'bot-stopped', 'bot-used', 'bot-limit-reached'].includes(
+      code,
+    )
+  )
+    return fail(code, 409)
+  return fail(code, 400)
 }

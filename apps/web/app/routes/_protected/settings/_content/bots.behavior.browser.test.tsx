@@ -1,12 +1,47 @@
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  RouterContextProvider,
+  useLoaderData,
+} from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import { BotSection } from '../+components/bot-section'
 import '~/app.css'
+import { action as botAction } from './bots'
+const services = vi.hoisted(() => ({
+  updateWorkspaceBotDestinations: vi.fn(),
+  createWorkspaceBot: vi.fn(),
+  stopWorkspaceBot: vi.fn(),
+  cancelWorkspaceBot: vi.fn(),
+  reissueWorkspaceBotCredential: vi.fn(),
+}))
+vi.mock('~/services/bot-members.server', () => services)
+vi.mock('~/services/bot-destinations.server', () => services)
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'admin', workspaceId: 'workspace' }),
+}))
+vi.mock('~/lib/bot-members-flag.server', () => ({
+  isBotMembersEnabled: () => true,
+}))
+vi.mock('~/services/team-management.server', () => ({}))
+function submitBot({
+  request,
+  params,
+}: Pick<Parameters<typeof botAction>[0], 'request' | 'params'>) {
+  return botAction({
+    request,
+    params,
+    context: new RouterContextProvider(),
+    url: new URL(request.url),
+    pattern: '/settings/bots',
+  })
+}
 
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
@@ -36,7 +71,16 @@ test('requires explicit primary replacement, preserves failed input and prevents
   )
   await page.viewport(390, 400)
   const saved: unknown[] = []
-  let release: ((value: Response) => void) | undefined
+  let release: (() => void) | undefined
+  services.updateWorkspaceBotDestinations.mockImplementation(
+    (_db, _user, input) => {
+      saved.push({ intent: 'destinations', ...input })
+      if (saved.length === 1) return { kind: 'bot-destination-invalid' }
+      return new Promise((resolve) => {
+        release = () => resolve({ kind: 'ok' })
+      })
+    },
+  )
   const router = createMemoryRouter(
     [
       {
@@ -55,17 +99,7 @@ test('requires explicit primary replacement, preserves failed input and prevents
             canCreate={false}
           />
         ),
-        action: async ({ request }) => {
-          saved.push(await request.json())
-          if (saved.length === 1)
-            return Response.json(
-              { error: { code: 'bot-destination-invalid' } },
-              { status: 400 },
-            )
-          return new Promise<Response>((resolve) => {
-            release = resolve
-          })
-        },
+        action: submitBot,
       },
     ],
     { initialEntries: ['/settings/bots'] },
@@ -148,7 +182,7 @@ test('requires explicit primary replacement, preserves failed input and prevents
         revision: 'revision',
       })),
     )
-    await act(async () => release!(Response.json({ ok: true })))
+    await act(async () => release!())
     await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
     await expect
       .element(
@@ -192,15 +226,21 @@ test('creation uses the existing picker and recovers from candidate failure and 
     )
   await page.viewport(390, 400)
   const saved: unknown[] = []
+  services.createWorkspaceBot.mockImplementation((_db, _user, input) => {
+    saved.push({ intent: 'create', ...input })
+    return {
+      kind: 'ok',
+      token: 'synthetic-test-token',
+      email: bot.email,
+      botUserId: bot.id,
+    }
+  })
   const router = createMemoryRouter(
     [
       {
         path: '/settings/bots',
         element: <BotSection bots={[]} canCreate />,
-        action: async ({ request }) => {
-          saved.push(await request.json())
-          return Response.json({ token: 'synthetic-test-token' })
-        },
+        action: submitBot,
       },
     ],
     { initialEntries: ['/settings/bots'] },
@@ -324,85 +364,95 @@ test('creation uses the existing picker and recovers from candidate failure and 
   }
 })
 
-test('conflict reloads inventory so reopening can save the current revision', async () => {
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    Response.json({ projects: [], preferredProject: null, nextCursor: null }),
-  )
-  let revision = 'original'
-  const saved: { revision: string }[] = []
-  const loader = vi.fn(() => [{ ...bot, destinationRevision: revision }])
-  function Inventory() {
-    const bots = useLoaderData<typeof loader>()
-    return <BotSection bots={bots} canCreate={false} />
-  }
-  const router = createMemoryRouter(
-    [
-      {
-        path: '/settings/bots',
-        loader,
-        Component: Inventory,
-        action: async ({ request }) => {
-          const input = (await request.json()) as { revision: string }
-          saved.push(input)
-          if (saved.length === 1) {
-            revision = 'current'
-            return Response.json(
-              { error: { code: 'bot-conflict' } },
-              { status: 409 },
-            )
-          }
-          return Response.json(
-            input.revision === revision
-              ? { ok: true }
-              : { error: { code: 'bot-conflict' } },
-            { status: input.revision === revision ? 200 : 409 },
-          )
-        },
+test.each(['bot-conflict', 'bot-stopped'])(
+  '%s preserves the draft and refreshes only a revision conflict',
+  async (code) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({ projects: [], preferredProject: null, nextCursor: null }),
+    )
+    let revision = 'original'
+    const saved: { revision: string }[] = []
+    const loader = vi.fn(() => [{ ...bot, destinationRevision: revision }])
+    function Inventory() {
+      const bots = useLoaderData<typeof loader>()
+      return <BotSection bots={bots} canCreate={false} />
+    }
+    services.updateWorkspaceBotDestinations.mockImplementation(
+      (_db, _user, input) => {
+        saved.push(input)
+        if (saved.length === 1) {
+          revision = 'current'
+          return { kind: code }
+        }
+        return { kind: input.revision === revision ? 'ok' : 'bot-conflict' }
       },
-    ],
-    { initialEntries: ['/settings/bots'] },
-  )
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  try {
-    await act(async () => root.render(<RouterProvider router={router} />))
-    const edit = page.getByRole('button', {
-      name: 'Edit destinations',
-      exact: true,
-    })
-    await edit.click()
-    await page.getByRole('radio', { name: 'Management', exact: true }).click()
-    await page
-      .getByRole('button', { name: 'Save destinations', exact: true })
-      .click()
-    await expect.element(page.getByRole('alert')).toBeVisible()
-    await expect
-      .element(
-        page.getByRole('radio', { name: 'Management (Primary)', exact: true }),
-      )
-      .toBeChecked()
-    await vi.waitFor(() => expect(loader.mock.calls.length).toBeGreaterThan(1))
-    await page
-      .getByRole('button', { name: 'Close', exact: true })
-      .first()
-      .click()
-    await edit.click()
-    await page
-      .getByRole('button', { name: 'Save destinations', exact: true })
-      .click()
-    await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
-    expect(saved.map((input) => input.revision)).toEqual([
-      'original',
-      'current',
-    ])
-  } finally {
-    await act(async () => root.unmount())
-    router.dispose()
-    container.remove()
-    await page.viewport(1280, 800)
-  }
-})
+    )
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/settings/bots',
+          loader,
+          Component: Inventory,
+          action: submitBot,
+        },
+      ],
+      { initialEntries: ['/settings/bots'] },
+    )
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      const edit = page.getByRole('button', {
+        name: 'Edit destinations',
+        exact: true,
+      })
+      await edit.click()
+      await page.getByRole('radio', { name: 'Management', exact: true }).click()
+      await page
+        .getByRole('button', { name: 'Save destinations', exact: true })
+        .click()
+      await expect.element(page.getByRole('alert')).toBeVisible()
+      await expect
+        .element(
+          page.getByRole('radio', {
+            name: 'Management (Primary)',
+            exact: true,
+          }),
+        )
+        .toBeChecked()
+      const save = page.getByRole('button', {
+        name: 'Save destinations',
+        exact: true,
+      })
+      if (code === 'bot-stopped') {
+        await expect.element(save).toBeEnabled()
+        expect(loader).toHaveBeenCalledTimes(1)
+        return
+      }
+      await expect.element(save).toBeDisabled()
+      await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2))
+      await page
+        .getByRole('button', { name: 'Close', exact: true })
+        .first()
+        .click()
+      await edit.click()
+      await page
+        .getByRole('button', { name: 'Save destinations', exact: true })
+        .click()
+      await expect.element(page.getByRole('dialog')).not.toBeInTheDocument()
+      expect(saved.map((input) => input.revision)).toEqual([
+        'original',
+        'current',
+      ])
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
+      await page.viewport(1280, 800)
+    }
+  },
+)
 
 // Browser witness: Radix automatic dismissal and alert geometry cannot be
 // established by a service or static-markup test.
@@ -418,7 +468,17 @@ test.each([
     language.locale = locale
     await page.viewport(390, 844)
     let finished = false
-    const submissions: ((response: Response) => void)[] = []
+    const submissions: ((result: { kind: string; token?: string }) => void)[] =
+      []
+    const service = {
+      stop: services.stopWorkspaceBot,
+      cancel: services.cancelWorkspaceBot,
+      reissue: services.reissueWorkspaceBotCredential,
+    }[intent]
+    service.mockImplementation((_db, _user, id) => {
+      expect(id).toBe(bot.id)
+      return new Promise((resolve) => submissions.push(resolve))
+    })
     const router = createMemoryRouter(
       [
         {
@@ -441,10 +501,7 @@ test.each([
           Component: () => (
             <BotSection bots={useLoaderData().bots} canCreate={false} />
           ),
-          action: async ({ request }) => {
-            expect(await request.json()).toEqual({ intent, botUserId: bot.id })
-            return new Promise<Response>((resolve) => submissions.push(resolve))
-          },
+          action: submitBot,
         },
       ],
       { initialEntries: ['/settings/bots'] },
@@ -526,9 +583,7 @@ test.each([
       expect(submissions).toHaveLength(1)
       expect(status.textContent).toBe('')
       const scroll = window.scrollY
-      await act(async () =>
-        submissions[0](Response.json({ error: { code: 'forbidden' } })),
-      )
+      await act(async () => submissions[0]({ kind: 'forbidden' }))
       const alert = dialog.getByRole('alert')
       await expect.element(alert).toBeVisible()
       await waitForBrowserLayout()
@@ -550,14 +605,12 @@ test.each([
       await vi.waitFor(() => expect(submissions).toHaveLength(2))
       finished = true
       await act(async () =>
-        submissions[1](
-          Response.json({
-            ok: true,
-            ...(intent === 'reissue'
-              ? { token: 'synthetic-reissued-token' }
-              : {}),
-          }),
-        ),
+        submissions[1]({
+          kind: 'ok',
+          ...(intent === 'reissue'
+            ? { token: 'synthetic-reissued-token' }
+            : {}),
+        }),
       )
       await expect.element(dialog).not.toBeInTheDocument()
       if (intent !== 'reissue') {
@@ -576,7 +629,6 @@ test.each([
           intent === 'stop' ? 'bot-row-reports' : 'bots-heading',
         )
       }
-      observer.disconnect()
       if (intent === 'stop') {
         await page
           .getByRole('button', {
@@ -665,6 +717,7 @@ test.each([
           expect(rect.top).toBeGreaterThanOrEqual(panelBounds.top)
           expect(rect.bottom).toBeLessThanOrEqual(panelBounds.bottom)
         }
+        expect(observations).toEqual([])
         await checkbox.click()
         const footerClose = page.elementLocator(
           panel.querySelector('[data-slot="dialog-footer"] button')!,
@@ -673,7 +726,18 @@ test.each([
         await footerClose.click()
         await expect.element(tokenDialog).not.toBeInTheDocument()
         await expect.element(token).not.toBeInTheDocument()
+        await vi.waitFor(() =>
+          expect(observations).toEqual([
+            {
+              text: bindI18n(locale).t('team.status.ok'),
+              hidden: false,
+              dialog: false,
+            },
+          ]),
+        )
+        expect(document.activeElement?.id).toBe('bot-reissue-reports')
       }
+      observer.disconnect()
       await page
         .getByRole('button', { name: triggerLabel, exact: true })
         .last()
@@ -764,6 +828,10 @@ test.each(['en', 'ja'] as const)(
 
 test('stop returns focus to the Bots heading when revalidation removes the row', async () => {
   let bots = [bot]
+  services.stopWorkspaceBot.mockImplementation(() => {
+    bots = []
+    return { kind: 'ok' }
+  })
   const router = createMemoryRouter(
     [
       {
@@ -772,10 +840,7 @@ test('stop returns focus to the Bots heading when revalidation removes the row',
         Component: () => (
           <BotSection bots={useLoaderData<typeof bots>()} canCreate={false} />
         ),
-        action: () => {
-          bots = []
-          return { ok: true }
-        },
+        action: submitBot,
       },
     ],
     { initialEntries: ['/settings/bots'] },

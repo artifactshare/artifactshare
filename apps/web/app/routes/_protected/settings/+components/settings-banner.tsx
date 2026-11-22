@@ -63,6 +63,8 @@ export type BillingStatusKey =
 type SettingsStatusKey =
   | TeamMutationResult['kind']
   | BillingStatusKey
+  | 'slack-connected'
+  | 'submission-interrupted'
   | 'slack-disconnected'
   | 'invalid-patch'
   | 'billing-unavailable'
@@ -86,6 +88,14 @@ const SETTINGS_STATUS_NOTICES: Record<
   SettingsStatusKey,
   { message: TKey; kind: SettingsNoticeKind }
 > = {
+  'submission-interrupted': {
+    message: 'settings.submissionInterrupted',
+    kind: 'error',
+  },
+  'slack-connected': {
+    message: 'team.integrations.slack.connected',
+    kind: 'success',
+  },
   ok: { message: 'team.status.ok', kind: 'success' },
   'slack-disconnected': {
     message: 'team.integrations.slack.disconnected',

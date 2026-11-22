@@ -1,3 +1,19 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  RouterContextProvider,
+} from 'react-router'
+import SettingsLayout from './_protected/settings/_layout'
+import IntegrationsPage, {
+  loader as integrationsLoader,
+} from './_protected/settings/_content/integrations'
+import { TooltipProvider } from '~/components/ui/tooltip'
+import { bindI18n } from '~/lib/i18n'
+vi.mock('~/middleware/context', async (original) => ({
+  ...(await original<typeof import('~/middleware/context')>()),
+  requireUser: () => ({ workspaceId: 'workspace-a', id: 'admin-a' }),
+}))
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -66,6 +82,64 @@ describe('/api/slack/oauth/callback', () => {
       bot_token: 'new-token',
       bot_scopes: 'chat:write,links:read',
     })
+    const destination = response.headers.get('Location')!
+    const url = new URL(destination, 'https://example.test')
+    const loaded = await integrationsLoader({
+      request: new Request(url),
+      context: new RouterContextProvider(),
+      url,
+      params: {},
+      pattern: '/settings/integrations',
+    })
+    const router = createMemoryRouter(
+      [
+        {
+          element: (
+            <TooltipProvider>
+              <SettingsLayout
+                loaderData={{
+                  kind: 'team',
+                  currentUserIsAdmin: true,
+                  currentUserRole: 'owner',
+                  joinedProjects: [],
+                  workspace: {
+                    id: 'workspace-a',
+                    name: 'Reports',
+                    hd: null,
+                    plan: 'team',
+                    storageUsedBytes: 0,
+                    storageQuotaBytes: 1000,
+                  },
+                  user: {
+                    id: 'admin-a',
+                    name: 'Owner',
+                    email: 'owner@example.test',
+                    image: null,
+                    initial: 'O',
+                  },
+                }}
+              />
+            </TooltipProvider>
+          ),
+          children: [
+            {
+              path: '/settings/integrations',
+              element: <IntegrationsPage loaderData={loaded.data} />,
+            },
+          ],
+        },
+      ],
+      { initialEntries: [destination] },
+    )
+    try {
+      const html = renderToStaticMarkup(<RouterProvider router={router} />)
+      expect(html).toContain('data-settings-status="slack-connected"')
+      expect(html).toContain(
+        bindI18n('en').t('team.integrations.slack.connected'),
+      )
+    } finally {
+      router.dispose()
+    }
   })
 
   test('cannot take over a Slack team connected to another workspace', async () => {

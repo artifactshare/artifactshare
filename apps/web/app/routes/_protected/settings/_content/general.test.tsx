@@ -1,13 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactNode } from 'react'
+import {
+  createMemoryRouter,
+  Outlet,
+  RouterProvider,
+  RouterContextProvider,
+} from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
 const services = vi.hoisted(() => ({ updateWorkspaceName: vi.fn() }))
-const pageState = vi.hoisted(() => ({
-  context: null as unknown,
-  navigation: { formData: undefined as FormData | undefined },
-}))
-
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'user', workspaceId: 'workspace' }),
@@ -16,70 +16,6 @@ vi.mock('~/services/dev-screen-state.server', () => ({
   isDevScreenStateRequest: () => false,
 }))
 vi.mock('~/services/team-management.server', () => services)
-vi.mock('react-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react-router')>()),
-  Form: ({ children, ...props }: { children: ReactNode }) => (
-    <form {...props}>{children}</form>
-  ),
-  Link: ({ children, to }: { children: ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
-  ),
-  useNavigation: () => pageState.navigation,
-  useFetcher: () => ({ state: 'idle', submit: vi.fn() }),
-  useRouteLoaderData: () => ({
-    analyticsConsent: { shouldLoadAnalytics: false, state: 'unset' },
-  }),
-  useOutletContext: () => pageState.context,
-}))
-vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: 'en',
-    t: (key: string) =>
-      ({
-        'team.workspace.name': 'Display name',
-        'team.workspace.name.body': 'Change the display name.',
-        'team.workspace.name.label': 'Display name',
-        'team.workspace.name.save': 'Save',
-        'team.members.owner': 'Workspace owner',
-        'team.guides.title': 'Role guides',
-        'team.guides.body': 'Read the guide.',
-        'team.guides.admin': 'Admin guide',
-        'team.guides.owner': 'Owner guide',
-        'analyticsConsent.settings.title': 'Analytics',
-        'analyticsConsent.settings.description': 'Analytics settings.',
-        'analyticsConsent.status.denied': 'Opted out.',
-        'analyticsConsent.settings.on': 'On',
-        'analyticsConsent.settings.off': 'Off',
-      })[key] ?? key,
-  }),
-}))
-vi.mock('~/components/form/settings-page', () => ({
-  SettingsPage: ({ children }: { children: ReactNode }) => (
-    <main>{children}</main>
-  ),
-}))
-vi.mock('~/components/form/settings-section', () => ({
-  SettingsSection: ({
-    title,
-    children,
-  }: {
-    title: string
-    children: ReactNode
-  }) => (
-    <section>
-      <h2>{title}</h2>
-      {children}
-    </section>
-  ),
-}))
-vi.mock('../+components/team-user', () => ({
-  TeamUser: ({ name, email }: { name: string; email: string }) => (
-    <div>
-      {name} {email}
-    </div>
-  ),
-}))
-
 import { action, default as GeneralPage } from './general'
 
 function postForm(fields: Record<string, string>) {
@@ -90,25 +26,43 @@ function postForm(fields: Record<string, string>) {
 }
 
 function renderPage(currentUserIsAdmin: boolean) {
-  pageState.context = {
+  const context = {
     workspace: { name: 'Example' },
     currentUserIsAdmin,
     currentUserRole: 'admin',
   }
-  return renderToStaticMarkup(
-    <GeneralPage
-      {...({
-        loaderData: {
-          owner: { name: 'Owner', email: 'owner@example.com' },
+  const router = createMemoryRouter([
+    {
+      element: <Outlet context={context} />,
+      children: [
+        {
+          path: '/',
+          element: (
+            <GeneralPage
+              loaderData={{
+                owner: {
+                  id: 'owner',
+                  name: 'Owner',
+                  email: 'owner@example.com',
+                  image: null,
+                },
+              }}
+            />
+          ),
         },
-      } as Parameters<typeof GeneralPage>[0])}
-    />,
-  )
+      ],
+    },
+  ])
+  try {
+    return renderToStaticMarkup(<RouterProvider router={router} />)
+  } finally {
+    router.dispose()
+  }
 }
 
 describe('/settings/general action', () => {
   test.each(['ok', 'forbidden', 'invalid'] as const)(
-    'redirects %s',
+    'returns the %s submission result',
     async (kind) => {
       if (kind !== 'invalid')
         services.updateWorkspaceName.mockResolvedValue({ kind })
@@ -121,10 +75,18 @@ describe('/settings/general action', () => {
                 workspaceName: 'New name',
               },
         ),
-        context: new Map(),
-      } as never)
-      expect(response.headers.get('Location')).toBe(
-        `/settings/general?status=${kind}`,
+        context: new RouterContextProvider(),
+        params: {},
+        pattern: '/settings/general',
+        url: new URL('https://example.test/settings/general'),
+      })
+      expect(response.data).toEqual({
+        ok: kind === 'ok',
+        code: kind,
+        intent: kind === 'invalid' ? 'wrong' : 'update-workspace-name',
+      })
+      expect(response.init?.status).toBe(
+        kind === 'ok' ? 200 : kind === 'forbidden' ? 403 : 400,
       )
     },
   )

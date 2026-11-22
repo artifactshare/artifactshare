@@ -1,9 +1,4 @@
-import {
-  createMemoryRouter,
-  RouterProvider,
-  RouterContextProvider,
-  useLoaderData,
-} from 'react-router'
+import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
@@ -14,7 +9,8 @@ import type { Locale } from '~/i18n/messages'
 import { fits, waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
-import { action as tokensAction } from './_content/tokens'
+import { settingsSingleFetch } from '~/test/settings-single-fetch'
+import { action as tokensAction, clientAction } from './_content/tokens'
 
 const services = vi.hoisted(() => ({
   revoke: vi.fn(),
@@ -59,6 +55,7 @@ test.each(['light', 'dark'])(
             path: '/settings/tokens',
             element: (
               <CliSessionsSection
+                onRevoked={vi.fn()}
                 cliFamilies={[
                   {
                     familyId: 'family-publisher',
@@ -255,7 +252,7 @@ for (const locale of ['en', 'ja'] as const)
         await new Promise<void>((resolve) => {
           release = resolve
         })
-        if (attempt === 1) throw new Error('service unavailable')
+        if (attempt === 1) return intent === 'revoke' ? true : 'ok'
         if (intent === 'revoke') {
           if (attempt === 2) return false
           currentData = {
@@ -292,31 +289,35 @@ for (const locale of ['en', 'ja'] as const)
       const loaderGate = new Promise<void>((resolve) => {
         releaseLoader = resolve
       })
-      const router = createMemoryRouter(
-        [
-          {
-            path: '/settings/tokens',
-            Component: () => (
-              <ApiTokensPage loaderData={useLoaderData<typeof data>()} />
-            ),
-            loader: async () => {
-              if (currentData !== data) {
-                reloadStarted = true
-                await loaderGate
-              }
-              return currentData
-            },
-            action: (args) =>
-              tokensAction({
-                ...args,
-                context: new RouterContextProvider(),
-                url: new URL(args.request.url),
-                pattern: '/settings/tokens',
-              }),
-          },
-        ],
-        { initialEntries: ['/settings/tokens'] },
-      )
+      let router: ReturnType<typeof createMemoryRouter>
+      let responses = 0
+      const { routes, dataStrategy } = settingsSingleFetch({
+        path: '/settings/tokens',
+        Component: () => (
+          <ApiTokensPage loaderData={useLoaderData<typeof data>()} />
+        ),
+        clientAction,
+        action: (args) =>
+          tokensAction({ ...args, pattern: '/settings/tokens' }),
+        getRouter: () => router,
+        fetchResponse: async (request, handle) => {
+          const response = await handle(request)
+          if (++responses === 1)
+            throw new TypeError('Connection lost after dispatch')
+          return response
+        },
+      })
+      routes[0].loader = async () => {
+        if (currentData !== data) {
+          reloadStarted = true
+          await loaderGate
+        }
+        return currentData
+      }
+      router = createMemoryRouter(routes, {
+        initialEntries: ['/settings/tokens'],
+        dataStrategy,
+      })
       const container = document.createElement('div')
       document.body.appendChild(container)
       const root = createRoot(container)
@@ -410,13 +411,11 @@ for (const locale of ['en', 'ja'] as const)
         await expect.element(dialog).toHaveAttribute('data-state', 'open')
         await expect.element(dialog).toBeVisible()
         await act(async () => release())
-        const failureMessage =
-          locale === 'en'
-            ? 'Could not revoke access. Try again.'
-            : 'アクセスを失効できませんでした。もう一度お試しください。'
         await expect
           .element(dialog.getByRole('alert'))
-          .toHaveTextContent(failureMessage)
+          .toHaveTextContent(
+            bindI18n(locale).t('settings.submissionInterrupted'),
+          )
         const retry = dialog.getByRole('button', { name: copy['dialog.retry'] })
         if (intent === 'revoke') {
           await waitForBrowserLayout()

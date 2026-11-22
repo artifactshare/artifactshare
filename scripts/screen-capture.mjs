@@ -106,7 +106,12 @@ export async function installCaptureActionResponse(page, fixture, origin) {
         await route.abort('aborted')
       } else {
         const body = await encodeCaptureActionData(fixture.data)
-        await route.fulfill({ status: 200, contentType: 'text/x-script', body })
+        await route.fulfill({
+          status: fixture.status ?? 200,
+          headers: { 'X-Remix-Response': 'yes' },
+          contentType: 'text/x-script',
+          body,
+        })
       }
     })
     requests.push(response)
@@ -1151,7 +1156,10 @@ async function captureScreensLocked({
           reportPageWarnings(assertNoPageError(pageErrors), job)
           await assertCaptureSurface(page, screen.id, state)
         },
-        ready: state.setup?.ready ?? screen.ready,
+        ready:
+          state.setup?.postInteractionReady ??
+          state.setup?.ready ??
+          screen.ready,
         actionResponse,
         page,
         outDir,

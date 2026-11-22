@@ -1,4 +1,5 @@
 {
+  "settings.submissionInterrupted": "通信が途切れました。接続を確認して、もう一度お試しください。",
   "settings.error.forbidden.title": "アクセスできません",
   "settings.error.forbidden.description": "この設定を表示するには権限が必要です。",
   "settings.error.missing.title": "設定ページが見つかりません",
@@ -196,6 +197,8 @@
   "team.members.page.prev": "前へ",
   "team.members.page.next": "次へ",
   "team.members.noMatches": "検索条件に一致するメンバーがいません。",
+  "team.members.grantAdminBody": "{name} にワークスペースの管理者権限を付与しますか？",
+  "team.members.revokeAdminBody": "{name} のワークスペース管理者権限を解除しますか？",
   "team.members.makeAdmin": "管理者にする",
   "team.members.removeAdmin": "管理者から外す",
   "team.members.transferOwner": "オーナーを移譲",

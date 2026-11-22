@@ -53,10 +53,12 @@ export type ScreenSetup = {
     route: string
     method: 'POST'
     intent: string
+    status?: number
     pending?: boolean
     data?: Record<string, unknown>
   }
   ready?: ScreenReady
+  postInteractionReady?: ScreenReady
 }
 
 export type ScreenState = {

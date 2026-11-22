@@ -1,5 +1,5 @@
 import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
-import { Link, Outlet, useSearchParams } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import type { Route } from './+types/_layout'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
@@ -16,7 +16,7 @@ import { Topbar } from '../../_home/+components/topbar'
 import { BottomTabBar } from '../../_home/+components/bottom-tab-bar'
 import { listJoinedProjectsForDropdown } from '~/services/project-membership.server'
 import type { JoinedProjectNav } from '../../_home/+components/primary-nav'
-import { StatusBanner } from './+components/settings-banner'
+import { SettingsOutlet } from './+components/settings-outlet'
 import { SettingsNav } from './+components/settings-nav'
 import { PageHeader } from '~/components/form/page-header'
 import { Stack } from '~/components/layout/stack'
@@ -26,12 +26,14 @@ import type { SettingsShellData } from '~/lib/team-management'
 import { toUserInfo, type UserInfo } from '~/lib/user'
 import { settingsMainClassName } from '~/components/app/page-shell-styles'
 
-type SettingsLoaderData = SettingsShellData & {
+export type SettingsLoaderData = SettingsShellData & {
   user: UserInfo
   joinedProjects: JoinedProjectNav[]
 }
 
-export type SettingsLayoutContext = SettingsLoaderData
+export type SettingsLayoutContext = SettingsLoaderData & {
+  externalResult?: string | null
+}
 
 export async function loader({
   context,
@@ -64,8 +66,7 @@ export async function loader({
 export default function SettingsLayout({
   loaderData,
 }: Pick<Route.ComponentProps, 'loaderData'>) {
-  const [searchParams] = useSearchParams()
-  const status = searchParams.get('status')
+  const { pathname } = useLocation()
   const { t } = useT()
 
   return (
@@ -99,8 +100,7 @@ export default function SettingsLayout({
             workspaceKind={loaderData.kind}
           >
             <Stack gap="4">
-              {status ? <StatusBanner status={status} /> : null}
-              <Outlet context={loaderData} />
+              <SettingsOutlet key={pathname} shell={loaderData} />
             </Stack>
           </SettingsNav>
         </SettingsPage>

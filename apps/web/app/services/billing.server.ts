@@ -493,7 +493,9 @@ export async function changePlan(
   workspace: WorkspaceBillingRow,
   plan: CheckoutPlan,
   interval: BillingInterval,
-): Promise<BillingMutationResult> {
+): Promise<
+  Exclude<BillingMutationResult, { kind: 'ok' }> | { kind: 'accepted' }
+> {
   if (!workspace.stripe_subscription_id) {
     return { kind: 'no-subscription' }
   }
@@ -526,7 +528,7 @@ export async function changePlan(
       payment_behavior: 'pending_if_incomplete',
     })
 
-    return { kind: 'ok', url: '/settings/billing?status=plan-change-requested' }
+    return { kind: 'accepted' }
   } catch (error) {
     console.error('billing_subscription_update_failed', error)
     return { kind: 'external-failed' }

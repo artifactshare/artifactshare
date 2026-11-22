@@ -604,6 +604,12 @@ text retains over-quota percentages. Invalid quotas show unavailable text.
 
 ### Settings confirmations and results
 
+Settings forms submit with their own fetcher. Each action returns `data({ ok, code, intent, ...payload }, { status })`. Successful writes use a 2xx status and refresh loader data. Expected failures use a 4xx status and keep the draft at its originating control. Previews and one-time credentials belong to the form that requested them.
+
+While a confirmation is pending, lock its controls and dismissal. Show expected failures and interrupted responses inside the open dialog. Retry only on user input. Close on success, restore focus, and announce the outcome once. A committed removal with a failed transfer refreshes the member lists and directs the user to transfer the remaining files from Removed members.
+
+Only recognized external returns use URL notices. Consume the return parameter by replacing the history entry and retain checkout-pending feedback during the current Billing visit.
+
 Disconnecting Slack removes authorization. Although reconnecting is possible, it requires a new authorization flow and interrupts previews and notifications; use a destructive confirmation that explains these consequences. Bot stop and creation cancellation also use destructive confirmations. Keep async confirmation dialogs open and disabled while submitting, show failures inside the dialog, and close only after success.
 
 Settings notices use success (check, status), warning (triangle, status), and error (error icon, alert). Past-due and near-storage-limit billing warnings are urgent warning alerts. Unknown outcomes are errors. External sharing uses one explicit page-wide save with visible unsaved-change cues; reductions to maximum expiry require a read-only count preview before destructive confirmation.

@@ -1,76 +1,57 @@
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
+import { useState, type ComponentProps } from 'react'
 import { useT } from '~/hooks/use-t'
-import type { TeamMember } from '~/lib/team-management'
+import { displayName, type TeamMember } from '~/lib/team-management'
 import { RecipientPicker } from './recipient-picker'
+import { ConfirmActionDialog } from './confirm-action-dialog'
 
-export { NO_ASSET_TRANSFER } from './recipient-picker'
-
-interface RemoveMemberDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConfirm: () => void
-  memberName: string
-  pending: boolean
+type Props = Omit<
+  ComponentProps<typeof ConfirmActionDialog>,
+  'onConfirm' | 'title' | 'description' | 'action'
+> & {
   currentUser: TeamMember
-  excludeUserId: string
-  recipientUserId: string
-  onRecipientUserIdChange: (userId: string) => void
+  member: TeamMember
+  intent: 'remove-member' | 'transfer-removed-assets'
+  committed: boolean
+  submit: (recipient: string) => void
 }
 
 export function RemoveMemberDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-  memberName,
-  pending,
+  member,
   currentUser,
-  excludeUserId,
-  recipientUserId,
-  onRecipientUserIdChange,
-}: RemoveMemberDialogProps) {
+  intent,
+  committed,
+  submit,
+  result,
+  ...dialog
+}: Props) {
   const { t } = useT()
-
+  const [selection, setSelection] = useState<string | null>(null)
+  const recipient = selection ?? currentUser.id
+  const remove = intent === 'remove-member'
+  const copy = remove
+    ? 'team.members.removeConfirm'
+    : 'team.removedMembers.transferConfirm'
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent size="sm">
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {t('team.members.removeConfirm.title', { name: memberName })}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('team.members.removeConfirm.body')}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <RecipientPicker
-          excludeUserId={excludeUserId}
-          currentUser={currentUser}
-          value={recipientUserId}
-          onChange={onRecipientUserIdChange}
-          disabled={pending}
-          allowNone
-        />
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>
-            {t('confirm.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={pending}
-            onClick={onConfirm}
-          >
-            {t('team.members.removeConfirm.action')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmActionDialog
+      {...dialog}
+      destructive={remove}
+      title={t(`${copy}.title`, { name: displayName(member) })}
+      description={t(`${copy}.body`, { name: displayName(member) })}
+      action={committed ? null : t(`${copy}.action`)}
+      onConfirm={() => submit(recipient)}
+      result={
+        <>
+          <RecipientPicker
+            currentUser={currentUser}
+            excludeUserId={member.id}
+            value={recipient}
+            onChange={setSelection}
+            disabled={dialog.pending || committed}
+            allowNone={remove}
+          />
+          {result}
+        </>
+      }
+    />
   )
 }

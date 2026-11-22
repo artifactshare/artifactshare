@@ -1,3 +1,4 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import {
   loadUsage,
@@ -8,26 +9,23 @@ import {
   shouldShowUsageWarning,
 } from '../+components/billing-usage'
 import { env } from 'cloudflare:workers'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Form,
+  data as actionData,
   Link,
   redirect,
+  useActionData,
   useFetcher,
-  useNavigation,
-  useSearchParams,
+  useOutletContext,
 } from 'react-router'
 import { BillingSelection } from '~/components/app/billing-toggle'
+import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
+import { settingsFailure } from '~/lib/settings-submission'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
+  confirmationResult,
+  runConfirmedMutation,
+} from '~/lib/settings-confirmation'
+import type { SettingsLayoutContext } from '../_layout'
 import {
   BILLING_PRICES,
   formatPrice,
@@ -40,7 +38,7 @@ import { withLang } from '~/lib/connect-link'
 import { useHydrated } from '~/hooks/use-hydrated'
 import { PlanCard } from '~/components/app/plan-card'
 import { SettingsPage } from '~/components/form/settings-page'
-import { SettingsBanner } from '../+components/settings-banner'
+import { SettingsBanner, StatusBanner } from '../+components/settings-banner'
 import { BillingPlanGrid } from '../+components/billing-plan-grid'
 import { BillingPlans } from '../+components/billing-plans'
 import { TeamMutedParagraph } from '~/components/form/team-muted'
@@ -188,7 +186,7 @@ export const screen = {
         query: '?status=checkout-success',
         ready: {
           selector:
-            'body:not(:has([data-billing-unavailable])) [data-billing-checkout-pending]',
+            'body:not(:has([data-billing-unavailable], [data-plan="plus"], [data-plan="team"])) [data-billing-checkout-pending]',
           visibleWith: [
             '[role="status"][data-settings-status="checkout-success"]',
           ],
@@ -215,18 +213,30 @@ export const screen = {
     },
     {
       id: 'result-error',
-      description: 'Invalid checkout with plan cards',
+      description: 'Rejected checkout with plan cards',
       setup: {
         scenario: 'settings-billing/purchase',
-        query: '?status=invalid',
-        ready: {
+        interactions: [
+          {
+            action: 'click',
+            selector: '[data-plan="plus"] button[type="submit"]',
+          },
+        ],
+        actionResponse: {
+          route: '/settings/billing',
+          method: 'POST',
+          intent: 'checkout',
+          status: 409,
+          data: { ok: false, code: 'billing-unavailable', intent: 'checkout' },
+        },
+        postInteractionReady: {
           selector:
             'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
           visibleWith: [
-            '[role="alert"][data-settings-status="invalid"]',
+            '[data-plan="plus"] form [role="alert"][data-settings-status="billing-unavailable"]',
             '[data-plan="plus"]',
           ],
-          description: 'Invalid checkout with plan cards',
+          description: 'Rejected checkout with plan cards',
         },
       },
     },
@@ -445,26 +455,45 @@ export async function loader({
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
+  const form = await request.formData()
+  const intent = stringValue(form.get('intent')) ?? ''
+  const submit = () => submitBilling(request, context, form, intent)
+  return intent === 'change-plan' ? runConfirmedMutation(submit) : submit()
+}
+
+export async function clientAction({
+  request,
+  serverAction,
+}: Route.ClientActionArgs) {
+  const intent = (await request.clone().formData()).get('intent')
+  return intent === 'change-plan'
+    ? confirmationResult(intent, serverAction)
+    : serverAction()
+}
+
+async function submitBilling(
+  request: Request,
+  context: Route.ActionArgs['context'],
+  form: FormData,
+  intent: string,
+) {
   const user = requireUser(context)
   const db = createDb()
   const authorized = await requireWorkspaceBillingOwner(db, user)
-  if (authorized.kind !== 'ok') {
-    return redirect(`/settings/billing?status=${authorized.kind}`)
-  }
-
-  const form = await request.formData()
-  const intent = stringValue(form.get('intent'))
+  if (authorized.kind !== 'ok') return settingsFailure(intent, authorized.kind)
+  if (!['change-plan', 'checkout', 'portal'].includes(intent))
+    return settingsFailure(intent, 'invalid')
   // Vite dev のプロキシ経由では request.url の origin がポートを落とすため、
   // Stripe への戻り先 URL は BETTER_AUTH_URL を正とする。
   const origin = env.BETTER_AUTH_URL ?? new URL(request.url).origin
 
   if (!isBillingConfigured(env)) {
-    return redirect('/settings/billing?status=billing-unavailable')
+    return settingsFailure(intent, 'billing-unavailable')
   }
 
   if (!env.STRIPE_SECRET_KEY) {
     console.error('billing_stripe_secret_missing')
-    return redirect('/settings/billing?status=external-failed')
+    return settingsFailure(intent, 'external-failed')
   }
 
   const workspace = await db
@@ -485,7 +514,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     const plan = parseCheckoutPlan(stringValue(form.get('plan')))
     const interval = parseBillingInterval(stringValue(form.get('interval')))
     if (!plan || !interval) {
-      return redirect('/settings/billing?status=invalid')
+      return settingsFailure(intent, 'invalid')
     }
 
     const currencyField = stringValue(form.get('currency'))
@@ -495,7 +524,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     } else {
       const parsedCurrency = parseCheckoutCurrency(currencyField)
       if (!parsedCurrency) {
-        return redirect('/settings/billing?status=invalid')
+        return settingsFailure(intent, 'invalid')
       }
       currency = parsedCurrency
     }
@@ -512,12 +541,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       locale,
     )
     if (result.kind === 'ok') return redirect(result.url)
-    return redirect(`/settings/billing?status=${result.kind}`)
+    return settingsFailure(intent, result.kind)
   }
 
   if (intent === 'portal') {
     if (!workspace.stripe_customer_id) {
-      return redirect('/settings/billing?status=invalid')
+      return settingsFailure(intent, 'invalid')
     }
     const result = await createPortalSession(
       stripe,
@@ -526,22 +555,26 @@ export async function action({ request, context }: Route.ActionArgs) {
       origin,
     )
     if (result.kind === 'ok') return redirect(result.url)
-    return redirect(`/settings/billing?status=${result.kind}`)
+    return settingsFailure(intent, result.kind)
   }
 
   if (intent === 'change-plan') {
     const plan = parseCheckoutPlan(stringValue(form.get('plan')))
     const interval = parseBillingInterval(stringValue(form.get('interval')))
     if (!plan || !interval) {
-      return redirect('/settings/billing?status=invalid')
+      return settingsFailure(intent, 'invalid')
     }
 
     const result = await changePlan(stripe, env, workspace, plan, interval)
-    if (result.kind === 'ok') return redirect(result.url)
-    return redirect(`/settings/billing?status=${result.kind}`)
+    if (result.kind === 'accepted')
+      return actionData(
+        { ok: true as const, code: 'plan-change-requested', intent },
+        { status: 202 },
+      )
+    return settingsFailure(intent, result.kind)
   }
 
-  return redirect('/settings/billing?status=invalid')
+  return settingsFailure(intent, 'invalid')
 }
 
 export default function BillingPage({
@@ -549,15 +582,14 @@ export default function BillingPage({
 }: {
   loaderData: BillingLoaderData
 }) {
-  const navigation = useNavigation()
-  const [searchParams] = useSearchParams()
+  const shell = useOutletContext<SettingsLayoutContext | null>()
+  // Checkout and Portal submitted before hydration report a failure here; a
+  // success has already moved to Stripe.
+  const nativeResult = useActionData<typeof action>()
   const { t, locale } = useT()
-  const pendingIntent = navigation.formData?.get('intent')
-  const isPending = Boolean(
-    navigation.formAction === '/settings/billing' && pendingIntent,
-  )
   const awaitingCheckoutReflection =
-    searchParams.get('status') === 'checkout-success' &&
+    shell?.externalResult === 'checkout-success' &&
+    !loaderData.hasSubscription &&
     loaderData.plan !== 'plus' &&
     loaderData.plan !== 'team'
 
@@ -575,6 +607,11 @@ export default function BillingPage({
 
   return (
     <SettingsPage>
+      {nativeResult && !nativeResult.ok && (
+        <StatusBanner status={nativeResult.code} />
+      )}
+      <PlanChangeNotice kind="plan" />
+      <PlanChangeNotice kind="interval" />
       {loaderData.stripeSubscriptionStatus === 'past_due' ? (
         <SettingsBanner kind="warning" urgent data-billing-past-due>
           {t('billing.pastDue.banner')}
@@ -582,6 +619,7 @@ export default function BillingPage({
       ) : null}
 
       <SettingsSection
+        headingId="billing-heading"
         title={t('billing.title')}
         description={
           !loaderData.canManage
@@ -598,7 +636,6 @@ export default function BillingPage({
             hasSubscription={loaderData.hasSubscription}
             canManage={loaderData.canManage}
             contract={loaderData.contract}
-            isPending={isPending}
             storageUsedBytes={loaderData.storageUsedBytes}
             activeProjectCount={loaderData.activeProjectCount}
           />
@@ -620,7 +657,6 @@ export default function BillingPage({
             showStorageWarning={showStorageWarning}
             loaderData={loaderData}
             presentation={presentation}
-            isPending={isPending}
             awaitingCheckoutReflection={awaitingCheckoutReflection}
           />
         </SettingsSubsection>
@@ -772,7 +808,6 @@ function CurrentPlanCard({
   hasSubscription,
   canManage,
   contract,
-  isPending,
   storageUsedBytes,
   activeProjectCount,
 }: {
@@ -781,7 +816,6 @@ function CurrentPlanCard({
   hasSubscription: boolean
   canManage: boolean
   contract: SubscriptionContract | null
-  isPending: boolean
   storageUsedBytes: number
   activeProjectCount: number
 }) {
@@ -803,7 +837,6 @@ function CurrentPlanCard({
         <CardContent>
           <ChangeContract
             contract={contract}
-            isPending={isPending}
             storageUsedBytes={storageUsedBytes}
             activeProjectCount={activeProjectCount}
           />
@@ -811,7 +844,7 @@ function CurrentPlanCard({
       ) : null}
       {canManage && contract ? (
         <CardFooter>
-          <PortalForm isPending={isPending} />
+          <PortalForm />
         </CardFooter>
       ) : null}
     </Card>
@@ -942,14 +975,14 @@ export function shouldShowBillingContext({
 }
 
 export function CheckoutActions({
-  isPending,
+  isPending = false,
   defaultCurrency,
   initialPlan,
   initialInterval,
   locale,
   externalPostingEnabled,
 }: {
-  isPending: boolean
+  isPending?: boolean
   defaultCurrency: CheckoutCurrency
   initialPlan: CheckoutPlan
   initialInterval: BillingInterval
@@ -989,7 +1022,7 @@ export function CheckoutActions({
             copy={copy}
             headingLevel="h4"
           >
-            <Form method="post">
+            <BillingForm>
               <input type="hidden" name="intent" value="checkout" />
               <input type="hidden" name="plan" value={plan} />
               <input type="hidden" name="interval" value={interval} />
@@ -1003,7 +1036,7 @@ export function CheckoutActions({
               >
                 {t(`billing.checkout.submit.${plan}`)}
               </Button>
-            </Form>
+            </BillingForm>
           </PlanCard>
         ))}
       </div>
@@ -1017,10 +1050,8 @@ export function CheckoutActions({
 }
 
 function SubscribedActions({
-  isPending,
   contract,
 }: {
-  isPending: boolean
   contract: SubscriptionContract | null
 }) {
   const { t } = useT()
@@ -1033,20 +1064,33 @@ function SubscribedActions({
         </TeamMutedParagraph>
       ) : null}
 
-      {!contract ? <PortalForm isPending={isPending} /> : null}
+      {!contract ? <PortalForm /> : null}
     </>
   )
 }
 
-function PortalForm({ isPending }: { isPending: boolean }) {
+function BillingForm({ children }: { children: ReactNode }) {
+  const fetcher = useFetcher<typeof action>()
+  useSettingsEntryChange(fetcher.reset)
+  return (
+    <fetcher.Form method="post">
+      <fieldset disabled={fetcher.state !== 'idle'}>{children}</fieldset>
+      {fetcher.state === 'idle' && fetcher.data && (
+        <StatusBanner status={fetcher.data.code} />
+      )}
+    </fetcher.Form>
+  )
+}
+
+function PortalForm() {
   const { t } = useT()
   return (
-    <Form method="post">
+    <BillingForm>
       <input type="hidden" name="intent" value="portal" />
-      <Button variant="outline" size="sm" type="submit" disabled={isPending}>
+      <Button variant="outline" size="sm" type="submit">
         {t('billing.portal')}
       </Button>
-    </Form>
+    </BillingForm>
   )
 }
 
@@ -1076,12 +1120,10 @@ function priceWithInterval(
 
 function ChangeContract({
   contract,
-  isPending,
   storageUsedBytes,
   activeProjectCount,
 }: {
   contract: SubscriptionContract
-  isPending: boolean
   storageUsedBytes: number
   activeProjectCount: number
 }) {
@@ -1113,7 +1155,6 @@ function ChangeContract({
           isDowngrade={otherPlan === 'plus'}
           storageUsedBytes={storageUsedBytes}
           activeProjectCount={activeProjectCount}
-          disabled={isPending}
         />
         <ChangeContractOption
           contract={contract}
@@ -1128,11 +1169,18 @@ function ChangeContract({
           isDowngrade={false}
           storageUsedBytes={storageUsedBytes}
           activeProjectCount={activeProjectCount}
-          disabled={isPending}
         />
       </BillingPlanGrid>
     </BillingPlans>
   )
+}
+
+function PlanChangeNotice({ kind }: { kind: 'plan' | 'interval' }) {
+  const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
+  useSettingsEntryChange(change.reset)
+  return change.state === 'idle' && change.data?.ok ? (
+    <StatusBanner status={change.data.code} />
+  ) : null
 }
 
 function ChangeContractOption({
@@ -1144,7 +1192,6 @@ function ChangeContractOption({
   isDowngrade,
   storageUsedBytes,
   activeProjectCount,
-  disabled,
 }: {
   contract: SubscriptionContract
   plan: CheckoutPlan
@@ -1154,10 +1201,14 @@ function ChangeContractOption({
   isDowngrade: boolean
   storageUsedBytes: number
   activeProjectCount: number
-  disabled: boolean
 }) {
   const { locale, t } = useT()
-  const [open, setOpen] = useState(false)
+  const [requestedOpen, setOpen] = useState(false)
+  useSettingsEntryChange(() => setOpen(false))
+  const kind = plan === contract.plan ? 'interval' : 'plan'
+  const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
+  const result = change.state === 'idle' ? change.data : undefined
+  const open = requestedOpen && !result?.ok
   const preview = useFetcher<PlanChangePreview>()
   const { load } = preview
   const newPrice = contractPrice(contract, plan, interval)
@@ -1181,10 +1232,13 @@ function ChangeContractOption({
         type="button"
         variant="outline"
         size="sm"
-        disabled={disabled}
+        id={`billing-change-${plan}-${interval}`}
         data-billing-change={plan === contract.plan ? 'interval' : 'plan'}
         className="h-full min-h-7 w-full flex-col py-[var(--spacing-2)] whitespace-normal"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          change.reset()
+          setOpen(true)
+        }}
       >
         <span className="leading-snug">{label}</span>
         {note ? (
@@ -1193,58 +1247,58 @@ function ChangeContractOption({
           </span>
         ) : null}
       </Button>
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('billing.confirm.title')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('billing.confirm.body', {
-                plan: t(`billing.plan.${plan}`),
-                interval: t(`billing.interval.${interval}`),
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex flex-col gap-[var(--spacing-2)] text-sm">
-            {newPrice ? (
-              <p>
-                {t('billing.confirm.newPrice', {
-                  price: priceWithInterval(t, newPrice, interval),
-                })}
-              </p>
-            ) : null}
-            <TeamMutedParagraph>
-              {t('billing.confirm.timing')}
-            </TeamMutedParagraph>
-            <TeamMutedParagraph>{prorationText}</TeamMutedParagraph>
-            {nextInvoiceAtLabel ? (
+      <ConfirmActionDialog
+        open={open}
+        onOpenChange={setOpen}
+        awaitResult
+        returnFocusId={`billing-change-${plan}-${interval}`}
+        fallbackFocusId="billing-heading"
+        title={t('billing.confirm.title')}
+        description={t('billing.confirm.body', {
+          plan: t(`billing.plan.${plan}`),
+          interval: t(`billing.interval.${interval}`),
+        })}
+        pending={change.state !== 'idle'}
+        action={t('billing.confirm.action')}
+        onConfirm={() => {
+          change.reset()
+          void change.submit(
+            { intent: 'change-plan', plan, interval },
+            { method: 'post' },
+          )
+        }}
+        result={
+          <>
+            {result && !result.ok && <StatusBanner status={result.code} />}
+            <div className="flex flex-col gap-[var(--spacing-2)] text-sm">
+              {newPrice ? (
+                <p>
+                  {t('billing.confirm.newPrice', {
+                    price: priceWithInterval(t, newPrice, interval),
+                  })}
+                </p>
+              ) : null}
               <TeamMutedParagraph>
-                {t('billing.confirm.nextInvoiceAt', {
-                  date: nextInvoiceAtLabel,
-                })}
+                {t('billing.confirm.timing')}
               </TeamMutedParagraph>
-            ) : null}
-            {isDowngrade ? (
-              <DowngradeImpact
-                storageUsedBytes={storageUsedBytes}
-                activeProjectCount={activeProjectCount}
-              />
-            ) : null}
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disabled}>
-              {t('confirm.cancel')}
-            </AlertDialogCancel>
-            <Form method="post">
-              <input type="hidden" name="intent" value="change-plan" />
-              <input type="hidden" name="plan" value={plan} />
-              <input type="hidden" name="interval" value={interval} />
-              <AlertDialogAction type="submit" disabled={disabled}>
-                {t('billing.confirm.action')}
-              </AlertDialogAction>
-            </Form>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              <TeamMutedParagraph>{prorationText}</TeamMutedParagraph>
+              {nextInvoiceAtLabel ? (
+                <TeamMutedParagraph>
+                  {t('billing.confirm.nextInvoiceAt', {
+                    date: nextInvoiceAtLabel,
+                  })}
+                </TeamMutedParagraph>
+              ) : null}
+              {isDowngrade ? (
+                <DowngradeImpact
+                  storageUsedBytes={storageUsedBytes}
+                  activeProjectCount={activeProjectCount}
+                />
+              ) : null}
+            </div>
+          </>
+        }
+      />
     </>
   )
 }
@@ -1368,13 +1422,11 @@ function BillingActions({
   showStorageWarning,
   loaderData,
   presentation,
-  isPending,
   awaitingCheckoutReflection,
 }: {
   loaderData: BillingLoaderData
   showStorageWarning: boolean
   presentation: ReturnType<typeof billingPresentation>
-  isPending: boolean
   awaitingCheckoutReflection: boolean
 }) {
   const { locale } = useT()
@@ -1384,13 +1436,10 @@ function BillingActions({
 
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
   if (loaderData.hasSubscription)
-    return (
-      <SubscribedActions isPending={isPending} contract={loaderData.contract} />
-    )
+    return <SubscribedActions contract={loaderData.contract} />
   if (awaitingCheckoutReflection) return <CheckoutPendingNotice />
   return (
     <CheckoutActions
-      isPending={isPending}
       defaultCurrency={loaderData.defaultCurrency}
       initialPlan={loaderData.initialPlan}
       initialInterval={loaderData.initialInterval}

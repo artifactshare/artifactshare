@@ -1,3 +1,4 @@
+import { settingsSubmissionMiddleware } from '~/lib/settings-confirmation'
 import { redirect, type MiddlewareFunction } from 'react-router'
 import {
   AUTH_SESSION_DATA_COOKIE_NAMES,
@@ -30,32 +31,33 @@ type AuthObservationOptions = {
  * Resolve the session user once per request and stash it in context.
  * Apply at the root so child middlewares + loaders share a single lookup.
  */
-export const sessionMiddleware: MiddlewareFunction = async (
-  { request, context, url },
-  next,
-) => {
-  const user = await getSessionUser(request)
+export const sessionMiddleware = settingsSubmissionMiddleware(
+  async ({ request, context, url }, next) => {
+    const user = await getSessionUser(request)
 
-  context.set(userContext, user)
-  logAuthObservation(
-    request,
-    {
-      cookieUserResolved: Boolean(user),
-      phase: 'session',
-    },
-    url,
-  )
-  return next()
-}
+    context.set(userContext, user)
+    logAuthObservation(
+      request,
+      {
+        cookieUserResolved: Boolean(user),
+        phase: 'session',
+      },
+      url,
+    )
+    return next()
+  },
+)
 
 /**
  * Protect a route subtree: throw redirect to / if no session.
  * Must run after `sessionMiddleware` (declared higher in the tree).
  */
-export const requireUserMiddleware: MiddlewareFunction = ({ context, url }) => {
-  if (context.get(userContext)) return
-  throw redirect(`/?next=${encodeURIComponent(url.pathname + url.search)}`)
-}
+export const requireUserMiddleware = settingsSubmissionMiddleware(
+  ({ context, url }) => {
+    if (context.get(userContext)) return
+    throw redirect(`/?next=${encodeURIComponent(url.pathname + url.search)}`)
+  },
+)
 
 /**
  * Same as `requireUserMiddleware` but returns 401 JSON for API routes —

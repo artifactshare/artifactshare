@@ -73,7 +73,7 @@ describe('/settings/bots loader', () => {
   })
 })
 
-test.each(['ok', 'forbidden', 'bot-conflict'] as const)(
+test.each(['ok', 'forbidden', 'bot-conflict', 'bot-stopped'] as const)(
   'destination action is available with creation off and preserves %s result',
   async (kind) => {
     services.isBotMembersEnabled.mockResolvedValue(false)
@@ -92,7 +92,12 @@ test.each(['ok', 'forbidden', 'bot-conflict'] as const)(
       }),
       context: new Map(),
     } as never)
-    expect(response.status).toBe(
+    expect(response.data).toEqual({
+      ok: kind === 'ok',
+      code: kind,
+      intent: 'destinations',
+    })
+    expect(response.init?.status).toBe(
       kind === 'ok' ? 200 : kind === 'forbidden' ? 403 : 409,
     )
     expect(services.updateWorkspaceBotDestinations).toHaveBeenLastCalledWith(

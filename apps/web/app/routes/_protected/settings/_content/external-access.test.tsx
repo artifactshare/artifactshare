@@ -58,8 +58,11 @@ test('preview parses the complete draft and resume without invoking a mutation',
     url: new URL('https://example.test/settings/external-access'),
     pattern: '/settings/external-access',
   })
-  expect(result).toEqual({
-    kind: 'preview',
+  expect(result.init?.status).toBe(200)
+  expect(result.data).toEqual({
+    ok: true,
+    intent: 'preview-external-access',
+    code: 'preview',
     maximumDays: 30,
     shortenedLinkCount: 2,
     draft: {
@@ -103,8 +106,11 @@ test.each(['forbidden', 'plan-required', 'invalid-policy'])(
       url: new URL('https://example.test/settings/external-access'),
       pattern: '/settings/external-access',
     })
-    expect(result).toMatchObject({
-      kind,
+    expect(result.init?.status).toBe(kind === 'invalid-policy' ? 400 : 403)
+    expect(result.data).toMatchObject({
+      ok: false,
+      code: kind,
+      intent: 'update-external-access',
       draft: { defaultDays: '7', maxDays: '30' },
     })
   },
@@ -125,12 +131,12 @@ test('invalid preview input never invokes preview or mutation', async () => {
     url: new URL('https://example.test/settings/external-access'),
     pattern: '/settings/external-access',
   })
-  expect(result).toMatchObject({ kind: 'invalid-policy' })
+  expect(result.data).toMatchObject({ ok: false, code: 'invalid-policy' })
   expect(services.previewWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
   expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
 })
 
-test('successful save preserves the authoritative shortened count in the redirect', async () => {
+test('successful save returns the authoritative shortened count', async () => {
   services.updateWorkspaceExternalAccessPolicy.mockResolvedValue({
     kind: 'ok',
     shortenedLinkCount: 3,
@@ -149,11 +155,15 @@ test('successful save preserves the authoritative shortened count in the redirec
     url: new URL('https://example.test/settings/external-access'),
     pattern: '/settings/external-access',
   })
-  expect(result).toBeInstanceOf(Response)
-  if (!(result instanceof Response)) throw new Error('Expected redirect')
-  expect(result.headers.get('Location')).toBe(
-    '/settings/external-access?status=ok&shortened=3',
-  )
+  expect(result).toMatchObject({
+    data: {
+      ok: true,
+      code: 'ok',
+      intent: 'update-external-access',
+      shortenedLinkCount: 3,
+    },
+    init: { status: 200 },
+  })
 })
 
 test('Free owners have a billing link and explicit page-wide save instructions', () => {
@@ -222,8 +232,8 @@ test('stale-page extension requires the current reduction preview before any mut
       url: new URL('https://example.test/settings/external-access'),
       pattern: '/settings/external-access',
     })
-  expect(await submit()).toMatchObject({
-    kind: 'preview',
+  expect((await submit()).data).toMatchObject({
+    code: 'preview',
     previousMaximumDays: 180,
     shortenedLinkCount: 2,
     draft: { defaultDays: '30', maxDays: '120' },
@@ -231,10 +241,10 @@ test('stale-page extension requires the current reduction preview before any mut
   expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
   form.set('confirmedPreviousMaximum', '90')
   form.set('confirmedMaximum', '120')
-  expect(await submit()).toMatchObject({ kind: 'preview' })
+  expect((await submit()).data).toMatchObject({ code: 'preview' })
   expect(services.updateWorkspaceExternalAccessPolicy).not.toHaveBeenCalled()
   form.set('confirmedPreviousMaximum', '180')
-  expect(await submit()).toBeInstanceOf(Response)
+  expect((await submit()).data).toMatchObject({ ok: true, code: 'ok' })
   expect(services.updateWorkspaceExternalAccessPolicy).toHaveBeenCalledTimes(1)
 })
 
@@ -270,7 +280,9 @@ test.each([false, true])(
           actionData: failed
             ? {
                 settings: {
-                  kind: 'forbidden',
+                  code: 'forbidden',
+                  ok: false,
+                  intent: 'update-external-access',
                   draft: {
                     defaultDays: '7',
                     maxDays: '90',
@@ -301,19 +313,7 @@ test.each([false, true])(
 )
 
 test.each([
-  ...[
-    'abc',
-    'NaN',
-    '0',
-    '-1',
-    '1.5',
-    'Infinity',
-    '1e3',
-    '0x10',
-    ' 2 ',
-    '+5',
-    '01',
-  ].map((count) => ['en', count, null] as const),
+  ['en', 0, null],
   [
     'en',
     1,
@@ -349,6 +349,7 @@ test.each([
           ),
           children: [
             {
+              id: 'external-access',
               index: true,
               element: (
                 <ExternalAccessPage
@@ -368,13 +369,23 @@ test.each([
         },
       ],
       {
-        initialEntries: [`/?status=ok&shortened=${encodeURIComponent(count)}`],
+        initialEntries: ['/'],
+        hydrationData: {
+          actionData: {
+            'external-access': {
+              ok: true,
+              code: 'ok',
+              intent: 'update-external-access',
+              shortenedLinkCount: count,
+            },
+          },
+        },
       },
     )
     try {
       const html = renderToStaticMarkup(<RouterProvider router={router} />)
       if (expected === null) {
-        expect(html).not.toContain('role="status"')
+        expect(html).not.toContain('data-shortened-links')
       } else {
         expect(html).toContain(expected)
       }

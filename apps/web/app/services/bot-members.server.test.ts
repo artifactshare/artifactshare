@@ -1206,7 +1206,9 @@ test.each([
   if (!response.body) throw new Error('Missing action result')
   const result = await UNSAFE_decodeViaTurboStream(response.body, globalThis)
   if (mode === 'healthy') {
-    expect(result.value).toEqual({ data: { ok: true } })
+    expect(result.value).toEqual({
+      data: { ok: true, code: 'ok', intent: 'destinations' },
+    })
     expect(log).not.toHaveBeenCalled()
   } else if (mode === 'unrelated') {
     expect(log.mock.calls).toEqual([
@@ -1222,7 +1224,7 @@ test.each([
     ])
   } else {
     expect(result.value).toMatchObject({
-      data: { error: { code: 'bot-conflict' } },
+      data: { ok: false, code: 'bot-conflict', intent: 'destinations' },
     })
     expect(log.mock.calls).toEqual([
       [

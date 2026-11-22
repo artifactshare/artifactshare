@@ -14,7 +14,9 @@ import {
   Outlet,
   parsePath,
   RouterProvider,
+  RouterContextProvider,
   useLoaderData,
+  UNSAFE_withComponentProps,
 } from 'react-router'
 import { vi } from 'vitest'
 import { page } from 'vitest/browser'
@@ -36,12 +38,34 @@ import SettingsLayout from './_layout'
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 vi.mock('~/services/link-sharing.server', () => ({}))
-vi.mock('~/services/team-management.server', () => ({}))
+const services = vi.hoisted(() => ({
+  updateWorkspaceName: vi.fn(),
+  removeWorkspaceMember: vi.fn(),
+  transferRemovedMemberAssets: vi.fn(),
+  revokeWorkspaceMemberCliSessions: vi.fn(),
+  loadMembersPageData: vi.fn(),
+  parseMembersPageFilters: () => ({
+    query: '',
+    role: 'all',
+    activity: 'all',
+    page: 1,
+  }),
+}))
+vi.mock('~/services/team-management.server', () => services)
 vi.mock('~/services/project-membership.server', () => ({}))
-vi.mock('~/services/db.server', () => ({}))
-vi.mock('~/middleware/context', () => ({}))
-import MembersPage, { screen as membersScreen } from './_content/index'
-import GeneralPage, { screen as generalScreen } from './_content/general'
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'owner' }),
+}))
+import MembersPage, {
+  screen as membersScreen,
+  action as membersAction,
+  loader as membersLoader,
+} from './_content/index'
+import GeneralPage, {
+  screen as generalScreen,
+  action as updateGeneral,
+} from './_content/general'
 import ActivityPage from './_content/activity'
 import AnalyticsPage from './_content/analytics'
 import IntegrationsPage from './_content/integrations'
@@ -271,9 +295,15 @@ test('disposes both routers when fixture setup throws', () => {
 
 async function withScreen(
   content: ReactNode,
-  inspect: (container: HTMLDivElement) => Promise<void>,
+  inspect: (
+    container: HTMLDivElement,
+    router: ReturnType<typeof createMemoryRouter>,
+  ) => Promise<void>,
   path = '/settings/bots',
   settingsShell = true,
+  action?: NonNullable<
+    Parameters<typeof createMemoryRouter>[0][number]['action']
+  >,
 ) {
   const router = createTestRouter(
     [
@@ -283,7 +313,9 @@ async function withScreen(
             {settingsShell ? <SettingsLayout loaderData={shell} /> : <Outlet />}
           </TooltipProvider>
         ),
-        children: [{ path: parsePath(path).pathname, element: content }],
+        children: [
+          { path: parsePath(path).pathname, element: content, action },
+        ],
       },
     ],
     { initialEntries: [path] },
@@ -296,7 +328,7 @@ async function withScreen(
   try {
     await act(async () => root.render(<RouterProvider router={router} />))
     await waitForBrowserLayout()
-    await inspect(container)
+    await inspect(container, router)
   } finally {
     await act(async () => root.unmount())
     container.remove()
@@ -1074,90 +1106,256 @@ const memberRows = {
   ],
 } satisfies Omit<Parameters<typeof MembersPage>[0]['loaderData'], 'filters'>
 
+test('consumes the Slack callback notice on the integrations route', async () => {
+  language.locale = 'en'
+  await withScreen(
+    <IntegrationsPage loaderData={{ connections: [] }} />,
+    async (container, router) => {
+      const status = page
+        .elementLocator(container)
+        .getByText(bindI18n('en').t('team.integrations.slack.connected'), {
+          exact: true,
+        })
+      await expect.element(status).toBeVisible()
+      expect(router.state.location.search).toBe('?view=teams')
+      expect(router.state.historyAction).toBe('REPLACE')
+      await act(async () => router.navigate('/settings/integrations'))
+      await expect.element(status).not.toBeInTheDocument()
+      await act(async () => router.navigate(-1))
+      expect(router.state.location.search).toBe('?view=teams')
+      await expect.element(status).not.toBeInTheDocument()
+    },
+    '/settings/integrations?connected=slack&view=teams',
+  )
+})
+
+test.each(['ok', 'invalid'] as const)(
+  'Japanese General submission reports %s at its form',
+  async (code) => {
+    language.locale = 'ja'
+    services.updateWorkspaceName.mockImplementation(
+      (_db, _actor, name: string) => ({
+        kind: name.trim() ? 'ok' : 'invalid',
+      }),
+    )
+    const success = generalScreen.states.find(
+      (state) => state.id === 'result-success',
+    )?.setup
+    const failure = generalScreen.states.find(
+      (state) => state.id === 'result-error',
+    )?.setup
+    const interactions = (code === 'ok' ? success : failure)?.interactions
+    const ready = success?.postInteractionReady
+    const errorReady = failure?.postInteractionReady
+    if (!interactions || !ready || !errorReady)
+      throw new Error('Missing General result setup')
+    await withScreen(
+      <GeneralPage loaderData={{ owner: null }} />,
+      async () => {
+        // Start with an empty required field so the capture must enter its own draft.
+        await page.getByRole('textbox').fill('')
+        for (const interaction of interactions) {
+          const target = page.elementLocator(
+            document.querySelector(interaction.selector)!,
+          )
+          if (interaction.action === 'fill')
+            await target.fill(interaction.value)
+          else await target.click()
+        }
+        if (code === 'ok') await commands.waitForScreenReady(ready)
+        else {
+          await commands.waitForScreenReady(errorReady)
+          await expect(
+            commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
+          ).rejects.toThrow('ready condition was not met: ' + ready.description)
+        }
+      },
+      generalScreen.route.en,
+      true,
+      (args) =>
+        updateGeneral({
+          ...args,
+          context: new RouterContextProvider(),
+          pattern: '/settings/general',
+          url: new URL(args.request.url),
+        }),
+    )
+  },
+)
+
 test.each([
-  [generalScreen, 'result-success'],
-  [generalScreen, 'result-error'],
-  [membersScreen, 'result-success'],
-  [membersScreen, 'result-warning'],
-  [membersScreen, 'result-error'],
-] as const)('$0.id $1 capture is ready in Japanese', async (screen, id) => {
-  const setup = screen.states.find((state) => state.id === id)?.setup
-  if (!setup?.ready) throw new Error('Missing readiness for ' + id)
-  const ready = setup.ready
-  language.locale = 'ja'
-  await withScreen(
-    screen === generalScreen ? (
-      <GeneralPage loaderData={{ owner: null }} />
-    ) : (
-      <MembersPage
-        loaderData={{
-          ...memberRows,
-          removedMembers: [
-            { ...memberRows.removedMembers[0], ownedArtifactCount: 1 },
-          ],
-          filters: { query: '', role: 'all', activity: 'all', page: 1 },
-        }}
-      />
-    ),
-    async () => {
-      await commands.waitForScreenReady(ready)
-    },
-    screen.route.en + setup.query,
-  )
-})
-
-test('Japanese General result-success waits for the missing banner', async () => {
-  const ready = generalScreen.states.find(
-    (state) => state.id === 'result-success',
-  )?.setup?.ready
-  if (!ready) throw new Error('Missing General result-success readiness')
-  language.locale = 'ja'
-  await withScreen(
-    <GeneralPage loaderData={{ owner: null }} />,
-    async (container) => {
-      expect(container.querySelector('[data-settings-status]')).toBeNull()
-      await expect(
-        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-      ).rejects.toThrow('ready condition was not met: ' + ready.description)
-    },
-    generalScreen.route.en,
-  )
-})
-
-test('Japanese Members result-warning waits for an enabled transfer retry', async () => {
+  'result-success',
+  'result-error',
+  'result-warning',
+  'missing-transfer',
+] as const)('Japanese Members submission reaches %s', async (id) => {
+  const warning = id === 'result-warning' || id === 'missing-transfer'
   const setup = membersScreen.states.find(
-    (state) => state.id === 'result-warning',
+    (state) => state.id === (warning ? 'result-warning' : id),
   )?.setup
-  if (!setup?.ready) throw new Error('Missing Members result-warning readiness')
-  const ready = setup.ready
+  const ready = setup?.postInteractionReady
+  if (!ready) throw new Error('Missing Members result readiness')
   language.locale = 'ja'
-  await withScreen(
-    <MembersPage
-      loaderData={{
-        ...memberRows,
-        removedMembers: [
-          { ...memberRows.removedMembers[0], ownedArtifactCount: 0 },
+  let removed = false
+  const target = {
+    ...memberRows.membersPage.members[0],
+    id: 'casey-removed-member',
+    name: 'Casey Morgan',
+    role: 'member' as const,
+    isAdmin: false,
+  }
+  services.removeWorkspaceMember.mockImplementation(() => {
+    removed = true
+    return { kind: 'ok' }
+  })
+  services.transferRemovedMemberAssets.mockResolvedValue({ kind: 'invalid' })
+  services.revokeWorkspaceMemberCliSessions.mockResolvedValue({
+    kind: id === 'result-error' ? 'invalid' : 'ok',
+  })
+  services.loadMembersPageData.mockImplementation(() => ({
+    ...memberRows,
+    membersPage: {
+      ...memberRows.membersPage,
+      members: removed ? [] : [target],
+    },
+    removedMembers: removed
+      ? [{ ...target, ownedArtifactCount: id === 'missing-transfer' ? 0 : 1 }]
+      : [],
+  }))
+  const router = createTestRouter(
+    [
+      {
+        element: (
+          <TooltipProvider>
+            <SettingsLayout loaderData={shell} />
+          </TooltipProvider>
+        ),
+        children: [
+          {
+            path: 'settings',
+            Component: UNSAFE_withComponentProps(MembersPage),
+            loader: (args) =>
+              membersLoader({
+                ...args,
+                context: new RouterContextProvider(),
+                params: {},
+                pattern: '/settings',
+                url: new URL(args.request.url),
+              }),
+            action: (args) =>
+              membersAction({
+                ...args,
+                context: new RouterContextProvider(),
+                params: {},
+                pattern: '/settings',
+                url: new URL(args.request.url),
+              }),
+          },
+          {
+            path: 'settings/recipients',
+            loader: () => ({ recipients: [], total: 0, query: '' }),
+          },
         ],
-        filters: { query: '', role: 'all', activity: 'all', page: 1 },
-      }}
-    />,
-    async (container) => {
-      expect(
-        container.querySelector(
-          '[data-settings-status="removed-transfer-failed"]',
+      },
+    ],
+    {
+      initialEntries:
+        id === 'result-success'
+          ? ['/settings?q=first', '/settings?q=second']
+          : ['/settings'],
+    },
+  )
+  const container = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await page
+      .getByRole('button', { name: bindI18n('ja').t('team.members.menu') })
+      .click()
+    await page
+      .getByRole('menuitem', {
+        name: bindI18n('ja').t(
+          warning ? 'team.members.remove' : 'team.members.revokeCliSessions',
         ),
-      ).not.toBeNull()
-      expect(
-        container.querySelector(
-          '#removed-members [data-transfer-removed-files]:disabled',
+        exact: true,
+      })
+      .click()
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', {
+        name: bindI18n('ja').t(
+          warning
+            ? 'team.members.removeConfirm.action'
+            : 'team.members.revokeCliSessions',
         ),
-      ).not.toBeNull()
+        exact: true,
+      })
+      .click()
+    if (id === 'missing-transfer') {
+      await expect
+        .element(
+          page
+            .elementLocator(document.body)
+            .getByRole('alertdialog')
+            .getByRole('status'),
+        )
+        .toHaveAttribute('data-settings-status', 'removed-transfer-failed')
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector('[data-transfer-removed-files]:disabled'),
+        ).not.toBeNull(),
+      )
       await expect(
         commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
       ).rejects.toThrow('ready condition was not met: ' + ready.description)
-    },
-    membersScreen.route.en + setup.query,
-  )
+    } else await commands.waitForScreenReady(ready)
+    if (id === 'result-success') {
+      const input = page.getByRole('searchbox')
+      await input.fill('Pending search')
+      for (const [delta, search] of [
+        [-1, '?q=first'],
+        [1, '?q=second'],
+      ] as const) {
+        await act(async () => router.navigate(delta))
+        expect(router.state.location.search).toBe(search)
+        expect(container.querySelector('[data-settings-status]')).toBeNull()
+        // Moving through history drops the unsubmitted draft; the fixture's
+        // loader data stands in for that entry's search.
+        await expect.element(page.getByRole('searchbox')).toHaveValue('')
+      }
+    }
+    if (id === 'result-warning') {
+      const removeCalls = services.removeWorkspaceMember.mock.calls.length
+      services.transferRemovedMemberAssets.mockResolvedValue({ kind: 'ok' })
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: bindI18n('ja').t('confirm.cancel') })
+        .click()
+      await page
+        .getByRole('button', {
+          name: bindI18n('ja').t('team.removedMembers.transfer'),
+          exact: true,
+        })
+        .click()
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button', {
+          name: bindI18n('ja').t('team.removedMembers.transferConfirm.action'),
+          exact: true,
+        })
+        .click()
+      await expect
+        .element(page.getByRole('alertdialog'))
+        .not.toBeInTheDocument()
+      expect(services.removeWorkspaceMember.mock.calls.length).toBe(removeCalls)
+      expect(services.transferRemovedMemberAssets.mock.lastCall).toContain(
+        target.id,
+      )
+    }
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
 })
 
 const ledgerPages = () => [
@@ -1601,10 +1799,18 @@ test.each(['members', 'artifacts'] as const)(
                 const role = params.get('role'),
                   activity = params.get('activity'),
                   visibility = params.get('visibility')
+                const matchingMembers = memberRows.membersPage.members.filter(
+                  (member) => member.role === role,
+                )
                 return members ? (
                   <MembersPage
                     loaderData={{
                       ...memberRows,
+                      membersPage: {
+                        members: matchingMembers,
+                        total: matchingMembers.length,
+                        page: 1,
+                      },
                       filters: {
                         query: params.get('q') ?? '',
                         page: 1,
@@ -1693,6 +1899,10 @@ test.each(['members', 'artifacts'] as const)(
           .click()
       }
       await search()
+      if (members)
+        await expect
+          .element(page.getByText(t('team.members.noMatches'), { exact: true }))
+          .toBeVisible()
       await vi.waitFor(() => {
         expect(router.state.location.pathname).toBe(path)
         for (const { key, nextValue } of fields)
@@ -1713,12 +1923,20 @@ test.each(['members', 'artifacts'] as const)(
           .element(page.getByRole('combobox', { name: label, exact: true }))
           .toHaveTextContent(initialLabel)
       if (!members) {
+        const apply = page
+          .getByRole('button', {
+            name: t('team.inventory.filter.apply'),
+            exact: true,
+          })
+          .element()
         const restoredKey = router.state.location.key
         await search()
         await vi.waitFor(() => {
           expect(router.state.location.key).not.toBe(restoredKey)
           expect(router.state.location.search).toBe('?' + initialSearch)
         })
+        await waitForBrowserLayout()
+        expect(document.activeElement).toBe(apply)
       }
     } finally {
       await act(async () => root.unmount())
