@@ -11,6 +11,7 @@ import { appFetch, closeAppFetch, cookieHeader } from './lib/dev-sign-in.mjs'
 import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import {
   assertCaptureServerHead,
+  bottomBarCaptureStyle,
   cleanCaptureHead,
   devShareableId,
   localSandboxOrigin,
@@ -530,10 +531,36 @@ export async function waitForSheetAnimations(
   }
 }
 
+async function captureWalkthroughPng(page, options, viewerLoading = false) {
+  let style
+  let bottomBarProbeFailed = false
+  if (options.fullPage && !viewerLoading) {
+    let timer
+    try {
+      style = await Promise.race([
+        bottomBarCaptureStyle(page),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Overflow probe timed out')),
+            2_000,
+          )
+        }),
+      ])
+    } catch {
+      bottomBarProbeFailed = true
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  await page.screenshot(style ? { ...options, style } : options)
+  return bottomBarProbeFailed ? { bottomBarProbeFailed: true } : {}
+}
+
 export async function captureStep({
   page,
   action,
   screenshot,
+  viewerLoading,
   animationTiming,
   ...context
 }) {
@@ -552,8 +579,12 @@ export async function captureStep({
     page,
     animationTiming,
   )
-  await page.screenshot(screenshot)
-  return evidence
+  const pngEvidence = await captureWalkthroughPng(
+    page,
+    screenshot,
+    viewerLoading,
+  )
+  return { ...evidence, ...pngEvidence }
 }
 
 async function applyAction({
@@ -1093,6 +1124,11 @@ export async function captureRun({
         session: activeSession,
         state: runState,
         tempDir,
+        viewerLoading:
+          (walkthrough.taskId === 'republish-updated-file' &&
+            step.phase === 'pending') ||
+          (walkthrough.taskId === 'confirm-agent-publish' &&
+            ['action', 'pending'].includes(step.phase)),
         screenshot: { path: join(outDir, file), fullPage: true },
       })
       if (walkthrough.continuousHomeReturn && step.phase === 'failure')
@@ -1186,10 +1222,11 @@ export async function captureRun({
             evidence: requestEvidence(),
           }
           try {
-            await branch.page.screenshot({
+            const pngEvidence = await captureWalkthroughPng(branch.page, {
               path: join(outDir, diagnosticFile),
               fullPage: true,
             })
+            Object.assign(diagnostic.evidence, pngEvidence)
             diagnostic.file = diagnosticFile
           } catch {
             /* Preserve the original journey failure. */
@@ -1208,7 +1245,7 @@ export async function captureRun({
         const animation = await waitForSheetAnimations(branch.page)
         if (animation.status !== 'completed')
           throw new Error('Home screenshot animations did not settle')
-        await branch.page.screenshot({
+        const pngEvidence = await captureWalkthroughPng(branch.page, {
           path: join(outDir, supplementFile),
           fullPage: true,
         })
@@ -1217,7 +1254,7 @@ export async function captureRun({
           purpose: 'home-read',
           description: 'Continuous return to Home',
           file: supplementFile,
-          evidence: requestEvidence(),
+          evidence: { ...requestEvidence(), ...pngEvidence },
           result: {
             ...result,
             inspectionStepId: steps.at(-1).id,

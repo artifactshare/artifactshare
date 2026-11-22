@@ -22,7 +22,9 @@ import {
   walkthroughCliEntry,
   walkthroughSandboxOrigin,
 } from './task-walkthrough-capture.mjs'
-import { championLoopTaskIds } from './task-walkthroughs.mjs'
+import { setImmediate as flush } from 'node:timers/promises'
+import { fullPageCaptureStyle } from './screen-capture.mjs'
+import { championLoopTaskIds, taskWalkthroughs } from './task-walkthroughs.mjs'
 
 test('selects the champion loop in its canonical order', () => {
   assert.deepEqual(
@@ -435,6 +437,174 @@ test('pre-screenshot wait follows existing load settling on a phase without clic
   assert.deepEqual(fake.events, ['load', 'inspect', 'screenshot:0'])
 })
 
+test('normal full-page PNG selects the style after settling and bounds only the overflow probe', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  for (const probe of ['overflow', 'fits', 'replaced', 'stalled', 'error']) {
+    const fake = animatedPage(() => [])
+    fake.page.url = () => 'https://localhost/recent'
+    const evaluateAnimations = fake.page.evaluate
+    const probeError = new Error('overflow evaluation failed')
+    fake.page.evaluate = (fn) => {
+      if (!fn.toString().includes('scrollHeight')) return evaluateAnimations(fn)
+      fake.events.push('overflow')
+      if (probe === 'replaced')
+        throw new Error('Execution context was destroyed')
+      if (probe === 'stalled') return new Promise(() => {})
+      if (probe === 'error') return Promise.reject(probeError)
+      return probe === 'overflow'
+    }
+    const originalOptions = { fullPage: true, path: 'phase.png' }
+    fake.page.screenshot = (options) => fake.events.push({ ...options })
+    const capture = captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: { ...originalOptions },
+    })
+    await flush()
+    if (probe === 'stalled') {
+      assert.deepEqual(fake.events, ['load', 'inspect', 'overflow'])
+      t.mock.timers.tick(2000)
+      await flush()
+    }
+    assert.deepEqual(fake.events, [
+      'load',
+      'inspect',
+      'overflow',
+      probe === 'overflow'
+        ? { ...originalOptions, style: fullPageCaptureStyle }
+        : originalOptions,
+    ])
+    const evidence = await capture
+    assert.equal(
+      evidence.bottomBarProbeFailed,
+      ['error', 'stalled', 'replaced'].includes(probe) ? true : undefined,
+    )
+  }
+})
+
+test('registered pending clicks retain their observation order before a styled PNG', async () => {
+  for (const taskId of ['return-to-recent-file', 'review-new-reactions']) {
+    const { action } = taskWalkthroughs
+      .find((task) => task.taskId === taskId)
+      .steps.find((step) => step.phase === 'pending')
+    const fake = animatedPage(() => [])
+    if (taskId === 'return-to-recent-file')
+      fake.page.url = () => 'https://localhost/recent'
+    fake.page.waitForURL = () => {
+      fake.events.push('url')
+      return Promise.resolve()
+    }
+    const locator = fake.page.locator()
+    locator.isVisible = () => {
+      fake.events.push('sheet-visible')
+      return true
+    }
+    const animate = fake.page.evaluate
+    fake.page.evaluate = (fn) => {
+      if (!fn.toString().includes('scrollHeight')) return animate(fn)
+      fake.events.push('overflow')
+      return true
+    }
+    const screenshot = { path: 'pending.png', fullPage: true }
+    fake.page.screenshot = (options) => fake.events.push(options)
+    await captureStep({ ...fake, action, screenshot })
+    assert.deepEqual(fake.events, [
+      'click',
+      'inspect',
+      'sheet-visible',
+      'inspect',
+      'overflow',
+      { ...screenshot, style: fullPageCaptureStyle },
+    ])
+  }
+})
+
+test('Viewer loading PNGs and inspection precede the actual sandbox continuation', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  for (const taskId of ['republish-updated-file', 'confirm-agent-publish']) {
+    const fake = animatedPage(() => [])
+    const task = taskWalkthroughs.find((entry) => entry.taskId === taskId)
+    let handler
+    let loading = false
+    let continuation
+    const request = () => {
+      loading = true
+      continuation = handler({
+        continue: () => {
+          loading = false
+        },
+      })
+    }
+    fake.page.route = (_match, callback) => {
+      handler = callback
+    }
+    fake.page.goto = (_url, options) => {
+      assert.equal(options.waitUntil, 'domcontentloaded')
+      request()
+      return { ok: () => true }
+    }
+    const locator = fake.page.locator()
+    fake.page.locator = (selector) => ({
+      ...locator,
+      waitFor: () => {
+        assert.notEqual(selector, '[data-sandbox-state="ready"]')
+        if (selector.includes(':not('))
+          fake.events.push(['inspection', loading])
+        return Promise.resolve()
+      },
+      click: request,
+    })
+    fake.page.waitForURL = () => {
+      fake.events.push('url')
+      return Promise.resolve()
+    }
+    const animate = fake.page.evaluate
+    fake.page.evaluate = (fn) => {
+      if (!fn.toString().includes('scrollHeight')) return animate(fn)
+      fake.events.push('overflow')
+      return new Promise(() => {})
+    }
+    fake.page.screenshot = (options) =>
+      fake.events.push(['png', loading, { ...options }])
+    const originalOptions = { fullPage: true, path: 'viewer.png' }
+    const phases =
+      taskId === 'confirm-agent-publish' ? ['action', 'pending'] : ['pending']
+    for (const phase of phases) {
+      const capture = captureStep({
+        ...fake,
+        action: task.steps.find((step) => step.phase === phase).action,
+        viewerLoading: true,
+        screenshot: { ...originalOptions },
+        baseUrl: 'https://localhost',
+        state: { cliArtifactId: 'example', initial: { artifactId: 'example' } },
+      })
+      await flush()
+      assert.deepEqual(fake.events.at(-1), ['png', true, originalOptions])
+      await capture
+    }
+    assert.deepEqual(fake.events, [
+      ...(phases.length === 2
+        ? [
+            'load',
+            'url',
+            'inspect',
+            ['png', true, originalOptions],
+            ['inspection', true],
+          ]
+        : []),
+      'inspect',
+      ['png', true, originalOptions],
+    ])
+    t.mock.timers.tick(1499)
+    await flush()
+    assert.equal(loading, true)
+    t.mock.timers.tick(1)
+    await flush()
+    assert.equal(loading, false)
+    await continuation
+  }
+})
+
 test('a stalled browser evaluation reaches the deadline before the PNG', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const fake = animatedPage(() => [])
@@ -571,23 +741,52 @@ test('navigation context replacement is diagnostic and still permits the PNG', a
   assert.equal(fake.events.at(-1), 'screenshot:50')
 })
 
-test('branch orchestration preserves phases, isolation, videos and continuous Home observations', async () => {
+test('branch orchestration preserves phases, isolation, videos and continuous Home observations', async (t) => {
   const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   const { captureRun, writeTaskIndex } =
     await import('./task-walkthrough-capture.mjs')
-  const { taskWalkthroughs } = await import('./task-walkthroughs.mjs')
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const root = await mkdtemp(join(tmpdir(), 'walkthrough-branches-'))
   try {
     for (const walkthrough of taskWalkthroughs) {
       for (const [viewport, fault] of ['desktop', 'mobile'].flatMap((size) =>
         (walkthrough.continuousHomeReturn
-          ? [null, 'unread', 'missing', 'diagnostic-write']
+          ? [
+              null,
+              'unread',
+              'missing',
+              'diagnostic-write',
+              'stalled',
+              ...(size === 'mobile' ? ['supplement-probe'] : []),
+            ]
           : [null]
         ).map((problem) => [size, problem]),
       )) {
+        const supplementProbeFailed = fault === 'supplement-probe'
+        const homeReturnFailed = Boolean(fault) && !supplementProbeFailed
         const calls = []
+        const missingRowError = new Error('target row absent')
+        const missingRow = fault === 'missing' || fault === 'diagnostic-write'
+        let homePng
+        const probeStarted = Promise.withResolvers()
+        const homeOptions = {
+          path: join(
+            root,
+            homeReturnFailed
+              ? `failed-home-return-${viewport}.png`
+              : `supplement-home-read-${viewport}.png`,
+          ),
+          fullPage: true,
+          ...(viewport === 'mobile' &&
+          !supplementProbeFailed &&
+          !['stalled', 'missing'].includes(fault)
+            ? { style: fullPageCaptureStyle }
+            : {}),
+        }
+        if (walkthrough.continuousHomeReturn)
+          await rm(homeOptions.path, { force: true })
         let serial = 0
         const browser = {
           newContext: async () => {
@@ -603,6 +802,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
             })
             const lateSuccess = request('late-success')
             const homeRequest = request('home-return')
+            const priorProbeRequest = request('prior-probe')
             const locator = (selector) => ({
               first() {
                 return this
@@ -610,21 +810,17 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               count: () => 0,
               all: () => [],
               waitFor: () => {
-                if (
-                  returned &&
-                  fault === 'missing' &&
-                  selector.startsWith('main')
-                )
-                  throw new Error('target row absent')
+                if (returned && missingRow && selector.startsWith('main'))
+                  throw missingRowError
               },
               innerText: () =>
                 selector.includes('data-new-comment')
                   ? 'A new body'
-                  : returned && !['unread', 'diagnostic-write'].includes(fault)
+                  : returned && !['unread', 'stalled'].includes(fault)
                     ? 'Target'
                     : '1 new comment',
               getAttribute: () =>
-                returned && !['unread', 'diagnostic-write'].includes(fault)
+                returned && !['unread', 'stalled'].includes(fault)
                   ? 'Target'
                   : 'Target Unread',
               allInnerTexts: () => Promise.resolve([]),
@@ -635,8 +831,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                       all: () => [
                         {
                           innerText: () =>
-                            !returned ||
-                            ['unread', 'diagnostic-write'].includes(fault)
+                            !returned || ['unread', 'stalled'].includes(fault)
                               ? 'New comment'
                               : '',
                           isVisible: () => true,
@@ -671,11 +866,28 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                   listeners.request(failed)
                   listeners.requestfailed(failed)
                   listeners.request(lateSuccess)
+                  listeners.request(priorProbeRequest)
                 },
                 frames: () => [],
                 url: () => url,
-                evaluate: () => true,
-                screenshot: async ({ path }) => {
+                evaluate: (fn) => {
+                  if (!fn.toString().includes('scrollHeight')) return true
+                  if (homeReturnFailed) {
+                    const duringProbe = request('home-probe')
+                    listeners.request(duringProbe)
+                    listeners.requestfailed(duringProbe)
+                    listeners.requestfailed(priorProbeRequest)
+                  }
+                  calls.push('overflow')
+                  probeStarted.resolve()
+                  if (fault === 'missing' || supplementProbeFailed)
+                    throw new Error('overflow evaluation failed')
+                  if (fault === 'stalled') return new Promise(() => {})
+                  return viewport === 'mobile'
+                },
+                screenshot: async (options) => {
+                  homePng = options
+                  const { path } = options
                   calls.push('home-png')
                   if (fault === 'diagnostic-write')
                     throw new Error('diagnostic write failed')
@@ -716,10 +928,28 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
           apply: () => {
             calls.push('failure-setup')
           },
-          capture: async ({ action, page, screenshot }) => {
+          capture: async ({ action, page, screenshot, viewerLoading }) => {
             const phase = walkthrough.steps.find(
               (s) => s.action === action,
             ).phase
+            const index = walkthrough.steps.findIndex(
+              (s) => s.action === action,
+            )
+            assert.deepEqual(screenshot, {
+              path: join(
+                root,
+                `${String(index + 1).padStart(2, '0')}-${phase}-${viewport}.png`,
+              ),
+              fullPage: true,
+            })
+            assert.equal(
+              viewerLoading,
+              [
+                'republish-updated-file/pending',
+                'confirm-agent-publish/action',
+                'confirm-agent-publish/pending',
+              ].includes(`${walkthrough.taskId}/${phase}`),
+            )
             calls.push(phase)
             if (phase === 'failure' && walkthrough.continuousHomeReturn)
               page.setUrl(`https://localhost${action.path}`)
@@ -733,11 +963,22 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               : {}
           },
         })
-        if (fault) {
-          await assert.rejects(
+        if (homeReturnFailed) {
+          const rejected = assert.rejects(
             capturing,
-            fault === 'missing' ? /target row absent/ : /remains unread/,
+            missingRow
+              ? (error) => error === missingRowError
+              : /remains unread/,
           )
+          if (fault === 'stalled') {
+            await probeStarted.promise
+            t.mock.timers.tick(2000)
+            await flush()
+            assert.deepEqual(homePng, homeOptions)
+          }
+          await rejected
+          assert.deepEqual(homePng, homeOptions)
+          assert.equal(calls[calls.indexOf('home-png') - 1], 'overflow')
           assert.ok(calls.includes('success'))
           assert.ok(calls.includes('app-home'))
           assert.equal(calls.at(-1), 'close')
@@ -765,9 +1006,18 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               },
             ],
           })
+          assert.equal(
+            diagnostic.evidence.bottomBarProbeFailed,
+            ['missing', 'stalled'].includes(fault) ? true : undefined,
+          )
+          if (diagnostic.file)
+            assert.equal(
+              await readFile(join(root, diagnostic.file), 'utf8'),
+              'png',
+            )
           assert.equal(diagnostic.status, 'failed')
-          assert.equal(diagnostic.final.visible, fault !== 'missing')
-          if (fault !== 'missing') assert.equal(diagnostic.final.unread, true)
+          assert.equal(diagnostic.final.visible, !missingRow)
+          if (!missingRow) assert.equal(diagnostic.final.unread, true)
           assert.equal(diagnostic.inspection.body, 'A new body')
           assert.equal(
             diagnostic.file,
@@ -822,6 +1072,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
             assert.equal(step.video, video.file)
         }
         if (walkthrough.continuousHomeReturn) {
+          assert.deepEqual(homePng, homeOptions)
           assert.ok(calls.indexOf('success') < calls.indexOf('app-home'))
           assert.ok(calls.indexOf('home-png') < calls.indexOf('close'))
           // Navigation failures belong to their initiation phase. A late
@@ -850,7 +1101,10 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
         }
         const serialized = JSON.parse(JSON.stringify(record))
         if (walkthrough.continuousHomeReturn) {
+          if (supplementProbeFailed)
+            assert.equal(await readFile(homeOptions.path, 'utf8'), 'png')
           assert.deepEqual(serialized.supplements[0].evidence, {
+            ...(supplementProbeFailed ? { bottomBarProbeFailed: true } : {}),
             failedRequests: [
               {
                 url: 'https://localhost/home-return?t=%5Bredacted%5D',
