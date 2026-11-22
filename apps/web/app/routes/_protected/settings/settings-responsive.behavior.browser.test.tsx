@@ -1,7 +1,7 @@
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { expect, test } from 'vitest'
+import { expect, onTestFinished, test } from 'vitest'
 import { commands } from 'vitest/browser'
 import {
   fits as fitsDimension,
@@ -247,13 +247,35 @@ const shell = {
     initial: 'O',
   },
 }
+function createTestRouter(...args: Parameters<typeof createMemoryRouter>) {
+  const router = createMemoryRouter(...args)
+  onTestFinished(() => router.dispose())
+  return router
+}
+
+test('disposes both routers when fixture setup throws', () => {
+  const disposals: Array<ReturnType<typeof vi.fn>> = []
+  // Completion hooks run in reverse registration order.
+  onTestFinished(() => {
+    expect(disposals).toHaveLength(2)
+    for (const dispose of disposals) expect(dispose).toHaveBeenCalledTimes(1)
+  })
+  expect(() => {
+    for (let index = 0; index < 2; index++) {
+      const router = createTestRouter([{ path: '/', element: <div /> }])
+      disposals.push(vi.spyOn(router, 'dispose'))
+    }
+    throw new Error('fixture setup failed')
+  }).toThrow('fixture setup failed')
+})
+
 async function withScreen(
   content: ReactNode,
   inspect: (container: HTMLDivElement) => Promise<void>,
   path = '/settings/bots',
   settingsShell = true,
 ) {
-  const router = createMemoryRouter(
+  const router = createTestRouter(
     [
       {
         element: (
@@ -270,15 +292,17 @@ async function withScreen(
   container.id = 'settings-layout-fixture'
   document.body.appendChild(container)
   const root = createRoot(container)
+  const unmount = vi.spyOn(root, 'unmount')
   try {
     await act(async () => root.render(<RouterProvider router={router} />))
     await waitForBrowserLayout()
     await inspect(container)
   } finally {
     await act(async () => root.unmount())
-    router.dispose()
     container.remove()
   }
+  expect(unmount).toHaveBeenCalledOnce()
+  expect(container.isConnected).toBe(false)
 }
 function fits(element: Element) {
   const rect = element.getBoundingClientRect()
@@ -316,7 +340,7 @@ for (const width of [600, 979, 980])
       )
       const destination =
         kind === 'artifacts' ? '/a/report0' : '/projects/reports0'
-      const router = createMemoryRouter(
+      const router = createTestRouter(
         [
           { path: destination, element: <div /> },
           {
@@ -397,6 +421,7 @@ for (const width of [600, 979, 980])
       const container = document.createElement('div')
       document.body.appendChild(container)
       const root = createRoot(container)
+      const unmount = vi.spyOn(root, 'unmount')
       try {
         await act(async () => root.render(<RouterProvider router={router} />))
         await waitForBrowserLayout()
@@ -495,10 +520,12 @@ for (const width of [600, 979, 980])
         }
       } finally {
         await act(async () => root.unmount())
-        router.dispose()
         container.remove()
         await page.viewport(1280, 800)
       }
+      expect(unmount).toHaveBeenCalledOnce()
+      expect(container.isConnected).toBe(false)
+      expect([innerWidth, innerHeight]).toEqual([1280, 800])
     })
 
 for (const theme of ['light', 'dark'])
@@ -507,6 +534,7 @@ for (const theme of ['light', 'dark'])
       const previousTheme = document.documentElement.dataset.theme
       document.documentElement.dataset.theme = theme
       language.locale = locale
+      const originalWrite = navigator.clipboard.writeText
       const clipboard = vi
         .spyOn(navigator.clipboard, 'writeText')
         .mockResolvedValue()
@@ -637,6 +665,9 @@ for (const theme of ['light', 'dark'])
         else document.documentElement.dataset.theme = previousTheme
         await page.viewport(1280, 800)
       }
+      expect(navigator.clipboard.writeText).toBe(originalWrite)
+      expect(document.documentElement.dataset.theme).toBe(previousTheme)
+      expect([innerWidth, innerHeight]).toEqual([1280, 800])
     })
 
     test(`expiry number/unit and badges fit (${theme}, ${locale})`, async () => {
@@ -1553,7 +1584,7 @@ test.each(['members', 'artifacts'] as const)(
     const initialSearch = new URLSearchParams(
       fields.map(({ key, initialValue }) => [key, initialValue]),
     ).toString()
-    const router = createMemoryRouter(
+    const router = createTestRouter(
       [
         {
           element: (
@@ -1619,6 +1650,7 @@ test.each(['members', 'artifacts'] as const)(
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
+    const unmount = vi.spyOn(root, 'unmount')
     try {
       await act(async () => root.render(<RouterProvider router={router} />))
       await waitForBrowserLayout()
@@ -1690,17 +1722,30 @@ test.each(['members', 'artifacts'] as const)(
       }
     } finally {
       await act(async () => root.unmount())
-      router.dispose()
       container.remove()
       language.locale = 'en'
     }
+    expect(unmount).toHaveBeenCalledOnce()
+    expect(container.isConnected).toBe(false)
+    expect(language.locale).toBe('en')
   },
 )
 
 test.each(['light', 'dark', 'system-dark'] as const)(
   'Slack reauthorization explanation meets 7:1 in %s',
   async (theme) => {
+    if (theme === 'system-dark') {
+      const original = document.documentElement.dataset.theme
+      onTestFinished(() => {
+        if (original === undefined)
+          delete document.documentElement.dataset.theme
+        else document.documentElement.dataset.theme = original
+      })
+      document.documentElement.dataset.theme = 'light'
+    }
     const before = document.documentElement.dataset.theme
+    const darkScheme = matchMedia('(prefers-color-scheme: dark)')
+    const previousDark = darkScheme.matches
     try {
       if (theme === 'system-dark') {
         delete document.documentElement.dataset.theme
@@ -1708,7 +1753,7 @@ test.each(['light', 'dark', 'system-dark'] as const)(
         expect(matchMedia('(prefers-color-scheme: dark)').matches).toBe(true)
       } else document.documentElement.dataset.theme = theme
       for (const admin of [true, false]) {
-        const router = createMemoryRouter([
+        const router = createTestRouter([
           {
             element: (
               <TooltipProvider>
@@ -1740,6 +1785,7 @@ test.each(['light', 'dark', 'system-dark'] as const)(
         const container = document.createElement('div')
         document.body.appendChild(container)
         const root = createRoot(container)
+        const unmount = vi.spyOn(root, 'unmount')
         try {
           await act(async () => root.render(<RouterProvider router={router} />))
           await waitForBrowserLayout()
@@ -1753,14 +1799,19 @@ test.each(['light', 'dark', 'system-dark'] as const)(
           }
         } finally {
           await act(async () => root.unmount())
-          router.dispose()
           container.remove()
         }
+        expect(unmount).toHaveBeenCalledOnce()
+        expect(container.isConnected).toBe(false)
       }
     } finally {
       if (before === undefined) delete document.documentElement.dataset.theme
       else document.documentElement.dataset.theme = before
-      if (theme === 'system-dark') await commands.setMermaidColorScheme(null)
+      if (theme === 'system-dark') {
+        await commands.setMermaidColorScheme(null)
+        expect(darkScheme.matches).toBe(previousDark)
+      }
+      expect(document.documentElement.dataset.theme).toBe(before)
     }
   },
 )

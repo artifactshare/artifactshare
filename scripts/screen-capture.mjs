@@ -654,7 +654,7 @@ export const fullPageCaptureStyle =
   '[data-bottom-tab-bar] { position: static !important; }'
 
 // A short page already anchors its fixed bar at the bottom of the image.
-async function bottomBarCaptureStyle(page) {
+export async function bottomBarCaptureStyle(page) {
   const overflows = await page.evaluate(
     () => window.document.documentElement.scrollHeight > window.innerHeight,
   )

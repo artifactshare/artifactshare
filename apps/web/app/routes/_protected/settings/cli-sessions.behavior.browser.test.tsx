@@ -1,4 +1,9 @@
-import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  RouterContextProvider,
+  useLoaderData,
+} from 'react-router'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
@@ -8,6 +13,31 @@ import en from '~/i18n/en.json'
 import type { Locale } from '~/i18n/messages'
 import { fits, waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
+
+import { action as tokensAction } from './tokens'
+
+const services = vi.hoisted(() => ({
+  revoke: vi.fn(),
+  'revoke-cli-family': vi.fn(),
+  'revoke-all-cli-families': vi.fn(),
+}))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'current-user' }),
+}))
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/services/dev-screen-state.server', () => ({
+  isDevScreenStateRequest: vi.fn(),
+}))
+vi.mock('~/services/api-tokens.server', () => ({
+  createApiToken: vi.fn(),
+  listApiTokens: vi.fn(),
+  revokeApiToken: services.revoke,
+}))
+vi.mock('~/services/cli-refresh-credentials.server', () => ({
+  listCliRefreshCredentialFamilies: vi.fn(),
+  revokeCliRefreshCredentialFamily: services['revoke-cli-family'],
+  revokeAllCliRefreshCredentialFamilies: services['revoke-all-cli-families'],
+}))
 
 const language = vi.hoisted(() => ({ locale: 'en' as Locale }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
@@ -198,13 +228,63 @@ for (const locale of ['en', 'ja'] as const)
         ],
         createdToken: null,
       }
-      let attempts = 0
-      let reloading = false
-      let release: () => void
-      let markReloadStarted!: () => void
-      const reloadStarted = new Promise<void>((resolve) => {
-        markReloadStarted = resolve
+      if (intent === 'revoke-all-cli-families')
+        data.cliFamilies.push({
+          ...data.cliFamilies[0],
+          familyId: 'family-87654321',
+          deviceName: 'Laptop',
+        })
+      const targetedRows =
+        intent === 'revoke'
+          ? []
+          : data.cliFamilies.map((family) =>
+              page.getByText(
+                `${family.deviceName} · ${family.familyId.slice(-8)}`,
+                { exact: true },
+              ),
+            )
+      let currentData = data
+      let reloadStarted = false
+      let release!: () => void
+      const service = services[intent].mockReset()
+      service.mockImplementation(async (_db, _user, id) => {
+        const attempt = service.mock.calls.length
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        if (attempt === 1) throw new Error('service unavailable')
+        if (intent === 'revoke') {
+          if (attempt === 2) return false
+          currentData = {
+            ...data,
+            tokens: data.tokens.filter((token) => token.id !== id),
+          }
+          return true
+        }
+        currentData = {
+          ...data,
+          cliFamilies:
+            intent === 'revoke-all-cli-families'
+              ? []
+              : data.cliFamilies.filter((family) => family.familyId !== id),
+        }
+        return 'ok'
       })
+      const expectedIds =
+        intent === 'revoke'
+          ? ['api']
+          : intent === 'revoke-cli-family'
+            ? ['family-12345678']
+            : []
+      const expectDispatch = (attempt: number) =>
+        vi.waitFor(() =>
+          expect(service).toHaveBeenNthCalledWith(
+            attempt,
+            {},
+            'current-user',
+            ...expectedIds,
+          ),
+        )
       let releaseLoader!: () => void
       const loaderGate = new Promise<void>((resolve) => {
         releaseLoader = resolve
@@ -217,25 +297,19 @@ for (const locale of ['en', 'ja'] as const)
               <ApiTokensPage loaderData={useLoaderData<typeof data>()} />
             ),
             loader: async () => {
-              if (reloading) {
-                markReloadStarted()
+              if (currentData !== data) {
+                reloadStarted = true
                 await loaderGate
-                return { ...data, tokens: [], cliFamilies: [] }
               }
-              return data
+              return currentData
             },
-            action: async ({ request }) => {
-              expect((await request.formData()).get('intent')).toBe(intent)
-              attempts++
-              await new Promise<void>((resolve) => {
-                release = resolve
-              })
-              if (attempts === 1) return { kind: 'revoke-failed', intent }
-              if (intent === 'revoke' && attempts === 2)
-                return { kind: 'revoke-unavailable', intent }
-              reloading = true
-              return { kind: 'revoked', intent }
-            },
+            action: (args) =>
+              tokensAction({
+                ...args,
+                context: new RouterContextProvider(),
+                url: new URL(args.request.url),
+                pattern: '/settings/tokens',
+              }),
           },
         ],
         { initialEntries: ['/settings/tokens'] },
@@ -253,6 +327,8 @@ for (const locale of ['en', 'ja'] as const)
               : `${copy['team.tokens.revoke']} ${intent === 'revoke' ? tokenName : 'Reports · 12345678'}`,
           exact: true,
         })
+        for (const row of targetedRows)
+          await expect.element(row).toBeInTheDocument()
         await trigger.click()
         const dialog = page.getByRole('alertdialog')
         if (intent !== 'revoke-all-cli-families') {
@@ -311,6 +387,7 @@ for (const locale of ['en', 'ja'] as const)
           exact: true,
         })
         await action.click()
+        await expectDispatch(1)
         await expect.element(dialog).toHaveAttribute('data-state', 'open')
         await expect.element(dialog).toBeVisible()
         await expect.element(busy).toBeDisabled()
@@ -329,10 +406,6 @@ for (const locale of ['en', 'ja'] as const)
         await userEvent.keyboard('{Escape}')
         await expect.element(dialog).toHaveAttribute('data-state', 'open')
         await expect.element(dialog).toBeVisible()
-        await vi.waitFor(() => {
-          expect(attempts).toBe(1)
-          expect(release).toBeDefined()
-        })
         await act(async () => release())
         const failureMessage =
           locale === 'en'
@@ -370,7 +443,7 @@ for (const locale of ['en', 'ja'] as const)
           }
         }
         await retry.click()
-        await vi.waitFor(() => expect(attempts).toBe(2))
+        await expectDispatch(2)
         await expect.element(busy).toBeDisabled()
         await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
         await act(async () => release())
@@ -391,16 +464,20 @@ for (const locale of ['en', 'ja'] as const)
           await expect.element(close).toHaveFocus()
           await userEvent.keyboard('{Escape}')
           await expect.element(dialog).not.toBeInTheDocument()
-          expect(attempts).toBe(2)
+          expect(service).toHaveBeenCalledTimes(2)
           await trigger.click()
           await action.click()
-          await vi.waitFor(() => expect(attempts).toBe(3))
+          await expectDispatch(3)
           await act(async () => release())
         }
-        await reloadStarted
+        await vi.waitFor(() => expect(reloadStarted).toBe(true))
+        for (const row of targetedRows)
+          await expect.element(row).toBeInTheDocument()
         await expect.element(dialog).toHaveAttribute('data-state', 'open')
         await expect.element(busy).toBeDisabled()
         await act(async () => releaseLoader())
+        for (const row of targetedRows)
+          await expect.element(row).not.toBeInTheDocument()
         await expect.element(dialog).not.toBeInTheDocument()
         await expect.element(trigger).not.toBeInTheDocument()
         await expect
