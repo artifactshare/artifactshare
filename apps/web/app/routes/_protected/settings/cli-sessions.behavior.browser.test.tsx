@@ -228,7 +228,7 @@ for (const locale of ['en', 'ja'] as const)
         ],
         createdToken: null,
       }
-      if (intent === 'revoke-all-cli-families')
+      if (intent !== 'revoke')
         data.cliFamilies.push({
           ...data.cliFamilies[0],
           familyId: 'family-87654321',
@@ -237,7 +237,10 @@ for (const locale of ['en', 'ja'] as const)
       const targetedRows =
         intent === 'revoke'
           ? []
-          : data.cliFamilies.map((family) =>
+          : (intent === 'revoke-cli-family'
+              ? data.cliFamilies.slice(0, 1)
+              : data.cliFamilies
+            ).map((family) =>
               page.getByText(
                 `${family.deviceName} · ${family.familyId.slice(-8)}`,
                 { exact: true },
@@ -491,6 +494,36 @@ for (const locale of ['en', 'ja'] as const)
             }),
           )
           .toHaveFocus()
+        if (intent === 'revoke-cli-family') {
+          const alreadyRevoked = page.getByText(
+            copy['team.tokens.cli.alreadyRevoked'],
+            { exact: true },
+          )
+          await expect.element(alreadyRevoked).not.toBeInTheDocument()
+
+          // The remaining session was revoked elsewhere before this confirmation.
+          service.mockImplementationOnce(() => {
+            currentData = { ...data, cliFamilies: [] }
+            return 'noop'
+          })
+          await page
+            .getByRole('button', {
+              name: `${copy['team.tokens.revoke']} Laptop · 87654321`,
+              exact: true,
+            })
+            .click()
+          await action.click()
+          await vi.waitFor(() =>
+            expect(service).toHaveBeenNthCalledWith(
+              3,
+              {},
+              'current-user',
+              'family-87654321',
+            ),
+          )
+          await expect.element(dialog).not.toBeInTheDocument()
+          await expect.element(alreadyRevoked).toBeVisible()
+        }
       } finally {
         await act(async () => root.unmount())
         router.dispose()

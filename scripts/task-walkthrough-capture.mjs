@@ -533,22 +533,27 @@ export async function waitForSheetAnimations(
 
 async function captureWalkthroughPng(page, options, viewerLoading = false) {
   let style
+  let bottomBarProbeFailed = false
   if (options.fullPage && !viewerLoading) {
     let timer
     try {
       style = await Promise.race([
         bottomBarCaptureStyle(page),
-        new Promise((resolveDeadline) => {
-          timer = setTimeout(resolveDeadline, 2_000)
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Overflow probe timed out')),
+            2_000,
+          )
         }),
       ])
-    } catch (error) {
-      if (!/execution context.*destroyed/i.test(error.message)) throw error
+    } catch {
+      bottomBarProbeFailed = true
     } finally {
       clearTimeout(timer)
     }
   }
   await page.screenshot(style ? { ...options, style } : options)
+  return bottomBarProbeFailed ? { bottomBarProbeFailed: true } : {}
 }
 
 export async function captureStep({
@@ -574,8 +579,12 @@ export async function captureStep({
     page,
     animationTiming,
   )
-  await captureWalkthroughPng(page, screenshot, viewerLoading)
-  return evidence
+  const pngEvidence = await captureWalkthroughPng(
+    page,
+    screenshot,
+    viewerLoading,
+  )
+  return { ...evidence, ...pngEvidence }
 }
 
 async function applyAction({
@@ -1213,10 +1222,11 @@ export async function captureRun({
             evidence: requestEvidence(),
           }
           try {
-            await captureWalkthroughPng(branch.page, {
+            const pngEvidence = await captureWalkthroughPng(branch.page, {
               path: join(outDir, diagnosticFile),
               fullPage: true,
             })
+            Object.assign(diagnostic.evidence, pngEvidence)
             diagnostic.file = diagnosticFile
           } catch {
             /* Preserve the original journey failure. */
@@ -1235,7 +1245,7 @@ export async function captureRun({
         const animation = await waitForSheetAnimations(branch.page)
         if (animation.status !== 'completed')
           throw new Error('Home screenshot animations did not settle')
-        await captureWalkthroughPng(branch.page, {
+        const pngEvidence = await captureWalkthroughPng(branch.page, {
           path: join(outDir, supplementFile),
           fullPage: true,
         })
@@ -1244,7 +1254,7 @@ export async function captureRun({
           purpose: 'home-read',
           description: 'Continuous return to Home',
           file: supplementFile,
-          evidence: requestEvidence(),
+          evidence: { ...requestEvidence(), ...pngEvidence },
           result: {
             ...result,
             inspectionStepId: steps.at(-1).id,

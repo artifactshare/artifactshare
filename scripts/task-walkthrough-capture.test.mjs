@@ -460,11 +460,6 @@ test('normal full-page PNG selects the style after settling and bounds only the 
       action: { kind: 'inspect', selector: 'main' },
       screenshot: { ...originalOptions },
     })
-    if (probe === 'error') {
-      await assert.rejects(capture, (error) => error === probeError)
-      assert.deepEqual(fake.events, ['load', 'inspect', 'overflow'])
-      continue
-    }
     await flush()
     if (probe === 'stalled') {
       assert.deepEqual(fake.events, ['load', 'inspect', 'overflow'])
@@ -479,7 +474,11 @@ test('normal full-page PNG selects the style after settling and bounds only the 
         ? { ...originalOptions, style: fullPageCaptureStyle }
         : originalOptions,
     ])
-    await capture
+    const evidence = await capture
+    assert.equal(
+      evidence.bottomBarProbeFailed,
+      ['error', 'stalled', 'replaced'].includes(probe) ? true : undefined,
+    )
   }
 })
 
@@ -754,10 +753,19 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
     for (const walkthrough of taskWalkthroughs) {
       for (const [viewport, fault] of ['desktop', 'mobile'].flatMap((size) =>
         (walkthrough.continuousHomeReturn
-          ? [null, 'unread', 'missing', 'diagnostic-write', 'stalled']
+          ? [
+              null,
+              'unread',
+              'missing',
+              'diagnostic-write',
+              'stalled',
+              ...(size === 'mobile' ? ['supplement-probe'] : []),
+            ]
           : [null]
         ).map((problem) => [size, problem]),
       )) {
+        const supplementProbeFailed = fault === 'supplement-probe'
+        const homeReturnFailed = Boolean(fault) && !supplementProbeFailed
         const calls = []
         const missingRowError = new Error('target row absent')
         const missingRow = fault === 'missing' || fault === 'diagnostic-write'
@@ -766,15 +774,19 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
         const homeOptions = {
           path: join(
             root,
-            fault
+            homeReturnFailed
               ? `failed-home-return-${viewport}.png`
               : `supplement-home-read-${viewport}.png`,
           ),
           fullPage: true,
-          ...(viewport === 'mobile' && fault !== 'stalled'
+          ...(viewport === 'mobile' &&
+          !supplementProbeFailed &&
+          !['stalled', 'missing'].includes(fault)
             ? { style: fullPageCaptureStyle }
             : {}),
         }
+        if (walkthrough.continuousHomeReturn)
+          await rm(homeOptions.path, { force: true })
         let serial = 0
         const browser = {
           newContext: async () => {
@@ -860,7 +872,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                 url: () => url,
                 evaluate: (fn) => {
                   if (!fn.toString().includes('scrollHeight')) return true
-                  if (fault) {
+                  if (homeReturnFailed) {
                     const duringProbe = request('home-probe')
                     listeners.request(duringProbe)
                     listeners.requestfailed(duringProbe)
@@ -868,6 +880,8 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                   }
                   calls.push('overflow')
                   probeStarted.resolve()
+                  if (fault === 'missing' || supplementProbeFailed)
+                    throw new Error('overflow evaluation failed')
                   if (fault === 'stalled') return new Promise(() => {})
                   return viewport === 'mobile'
                 },
@@ -949,7 +963,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               : {}
           },
         })
-        if (fault) {
+        if (homeReturnFailed) {
           const rejected = assert.rejects(
             capturing,
             missingRow
@@ -992,6 +1006,15 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               },
             ],
           })
+          assert.equal(
+            diagnostic.evidence.bottomBarProbeFailed,
+            ['missing', 'stalled'].includes(fault) ? true : undefined,
+          )
+          if (diagnostic.file)
+            assert.equal(
+              await readFile(join(root, diagnostic.file), 'utf8'),
+              'png',
+            )
           assert.equal(diagnostic.status, 'failed')
           assert.equal(diagnostic.final.visible, !missingRow)
           if (!missingRow) assert.equal(diagnostic.final.unread, true)
@@ -1078,7 +1101,10 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
         }
         const serialized = JSON.parse(JSON.stringify(record))
         if (walkthrough.continuousHomeReturn) {
+          if (supplementProbeFailed)
+            assert.equal(await readFile(homeOptions.path, 'utf8'), 'png')
           assert.deepEqual(serialized.supplements[0].evidence, {
+            ...(supplementProbeFailed ? { bottomBarProbeFailed: true } : {}),
             failedRequests: [
               {
                 url: 'https://localhost/home-return?t=%5Bredacted%5D',
