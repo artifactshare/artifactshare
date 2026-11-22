@@ -289,7 +289,12 @@ function sectionPage({ height = 900, targets = {}, failFull = false } = {}) {
     evaluate: (fn) => {
       // Exercise the actual browser callback with a scrolled viewport.
       const previous = globalThis.window
-      globalThis.window = { scrollX: 5, scrollY: 1200 }
+      globalThis.window = {
+        scrollX: 5,
+        scrollY: 1200,
+        innerHeight: height,
+        document: { documentElement: { scrollHeight: 8000 } },
+      }
       try {
         return fn()
       } finally {
@@ -800,6 +805,7 @@ for (const duplicate of [false, true]) {
       ready: { selector: '#busy' },
       actionResponse: actionFixture,
       page: {
+        evaluate: () => false,
         locator: () => ({ waitFor: () => events.push('ready') }),
         screenshot: () => {
           assert.deepEqual(events, ['ready', 'read'])

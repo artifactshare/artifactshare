@@ -653,6 +653,14 @@ export function fileName(screen, state, viewport, theme, locale, section) {
 export const fullPageCaptureStyle =
   '[data-bottom-tab-bar] { position: static !important; }'
 
+// A short page already anchors its fixed bar at the bottom of the image.
+async function bottomBarCaptureStyle(page) {
+  const overflows = await page.evaluate(
+    () => window.document.documentElement.scrollHeight > window.innerHeight,
+  )
+  return overflows ? fullPageCaptureStyle : undefined
+}
+
 /** Full-page failure propagates; crop failures remain individual manifest entries. */
 export async function captureScreenImages({
   page,
@@ -666,9 +674,10 @@ export async function captureScreenImages({
 }) {
   await waitForReady(page, ready)
   await actionResponse?.waitForMatch()
+  const style = await bottomBarCaptureStyle(page)
   await page.screenshot({
     path: join(outDir, entry.file),
-    style: fullPageCaptureStyle,
+    style,
     fullPage: true,
   })
   const full = { ...entry, ...(await afterFullCapture()) }
@@ -705,7 +714,7 @@ export async function captureScreenImages({
       )
       await page.screenshot({
         path: join(outDir, file),
-        style: fullPageCaptureStyle,
+        style,
         fullPage: true,
         clip,
       })
@@ -1056,7 +1065,7 @@ async function captureScreensLocked({
           try {
             await page.screenshot({
               path: join(outDir, diagnosticFile),
-              style: fullPageCaptureStyle,
+              style: await bottomBarCaptureStyle(page),
               fullPage: true,
             })
             savedDiagnostic = true

@@ -357,7 +357,7 @@ export async function loader({
     plan: 'team',
     interval: 'monthly',
     currency: 'usd',
-    amount: 20,
+    amount: BILLING_PRICES.team.usd.month,
     renewsAt: '2030-01-01T00:00:00.000Z',
     cancelAtPeriodEnd: false,
   }

@@ -4,6 +4,7 @@ import * as billing from '~/services/billing.server'
 import * as billingUsage from '~/services/billing-usage.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { BILLING_PRICES } from '~/lib/billing-prices'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
@@ -138,6 +139,7 @@ describe('/settings/billing loader', () => {
                 plan: 'team',
                 interval: 'monthly',
                 currency: 'usd',
+                amount: BILLING_PRICES.team.usd.month,
               })
             : null,
         )
