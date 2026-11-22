@@ -109,13 +109,15 @@ describe('/dev/sign-in loader', () => {
       request: new Request('https://artifactshare.test/dev/sign-in'),
     } as never)
 
-    expect(result.scenarios).not.toEqual(
-      expect.arrayContaining([
-        'settings-tokens/created-secret',
-        'settings-billing/subscribed',
-        'viewer/bridge-attribution',
-      ]),
-    )
+    expect(result.scenarios).toContain('settings/result-warning')
+    for (const scenario of [
+      'settings-tokens/created-secret',
+      'settings-billing/subscribed',
+      'settings-billing/near-limit',
+      'settings-billing/continuing-near-limit',
+      'viewer/bridge-attribution',
+    ])
+      expect(result.scenarios).not.toContain(scenario)
   })
 })
 

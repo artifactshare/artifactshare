@@ -133,6 +133,65 @@ export function hasDefaultExport(source) {
   })
 }
 
+const settingsStatuses = {
+  '/settings': ['ok', 'invalid', 'removed-transfer-failed'],
+  '/settings/general': ['ok', 'invalid'],
+  '/settings/billing': ['invalid', 'checkout-success', 'checkout-cancelled'],
+  '/settings/external-access': ['ok'],
+  '/settings/integrations': ['slack-disconnected'],
+}
+
+function matchesLocaleWrapper(leaf, ownerFile, localePath) {
+  return (
+    localePath &&
+    leaf.file === 'ja.' + ownerFile &&
+    normalizePath(localePath) === normalizePath(leaf.path)
+  )
+}
+
+function checkSettingsCapture(screen, owner, leaves, failures) {
+  if (!/^\/settings(?:\/|$)/.test(owner.path)) return
+  for (const [locale, route] of Object.entries(screen.route)) {
+    const wrapper =
+      locale === 'ja' &&
+      leaves.find((leaf) => matchesLocaleWrapper(leaf, owner.file, route))
+    for (const state of screen.states ?? []) {
+      const url = new URL(
+        route + (state.setup?.query ?? ''),
+        'https://capture.test',
+      )
+      const status = url.searchParams.get('status')
+      const label = screen.id + '/' + state.id + ' ' + url.pathname + url.search
+      if (
+        url.origin !== 'https://capture.test' ||
+        url.pathname.replace(/\/+$/, '') !== (wrapper?.path ?? owner.path)
+      ) {
+        failures.push(
+          'wrong Settings capture route: ' +
+            label +
+            ' (owner ' +
+            owner.path +
+            ')',
+        )
+      } else if (
+        status !== null &&
+        !settingsStatuses[owner.path]?.includes(status)
+      ) {
+        failures.push(
+          'unregistered Settings status: ' +
+            screen.id +
+            '/' +
+            state.id +
+            ' ' +
+            url.pathname +
+            '?status=' +
+            status,
+        )
+      }
+    }
+  }
+}
+
 export function checkScreenLedger({
   screens: suppliedScreens,
   excludedRoutes: ledgerExclusions = excludedRoutes,
@@ -160,6 +219,13 @@ export function checkScreenLedger({
     ledgerExclusions.map(({ file, reason }) => [file, reason]),
   )
   const failures = []
+  for (const screen of ledgerScreens) {
+    const module = screenModules?.find((entry) => entry.screen === screen)
+    const owner = module
+      ? leaves.find((leaf) => leaf.file === module.file)
+      : leaves.find((leaf) => leaf.path === screen.route.en)
+    if (owner) checkSettingsCapture(screen, owner, leaves, failures)
+  }
   for (const screen of ledgerScreens)
     for (const state of screen.states ?? []) {
       for (const interaction of state.setup?.interactions ?? []) {
@@ -199,8 +265,8 @@ export function checkScreenLedger({
     if (!leaf.file.startsWith('ja.')) return undefined
     const sibling = screenModulesByFile.get(leaf.file.slice('ja.'.length))
     if (
-      sibling?.screen.route.ja &&
-      normalizePath(sibling.screen.route.ja) === normalizePath(leaf.path)
+      sibling &&
+      matchesLocaleWrapper(leaf, sibling.file, sibling.screen.route.ja)
     )
       return sibling
   }

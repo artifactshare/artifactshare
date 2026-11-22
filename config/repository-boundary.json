@@ -158,6 +158,7 @@
     "scripts/worktree-activity-lock.mjs",
     "scripts/worktree-activity-lock.test.mjs",
     "scripts/screen-ledger.mjs",
+    "scripts/settings-status-producers.mjs",
     "scripts/screen-scenarios.json",
     "scripts/generate-task-ledger-types.mjs",
     "scripts/task-ledger-screen-references.d.ts",

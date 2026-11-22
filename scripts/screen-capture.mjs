@@ -303,7 +303,13 @@ export async function navigateForCapture(page, url, expectedStatus) {
 export async function waitForReady(page, ready) {
   if (!ready) return
   try {
-    await page.locator(ready.selector).waitFor({
+    let readyTarget = page.locator(ready.selector)
+    for (const cue of ready.visibleWith ?? []) {
+      readyTarget = readyTarget.and(
+        page.locator(`body:has(:is(${cue}):visible) *`),
+      )
+    }
+    await readyTarget.waitFor({
       state: 'visible',
       timeout: ready.timeoutMs ?? 30_000,
     })

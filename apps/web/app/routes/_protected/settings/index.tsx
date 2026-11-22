@@ -120,20 +120,38 @@ export const screen = {
     },
     {
       id: 'result-success',
-      description:
-        'Successful settings action announced above the page content',
-      setup: { query: '?status=ok' },
+      description: 'Saved confirmation',
+      setup: {
+        query: '?status=ok',
+        ready: {
+          selector: '[role=status]:has-text("Saved.")',
+          description: 'Saved confirmation',
+        },
+      },
     },
     {
       id: 'result-warning',
-      description: 'Informational settings warning above the page content',
-      setup: { query: '?status=removed-transfer-failed' },
+      description: 'Removed member with a file available for transfer',
+      setup: {
+        scenario: 'settings/result-warning',
+        query: '?status=removed-transfer-failed',
+        ready: {
+          selector:
+            'body:has([role=status]:has-text("The member was removed, but their files could not be transferred. Try again from Removed members."):visible) #removed-members tbody tr:has(td :text-matches("(^|: )1$")) button:enabled:text-is("Transfer files")',
+          description: 'Removed member with a file available for transfer',
+        },
+      },
     },
     {
       id: 'result-error',
-      description:
-        'Failed settings action with an error alert above the page content',
-      setup: { query: '?status=forbidden' },
+      description: 'Invalid input alert',
+      setup: {
+        query: '?status=invalid',
+        ready: {
+          selector: '[role=alert]:has-text("Check your input and try again.")',
+          description: 'Invalid input alert',
+        },
+      },
     },
     {
       id: 'default',

@@ -1,3 +1,4 @@
+import { RouterContextProvider } from 'react-router'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -298,6 +299,42 @@ function renderPage({
 }
 
 describe('/settings role actions', () => {
+  test.each([
+    ['ok', 'removed'],
+    ['invalid', 'removed-transfer-failed'],
+  ])(
+    'redirects after removal and a transfer returning %s',
+    async (kind, status) => {
+      services.removeWorkspaceMember.mockResolvedValueOnce({ kind: 'ok' })
+      services.transferRemovedMemberAssets.mockResolvedValueOnce({ kind })
+      const request = postForm({
+        intent: 'remove-member',
+        userId: 'target',
+        recipientUserId: 'owner',
+      })
+      const response = await action({
+        request,
+        context: new RouterContextProvider(),
+        params: {},
+        url: new URL(request.url),
+        pattern: '/settings',
+      })
+      expect(response.headers.get('Location')).toBe(
+        '/settings?status=' + status,
+      )
+    },
+  )
+  test('redirects invalid owner input to the invalid banner', async () => {
+    const request = postForm({ intent: 'grant-admin' })
+    const response = await action({
+      request,
+      context: new RouterContextProvider(),
+      params: {},
+      url: new URL(request.url),
+      pattern: '/settings',
+    })
+    expect(response.headers.get('Location')).toBe('/settings?status=invalid')
+  })
   test.each([
     ['grant-admin', 'grantWorkspaceAdmin'],
     ['revoke-admin', 'revokeWorkspaceAdmin'],
