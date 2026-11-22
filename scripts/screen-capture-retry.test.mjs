@@ -989,3 +989,29 @@ test('only the root recovery logo may link outside the consent banner', (t) => {
   region.replaceChildren(logo)
   assert.equal(rootErrorLogoAtTopLeft(doc), false)
 })
+
+test('an uncaught page error fails the capture with its first message', async () => {
+  const { assertNoPageError, captureFailure, shouldRetryCapture } =
+    await import('./screen-capture.mjs')
+  assert.doesNotThrow(() => assertNoPageError([]))
+  let thrown
+  try {
+    assertNoPageError([
+      new TypeError(
+        'Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx\n    at stack',
+      ),
+      new Error('second'),
+    ])
+  } catch (error) {
+    thrown = error
+  }
+  const failure = captureFailure(thrown)
+  assert.equal(failure.kind, 'page_error')
+  assert.equal(
+    failure.message,
+    'the page threw an uncaught error: Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx',
+  )
+  assert.equal(failure.count, 2)
+  // A page that never hydrated is reported, not retried into a pass.
+  assert.equal(shouldRetryCapture(failure, 0, 2, true), false)
+})

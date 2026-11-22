@@ -168,3 +168,22 @@ test('unit tests reject an unmocked Workers runtime import', async () => {
     'cloudflare:workers requires an explicit mock in unit tests',
   )
 })
+
+test('the dev server scans the client entry, root and routes for dependencies', async () => {
+  // Without this scan the first browser load re-optimizes dependencies and the
+  // pages that were loading get 504 for them and never hydrate.
+  const { default: config } = await import('./vite.config')
+  const resolved =
+    typeof config === 'function'
+      ? config({ command: 'build', mode: 'test', isPreview: false })
+      : config
+  const entries = (await resolved).optimizeDeps?.entries
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      'app/entry.client.tsx',
+      'app/root.tsx',
+      'app/routes/**/*.tsx',
+      '!app/**/*.test.tsx',
+    ]),
+  )
+})

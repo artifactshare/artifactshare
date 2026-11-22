@@ -195,6 +195,23 @@ export class CaptureFailure extends Error {
 }
 
 /**
+ * An uncaught exception in the page means the screen may not be what a user
+ * gets: a client entry that failed to load leaves server HTML that never
+ * hydrates, yet still matches every readiness selector. Fail the capture and
+ * name the first error instead of recording that page.
+ */
+export function assertNoPageError(pageErrors) {
+  if (pageErrors.length === 0) return
+  const [first] = pageErrors
+  const message = first instanceof Error ? first.message : String(first)
+  throw new CaptureFailure(
+    'page_error',
+    `the page threw an uncaught error: ${message.split('\n')[0]}`,
+    { count: pageErrors.length },
+  )
+}
+
+/**
  * Retries for readiness timeouts only: a dev server that is still warming
  * up (or a transient local D1 error) fails the first visit and passes the
  * next; every other failure kind is deterministic and reported at once.
@@ -988,6 +1005,8 @@ async function captureScreensLocked({
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
       page = await context.newPage()
+      const pageErrors = []
+      page.on('pageerror', (error) => pageErrors.push(error))
       url = captureUrlForState(
         baseUrl,
         pathFor(screen, locale, seeds, state),
@@ -1005,6 +1024,7 @@ async function captureScreensLocked({
         state.setup?.ready ?? screen.ready,
         state.expectedError,
       )
+      assertNoPageError(pageErrors)
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
       if (interactions.length > 0) beforeInteractions = false
@@ -1072,7 +1092,10 @@ async function captureScreensLocked({
         await page.waitForLoadState('networkidle')
       const entries = await captureScreenImages({
         expectedError: state.expectedError,
-        beforeFullCapture: () => assertCaptureSurface(page, screen.id, state),
+        beforeFullCapture: async () => {
+          assertNoPageError(pageErrors)
+          await assertCaptureSurface(page, screen.id, state)
+        },
         ready: state.setup?.ready ?? screen.ready,
         actionResponse,
         page,
