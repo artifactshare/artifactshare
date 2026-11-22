@@ -33,7 +33,7 @@ export function RevokeDialog({
   const all = target.intent === 'revoke-all-cli-families'
   const unavailable = result === 'revoke-unavailable'
   let actionLabel: string | null = t(
-    all ? 'team.tokens.cli.revokeAll' : 'team.tokens.revoke',
+    all ? 'team.tokens.cli.revokeAllConfirm.action' : 'team.tokens.revoke',
   )
   let banner
   if (unavailable) {
@@ -61,9 +61,12 @@ export function RevokeDialog({
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={t(
-        all ? 'team.tokens.cli.revokeAllConfirm.title' : 'team.tokens.revoke',
-      )}
+      contentClassName="max-h-dvh overflow-y-auto [overflow-wrap:anywhere]"
+      title={
+        all
+          ? t('team.tokens.cli.revokeAllConfirm.title')
+          : t('team.tokens.revoke.title', { name: target.name })
+      }
       description={
         all
           ? t('team.tokens.cli.revokeAllConfirm.body')

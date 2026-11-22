@@ -17,6 +17,7 @@ export function ConfirmActionDialog({
   onOpenChange,
   onConfirm,
   title,
+  contentClassName,
   description,
   action,
   pending,
@@ -34,6 +35,7 @@ export function ConfirmActionDialog({
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
   title: string
+  contentClassName?: string
   description: string
   action: string | null
   pendingLabel?: string
@@ -65,6 +67,7 @@ export function ConfirmActionDialog({
       ) : null}
       <AlertDialogContent
         size="sm"
+        className={contentClassName}
         onCloseAutoFocus={(event) => {
           if (!returnFocusId) return
           const focusTarget =
