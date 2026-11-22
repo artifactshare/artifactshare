@@ -199,15 +199,27 @@ export class CaptureFailure extends Error {
  * gets: a client entry that failed to load leaves server HTML that never
  * hydrates, yet still matches every readiness selector. Fail the capture and
  * name the first error instead of recording that page.
+ *
+ * A hydration mismatch is reported the same way but React recovers from it by
+ * rendering that tree on the client, so the page the capture records is the
+ * hydrated one. It is returned as a warning for the run log rather than a
+ * failure; relative times rendered on both sides of a minute boundary cause it.
  */
 export function assertNoPageError(pageErrors) {
-  if (pageErrors.length === 0) return
-  const [first] = pageErrors
-  const message = first instanceof Error ? first.message : String(first)
-  throw new CaptureFailure(
-    'page_error',
-    `the page threw an uncaught error: ${message.split('\n')[0]}`,
-    { count: pageErrors.length },
+  const message = (error) =>
+    (error instanceof Error ? error.message : String(error)).split('\n')[0]
+  const recovered = pageErrors.filter((error) =>
+    message(error).startsWith('Hydration failed because'),
+  )
+  const fatal = pageErrors.filter((error) => !recovered.includes(error))
+  if (fatal.length > 0)
+    throw new CaptureFailure(
+      'page_error',
+      `the page threw an uncaught error: ${message(fatal[0])}`,
+      { count: fatal.length },
+    )
+  return recovered.map(
+    (error) => `the page recovered from an error: ${message(error)}`,
   )
 }
 
@@ -1024,7 +1036,11 @@ async function captureScreensLocked({
         state.setup?.ready ?? screen.ready,
         state.expectedError,
       )
-      assertNoPageError(pageErrors)
+      for (const warning of assertNoPageError(pageErrors))
+        console.error(
+          `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
+        )
+      pageErrors.length = 0
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
       if (interactions.length > 0) beforeInteractions = false
@@ -1093,7 +1109,10 @@ async function captureScreensLocked({
       const entries = await captureScreenImages({
         expectedError: state.expectedError,
         beforeFullCapture: async () => {
-          assertNoPageError(pageErrors)
+          for (const warning of assertNoPageError(pageErrors))
+            console.error(
+              `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
+            )
           await assertCaptureSurface(page, screen.id, state)
         },
         ready: state.setup?.ready ?? screen.ready,

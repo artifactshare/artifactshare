@@ -991,9 +991,19 @@ test('only the root recovery logo may link outside the consent banner', (t) => {
 })
 
 test('an uncaught page error fails the capture with its first message', async () => {
-  const { assertNoPageError, captureFailure, shouldRetryCapture } =
+  const { assertNoPageError, captureFailure } =
     await import('./screen-capture.mjs')
-  assert.doesNotThrow(() => assertNoPageError([]))
+  assert.deepEqual(assertNoPageError([]), [])
+  assert.deepEqual(
+    assertNoPageError([
+      new Error(
+        "Hydration failed because the server rendered text didn't match the client.\nmore",
+      ),
+    ]),
+    [
+      "the page recovered from an error: Hydration failed because the server rendered text didn't match the client.",
+    ],
+  )
   let thrown
   try {
     assertNoPageError([
