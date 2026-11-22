@@ -56,11 +56,17 @@ function errorName(error: unknown) {
   return ERROR_NAMES.has(error.name) ? error.name : 'Error'
 }
 
+// An extended SQLite code such as `SQLITE_CONSTRAINT_UNIQUE` is logged as its
+// listed base code.
 function resultCode(error: unknown) {
   if (!(error instanceof Error)) return undefined
-  return error.message
-    .match(RESULT_CODE)
-    ?.find((code) => RESULT_CODES.has(code))
+  for (const token of error.message.match(RESULT_CODE) ?? []) {
+    const code = [...RESULT_CODES].find(
+      (listed) => token === listed || token.startsWith(`${listed}_`),
+    )
+    if (code) return code
+  }
+  return undefined
 }
 
 // The stack starts with `name: message` (the name the error had when it was

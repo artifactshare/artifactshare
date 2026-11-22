@@ -95,3 +95,10 @@ test('reduces custom error names, unknown values and methods to fixed values', (
     cause: 'Unknown',
   })
 })
+
+test('logs an extended SQLite code as its base code', () => {
+  expect(
+    logged(new Error('UNIQUE constraint failed: SQLITE_CONSTRAINT_UNIQUE')),
+  ).toMatchObject({ code: 'SQLITE_CONSTRAINT' })
+  expect(logged(new Error('SQLITE_SYNTHETICVALUE'))).not.toHaveProperty('code')
+})
