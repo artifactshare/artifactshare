@@ -124,7 +124,7 @@ export const screen = {
       setup: {
         query: '?status=ok',
         ready: {
-          selector: '[role=status]:has-text("Saved.")',
+          selector: '[role="status"][data-settings-status="ok"]',
           description: 'Saved confirmation',
         },
       },
@@ -137,7 +137,10 @@ export const screen = {
         query: '?status=removed-transfer-failed',
         ready: {
           selector:
-            'body:has([role=status]:has-text("The member was removed, but their files could not be transferred. Try again from Removed members."):visible) #removed-members tbody tr:has(td :text-matches("(^|: )1$")) button:enabled:text-is("Transfer files")',
+            '#removed-members tbody tr:has([data-owned-file-count="1"]:visible) [data-transfer-removed-files]:enabled',
+          visibleWith: [
+            '[role="status"][data-settings-status="removed-transfer-failed"]',
+          ],
           description: 'Removed member with a file available for transfer',
         },
       },
@@ -148,7 +151,7 @@ export const screen = {
       setup: {
         query: '?status=invalid',
         ready: {
-          selector: '[role=alert]:has-text("Check your input and try again.")',
+          selector: '[role="alert"][data-settings-status="invalid"]',
           description: 'Invalid input alert',
         },
       },
@@ -725,7 +728,7 @@ function RemovedMemberRow({
         <TeamUser name={displayName(member)} email={member.email} wrapOnPhone />
       </TableCell>
       <TableCell>
-        <TeamMuted>
+        <TeamMuted data-owned-file-count={member.ownedArtifactCount}>
           <span className="md:hidden">
             {t('team.removedMembers.artifacts')}:{' '}
           </span>
@@ -741,6 +744,7 @@ function RemovedMemberRow({
             disabled={
               !canManage || member.ownedArtifactCount === 0 || pendingForMember
             }
+            data-transfer-removed-files
             onClick={() => setTransferOpen(true)}
           >
             {t('team.removedMembers.transfer')}

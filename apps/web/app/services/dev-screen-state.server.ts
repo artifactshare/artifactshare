@@ -301,7 +301,8 @@ export async function ensureDevScreenState(
         name: `Screen state: ${scenario}`,
         created_at: now,
         plan,
-        storage_quota_bytes: plan === 'team' ? 100_000_000_000 : 5_000_000_000,
+        storage_quota_bytes:
+          plan === 'free' ? 5_000_000_000 : PLAN_STORAGE_QUOTA_BYTES[plan],
         link_sharing_enabled: 1,
         external_posting_enabled: 0,
         ...linkExpiryStartingColumns(),
@@ -375,9 +376,9 @@ export async function ensureDevScreenState(
       .updateTable('workspaces')
       .set({
         storage_used_bytes: scenario.endsWith('high-usage')
-          ? 95_000_000_000
+          ? PLAN_STORAGE_QUOTA_BYTES.team * 0.95
           : 0,
-        storage_quota_bytes: 100_000_000_000,
+        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.team,
         plan: 'team',
         stripe_subscription_id: null,
         stripe_subscription_status: 'none',

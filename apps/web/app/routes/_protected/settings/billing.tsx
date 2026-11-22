@@ -187,7 +187,10 @@ export const screen = {
         query: '?status=checkout-success',
         ready: {
           selector:
-            'body:not(:has(p:text-is("Billing is not available yet. Please check back later."))):has([role=status]:has-text("Checkout completed. Your plan may take a moment to update."):visible) p:text-is("Checkout completed. Your plan will appear here once billing sync finishes.")',
+            'body:not(:has([data-billing-unavailable])) [data-billing-checkout-pending]',
+          visibleWith: [
+            '[role="status"][data-settings-status="checkout-success"]',
+          ],
           description: 'Completed checkout awaiting plan sync',
         },
       },
@@ -200,7 +203,11 @@ export const screen = {
         query: '?status=checkout-cancelled',
         ready: {
           selector:
-            'body:not(:has(p:text-is("Billing is not available yet. Please check back later."))):has([role=status]:has-text("Checkout was canceled."):visible):has([data-plan="plus"]:visible) [data-plan="team"]',
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="status"][data-settings-status="checkout-cancelled"]',
+            '[data-plan="plus"]',
+          ],
           description: 'Cancelled checkout with plan cards',
         },
       },
@@ -213,7 +220,11 @@ export const screen = {
         query: '?status=invalid',
         ready: {
           selector:
-            'body:not(:has(p:text-is("Billing is not available yet. Please check back later."))):has([role=alert]:has-text("Check your input and try again."):visible):has([data-plan="plus"]:visible) [data-plan="team"]',
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="alert"][data-settings-status="invalid"]',
+            '[data-plan="plus"]',
+          ],
           description: 'Invalid checkout with plan cards',
         },
       },
@@ -248,7 +259,11 @@ export const screen = {
         scenario: 'settings-billing/near-limit',
         ready: {
           selector:
-            'body:not(:has(p:text-is("Billing is not available yet. Please check back later."))):has([role="alert"]:has-text("Choose a plan from the options on this page to increase the limit."):visible):has([data-plan="plus"]:visible) [data-plan="team"]',
+            'body:not(:has([data-billing-unavailable])) [data-plan="team"]',
+          visibleWith: [
+            '[role="alert"] [data-billing-upgrade-guidance]',
+            '[data-plan="plus"]',
+          ],
           description: 'Configured near-limit billing controls',
         },
       },
@@ -335,9 +350,9 @@ export async function loader({
   const billingConfigured =
     stripeConfigured ||
     useDevFixture ||
-    isDevScreenStateRequest(request, 'settings-billing/purchase') ||
     (canManage &&
-      isDevScreenStateRequest(request, 'settings-billing/near-limit'))
+      (isDevScreenStateRequest(request, 'settings-billing/purchase') ||
+        isDevScreenStateRequest(request, 'settings-billing/near-limit')))
   const devContract: SubscriptionContract = {
     plan: 'team',
     interval: 'monthly',
@@ -720,7 +735,7 @@ function NearLimitNextStep({
   if (presentation === 'team-without-subscription')
     return <SupportContact topic="storage" />
   if (billingConfigured && presentation === 'purchase')
-    return <p>{t('team.usage.nearLimitAdmin')}</p>
+    return <p data-billing-upgrade-guidance>{t('team.usage.nearLimitAdmin')}</p>
   return null
 }
 
@@ -890,7 +905,9 @@ function CheckoutPendingNotice() {
   const { t } = useT()
 
   return (
-    <TeamMutedParagraph>{t('billing.checkout.pending')}</TeamMutedParagraph>
+    <TeamMutedParagraph data-billing-checkout-pending>
+      {t('billing.checkout.pending')}
+    </TeamMutedParagraph>
   )
 }
 

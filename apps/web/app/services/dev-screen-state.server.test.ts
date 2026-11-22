@@ -2819,9 +2819,36 @@ test('long-owner capture restores its owner profile without changing other users
   }
 })
 
+test.each(['team', 'plus'] as const)(
+  'new %s scenario workspaces use the production plan quota',
+  async (plan) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings/result-warning',
+        '2026-07-31T12:00:00.000Z',
+        plan,
+      )
+      const workspace = await db
+        .selectFrom('workspaces')
+        .select('storage_quota_bytes')
+        .where('id', '=', workspaceId)
+        .executeTakeFirstOrThrow()
+      expect(workspace.storage_quota_bytes).toBe(PLAN_STORAGE_QUOTA_BYTES[plan])
+    } finally {
+      await db.destroy()
+    }
+  },
+)
+
 test.each([
-  ['team-unsubscribed', 0, 100_000_000_000],
-  ['team-unsubscribed-high-usage', 95_000_000_000, 100_000_000_000],
+  ['team-unsubscribed', 0, PLAN_STORAGE_QUOTA_BYTES.team],
+  [
+    'team-unsubscribed-high-usage',
+    PLAN_STORAGE_QUOTA_BYTES.team * 0.95,
+    PLAN_STORAGE_QUOTA_BYTES.team,
+  ],
   [
     'near-limit',
     PLAN_STORAGE_QUOTA_BYTES.free * 0.95,

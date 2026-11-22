@@ -85,6 +85,7 @@ describe('/settings/billing loader', () => {
     ['near-limit', false, true, true, true, false],
     ['near-limit', true, true, true, true, false],
     ['purchase', false, true, true, true, false],
+    ['purchase', false, false, true, false, false],
     [null, true, true, true, false, false],
     ['query-only', true, true, true, false, false],
     ['team-unsubscribed', true, true, true, false, false],

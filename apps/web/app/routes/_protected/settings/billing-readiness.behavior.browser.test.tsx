@@ -5,6 +5,8 @@ import { expect, test, vi } from 'vitest'
 import { server } from 'vitest/browser'
 import type { ScreenReady } from '~/types/screen'
 import { bindI18n } from '~/lib/i18n'
+import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
+import { StatusBanner } from './+components/settings-banner'
 import BillingPage, { screen } from './billing'
 
 declare module 'vitest/browser' {
@@ -13,7 +15,6 @@ declare module 'vitest/browser' {
   }
 }
 
-vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
 vi.mock('~/services/billing.server', () => ({}))
 vi.mock('~/services/billing-usage.server', () => ({}))
 
@@ -131,6 +132,96 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
         router.dispose()
         container.remove()
       }
+    }
+  },
+)
+
+test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
+  '%s capture is ready with Japanese billing copy',
+  async (id) => {
+    const setup = screen.states.find((state) => state.id === id)?.setup
+    if (!setup?.ready) throw new Error('Missing billing readiness for ' + id)
+    const query = setup.query ?? ''
+    const status = new URLSearchParams(query).get('status')
+    const quota = PLAN_STORAGE_QUOTA_BYTES.free
+    const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
+      canManage: true,
+      plan: 'free',
+      stripeSubscriptionStatus: 'none',
+      hasSubscription: false,
+      billingConfigured: true,
+      defaultCurrency: 'jpy',
+      initialPlan: 'plus',
+      initialInterval: 'monthly',
+      storageUsedBytes: id === 'near-limit' ? quota * 0.95 : 0,
+      storageQuotaBytes: quota,
+      activeProjectCount: 0,
+      projectLimit: 5,
+      entryContext: 'default',
+      externalPostingEnabled: false,
+      contract: null,
+      monthlyEstimate: null,
+      showOverageProjection: false,
+      includedBytes: quota,
+      overageProjection: null,
+      contributorCount: null,
+    }
+    const router = createMemoryRouter(
+      [
+        {
+          id: 'root',
+          path: '/',
+          loader: () => ({ locale: 'ja' }),
+          element: (
+            <>
+              {status && <StatusBanner status={status} />}
+              <Outlet context={{ currentUserIsAdmin: true }} />
+            </>
+          ),
+          children: [
+            { index: true, element: <BillingPage loaderData={data} /> },
+            {
+              path: 'unconfigured',
+              element: (
+                <BillingPage
+                  loaderData={{ ...data, billingConfigured: false }}
+                />
+              ),
+            },
+          ],
+        },
+      ],
+      {
+        initialEntries: ['/unconfigured'],
+        hydrationData: { loaderData: { root: { locale: 'ja' } } },
+      },
+    )
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<RouterProvider router={router} />))
+      const unavailable = container.querySelector('[data-billing-unavailable]')
+      if (!unavailable) throw new Error('Missing billing-unavailable notice')
+      expect(unavailable.textContent).toBe(
+        bindI18n('ja').t('billing.unavailable'),
+      )
+      await act(async () => {
+        await router.navigate('/' + query)
+      })
+      expect(container.textContent).toContain(
+        bindI18n('ja').t('billing.usage.storageTitle'),
+      )
+      await server.commands.waitForScreenReady(setup.ready)
+      container.appendChild(unavailable)
+      await expect(
+        server.commands.waitForScreenReady({ ...setup.ready, timeoutMs: 100 }),
+      ).rejects.toThrow(
+        'ready condition was not met: ' + setup.ready.description,
+      )
+    } finally {
+      await act(async () => root.unmount())
+      router.dispose()
+      container.remove()
     }
   },
 )

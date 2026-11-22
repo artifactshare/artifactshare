@@ -75,7 +75,7 @@ export const screen = {
       setup: {
         query: '?status=ok',
         ready: {
-          selector: '[role=status]:has-text("Saved.")',
+          selector: '[role="status"][data-settings-status="ok"]',
           description: 'Saved confirmation',
         },
       },
@@ -86,7 +86,7 @@ export const screen = {
       setup: {
         query: '?status=invalid',
         ready: {
-          selector: '[role=alert]:has-text("Check your input and try again.")',
+          selector: '[role="alert"][data-settings-status="invalid"]',
           description: 'Invalid input alert',
         },
       },
