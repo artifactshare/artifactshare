@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import { env } from 'cloudflare:workers'
 import type { AnyMessageBlock } from 'slack-cloudflare-workers'
 import { nanoid } from 'nanoid'
@@ -579,7 +580,8 @@ async function revokeSlackBotToken(botToken: string): Promise<boolean> {
     return (
       result.error === 'invalid_auth' || result.error === 'account_inactive'
     )
-  } catch {
+  } catch (error) {
+    logErrorDiagnostic('slack.revoke', error)
     return false
   }
 }

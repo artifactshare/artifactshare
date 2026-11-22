@@ -1,3 +1,11 @@
+import {
+  createRequestHandler,
+  RouterContextProvider,
+  useRouteError,
+} from 'react-router'
+import { Window } from 'happy-dom'
+import entry from './entry.server'
+import { SUPPORTED_LOCALES, MESSAGES } from '~/i18n/messages'
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('~/middleware/auth', () => ({
@@ -11,6 +19,8 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 import {
+  Layout,
+  ErrorBoundary,
   isProjectTimezoneRoute,
   links,
   loader,
@@ -60,7 +70,7 @@ describe('project timezone routes', () => {
     ],
     [['routes/_protected/projects.archived'], false],
     [['routes/_protected/projects.$id.files'], false],
-    [['routes/_protected/settings/activity'], false],
+    [['routes/_protected/settings/_content/activity'], false],
     [[], false],
   ] as const)('%s', (routeIds, expected) => {
     expect(isProjectTimezoneRoute(routeIds.map((id) => ({ id })))).toBe(
@@ -312,3 +322,129 @@ import { sessionMiddleware } from '~/middleware/auth'
 test('report admission precedes session middleware', () => {
   expect(middleware).toEqual([sandboxBlockReportMiddleware, sessionMiddleware])
 })
+
+test.each(SUPPORTED_LOCALES)(
+  'renders a localized root error document in %s with and without loader data',
+  async (locale) => {
+    const window = new Window()
+    try {
+      for (const hasData of [true, false]) {
+        const handler = createRequestHandler(
+          {
+            entry: { module: { default: entry, handleError: () => {} } },
+            routes: {
+              root: {
+                id: 'root',
+                path: '/',
+                module: {
+                  Layout,
+                  links,
+                  default: () => {
+                    throw new Error('render fault')
+                  },
+                  ErrorBoundary: () => (
+                    <ErrorBoundary error={useRouteError()} />
+                  ),
+                  loader: () => {
+                    if (!hasData) throw new Error('loader fault')
+                    return {
+                      locale,
+                      appOrigin: 'https://artifactshare.com',
+                      analyticsConsent: { showBanner: true },
+                    }
+                  },
+                },
+              },
+            },
+            assets: {
+              routes: {
+                root: {
+                  id: 'root',
+                  path: '/',
+                  module: 'root.js',
+                  hasAction: false,
+                  hasLoader: true,
+                  hasClientAction: false,
+                  hasClientLoader: false,
+                  hasClientMiddleware: false,
+                  hasErrorBoundary: true,
+                  clientActionModule: undefined,
+                  clientLoaderModule: undefined,
+                  clientMiddlewareModule: undefined,
+                  hydrateFallbackModule: undefined,
+                },
+              },
+              entry: { module: 'entry.js', imports: [] },
+              url: 'manifest.js',
+              version: 'test',
+            },
+            publicPath: '/',
+            assetsBuildDirectory: 'build/client',
+            future: {},
+            ssr: true,
+            isSpaMode: false,
+            prerender: [],
+            routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
+          },
+          'test',
+        )
+        const context = new RouterContextProvider()
+        if (!hasData) context.set(linkDomainContext, { shareableId: 'example' })
+        const res = await handler(
+          new Request(
+            hasData
+              ? 'https://artifactshare.com/'
+              : 'https://example.artifactshare.link/',
+            {
+              headers: {
+                'Accept-Language': hasData
+                  ? locale === 'en'
+                    ? 'ja'
+                    : 'en'
+                  : locale,
+              },
+            },
+          ),
+          context,
+        )
+        const doc = new window.DOMParser().parseFromString(
+          await res.text(),
+          'text/html',
+        )
+        expect(res.status).toBe(500)
+        expect(doc.documentElement.lang).toBe(locale)
+        expect(doc.querySelector('main h1')?.textContent).toBe(
+          MESSAGES[locale]['root.error.unexpected.title'],
+        )
+        expect(
+          doc.querySelector('main [data-slot="empty-description"]')
+            ?.textContent,
+        ).toBe(MESSAGES[locale]['root.error.unexpected.description'])
+        const linksOutsideConsent = Array.from(
+          doc.querySelectorAll('a'),
+        ).filter((link) => !link.closest('[data-analytics-consent-banner]'))
+        expect(linksOutsideConsent).toHaveLength(1)
+        expect(
+          linksOutsideConsent[0]
+            ?.closest('[data-screen-capture-error]')
+            ?.getAttribute('data-screen-capture-error'),
+        ).toBe('route-error-boundary')
+        expect(linksOutsideConsent[0]?.getAttribute('href')).toBe(
+          'https://artifactshare.com/',
+        )
+        expect(linksOutsideConsent[0]?.getAttribute('aria-label')).toBe(
+          MESSAGES[locale]['vw.homeLink'],
+        )
+        expect(
+          Boolean(
+            doc.querySelector('[data-analytics-consent-banner][role="region"]'),
+          ),
+        ).toBe(hasData)
+        expect(doc.querySelector('#app-topbar,nav')).toBeNull()
+        expect(doc.querySelector('link[rel="icon"]')).not.toBeNull()
+      }
+    } finally {
+      await window.happyDOM.close()
+    }
+  },
+)

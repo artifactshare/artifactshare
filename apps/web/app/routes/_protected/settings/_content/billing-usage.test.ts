@@ -1,3 +1,4 @@
+import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -64,8 +65,8 @@ vi.mock('~/services/team-management.server', () => ({
   countWorkspaceContributors: countContributorsMock,
 }))
 
-import { loadUsage as loader } from './+components/billing-usage.server'
-import { shouldShowUsageWarning } from './+components/billing-usage'
+import { loadUsage as loader } from '../+components/billing-usage.server'
+import { shouldShowUsageWarning } from '../+components/billing-usage'
 
 describe('shouldShowUsageWarning', () => {
   test.each([
@@ -133,6 +134,22 @@ describe('/settings/usage loader', () => {
     })
   })
 
+  test('keeps usage data when projection fails', async () => {
+    projectionMock.mockRejectedValueOnce(new Error('query failed'))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const result = await loader({ context: new RouterContextProvider() })
+    expect(result.overageProjection).toBeNull()
+    expect(log.mock.calls).toEqual([
+      [
+        {
+          operation: 'billing.usage.projection',
+          cause: 'Error',
+          frames: expect.any(Array),
+        },
+      ],
+    ])
+    log.mockRestore()
+  })
   test('free plan skips projection and contributor count reflects team only', async () => {
     workspaceRow.current = {
       id: 'ws1',

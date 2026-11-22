@@ -1,6 +1,6 @@
 import { Button } from '~/components/ui/button'
 import { Form } from 'react-router'
-import { FilterSelect } from '../../+components/filter-select'
+import { FilterSelect } from '../../../+components/filter-select'
 import { useT } from '~/hooks/use-t'
 import { visibilityLabel } from './artifacts-table'
 

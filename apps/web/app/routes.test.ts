@@ -154,3 +154,42 @@ describe('route discovery', () => {
     ).toEqual([])
   })
 })
+
+test('settings page URLs share a content boundary and resource URLs belong to the shell', () => {
+  const routes = discoverRoutes(false).map(toRouteObject)
+  const settings = 'routes/_protected/settings'
+  for (const page of [
+    'index',
+    'activity',
+    'analytics',
+    'billing',
+    'bots',
+    'general',
+    'integrations',
+    'external-access',
+    'tokens',
+    'inventory/index',
+    'inventory/projects',
+    'inventory/artifacts',
+    'billing-preview',
+    'cli-sessions',
+    'usage',
+    'recipients',
+  ]) {
+    const resource = [
+      'billing-preview',
+      'cli-sessions',
+      'usage',
+      'recipients',
+    ].includes(page)
+    const matches = matchRoutes(
+      routes,
+      '/settings/' + page.replace(/index$/, ''),
+    )
+    const ids = matches?.map((match) => match.route.id)
+    expect(ids).toContain(settings + '/_layout')
+    expect(ids?.includes(settings + '/_content/_layout')).toBe(!resource)
+    expect(ids?.at(-1)).toBe(settings + (resource ? '/' : '/_content/') + page)
+    expect(Boolean(matches?.at(-1)?.route.index)).toBe(page.endsWith('index'))
+  }
+})

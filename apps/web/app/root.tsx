@@ -13,9 +13,17 @@ import { env } from 'cloudflare:workers'
 import type { Route } from './+types/root'
 import { useEffect } from 'react'
 import './app.css'
-import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
-import { getLocale } from '~/lib/i18n.server'
-import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { useErrorDocument } from '~/lib/error-document'
+import { BrandMark } from '~/components/app/brand-mark'
+import { guideFocusRingRoundedClassName } from '~/components/app/guide-styles'
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+} from '~/components/ui/empty'
+import { documentLocale } from '~/lib/document-locale.server'
+import { MESSAGES } from '~/i18n/messages'
 import { sandboxBlockReportMiddleware } from '~/middleware/sandbox-block-report.server'
 import { sessionMiddleware } from '~/middleware/auth'
 import { linkDomainContext, userContext } from '~/middleware/context'
@@ -25,7 +33,6 @@ import { getAppTheme } from '~/lib/app-theme.server'
 import { DEFAULT_APP_THEME, type AppTheme } from '~/lib/app-theme'
 import { isMaintenanceRequest } from '~/lib/maintenance'
 import { readLastLoginMethod } from '~/lib/auth-cookies'
-import { hasSafeArtifactInviteNext } from '~/lib/safe-next'
 import { resolveAnalyticsConsent } from '~/lib/analytics-consent'
 import { getAnalyticsConsent } from '~/lib/analytics-consent.server'
 import { AnalyticsConsentBanner } from '~/components/app/analytics-consent-banner'
@@ -75,6 +82,11 @@ export const links: Route.LinksFunction = () => [
 export const middleware = [sandboxBlockReportMiddleware, sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
+  if (
+    new URL(request.url).pathname === '/settings/general' &&
+    isDevScreenStateRequest(request, 'settings-general/root-error')
+  )
+    throw new Error('Root screen fixture')
   const linkDomainState = context.get(linkDomainContext)
   const linkDomain = linkDomainState !== null
   // Keep direct internal viewer navigation canonical on link hosts.
@@ -83,15 +95,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     ? `/a/${linkDomainState.shareableId}`
     : null
   const user = context.get(userContext)
-  const pathname = url.pathname
-  const hasSafeNext = hasSafeArtifactInviteNext(url.searchParams.get('next'))
-  const forced =
-    linkDomain || (pathname === '/' && (user || hasSafeNext))
-      ? null
-      : isPublicPagePath(pathname)
-        ? pathGuideLocale(pathname)
-        : null
-  const locale = forced ?? getLocale(request, user?.locale)
+  const locale = documentLocale(request, { url, user, linkDomain })
   const appTheme = getAppTheme(request)
   const notice = user ? await getLatestVisibleNotice() : undefined
   const noticeState = readUpdatesNotice(request)
@@ -162,7 +166,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData<typeof loader>('root')
-  const locale: Locale = data?.locale ?? DEFAULT_LOCALE
+  const { locale, appOrigin } = useErrorDocument(data)
   const appTheme: AppTheme = data?.appTheme ?? DEFAULT_APP_THEME
   const linkViewerPath = data?.linkViewerPath ?? null
   useEffect(() => {
@@ -175,7 +179,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     )
   }, [linkViewerPath])
   return (
-    <html lang={locale} data-theme={appTheme}>
+    <html lang={locale} data-app-origin={appOrigin} data-theme={appTheme}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -228,34 +232,39 @@ export default function App() {
   )
 }
 
-export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  let message = 'Oops!'
-  let details = 'An unexpected error occurred.'
-  let stack: string | undefined
-
-  if (isRouteErrorResponse(error)) {
-    message = error.status === 404 ? '404' : 'Error'
-    details =
-      error.status === 404
-        ? 'The requested page could not be found.'
-        : error.statusText || details
-  } else if (import.meta.env.DEV && error && error instanceof Error) {
-    details = error.message
-    stack = error.stack
-  }
-
+export function ErrorBoundary({
+  error,
+}: Pick<Route.ErrorBoundaryProps, 'error'>) {
+  const data = useRouteLoaderData<typeof loader>('root')
+  const { locale, appOrigin } = useErrorDocument(data)
+  const messages = MESSAGES[locale]
+  const kind =
+    isRouteErrorResponse(error) && error.status === 404
+      ? 'missing'
+      : 'unexpected'
   return (
     <main
       data-screen-capture-error="route-error-boundary"
-      className="mx-auto w-full max-w-5xl p-4 pt-16"
+      className="flex min-h-dvh flex-col p-4"
     >
-      <h1>{message}</h1>
-      <p>{details}</p>
-      {stack && (
-        <pre className="w-full overflow-x-auto p-4">
-          <code>{stack}</code>
-        </pre>
-      )}
+      <a
+        href={appOrigin ? new URL('/', appOrigin).href : '/'}
+        aria-label={messages['vw.homeLink']}
+        className={`inline-flex items-center gap-2 self-start font-semibold ${guideFocusRingRoundedClassName}`}
+      >
+        <BrandMark size={16} aria-hidden="true" />
+        Artifact Share
+      </a>
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>
+            <h1>{messages[`root.error.${kind}.title`]}</h1>
+          </EmptyTitle>
+          <EmptyDescription>
+            {messages[`root.error.${kind}.description`]}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     </main>
   )
 }

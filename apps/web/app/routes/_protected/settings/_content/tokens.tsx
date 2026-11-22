@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import type { Route } from './+types/tokens'
 import { stringValue } from '~/lib/form'
 import { requireUser } from '~/middleware/context'
@@ -16,7 +17,7 @@ import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { ScreenSpec } from '~/types/screen'
 import ApiTokensPage, {
   MAX_TOKEN_NAME_LENGTH,
-} from './+components/ai-tools-page'
+} from '../+components/ai-tools-page'
 
 export default function TokensRoute({
   loaderData,
@@ -316,6 +317,7 @@ export async function action({
     return { kind: 'revoked', intent }
   } catch (error) {
     if (error instanceof Response) throw error
+    logErrorDiagnostic('tokens.revoke', error)
     return { kind: 'revoke-failed', intent }
   }
 }

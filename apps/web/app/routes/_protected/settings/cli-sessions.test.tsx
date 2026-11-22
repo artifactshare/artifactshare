@@ -26,7 +26,7 @@ vi.mock('~/services/cli-refresh-credentials.server', () => ({
 const language = vi.hoisted(() => ({ locale: 'en' as Locale }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 import { CliSessionsSection } from './+components/cli-sessions-section'
-import { action } from './tokens'
+import { action } from './_content/tokens'
 test.each([
   [
     'en',

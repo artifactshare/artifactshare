@@ -10,12 +10,12 @@ import {
   useSearchParams,
 } from 'react-router'
 import { SettingsPage } from '~/components/form/settings-page'
-import { ConfirmActionDialog } from './+components/confirm-action-dialog'
+import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
 import {
   SettingsBanner,
   StatusBanner,
   settingsNotice,
-} from './+components/settings-banner'
+} from '../+components/settings-banner'
 import { Inline } from '~/components/layout/inline'
 import { Stack } from '~/components/layout/stack'
 import { Button } from '~/components/ui/button'
@@ -41,7 +41,7 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 import type { Route } from './+types/integrations'
-import type { SettingsLayoutContext } from './_layout'
+import type { SettingsLayoutContext } from '../_layout'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
 import { formatRelative } from '~/lib/datetime'

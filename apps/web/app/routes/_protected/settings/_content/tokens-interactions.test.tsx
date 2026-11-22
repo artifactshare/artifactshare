@@ -6,8 +6,8 @@ import { expect, test, vi } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
-import { ConfirmActionDialog } from './+components/confirm-action-dialog'
-import ApiTokensPage from './+components/ai-tools-page'
+import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
+import ApiTokensPage from '../+components/ai-tools-page'
 
 test.each(['token', 'session', 'session-noop'] as const)(
   'single %s revoke names its target and dispatches only after confirmation',

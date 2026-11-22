@@ -6,8 +6,8 @@ import {
   useOutletContext,
 } from 'react-router'
 import type { Route } from './+types/general'
-import { TeamUser } from './+components/team-user'
-import type { SettingsLayoutContext } from './_layout'
+import { TeamUser } from '../+components/team-user'
+import type { SettingsLayoutContext } from '../_layout'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -29,6 +29,7 @@ import {
   loadWorkspaceOwner,
   updateWorkspaceName,
 } from '~/services/team-management.server'
+import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { ScreenSpec } from '~/types/screen'
 
 export const screen = {
@@ -42,6 +43,73 @@ export const screen = {
   role: '基本設定を管理する',
   primaryAction: '設定を更新する',
   states: [
+    {
+      id: 'forbidden',
+      description: 'Settings content error (403)',
+      expectedStatus: 403,
+      expectedError: 'settings-error-boundary',
+      setup: {
+        scenario: 'settings-general/forbidden',
+        ready: {
+          selector:
+            '[data-screen-capture-error="settings-error-boundary"] a[href="/settings"]',
+          description: 'Settings recovery and navigation are visible',
+          visibleWith: [
+            '#app-topbar',
+            'main nav a[href="/settings/billing"], main button[data-slot="sheet-trigger"]',
+          ],
+        },
+      },
+    },
+    {
+      id: 'not-found',
+      description: 'Settings content error (404)',
+      expectedStatus: 404,
+      expectedError: 'settings-error-boundary',
+      setup: {
+        scenario: 'settings-general/not-found',
+        ready: {
+          selector:
+            '[data-screen-capture-error="settings-error-boundary"] a[href="/settings"]',
+          description: 'Settings recovery and navigation are visible',
+          visibleWith: [
+            '#app-topbar',
+            'main nav a[href="/settings/billing"], main button[data-slot="sheet-trigger"]',
+          ],
+        },
+      },
+    },
+    {
+      id: 'unexpected-error',
+      description: 'Settings content error (500)',
+      expectedStatus: 500,
+      expectedError: 'settings-error-boundary',
+      setup: {
+        scenario: 'settings-general/unexpected-error',
+        ready: {
+          selector:
+            '[data-screen-capture-error="settings-error-boundary"] a[href="/settings"]',
+          description: 'Settings recovery and navigation are visible',
+          visibleWith: [
+            '#app-topbar',
+            'main nav a[href="/settings/billing"], main button[data-slot="sheet-trigger"]',
+          ],
+        },
+      },
+    },
+    {
+      id: 'root-error',
+      description: 'Standalone root error',
+      expectedStatus: 500,
+      expectedError: 'route-error-boundary',
+      setup: {
+        scenario: 'settings-general/root-error',
+        ready: {
+          selector: '[data-screen-capture-error="route-error-boundary"] a',
+          description: 'Home logo is visible',
+        },
+      },
+    },
     {
       id: 'team-member-read-only',
       description: 'Role guidance for a Team member',
@@ -99,8 +167,14 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
+  if (isDevScreenStateRequest(request, 'settings-general/forbidden'))
+    throw new Response(null, { status: 403 })
+  if (isDevScreenStateRequest(request, 'settings-general/not-found'))
+    throw new Response(null, { status: 404 })
+  if (isDevScreenStateRequest(request, 'settings-general/unexpected-error'))
+    throw new Error('Settings screen fixture')
   const db = createDb()
   return { owner: await loadWorkspaceOwner(db, user.workspaceId) }
 }

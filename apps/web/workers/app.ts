@@ -1,3 +1,4 @@
+import { createRequestContext } from '../app/lib/error-diagnostics.server'
 import {
   dispatchWorkspaceSearch,
   type SearchEnvironment,
@@ -13,7 +14,7 @@ import {
   prepareSandboxBlockReport,
   finishSandboxBlockReport,
 } from '../app/services/sandbox-block-report.server'
-import { createRequestHandler, RouterContextProvider } from 'react-router'
+import { createRequestHandler } from 'react-router'
 import {
   APEX_HOST,
   SANDBOX_DEV_SUFFIX,
@@ -386,15 +387,13 @@ export default {
       }
     }
 
-    const context = new RouterContextProvider()
+    const routerRequest = requestWithDevelopmentOriginPort(handlerRequest, env)
+    const context = createRequestContext(routerRequest)
     context.set(ctxContext, ctx)
     if (linkShareableId) {
       context.set(linkDomainContext, { shareableId: linkShareableId })
     }
-    const response = await requestHandler(
-      requestWithDevelopmentOriginPort(handlerRequest, env),
-      context,
-    )
+    const response = await requestHandler(routerRequest, context)
     return linkShareableId ? withLinkHostRobotsHeader(response) : response
   },
 } satisfies ExportedHandler<Cloudflare.Env>

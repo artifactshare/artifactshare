@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import {
   botDestinationGrant,
   botDestinationPlacementSql,
@@ -639,7 +640,8 @@ export async function createWorkspaceBot(
       ),
       auditInsert,
     )
-  } catch {
+  } catch (error) {
+    logErrorDiagnostic('bot.create', error)
     // Constraint failure rolled the batch back; classify deterministically.
     return await classifyCreateFailure(db, actor.workspaceId, name)
   }
@@ -1290,7 +1292,8 @@ export async function reissueWorkspaceBotCredential(
       credentialInsert,
       reissueAudit,
     )
-  } catch {
+  } catch (error) {
+    logErrorDiagnostic('bot.reissue', error)
     // The batch rolled back. Re-read state to classify instead of guessing:
     // only a genuinely missing/deleted destination is "create a new bot" —
     // a transient D1 error must surface as retryable.

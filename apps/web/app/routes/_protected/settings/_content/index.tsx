@@ -4,16 +4,16 @@ import type { Route } from './+types/index'
 import {
   NO_ASSET_TRANSFER,
   RemoveMemberDialog,
-} from './+components/remove-member-dialog'
-import { RecipientPicker } from './+components/recipient-picker'
-import { TeamActions } from './+components/team-actions'
-import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
-import { ConfirmActionDialog } from './+components/confirm-action-dialog'
+} from '../+components/remove-member-dialog'
+import { RecipientPicker } from '../+components/recipient-picker'
+import { TeamActions } from '../+components/team-actions'
+import { TransferOwnerDialog } from '../+components/transfer-owner-dialog'
+import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
 import { Pager } from '~/components/form/pager'
 import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
-import { TeamUser } from './+components/team-user'
-import { UpgradeNotice } from './+components/upgrade-notice'
-import type { SettingsLayoutContext } from './_layout'
+import { TeamUser } from '../+components/team-user'
+import { UpgradeNotice } from '../+components/upgrade-notice'
+import type { SettingsLayoutContext } from '../_layout'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
 import { Badge } from '~/components/ui/badge'
@@ -38,7 +38,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
-import { FilterSelect } from './+components/filter-select'
+import { FilterSelect } from '../+components/filter-select'
 import {
   Table,
   TableBody,

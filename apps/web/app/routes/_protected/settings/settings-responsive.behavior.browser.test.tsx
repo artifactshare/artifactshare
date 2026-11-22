@@ -28,10 +28,10 @@ import { BILLING_PRICES, formatPrice } from '~/lib/billing-prices'
 import { PRICING_COPY } from '~/lib/pricing-content'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { Checkbox } from '~/components/ui/checkbox'
-import { ProjectsTable } from './inventory/+components/projects-table'
-import { ArtifactsTable } from './inventory/+components/artifacts-table'
+import { ProjectsTable } from './_content/inventory/+components/projects-table'
+import { ArtifactsTable } from './_content/inventory/+components/artifacts-table'
 import { BotSection } from './+components/bot-section'
-import ExternalAccessPage from './external-access'
+import ExternalAccessPage from './_content/external-access'
 import SettingsLayout from './_layout'
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
@@ -40,15 +40,15 @@ vi.mock('~/services/team-management.server', () => ({}))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/db.server', () => ({}))
 vi.mock('~/middleware/context', () => ({}))
-import MembersPage, { screen as membersScreen } from './index'
-import GeneralPage, { screen as generalScreen } from './general'
-import ActivityPage from './activity'
-import AnalyticsPage from './analytics'
-import IntegrationsPage from './integrations'
+import MembersPage, { screen as membersScreen } from './_content/index'
+import GeneralPage, { screen as generalScreen } from './_content/general'
+import ActivityPage from './_content/activity'
+import AnalyticsPage from './_content/analytics'
+import IntegrationsPage from './_content/integrations'
 import AiToolsPage from './+components/ai-tools-page'
-import BillingPage from './billing'
-import ProjectsPage from './inventory/projects'
-import ArtifactsPage from './inventory/artifacts'
+import BillingPage from './_content/billing'
+import ProjectsPage from './_content/inventory/projects'
+import ArtifactsPage from './_content/inventory/artifacts'
 import { PricingPage } from '~/components/app/pricing-page'
 vi.mock('~/services/slack.server', () => ({}))
 vi.mock('~/services/billing.server', () => ({}))

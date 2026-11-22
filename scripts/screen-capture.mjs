@@ -260,9 +260,24 @@ async function optionalText(root, selector) {
   return (await locator.count()) > 0 ? await locator.first().innerText() : null
 }
 
-export async function assertNoRouteError(page) {
+export async function assertNoRouteError(page, expectedError) {
   const error = page.locator(ROUTE_ERROR_SELECTOR)
-  if ((await error.count()) === 0) return
+  const count = await error.count()
+  if (expectedError) {
+    if (
+      count === 1 &&
+      (await error.first().getAttribute('data-screen-capture-error')) ===
+        expectedError &&
+      (await error.first().isVisible())
+    )
+      return
+    throw new CaptureFailure(
+      'screen_error',
+      'Expected one visible boundary: ' + expectedError,
+      { condition: expectedError },
+    )
+  }
+  if (count === 0) return
   const root = error.first()
   const marker = await root.getAttribute('data-screen-capture-error')
   const heading = await optionalText(
@@ -276,6 +291,32 @@ export async function assertNoRouteError(page) {
     `screen rendered ${marker ?? 'an error boundary'}${summary ? `: ${summary}` : ''}`,
     { condition: marker ?? ROUTE_ERROR_SELECTOR },
   )
+}
+
+export function rootErrorLogoAtTopLeft(doc = window.document) {
+  const links = Array.from(doc.querySelectorAll('a')).filter(
+    (link) => !link.closest('[data-analytics-consent-banner]'),
+  )
+  if (
+    links.length !== 1 ||
+    !links[0].closest('[data-screen-capture-error="route-error-boundary"]')
+  )
+    return false
+  const { x, y, width, height } = links[0].getBoundingClientRect()
+  return width > 0 && height > 0 && x >= 0 && x <= 32 && y >= 0 && y <= 32
+}
+
+export async function assertCaptureSurface(page, screenId, state) {
+  await assertNoRouteError(page, state.expectedError)
+  if (
+    screenId === 'settings-general' &&
+    state.id === 'root-error' &&
+    !(await page.evaluate(rootErrorLogoAtTopLeft))
+  )
+    throw new CaptureFailure(
+      'screen_error',
+      'Expected a single home link in the top-left corner of the root error surface',
+    )
 }
 
 export async function navigateForCapture(page, url, expectedStatus) {
@@ -298,23 +339,28 @@ export async function navigateForCapture(page, url, expectedStatus) {
       'navigation_failure',
       `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
     )
+  return navigation.status()
 }
 
-export async function waitForReady(page, ready) {
+function readinessTarget(page, ready) {
+  let readyTarget = page.locator(ready.selector)
+  for (const cue of ready.visibleWith ?? []) {
+    readyTarget = readyTarget.and(
+      page.locator(`body:has(:is(${cue}):visible) *`),
+    )
+  }
+  return readyTarget
+}
+
+export async function waitForReady(page, ready, expectedError) {
   if (!ready) return
   try {
-    let readyTarget = page.locator(ready.selector)
-    for (const cue of ready.visibleWith ?? []) {
-      readyTarget = readyTarget.and(
-        page.locator(`body:has(:is(${cue}):visible) *`),
-      )
-    }
-    await readyTarget.waitFor({
+    await readinessTarget(page, ready).waitFor({
       state: 'visible',
       timeout: ready.timeoutMs ?? 30_000,
     })
   } catch {
-    await assertNoRouteError(page)
+    await assertNoRouteError(page, expectedError)
     throw new CaptureFailure(
       'readiness_timeout',
       `ready condition was not met: ${ready.description}`,
@@ -669,12 +715,22 @@ export async function captureScreenImages({
   ready,
   actionResponse,
   sections = [],
+  beforeFullCapture,
+  expectedError,
   afterFullCapture = () => ({}),
   reportFailure = (message) => console.error(message),
 }) {
-  await waitForReady(page, ready)
+  await waitForReady(page, ready, expectedError)
   await actionResponse?.waitForMatch()
   const style = await bottomBarCaptureStyle(page)
+  await beforeFullCapture?.()
+  if (expectedError && !(await readinessTarget(page, ready).isVisible())) {
+    throw new CaptureFailure(
+      'readiness_timeout',
+      `ready condition was lost before screenshot: ${ready.description}`,
+      { condition: ready.description, selector: ready.selector },
+    )
+  }
   await page.screenshot({
     path: join(outDir, entry.file),
     style,
@@ -938,9 +994,17 @@ async function captureScreensLocked({
         auth,
       )
       url.searchParams.set('theme', theme)
-      await navigateForCapture(page, url.toString(), state.expectedStatus)
-      await assertNoRouteError(page)
-      await waitForReady(page, state.setup?.ready ?? screen.ready)
+      const httpStatus = await navigateForCapture(
+        page,
+        url.toString(),
+        state.expectedStatus,
+      )
+      await assertNoRouteError(page, state.expectedError)
+      await waitForReady(
+        page,
+        state.setup?.ready ?? screen.ready,
+        state.expectedError,
+      )
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
       if (interactions.length > 0) beforeInteractions = false
@@ -1006,8 +1070,9 @@ async function captureScreensLocked({
         !interactions.some((interaction) => interaction.captureImmediately)
       )
         await page.waitForLoadState('networkidle')
-      await assertNoRouteError(page)
       const entries = await captureScreenImages({
+        expectedError: state.expectedError,
+        beforeFullCapture: () => assertCaptureSurface(page, screen.id, state),
         ready: state.setup?.ready ?? screen.ready,
         actionResponse,
         page,
@@ -1023,6 +1088,13 @@ async function captureScreensLocked({
           locale,
           file,
           url: url.toString(),
+          ...(state.expectedError
+            ? {
+                httpStatus,
+                boundaryMarker: state.expectedError,
+                readySelector: state.setup.ready.selector,
+              }
+            : {}),
           ...(attempt ? { attempts: attempt + 1 } : {}),
         },
         afterFullCapture: async () => {

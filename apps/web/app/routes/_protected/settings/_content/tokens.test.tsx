@@ -64,6 +64,7 @@ describe('/settings/tokens actions', () => {
   test.each(['stale', 'failed'])(
     'returns a neutral or retryable result for a %s token',
     async (state) => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
       if (state === 'stale')
         services.revokeApiToken.mockResolvedValueOnce(false)
       else
@@ -80,6 +81,20 @@ describe('/settings/tokens actions', () => {
         kind: state === 'stale' ? 'revoke-unavailable' : 'revoke-failed',
         intent: 'revoke',
       })
+      expect(log.mock.calls).toEqual(
+        state === 'failed'
+          ? [
+              [
+                {
+                  operation: 'tokens.revoke',
+                  cause: 'Error',
+                  frames: expect.any(Array),
+                },
+              ],
+            ]
+          : [],
+      )
+      log.mockRestore()
     },
   )
   test('does not dispatch a revoke without a token id', async () => {

@@ -14,7 +14,7 @@ import type { Locale } from '~/i18n/messages'
 import { fits, waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
-import { action as tokensAction } from './tokens'
+import { action as tokensAction } from './_content/tokens'
 
 const services = vi.hoisted(() => ({
   revoke: vi.fn(),

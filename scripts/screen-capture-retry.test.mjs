@@ -15,14 +15,18 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import {
   assertSafeCaptureOutput,
   createCaptureOutput,
   removeCaptureOutput,
   screenCaptureOutputDirectory,
   screenCaptureOutputRoot,
+  verifySettingsErrorEvidence,
 } from './screen-capture-output.mjs'
 import {
+  assertCaptureSurface,
+  rootErrorLogoAtTopLeft,
   navigateForCapture,
   captureRetries,
   shouldRetryCapture,
@@ -88,6 +92,76 @@ test('primary and linked worktrees write to distinct deterministic roots outside
     return root
   })
   assert.notEqual(roots[0], roots[1])
+})
+
+test('label verification requires the current checkout revision on every screenshot', (t) => {
+  const { primary, git } = fixture(t)
+  const directory = screenCaptureOutputDirectory(
+    'review',
+    screenCaptureOutputRoot((_file, args) => git(primary, args)),
+  )
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, 'review.png'), 'screenshot')
+  const entry = {
+    status: 'success',
+    file: 'review.png',
+    head: git(primary, ['rev-parse', 'HEAD']),
+  }
+  const verify = (second) => {
+    writeFileSync(
+      join(directory, 'manifest.json'),
+      JSON.stringify([entry, second]),
+    )
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./screen-capture-output.mjs', import.meta.url)),
+        '--check-labels',
+        'review',
+      ],
+      { cwd: primary, stdio: 'pipe' },
+    )
+  }
+  verify(entry)
+  assert.throws(
+    () => verify({ ...entry, head: 'old-revision' }),
+    /revision mismatch/,
+  )
+})
+
+test('settings-errors verification detects a state missing from both the ledger and the manifest', async () => {
+  const { screens } = await import('./screen-ledger.mjs')
+  const general = screens.find((screen) => screen.id === 'settings-general')
+  const manifest = []
+  for (const state of general.states.filter(
+    (candidate) => candidate.expectedError,
+  )) {
+    for (const viewport of ['desktop', 'mobile']) {
+      for (const theme of ['light', 'dark']) {
+        manifest.push({
+          screen: general.id,
+          state: state.id,
+          viewport,
+          theme,
+          httpStatus: state.expectedStatus,
+          boundaryMarker: state.expectedError,
+          readySelector: state.setup.ready.selector,
+        })
+      }
+    }
+  }
+  verifySettingsErrorEvidence(general, manifest)
+  assert.throws(
+    () =>
+      verifySettingsErrorEvidence(
+        {
+          ...general,
+          states: general.states.filter((state) => state.id !== 'root-error'),
+        },
+        manifest.filter((entry) => entry.state !== 'root-error'),
+      ),
+    /Missing required error state: root-error/,
+  )
 })
 
 test('legacy captures remain intact and ignored after updating the ignore rules', (t) => {
@@ -835,3 +909,83 @@ for (const duplicate of [false, true]) {
     ])
   })
 }
+
+test('expected-error screenshot requires the exact status, marker and readiness together', async () => {
+  const state = {
+    id: 'forbidden',
+    expectedStatus: 403,
+    expectedError: 'settings-error-boundary',
+    setup: { ready: { selector: 'a', description: 'Settings recovery link' } },
+  }
+  for (const [status, marker, ready, failure] of [
+    [403, 'settings-error-boundary', 'disappears', /ready condition was lost/],
+    [403, 'settings-error-boundary', true, null],
+    [200, 'settings-error-boundary', true, /navigation failed: HTTP 200/],
+    [403, 'route-error-boundary', true, /Expected one visible boundary/],
+    [
+      403,
+      'settings-error-boundary',
+      false,
+      /ready condition was not met: Settings recovery link/,
+    ],
+  ]) {
+    const page = sectionPage()
+    let visible = Boolean(ready)
+    page.goto = () => ({ status: () => status, ok: () => status === 200 })
+    page.locator = () => ({
+      isVisible: () => visible,
+      waitFor: () => {
+        if (!ready) throw new Error('not ready')
+      },
+      count: () => 1,
+      first: () => ({ getAttribute: () => marker, isVisible: () => true }),
+    })
+    const capture = async () => {
+      await navigateForCapture(
+        page,
+        'https://app.example/settings/general',
+        state.expectedStatus,
+      )
+      await captureScreenImages({
+        page,
+        entry: captureEntry(),
+        outDir: '/tmp',
+        ready: state.setup.ready,
+        expectedError: state.expectedError,
+        beforeFullCapture: () => {
+          if (ready === 'disappears') visible = false
+          return assertCaptureSurface(page, 'settings-general', state)
+        },
+      })
+    }
+    if (failure) await assert.rejects(capture, failure)
+    else await capture()
+    assert.equal(page.shots.length, failure ? 0 : 1)
+  }
+})
+
+test('only the root recovery logo may link outside the consent banner', (t) => {
+  const { Window } = createRequire(
+    new URL('../apps/web/package.json', import.meta.url),
+  )('happy-dom')
+  const window = new Window()
+  t.after(() => window.happyDOM.close())
+  const doc = window.document
+  doc.body.innerHTML =
+    '<main data-screen-capture-error="route-error-boundary"><a href="/">Home</a></main><aside role="region" data-analytics-consent-banner><a href="/privacy">Privacy</a></aside><section role="region"></section>'
+  const logo = doc.querySelector('main a')
+  const bounds = { x: 16, y: 16, width: 40, height: 20 }
+  t.mock.method(logo, 'getBoundingClientRect', () => bounds)
+  assert.equal(rootErrorLogoAtTopLeft(doc), true)
+  bounds.x = 160
+  assert.equal(rootErrorLogoAtTopLeft(doc), false)
+  bounds.x = 16
+  bounds.y = 160
+  assert.equal(rootErrorLogoAtTopLeft(doc), false)
+  bounds.y = 16
+  const region = doc.querySelector('section')
+  region.innerHTML = '<a href="/extra">Extra</a>'
+  assert.equal(rootErrorLogoAtTopLeft(doc), false)
+  region.replaceChildren(logo)
+  assert.equal(rootErrorLogoAtTopLeft(doc), false)
+})

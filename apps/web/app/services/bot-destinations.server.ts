@@ -1,3 +1,4 @@
+import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import { sql, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { nowIso } from '~/lib/datetime'
@@ -248,8 +249,25 @@ export async function updateWorkspaceBotDestinations(
   )
   try {
     await runD1Batch(db, ...queries)
-  } catch {
+  } catch (error) {
+    if (!isDestinationConflict(error)) throw error
+    logErrorDiagnostic('bot.destinations', error)
     return { kind: 'bot-conflict' }
   }
   return { kind: 'ok' }
+}
+
+function isDestinationConflict(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return [error, error.cause].some((cause) => {
+    if (!(cause instanceof Error)) return false
+    const code = Reflect.get(cause, 'code')
+    return (
+      (typeof code === 'string' &&
+        /^SQLITE_CONSTRAINT(?:_[A-Z]+)?$/.test(code)) ||
+      /^(?:D1_ERROR: )?(?:link publication mutation missing|invalid bot destination|(?:UNIQUE|PRIMARY KEY|FOREIGN KEY|CHECK|NOT NULL) constraint failed(?:[:][^\n]+)?)(?:: SQLITE_CONSTRAINT(?:_[A-Z]+)?(?: \(extended: SQLITE_CONSTRAINT_[A-Z]+\))?)?$/.test(
+        cause.message,
+      )
+    )
+  })
 }

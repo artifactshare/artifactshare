@@ -212,7 +212,7 @@ vi.mock('~/components/form/settings-section', () => ({
     </section>
   ),
 }))
-vi.mock('./+components/team-user', () => ({
+vi.mock('../+components/team-user', () => ({
   TeamUser: ({ name, email }: { name: string; email: string }) => (
     <span>
       {name} {email}
@@ -220,12 +220,12 @@ vi.mock('./+components/team-user', () => ({
   ),
 }))
 
-vi.mock('./+components/upgrade-notice', () => ({ UpgradeNotice: () => null }))
+vi.mock('../+components/upgrade-notice', () => ({ UpgradeNotice: () => null }))
 
 import { action } from './index'
 import TeamMembersPage from './index'
 import BotsPage from './bots'
-import { TransferOwnerDialog } from './+components/transfer-owner-dialog'
+import { TransferOwnerDialog } from '../+components/transfer-owner-dialog'
 
 function postForm(fields: Record<string, string>) {
   const form = new URLSearchParams(fields)
