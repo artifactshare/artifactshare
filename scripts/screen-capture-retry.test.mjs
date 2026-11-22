@@ -1026,40 +1026,55 @@ test('an uncaught page error fails the capture with its first message', async ()
   assert.equal(shouldRetryCapture(failure, 0, 2, true), false)
 })
 
-test('a failed or rejected app script counts as a page error', async () => {
+test('a failed or rejected script of the page itself counts as a page error', async () => {
   const { watchPageErrors, assertNoPageError, captureFailure } =
     await import('./screen-capture.mjs')
   const listeners = {}
+  const mainFrame = { url: () => 'https://viewer.test/a/share' }
+  const otherFrame = { url: () => 'https://sandbox.test/' }
   const page = {
     on: (event, listener) => {
       listeners[event] = listener
     },
+    mainFrame: () => mainFrame,
   }
   const pageErrors = []
-  watchPageErrors(page, 'https://app.test', pageErrors)
-  const request = (url, resourceType = 'script') => ({
+  watchPageErrors(page, pageErrors)
+  const request = (
+    url,
+    { resourceType = 'script', frame = mainFrame, errorText } = {},
+  ) => ({
     url: () => url,
     resourceType: () => resourceType,
-    failure: () => ({ errorText: 'net::ERR_ABORTED' }),
+    frame: () => frame,
+    failure: () => ({ errorText }),
   })
-  listeners.response({
-    status: () => 200,
-    request: () => request('https://app.test/app/root.tsx'),
-  })
-  listeners.response({
-    status: () => 504,
-    request: () => request('https://app.test/assets/sandbox.png', 'image'),
-  })
-  listeners.requestfailed(request('https://cdn.example/other.js'))
+  const respond = (status, req) =>
+    listeners.response({ status: () => status, request: () => req })
+  respond(200, request('https://viewer.test/app/root.tsx'))
+  respond(
+    504,
+    request('https://viewer.test/logo.png', { resourceType: 'image' }),
+  )
+  respond(404, request('https://sandbox.test/app.js', { frame: otherFrame }))
+  respond(404, request('https://cdn.example/other.js'))
+  listeners.requestfailed(
+    request('https://viewer.test/app/route.tsx', {
+      errorText: 'net::ERR_ABORTED',
+    }),
+  )
   assert.deepEqual(pageErrors, [])
-  listeners.response({
-    status: () => 504,
-    request: () =>
-      request(
-        'https://app.test/node_modules/.vite/deps/react-dom_client.js?v=1',
-      ),
-  })
-  listeners.requestfailed(request('https://app.test/app/entry.client.tsx'))
+  respond(
+    504,
+    request(
+      'https://viewer.test/node_modules/.vite/deps/react-dom_client.js?v=1',
+    ),
+  )
+  listeners.requestfailed(
+    request('https://viewer.test/app/entry.client.tsx', {
+      errorText: 'net::ERR_CONNECTION_RESET',
+    }),
+  )
   assert.equal(pageErrors.length, 2)
   let thrown
   try {

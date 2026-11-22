@@ -225,24 +225,30 @@ export function assertNoPageError(pageErrors) {
 
 /**
  * Collects what makes a page fail to run: uncaught exceptions and rejections,
- * and app scripts that did not load. A module script whose static import fails
- * only fires an error event on its element, so a failed or non-2xx script
- * response from the app is recorded as an error too.
+ * and the page's own scripts that did not load. A module script whose static
+ * import fails only fires an error event on its element, so a non-2xx script
+ * response, or a script request that failed, from the main frame's own origin
+ * is recorded as an error too. That origin is the app or the viewer host;
+ * scripts of embedded frames belong to the content they show. A request the
+ * browser aborted itself, such as on navigation, is not a failure.
  */
-export function watchPageErrors(page, origin, pageErrors) {
+export function watchPageErrors(page, pageErrors) {
   page.on('pageerror', (error) => pageErrors.push(error))
   const failedScript = (request, reason) => {
     if (
       request.resourceType() === 'script' &&
-      new URL(request.url()).origin === origin
+      request.frame() === page.mainFrame() &&
+      new URL(request.url()).origin === new URL(page.mainFrame().url()).origin
     )
       pageErrors.push(
         new Error(`script ${new URL(request.url()).pathname} ${reason}`),
       )
   }
-  page.on('requestfailed', (request) =>
-    failedScript(request, `failed: ${request.failure()?.errorText ?? ''}`),
-  )
+  page.on('requestfailed', (request) => {
+    const reason = request.failure()?.errorText ?? ''
+    if (reason !== 'net::ERR_ABORTED')
+      failedScript(request, `failed: ${reason}`)
+  })
   page.on('response', (response) => {
     if (response.status() >= 400)
       failedScript(response.request(), `returned ${response.status()}`)
@@ -1054,7 +1060,7 @@ async function captureScreensLocked({
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
       page = await context.newPage()
-      watchPageErrors(page, new URL(baseUrl).origin, pageErrors)
+      watchPageErrors(page, pageErrors)
       url = captureUrlForState(
         baseUrl,
         pathFor(screen, locale, seeds, state),
