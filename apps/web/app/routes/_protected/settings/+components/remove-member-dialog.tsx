@@ -12,6 +12,8 @@ type Props = Omit<
   member: TeamMember
   intent: 'remove-member' | 'transfer-removed-assets'
   committed: boolean
+  // A request that may have reached the server is retried unchanged.
+  interrupted: boolean
   submit: (recipient: string) => void
 }
 
@@ -20,6 +22,7 @@ export function RemoveMemberDialog({
   currentUser,
   intent,
   committed,
+  interrupted,
   submit,
   result,
   ...dialog
@@ -46,7 +49,7 @@ export function RemoveMemberDialog({
             excludeUserId={member.id}
             value={recipient}
             onChange={setSelection}
-            disabled={dialog.pending || committed}
+            disabled={dialog.pending || committed || interrupted}
             allowNone={remove}
           />
           {result}

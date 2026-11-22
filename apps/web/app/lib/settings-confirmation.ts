@@ -4,6 +4,20 @@ import {
   type MiddlewareFunction,
 } from 'react-router'
 
+/**
+ * A request that never got an answer from the app: the connection was lost,
+ * the response could not be read, or a server in front of the app answered
+ * 502, 503 or 504. Anything else is the app's own answer or failure.
+ */
+export function isInterruptedRequest(error: unknown) {
+  return isRouteErrorResponse(error)
+    ? [502, 503, 504].includes(error.status)
+    : error instanceof TypeError ||
+        (error instanceof Error &&
+          error.message === 'Unable to decode turbo-stream response' &&
+          'cause' in error)
+}
+
 export async function confirmationResult<T>(
   intent: string,
   submit: () => Promise<T>,
@@ -11,13 +25,7 @@ export async function confirmationResult<T>(
   try {
     return await submit()
   } catch (error) {
-    const retryable = isRouteErrorResponse(error)
-      ? [502, 503, 504].includes(error.status)
-      : error instanceof TypeError ||
-        (error instanceof Error &&
-          error.message === 'Unable to decode turbo-stream response' &&
-          'cause' in error)
-    if (!retryable) throw error
+    if (!isInterruptedRequest(error)) throw error
     return data(
       { ok: false as const, code: 'submission-interrupted' as const, intent },
       { status: 409 },

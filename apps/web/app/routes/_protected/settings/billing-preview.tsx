@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 import type { Route } from './+types/billing-preview'
+import { isInterruptedRequest } from '~/lib/settings-confirmation'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import {
@@ -56,4 +57,22 @@ export async function loader({
     plan,
     interval,
   )
+}
+
+// The plan change confirmation loads this estimate with a fetcher. A request
+// that never reached the app is an estimate that could not be read, not an
+// error that replaces the open confirmation.
+export async function loadEstimate(
+  serverLoader: () => Promise<PlanChangePreview>,
+): Promise<PlanChangePreview> {
+  try {
+    return await serverLoader()
+  } catch (error) {
+    if (isInterruptedRequest(error)) return { kind: 'external-failed' }
+    throw error
+  }
+}
+
+export function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
+  return loadEstimate(serverLoader)
 }

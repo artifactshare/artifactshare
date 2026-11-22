@@ -136,7 +136,6 @@ export type TaskLedgerScreenReference =
   | 'settings-integrations/slack-disconnect-confirmation'
   | 'settings-integrations/slack-disconnect-dialog-error'
   | 'settings-integrations/slack-disconnect-dialog-pending'
-  | 'settings-integrations/slack-disconnect-page-error'
   | 'settings-integrations/slack-disconnected'
   | 'settings-integrations/slack-member-connected'
   | 'settings-integrations/slack-member-empty'

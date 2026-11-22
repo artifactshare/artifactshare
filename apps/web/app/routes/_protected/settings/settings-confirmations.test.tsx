@@ -328,6 +328,8 @@ const faults = [
   'app-data',
   'offline',
   'broken',
+  // A platform error page in front of the app is an unexpected server error.
+  500,
   502,
   503,
   504,
@@ -824,51 +826,57 @@ for (const operation of operations.filter(
 
 // A recipient choice is part of the submission: it is locked while the
 // request is in flight and kept, unchanged, for the retry after a failure.
+// After a returned failure the choice can be changed again; after an
+// interrupted request, which may have reached the server, it stays locked.
 for (const operation of operations.filter(
   ([intent]) =>
     intent === 'remove-member' || intent === 'transfer-removed-assets',
 ))
-  test(operation[0] + ' locks and keeps a chosen recipient', async () => {
-    const mounted = await mount(operation, 'app-data')
-    const { gates, posts, container } = mounted
-    try {
-      await openConfirmation(operation, container)
-      const dialog = () =>
-        document.querySelector<HTMLElement>('[role="alertdialog"]')!
-      const other = () =>
-        dialog().querySelector<HTMLButtonElement>(
-          '[role="radio"][value="other"]',
+  test.each(['app-data', 'offline'] as const)(
+    operation[0] + ' locks and keeps a chosen recipient after %s',
+    async (fault) => {
+      const mounted = await mount(operation, fault)
+      const { gates, posts, container } = mounted
+      try {
+        await openConfirmation(operation, container)
+        const dialog = () =>
+          document.querySelector<HTMLElement>('[role="alertdialog"]')!
+        const other = () =>
+          dialog().querySelector<HTMLButtonElement>(
+            '[role="radio"][value="other"]',
+          )
+        await dom.press(await dom.find(other))
+        await vi.waitFor(() =>
+          expect(other()?.getAttribute('aria-checked')).toBe('true'),
         )
-      await dom.press(await dom.find(other))
-      await vi.waitFor(() =>
-        expect(other()?.getAttribute('aria-checked')).toBe('true'),
-      )
-      const confirm = () => {
-        const buttons = dialog().querySelectorAll('button')
-        return buttons[buttons.length - 1]
+        const confirm = () => {
+          const buttons = dialog().querySelectorAll('button')
+          return buttons[buttons.length - 1]
+        }
+        await vi.waitFor(() => expect(confirm().disabled).toBe(false))
+        await dom.press(confirm())
+        await vi.waitFor(() => expect(gates).toHaveLength(1))
+        expect(posts[0]).toMatchObject({ recipientUserId: 'other' })
+        const controls = () =>
+          Array.from(
+            dialog().querySelectorAll<HTMLInputElement | HTMLButtonElement>(
+              'input:not([type="hidden"]), [role="radio"]',
+            ),
+          )
+        expect(controls().length).toBeGreaterThan(1)
+        for (const control of controls()) expect(control.disabled).toBe(true)
+        await act(async () => gates[0]())
+        await vi.waitFor(() =>
+          expect(dialog().querySelector('[role="alert"]')).not.toBeNull(),
+        )
+        expect(other()?.getAttribute('aria-checked')).toBe('true')
+        for (const control of controls())
+          expect(control.disabled).toBe(fault === 'offline')
+        await dom.press(confirm())
+        await vi.waitFor(() => expect(gates).toHaveLength(2))
+        expect(posts[1]).toEqual(posts[0])
+      } finally {
+        await unmount(mounted)
       }
-      await vi.waitFor(() => expect(confirm().disabled).toBe(false))
-      await dom.press(confirm())
-      await vi.waitFor(() => expect(gates).toHaveLength(1))
-      expect(posts[0]).toMatchObject({ recipientUserId: 'other' })
-      const controls = () =>
-        Array.from(
-          dialog().querySelectorAll<HTMLInputElement | HTMLButtonElement>(
-            'input:not([type="hidden"]), [role="radio"]',
-          ),
-        )
-      expect(controls().length).toBeGreaterThan(1)
-      for (const control of controls()) expect(control.disabled).toBe(true)
-      await act(async () => gates[0]())
-      await vi.waitFor(() =>
-        expect(dialog().querySelector('[role="alert"]')).not.toBeNull(),
-      )
-      expect(other()?.getAttribute('aria-checked')).toBe('true')
-      for (const control of controls()) expect(control.disabled).toBe(false)
-      await dom.press(confirm())
-      await vi.waitFor(() => expect(gates).toHaveLength(2))
-      expect(posts[1]).toEqual(posts[0])
-    } finally {
-      await unmount(mounted)
-    }
-  })
+    },
+  )

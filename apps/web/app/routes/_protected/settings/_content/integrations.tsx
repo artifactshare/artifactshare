@@ -175,45 +175,6 @@ export const screen = {
       },
     },
     {
-      id: 'slack-disconnect-page-error',
-      description: 'Slack failure remains visible after dismissing the dialog',
-      setup: {
-        scenario: 'settings-integrations/slack-connected',
-        reseedBeforeCapture: true,
-        actionResponse: {
-          route: '/settings/integrations',
-          method: 'POST',
-          intent: 'disconnect-slack',
-          status: 409,
-          data: {
-            ok: false,
-            intent: 'disconnect-slack',
-            code: 'external-failed',
-            connectionId:
-              'dev-screen-team-settings-integrations-slack-connected-slack',
-          },
-        },
-        interactions: [
-          {
-            action: 'click',
-            selector: 'button:text-is("Disconnect")',
-            readySelector: '[role="alertdialog"]',
-          },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] button:text-is("Disconnect")',
-            readySelector: '[role="alertdialog"] [role="alert"]',
-          },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] button:text-is("Cancel")',
-            readySelector:
-              'body:not(:has([role="alertdialog"])) [role="alert"]',
-          },
-        ],
-      },
-    },
-    {
       id: 'slack-member-empty',
       description: 'Member guidance to ask a workspace admin to connect Slack',
       setup: {

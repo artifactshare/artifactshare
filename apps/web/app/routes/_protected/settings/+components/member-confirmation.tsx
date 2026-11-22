@@ -100,6 +100,7 @@ export function MemberConfirmation({
         currentUser={currentUser}
         intent={intent}
         committed={committed}
+        interrupted={result?.code === 'submission-interrupted'}
         submit={submit}
       />
     )

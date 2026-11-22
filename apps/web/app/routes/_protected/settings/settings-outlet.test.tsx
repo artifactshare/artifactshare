@@ -84,3 +84,54 @@ test('a Checkout return notice leaves history even when the user moves on before
     router.dispose()
   }
 })
+
+test('a Checkout return notice stays on its own entry when the user opens Billing again', async () => {
+  let loads = 0
+  let reopening = false
+  window.history.replaceState(
+    null,
+    '',
+    '/settings/billing?status=checkout-success',
+  )
+  const router = createBrowserRouter([
+    {
+      element: (
+        <TooltipProvider>
+          <SettingsOutlet shell={shell} />
+        </TooltipProvider>
+      ),
+      children: [
+        {
+          path: '/settings/billing',
+          // Until the user opens Billing again, any later load (such as a
+          // cleanup navigation) stays loading.
+          loader: () =>
+            loads++ === 0 || reopening ? null : new Promise<null>(() => {}),
+          element: <p>Billing</p>,
+        },
+      ],
+    },
+  ])
+  const container = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    await act(async () => {})
+    expect(window.location.search).toBe('')
+    expect(container.querySelector('[data-settings-status]')).not.toBeNull()
+    // The same page opened again from the navigation is a new entry.
+    reopening = true
+    await act(async () => router.navigate('/settings/billing'))
+    expect(container.querySelector('[data-settings-status]')).toBeNull()
+    await act(async () => {
+      router.navigate(-1)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(window.location.search).toBe('')
+    expect(container.querySelector('[data-settings-status]')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+    router.dispose()
+  }
+})
