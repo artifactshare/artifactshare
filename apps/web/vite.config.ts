@@ -202,6 +202,18 @@ export default defineConfig(({ command, isPreview }) => {
 
   return {
     build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
+    // React Router scans the client entry and route modules for dependencies
+    // only under its unstable optimizeDeps flag. Without a scan, the dev server
+    // discovers them on the first page load, re-optimizes, and answers the
+    // in-flight dependency requests with 504: those pages never hydrate.
+    optimizeDeps: {
+      entries: [
+        'app/entry.client.tsx',
+        'app/root.tsx',
+        'app/routes/**/*.tsx',
+        '!app/**/*.test.tsx',
+      ],
+    },
     plugins: [
       ...(startupHead
         ? [

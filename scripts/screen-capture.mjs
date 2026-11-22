@@ -195,6 +195,77 @@ export class CaptureFailure extends Error {
 }
 
 /**
+ * An uncaught exception in the page means the screen may not be what a user
+ * gets: a client entry that failed to load leaves server HTML that never
+ * hydrates, yet still matches every readiness selector. Fail the capture and
+ * name the first error instead of recording that page.
+ *
+ * A hydration mismatch is reported the same way but React recovers from it by
+ * rendering that tree on the client, so the page the capture records is the
+ * hydrated one. It is returned as a warning for the run log rather than a
+ * failure; relative times rendered on both sides of a minute boundary cause it.
+ */
+export function assertNoPageError(pageErrors) {
+  const message = (error) =>
+    (error instanceof Error ? error.message : String(error)).split('\n')[0]
+  const recovered = pageErrors.filter((error) =>
+    message(error).startsWith('Hydration failed because'),
+  )
+  const fatal = pageErrors.filter((error) => !recovered.includes(error))
+  if (fatal.length > 0)
+    throw new CaptureFailure(
+      'page_error',
+      `the page failed to run: ${message(fatal[0])}`,
+      { count: fatal.length },
+    )
+  return recovered.map(
+    (error) => `the page recovered from an error: ${message(error)}`,
+  )
+}
+
+/**
+ * Collects what makes a page fail to run: uncaught exceptions and rejections,
+ * and the page's own scripts that did not load. A module script whose static
+ * import fails only fires an error event on its element, so a non-2xx script
+ * response, or a script request that failed, from the main frame's own origin
+ * is recorded as an error too. That origin is the app or the viewer host;
+ * scripts of embedded frames belong to the content they show. A request the
+ * browser aborted itself, such as on navigation, is not a failure.
+ */
+export function watchPageErrors(page, pageErrors) {
+  page.on('pageerror', (error) => pageErrors.push(error))
+  const failedScript = (request, reason) => {
+    if (
+      request.resourceType() === 'script' &&
+      request.frame() === page.mainFrame() &&
+      new URL(request.url()).origin === new URL(page.mainFrame().url()).origin
+    )
+      pageErrors.push(
+        new Error(`script ${new URL(request.url()).pathname} ${reason}`),
+      )
+  }
+  page.on('requestfailed', (request) => {
+    const reason = request.failure()?.errorText ?? ''
+    if (reason !== 'net::ERR_ABORTED')
+      failedScript(request, `failed: ${reason}`)
+  })
+  page.on('response', (response) => {
+    if (response.status() >= 400)
+      failedScript(response.request(), `returned ${response.status()}`)
+  })
+}
+
+function reportPageWarnings(
+  warnings,
+  { screen, state, viewport, theme, locale },
+) {
+  for (const warning of warnings)
+    console.error(
+      `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
+    )
+}
+
+/**
  * Retries for readiness timeouts only: a dev server that is still warming
  * up (or a transient local D1 error) fails the first visit and passes the
  * next; every other failure kind is deterministic and reported at once.
@@ -982,12 +1053,14 @@ async function captureScreensLocked({
     let actionResponse
     let captureFailed = false
     let heldUploadRequest
+    const pageErrors = []
     try {
       if (cookie)
         await context.addCookies(
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
       page = await context.newPage()
+      watchPageErrors(page, pageErrors)
       url = captureUrlForState(
         baseUrl,
         pathFor(screen, locale, seeds, state),
@@ -1005,6 +1078,8 @@ async function captureScreensLocked({
         state.setup?.ready ?? screen.ready,
         state.expectedError,
       )
+      reportPageWarnings(assertNoPageError(pageErrors), job)
+      pageErrors.length = 0
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
       if (interactions.length > 0) beforeInteractions = false
@@ -1072,7 +1147,10 @@ async function captureScreensLocked({
         await page.waitForLoadState('networkidle')
       const entries = await captureScreenImages({
         expectedError: state.expectedError,
-        beforeFullCapture: () => assertCaptureSurface(page, screen.id, state),
+        beforeFullCapture: async () => {
+          reportPageWarnings(assertNoPageError(pageErrors), job)
+          await assertCaptureSurface(page, screen.id, state)
+        },
         ready: state.setup?.ready ?? screen.ready,
         actionResponse,
         page,
@@ -1120,10 +1198,19 @@ async function captureScreensLocked({
           }
         },
       })
+      // Errors raised while the screenshots were taken still void them.
+      reportPageWarnings(assertNoPageError(pageErrors), job)
       manifest.push(...entries)
     } catch (error) {
       captureFailed = true
-      const failure = captureFailure(error)
+      let failure = captureFailure(error)
+      // A readiness timeout caused by a page that failed to run is that
+      // failure, and is not retried into a pass.
+      try {
+        assertNoPageError(pageErrors)
+      } catch (pageError) {
+        failure = captureFailure(pageError)
+      }
       if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
         retry = true
         if (attempt === 0) retried += 1

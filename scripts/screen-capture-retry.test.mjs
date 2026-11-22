@@ -989,3 +989,104 @@ test('only the root recovery logo may link outside the consent banner', (t) => {
   region.replaceChildren(logo)
   assert.equal(rootErrorLogoAtTopLeft(doc), false)
 })
+
+test('an uncaught page error fails the capture with its first message', async () => {
+  const { assertNoPageError, captureFailure } =
+    await import('./screen-capture.mjs')
+  assert.deepEqual(assertNoPageError([]), [])
+  assert.deepEqual(
+    assertNoPageError([
+      new Error(
+        "Hydration failed because the server rendered text didn't match the client.\nmore",
+      ),
+    ]),
+    [
+      "the page recovered from an error: Hydration failed because the server rendered text didn't match the client.",
+    ],
+  )
+  let thrown
+  try {
+    assertNoPageError([
+      new TypeError(
+        'Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx\n    at stack',
+      ),
+      new Error('second'),
+    ])
+  } catch (error) {
+    thrown = error
+  }
+  const failure = captureFailure(thrown)
+  assert.equal(failure.kind, 'page_error')
+  assert.equal(
+    failure.message,
+    'the page failed to run: Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx',
+  )
+  assert.equal(failure.count, 2)
+  // A page that never hydrated is reported, not retried into a pass.
+  assert.equal(shouldRetryCapture(failure, 0, 2, true), false)
+})
+
+test('a failed or rejected script of the page itself counts as a page error', async () => {
+  const { watchPageErrors, assertNoPageError, captureFailure } =
+    await import('./screen-capture.mjs')
+  const listeners = {}
+  const mainFrame = { url: () => 'https://viewer.test/a/share' }
+  const otherFrame = { url: () => 'https://sandbox.test/' }
+  const page = {
+    on: (event, listener) => {
+      listeners[event] = listener
+    },
+    mainFrame: () => mainFrame,
+  }
+  const pageErrors = []
+  watchPageErrors(page, pageErrors)
+  const request = (
+    url,
+    { resourceType = 'script', frame = mainFrame, errorText } = {},
+  ) => ({
+    url: () => url,
+    resourceType: () => resourceType,
+    frame: () => frame,
+    failure: () => ({ errorText }),
+  })
+  const respond = (status, req) =>
+    listeners.response({ status: () => status, request: () => req })
+  respond(200, request('https://viewer.test/app/root.tsx'))
+  respond(
+    504,
+    request('https://viewer.test/logo.png', { resourceType: 'image' }),
+  )
+  respond(404, request('https://sandbox.test/app.js', { frame: otherFrame }))
+  respond(404, request('https://cdn.example/other.js'))
+  listeners.requestfailed(
+    request('https://viewer.test/app/route.tsx', {
+      errorText: 'net::ERR_ABORTED',
+    }),
+  )
+  assert.deepEqual(pageErrors, [])
+  respond(
+    504,
+    request(
+      'https://viewer.test/node_modules/.vite/deps/react-dom_client.js?v=1',
+    ),
+  )
+  listeners.requestfailed(
+    request('https://viewer.test/app/entry.client.tsx', {
+      errorText: 'net::ERR_CONNECTION_RESET',
+    }),
+  )
+  assert.equal(pageErrors.length, 2)
+  let thrown
+  try {
+    assertNoPageError(pageErrors)
+  } catch (error) {
+    thrown = error
+  }
+  assert.deepEqual(
+    [captureFailure(thrown).kind, captureFailure(thrown).message],
+    [
+      'page_error',
+      'the page failed to run: script /node_modules/.vite/deps/react-dom_client.js returned 504',
+    ],
+  )
+})
