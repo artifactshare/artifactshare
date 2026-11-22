@@ -1019,9 +1019,59 @@ test('an uncaught page error fails the capture with its first message', async ()
   assert.equal(failure.kind, 'page_error')
   assert.equal(
     failure.message,
-    'the page threw an uncaught error: Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx',
+    'the page failed to run: Failed to fetch dynamically imported module: https://localhost/app/entry.client.tsx',
   )
   assert.equal(failure.count, 2)
   // A page that never hydrated is reported, not retried into a pass.
   assert.equal(shouldRetryCapture(failure, 0, 2, true), false)
+})
+
+test('a failed or rejected app script counts as a page error', async () => {
+  const { watchPageErrors, assertNoPageError, captureFailure } =
+    await import('./screen-capture.mjs')
+  const listeners = {}
+  const page = {
+    on: (event, listener) => {
+      listeners[event] = listener
+    },
+  }
+  const pageErrors = []
+  watchPageErrors(page, 'https://app.test', pageErrors)
+  const request = (url, resourceType = 'script') => ({
+    url: () => url,
+    resourceType: () => resourceType,
+    failure: () => ({ errorText: 'net::ERR_ABORTED' }),
+  })
+  listeners.response({
+    status: () => 200,
+    request: () => request('https://app.test/app/root.tsx'),
+  })
+  listeners.response({
+    status: () => 504,
+    request: () => request('https://app.test/assets/sandbox.png', 'image'),
+  })
+  listeners.requestfailed(request('https://cdn.example/other.js'))
+  assert.deepEqual(pageErrors, [])
+  listeners.response({
+    status: () => 504,
+    request: () =>
+      request(
+        'https://app.test/node_modules/.vite/deps/react-dom_client.js?v=1',
+      ),
+  })
+  listeners.requestfailed(request('https://app.test/app/entry.client.tsx'))
+  assert.equal(pageErrors.length, 2)
+  let thrown
+  try {
+    assertNoPageError(pageErrors)
+  } catch (error) {
+    thrown = error
+  }
+  assert.deepEqual(
+    [captureFailure(thrown).kind, captureFailure(thrown).message],
+    [
+      'page_error',
+      'the page failed to run: script /node_modules/.vite/deps/react-dom_client.js returned 504',
+    ],
+  )
 })

@@ -215,12 +215,48 @@ export function assertNoPageError(pageErrors) {
   if (fatal.length > 0)
     throw new CaptureFailure(
       'page_error',
-      `the page threw an uncaught error: ${message(fatal[0])}`,
+      `the page failed to run: ${message(fatal[0])}`,
       { count: fatal.length },
     )
   return recovered.map(
     (error) => `the page recovered from an error: ${message(error)}`,
   )
+}
+
+/**
+ * Collects what makes a page fail to run: uncaught exceptions and rejections,
+ * and app scripts that did not load. A module script whose static import fails
+ * only fires an error event on its element, so a failed or non-2xx script
+ * response from the app is recorded as an error too.
+ */
+export function watchPageErrors(page, origin, pageErrors) {
+  page.on('pageerror', (error) => pageErrors.push(error))
+  const failedScript = (request, reason) => {
+    if (
+      request.resourceType() === 'script' &&
+      new URL(request.url()).origin === origin
+    )
+      pageErrors.push(
+        new Error(`script ${new URL(request.url()).pathname} ${reason}`),
+      )
+  }
+  page.on('requestfailed', (request) =>
+    failedScript(request, `failed: ${request.failure()?.errorText ?? ''}`),
+  )
+  page.on('response', (response) => {
+    if (response.status() >= 400)
+      failedScript(response.request(), `returned ${response.status()}`)
+  })
+}
+
+function reportPageWarnings(
+  warnings,
+  { screen, state, viewport, theme, locale },
+) {
+  for (const warning of warnings)
+    console.error(
+      `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
+    )
 }
 
 /**
@@ -1011,14 +1047,14 @@ async function captureScreensLocked({
     let actionResponse
     let captureFailed = false
     let heldUploadRequest
+    const pageErrors = []
     try {
       if (cookie)
         await context.addCookies(
           cookie.cookies.map((item) => ({ ...item, url: baseUrl })),
         )
       page = await context.newPage()
-      const pageErrors = []
-      page.on('pageerror', (error) => pageErrors.push(error))
+      watchPageErrors(page, new URL(baseUrl).origin, pageErrors)
       url = captureUrlForState(
         baseUrl,
         pathFor(screen, locale, seeds, state),
@@ -1036,10 +1072,7 @@ async function captureScreensLocked({
         state.setup?.ready ?? screen.ready,
         state.expectedError,
       )
-      for (const warning of assertNoPageError(pageErrors))
-        console.error(
-          `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
-        )
+      reportPageWarnings(assertNoPageError(pageErrors), job)
       pageErrors.length = 0
       const interactions = state.setup?.interactions ?? []
       // Only an interaction can make a later ready wait the state's own fault.
@@ -1109,10 +1142,7 @@ async function captureScreensLocked({
       const entries = await captureScreenImages({
         expectedError: state.expectedError,
         beforeFullCapture: async () => {
-          for (const warning of assertNoPageError(pageErrors))
-            console.error(
-              `capture warning: ${screen.id}/${state.id}/${viewport}/${theme}/${locale}: ${warning}`,
-            )
+          reportPageWarnings(assertNoPageError(pageErrors), job)
           await assertCaptureSurface(page, screen.id, state)
         },
         ready: state.setup?.ready ?? screen.ready,
@@ -1162,10 +1192,19 @@ async function captureScreensLocked({
           }
         },
       })
+      // Errors raised while the screenshots were taken still void them.
+      reportPageWarnings(assertNoPageError(pageErrors), job)
       manifest.push(...entries)
     } catch (error) {
       captureFailed = true
-      const failure = captureFailure(error)
+      let failure = captureFailure(error)
+      // A readiness timeout caused by a page that failed to run is that
+      // failure, and is not retried into a pass.
+      try {
+        assertNoPageError(pageErrors)
+      } catch (pageError) {
+        failure = captureFailure(pageError)
+      }
       if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
         retry = true
         if (attempt === 0) retried += 1
