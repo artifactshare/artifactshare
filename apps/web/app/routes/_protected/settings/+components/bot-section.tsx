@@ -101,9 +101,13 @@ export function BotSection({
       <div
         role="status"
         data-bot-result={notice?.intent}
-        className="text-sm empty:sr-only"
+        className="empty:sr-only"
       >
-        {notice?.text}
+        {notice ? (
+          <SettingsBanner kind="success" announce={false}>
+            {notice.text}
+          </SettingsBanner>
+        ) : null}
       </div>
       {canCreate ? (
         <div className="flex justify-end">

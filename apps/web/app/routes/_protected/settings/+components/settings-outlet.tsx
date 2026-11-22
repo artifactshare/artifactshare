@@ -87,8 +87,7 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
     }
     const kept = new URLSearchParams(location.search)
     kept.delete('status')
-    if (location.pathname === '/settings/integrations')
-      kept.delete('connected')
+    if (location.pathname === '/settings/integrations') kept.delete('connected')
     const query = kept.toString()
     const search = query ? `?${query}` : ''
     window.history.replaceState(

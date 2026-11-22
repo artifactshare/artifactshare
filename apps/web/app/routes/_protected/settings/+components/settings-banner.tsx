@@ -16,11 +16,14 @@ export function SettingsBanner({
   className,
   kind,
   urgent = false,
+  announce = true,
   children,
   ...props
 }: Omit<ComponentProps<typeof Alert>, 'role'> & {
   kind: SettingsNoticeKind
   urgent?: boolean
+  // False when an enclosing live region already announces the message.
+  announce?: boolean
 }) {
   const Icon =
     kind === 'success'
@@ -32,7 +35,11 @@ export function SettingsBanner({
     <Alert
       {...props}
       role={
-        kind === 'error' || (kind === 'warning' && urgent) ? 'alert' : 'status'
+        !announce
+          ? undefined
+          : kind === 'error' || (kind === 'warning' && urgent)
+            ? 'alert'
+            : 'status'
       }
       className={cn(
         'text-foreground rounded-[var(--r-md)] px-[var(--spacing-4)] py-[var(--spacing-3)]',
