@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import {
   createMemoryRouter,
   RouterProvider,
-  useFetcher,
+  RouterContextProvider,
   useRouteError,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
@@ -12,32 +12,31 @@ import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import SettingsLayout from '../_layout'
 import SettingsContent, { ErrorBoundary } from './_layout'
-import GeneralPage, { screen } from './general'
+import GeneralPage, { action as updateGeneral, screen } from './general'
 import BillingPage from './billing'
 
-vi.mock('~/services/team-management.server', () => ({}))
+const { updateWorkspaceName } = vi.hoisted(() => ({
+  updateWorkspaceName: vi.fn(),
+}))
+vi.mock('~/services/team-management.server', () => ({ updateWorkspaceName }))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/dev-screen-state.server', () => ({}))
 vi.mock('~/services/billing.server', () => ({}))
 vi.mock('~/services/billing-usage.server', () => ({}))
-vi.mock('~/services/db.server', () => ({}))
-vi.mock('~/middleware/context', () => ({}))
-
-function Submission() {
-  const fetcher = useFetcher<{ result: string }>()
-  return (
-    <fetcher.Form method="post">
-      <button type="submit">Submit</button>
-      <p>{fetcher.data?.result}</p>
-    </fetcher.Form>
-  )
-}
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'owner', workspaceId: 'ws' }),
+}))
 
 test.each(['loader', 'action', 'preview'])(
   'retains the Settings shell after a thrown %s and recovers',
   async (fault) => {
     await page.viewport(fault === 'loader' ? 390 : 1440, 844)
     let shouldThrow = false
+    updateWorkspaceName.mockImplementation(() => {
+      if (shouldThrow) throw new Error('action failed')
+      return { kind: 'invalid' }
+    })
     const preview = vi.fn(() => {
       if (shouldThrow) throw new Error('preview failed')
       return {
@@ -101,11 +100,14 @@ test.each(['loader', 'action', 'preview'])(
                 },
                 {
                   path: 'submit',
-                  Component: Submission,
-                  action: () => {
-                    if (shouldThrow) throw new Error('action failed')
-                    return { result: 'Validation failed' }
-                  },
+                  element: <GeneralPage loaderData={{ owner: null }} />,
+                  action: (args) =>
+                    updateGeneral({
+                      ...args,
+                      context: new RouterContextProvider(),
+                      pattern: '/settings/general',
+                      url: new URL(args.request.url),
+                    }),
                 },
                 {
                   path: 'billing',
@@ -161,10 +163,12 @@ test.each(['loader', 'action', 'preview'])(
         await act(() => router.navigate('/settings/general'))
       if (fault === 'action') {
         await act(() => router.navigate('/settings/submit'))
-        await page.getByRole('button', { name: 'Submit' }).click()
-        await expect.element(page.getByText('Validation failed')).toBeVisible()
+        await page.getByRole('button', { name: 'Save' }).click()
+        await expect
+          .element(page.getByText('Check your input and try again.'))
+          .toBeVisible()
         shouldThrow = true
-        await page.getByRole('button', { name: 'Submit' }).click()
+        await page.getByRole('button', { name: 'Save' }).click()
       }
       if (fault === 'preview') {
         await act(() => router.navigate('/settings/billing'))

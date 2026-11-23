@@ -1,3 +1,4 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import { useEffect, useState } from 'react'
 import { useFetcher, useRevalidator } from 'react-router'
 import { SettingsBanner } from './settings-banner'
@@ -37,11 +38,12 @@ import type { TKey } from '~/i18n/messages'
 import type { WorkspaceBotRow } from '~/services/bot-members.server'
 
 type BotActionResponse = {
-  ok?: boolean
+  ok: boolean
   botUserId?: string
   email?: string
   token?: string
-  error?: { code?: string }
+  code: string
+  intent: string
 }
 
 const REISSUE_ERROR_OVERRIDES: Record<string, TKey> = {
@@ -50,6 +52,7 @@ const REISSUE_ERROR_OVERRIDES: Record<string, TKey> = {
 }
 
 const ERROR_KEYS: Record<string, TKey> = {
+  'submission-interrupted': 'settings.submissionInterrupted',
   'bot-name-invalid': 'team.bots.error.bot-name-invalid',
   'bot-destination-invalid': 'team.bots.error.bot-destination-invalid',
   'bot-limit-reached': 'team.bots.error.bot-limit-reached',
@@ -80,6 +83,7 @@ export function BotSection({
   const [notice, setNotice] = useState<{ intent: string; text: string } | null>(
     null,
   )
+  useSettingsEntryChange(() => setNotice(null))
   const [createOpen, setCreateOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<WorkspaceBotRow | null>(null)
   const [stopTarget, setStopTarget] = useState<WorkspaceBotRow | null>(null)
@@ -97,9 +101,13 @@ export function BotSection({
       <div
         role="status"
         data-bot-result={notice?.intent}
-        className="text-sm empty:sr-only"
+        className="empty:sr-only"
       >
-        {notice?.text}
+        {notice ? (
+          <SettingsBanner kind="success" announce={false}>
+            {notice.text}
+          </SettingsBanner>
+        ) : null}
       </div>
       {canCreate ? (
         <div className="flex justify-end">
@@ -239,11 +247,20 @@ export function BotSection({
         <BotDestinationDialog
           key={editTarget.id}
           bot={editTarget}
+          onSaved={() =>
+            setNotice({ intent: 'destinations', text: t('team.status.ok') })
+          }
           onClose={() => setEditTarget(null)}
         />
       ) : null}
       {canCreate ? (
-        <BotCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
+        <BotCreateDialog
+          onCreated={() =>
+            setNotice({ intent: 'create', text: t('team.status.ok') })
+          }
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+        />
       ) : null}
 
       {cancelTarget ? (
@@ -283,6 +300,9 @@ export function BotSection({
           key={reissueTarget.id}
           bot={reissueTarget}
           intent="reissue"
+          onSuccess={() =>
+            setNotice({ intent: 'reissue', text: t('team.status.ok') })
+          }
           onClose={() => setReissueTarget(null)}
         />
       ) : null}
@@ -309,7 +329,21 @@ function BotActionDialog({
   useEffect(() => {
     if (complete && !token) onClose()
   }, [complete, token, onClose])
-  if (token) return <BotTokenDialog token={token} onClose={onClose} />
+  if (token)
+    return (
+      <BotTokenDialog
+        token={token}
+        onClose={onClose}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          const target =
+            document.getElementById(`bot-reissue-${bot.id}`) ??
+            document.getElementById('bots-heading')
+          target?.focus()
+          onSuccess?.()
+        }}
+      />
+    )
   return (
     <ConfirmActionDialog
       open
@@ -420,7 +454,7 @@ function FetcherError({
 }) {
   const { t } = useT()
   if (fetcher.state !== 'idle') return null
-  const code = fetcher.data?.error?.code
+  const code = !fetcher.data?.ok && fetcher.data?.code
   if (!code) return null
   const key =
     overrides[code] ??
@@ -551,12 +585,14 @@ function BotDestinations({ bot }: { bot: WorkspaceBotRow }) {
 function BotDestinationDialog({
   bot,
   onClose,
+  onSaved,
 }: {
   bot: WorkspaceBotRow
   onClose: () => void
+  onSaved: () => void
 }) {
   const { t } = useT()
-  const { revalidate } = useRevalidator()
+  const { revalidate, state: refreshState } = useRevalidator()
   const fetcher = useFetcher<BotActionResponse>()
   const [projects, setProjects] = useState<SelectedDestination[]>(
     bot.approvedProjects ?? [],
@@ -567,20 +603,25 @@ function BotDestinationDialog({
     if (fetcher.data?.ok && fetcher.state === 'idle') onClose()
   }, [fetcher.data, fetcher.state, onClose])
   useEffect(() => {
-    if (fetcher.data?.error?.code === 'bot-conflict') void revalidate()
+    if (
+      fetcher.data?.intent === 'destinations' &&
+      fetcher.data.code === 'bot-conflict'
+    )
+      void revalidate()
   }, [fetcher.data, revalidate])
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !pending) onClose()
+        if (!open && !pending && refreshState === 'idle') onClose()
       }}
     >
       <DialogContent
         className="max-h-dvh overflow-y-auto"
-        onCloseAutoFocus={() =>
+        onCloseAutoFocus={() => {
           document.getElementById(`bot-destinations-${bot.id}`)?.focus()
-        }
+          if (fetcher.data?.ok) onSaved()
+        }}
       >
         <DialogHeader>
           <DialogTitle>{t('team.bots.editDestinations')}</DialogTitle>
@@ -605,7 +646,7 @@ function BotDestinationDialog({
           <Button
             type="button"
             variant="outline"
-            disabled={pending}
+            disabled={pending || refreshState !== 'idle'}
             onClick={onClose}
           >
             {t('team.bots.close')}
@@ -616,6 +657,7 @@ function BotDestinationDialog({
               pending ||
               !primary ||
               !projects.length ||
+              fetcher.data?.code === 'bot-conflict' ||
               Boolean(fetcher.data?.ok)
             }
             onClick={() =>
@@ -644,9 +686,11 @@ function BotDestinationDialog({
 }
 
 function BotCreateDialog({
+  onCreated,
   open,
   onOpenChange,
 }: {
+  onCreated: () => void
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -736,6 +780,7 @@ function BotCreateDialog({
       </Dialog>
       {token ? (
         <BotTokenDialog
+          onShown={onCreated}
           token={token}
           onClose={() => {
             setDismissedToken(token)
@@ -752,8 +797,12 @@ function BotCreateDialog({
 
 export function BotTokenDialog({
   token,
+  onShown,
+  onCloseAutoFocus,
   onClose,
 }: {
+  onCloseAutoFocus?: (event: Event) => void
+  onShown?: () => void
   token: string
   onClose: () => void
 }) {
@@ -771,6 +820,8 @@ export function BotTokenDialog({
     >
       <DialogContent
         className="max-h-dvh overflow-y-auto"
+        onOpenAutoFocus={onShown}
+        onCloseAutoFocus={onCloseAutoFocus}
         showCloseButton={stored}
       >
         <DialogHeader>

@@ -134,11 +134,13 @@ export function hasDefaultExport(source) {
 }
 
 const settingsStatuses = {
-  '/settings': ['ok', 'invalid', 'removed-transfer-failed'],
-  '/settings/general': ['ok', 'invalid'],
-  '/settings/billing': ['invalid', 'checkout-success', 'checkout-cancelled'],
-  '/settings/external-access': ['ok'],
-  '/settings/integrations': ['slack-disconnected'],
+  '/settings/billing': ['checkout-success', 'checkout-cancelled'],
+  '/settings/integrations': [
+    'slack-team-in-use',
+    'slack-team-mismatch',
+    'not-found',
+    'forbidden',
+  ],
 }
 
 function matchesLocaleWrapper(leaf, ownerFile, localePath) {
@@ -237,12 +239,25 @@ export function checkScreenLedger({
             'fill requires a string value: ' + screen.id + '/' + state.id,
           )
       }
+      if (
+        screen.id.startsWith('settings') &&
+        state.id.startsWith('result-') &&
+        state.setup?.interactions?.length &&
+        !state.setup.postInteractionReady
+      )
+        failures.push(
+          'missing post-interaction readiness: ' + screen.id + '/' + state.id,
+        )
       const fixture = state.setup?.actionResponse
       if (
         fixture &&
         (fixture.method !== 'POST' ||
           !Object.values(screen.route).includes(fixture.route) ||
           !fixture.intent ||
+          (fixture.status !== undefined &&
+            (!Number.isInteger(fixture.status) ||
+              fixture.status < 200 ||
+              fixture.status >= 500)) ||
           (!fixture.pending && !fixture.data))
       ) {
         failures.push(

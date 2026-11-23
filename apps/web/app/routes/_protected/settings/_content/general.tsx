@@ -1,11 +1,13 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import {
-  Form,
+  data,
   Link,
-  redirect,
-  useNavigation,
+  useActionData,
+  useFetcher,
   useOutletContext,
 } from 'react-router'
 import type { Route } from './+types/general'
+import { StatusBanner } from '../+components/settings-banner'
 import { TeamUser } from '../+components/team-user'
 import type { SettingsLayoutContext } from '../_layout'
 import { InlineFields } from '~/components/form/inline-fields'
@@ -18,6 +20,7 @@ import { Input } from '~/components/ui/input'
 import { useT } from '~/hooks/use-t'
 import { withLang } from '~/lib/connect-link'
 import { stringValue } from '~/lib/form'
+import { settingsFailure } from '~/lib/settings-submission'
 import {
   WORKSPACE_NAME_MAX_LENGTH,
   displayName,
@@ -141,8 +144,25 @@ export const screen = {
       id: 'result-success',
       description: 'Saved confirmation',
       setup: {
-        query: '?status=ok',
-        ready: {
+        actionResponse: {
+          route: '/settings/general',
+          method: 'POST',
+          intent: 'update-workspace-name',
+          status: 200,
+          data: { ok: true, intent: 'update-workspace-name', code: 'ok' },
+        },
+        interactions: [
+          {
+            action: 'fill',
+            selector: '#workspace-name',
+            value: 'Example workspace',
+          },
+          {
+            action: 'click',
+            selector: 'form:has(#workspace-name) button[type="submit"]',
+          },
+        ],
+        postInteractionReady: {
           selector: '[role="status"][data-settings-status="ok"]',
           description: 'Saved confirmation',
         },
@@ -152,8 +172,14 @@ export const screen = {
       id: 'result-error',
       description: 'Invalid input alert',
       setup: {
-        query: '?status=invalid',
-        ready: {
+        interactions: [
+          { action: 'fill', selector: '#workspace-name', value: ' ' },
+          {
+            action: 'click',
+            selector: 'form:has(#workspace-name) button[type="submit"]',
+          },
+        ],
+        postInteractionReady: {
           selector: '[role="alert"][data-settings-status="invalid"]',
           description: 'Invalid input alert',
         },
@@ -182,26 +208,42 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export async function action({ request, context }: Route.ActionArgs) {
   const user = requireUser(context)
   const form = await request.formData()
-  if (stringValue(form.get('intent')) !== 'update-workspace-name') {
-    return redirect('/settings/general?status=invalid')
+  const intent = stringValue(form.get('intent')) ?? ''
+  if (intent !== 'update-workspace-name') {
+    return data({ ok: false, intent, code: 'invalid' }, { status: 400 })
   }
   const result = await updateWorkspaceName(
     createDb(),
     user,
     stringValue(form.get('workspaceName')) ?? '',
   )
-  return redirect(`/settings/general?status=${result.kind}`)
+  return result.kind === 'ok'
+    ? data({ ok: true as const, intent, code: result.kind }, { status: 200 })
+    : settingsFailure(intent, result.kind)
 }
 
 export default function GeneralPage({
   loaderData,
 }: Pick<Route.ComponentProps, 'loaderData'>) {
   const shell = useOutletContext<SettingsLayoutContext>()
+  const fetcher = useFetcher<typeof action>()
+  useSettingsEntryChange(fetcher.reset)
+  // A submission made before hydration arrives as the route's action data.
+  const nativeResult = useActionData<typeof action>()
+  const result = fetcher.data ?? nativeResult
   const { t } = useT()
   const canManage = shell.currentUserIsAdmin
   return (
     <SettingsPage>
-      <WorkspaceNameSection name={shell.workspace.name} canManage={canManage} />
+      {fetcher.state !== 'submitting' && result?.ok && (
+        <StatusBanner status={result.code} />
+      )}
+      <WorkspaceNameSection
+        fetcher={fetcher}
+        result={result}
+        name={shell.workspace.name}
+        canManage={canManage}
+      />
       <SettingsSection title={t('team.members.owner')}>
         {loaderData.owner ? (
           <TeamUser
@@ -217,16 +259,19 @@ export default function GeneralPage({
 }
 
 function WorkspaceNameSection({
+  fetcher,
+  result,
   name,
   canManage,
 }: {
+  fetcher: ReturnType<typeof useFetcher<typeof action>>
+  result: ReturnType<typeof useActionData<typeof action>>
   name: string
   canManage: boolean
 }) {
-  const navigation = useNavigation()
   const { t } = useT()
   const guidanceId = canManage ? undefined : 'name-guidance'
-  const pending = navigation.formData?.get('intent') === 'update-workspace-name'
+  const pending = fetcher.state !== 'idle'
   return (
     <SettingsSection
       title={t('team.workspace.name')}
@@ -236,7 +281,13 @@ function WorkspaceNameSection({
         canManage ? undefined : t('team.workspace.name.readOnly')
       }
     >
-      <Form method="post">
+      <fetcher.Form
+        method="post"
+        className="flex flex-col gap-[var(--spacing-2)]"
+      >
+        {!pending && result && !result.ok && (
+          <StatusBanner status={result.code} />
+        )}
         <input type="hidden" name="intent" value="update-workspace-name" />
         <InlineFields>
           <Field key={name} className="min-w-0">
@@ -263,7 +314,7 @@ function WorkspaceNameSection({
             {t('team.workspace.name.save')}
           </Button>
         </InlineFields>
-      </Form>
+      </fetcher.Form>
     </SettingsSection>
   )
 }

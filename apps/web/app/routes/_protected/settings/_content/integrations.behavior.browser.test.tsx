@@ -4,18 +4,22 @@ import {
   createMemoryRouter,
   Outlet,
   RouterProvider,
+  RouterContextProvider,
   useLoaderData,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { bindI18n } from '~/lib/i18n'
-import IntegrationsPage from './integrations'
+import IntegrationsPage, { action as disconnect } from './integrations'
 import '~/app.css'
 
-vi.mock('~/services/slack.server', () => ({}))
-vi.mock('~/services/db.server', () => ({}))
-vi.mock('~/middleware/context', () => ({}))
+const services = vi.hoisted(() => ({ deleteWorkspaceSlackConnection: vi.fn() }))
+vi.mock('~/services/slack.server', () => services)
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'owner' }),
+}))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
 
 // Real dialog/form boundary; the controlled action never contacts Slack.
@@ -26,7 +30,19 @@ test.each(['retry', 'dismiss and reopen'] as const)(
       method: string
       fields: Record<string, FormDataEntryValue>
     }[] = []
-    let release!: (result: Response) => void
+    // The service is reached after the action reads its form, so each
+    // release waits for its own call instead of a shared variable.
+    const calls: ((result: { kind: string }) => void)[] = []
+    services.deleteWorkspaceSlackConnection.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          calls.push(resolve)
+        }),
+    )
+    const release = async (call: number, result: { kind: string }) => {
+      await vi.waitFor(() => expect(calls).toHaveLength(call))
+      await act(async () => calls[call - 1](result))
+    }
     const router = createMemoryRouter(
       [
         {
@@ -52,10 +68,14 @@ test.each(['retry', 'dismiss and reopen'] as const)(
               action: async ({ request }) => {
                 submissions.push({
                   method: request.method,
-                  fields: Object.fromEntries(await request.formData()),
+                  fields: Object.fromEntries(await request.clone().formData()),
                 })
-                return new Promise<Response>((resolve) => {
-                  release = resolve
+                return disconnect({
+                  request,
+                  context: new RouterContextProvider(),
+                  params: {},
+                  url: new URL(request.url),
+                  pattern: '/settings/integrations',
                 })
               },
             },
@@ -110,11 +130,7 @@ test.each(['retry', 'dismiss and reopen'] as const)(
         throw new Error('Expected disconnect button')
       disabledTrigger.click()
       expect(submissions).toHaveLength(1)
-      await act(async () =>
-        release(
-          Response.json({ error: 'external-failed', connectionId: 'slack' }),
-        ),
-      )
+      await release(1, { kind: 'external-failed' })
       await expect
         .element(dialog.getByRole('alert'))
         .toHaveTextContent(bindI18n('en').t('team.status.externalFailed'))
@@ -128,10 +144,8 @@ test.each(['retry', 'dismiss and reopen'] as const)(
           .getByRole('button', { name: 'Cancel', exact: true })
           .click()
         await expect.element(dialog).not.toBeInTheDocument()
-        await expect
-          .element(page.getByRole('alert'))
-          .toMatchTextContent(/Example team/)
-        expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1)
+        // Dismissing ends the attempt; the page does not repeat its failure.
+        expect(document.querySelectorAll('[role="alert"]')).toHaveLength(0)
         await trigger.click()
         await expect.element(dialog.getByRole('alert')).not.toBeInTheDocument()
         await confirm.click()
@@ -139,18 +153,13 @@ test.each(['retry', 'dismiss and reopen'] as const)(
       await vi.waitFor(() => expect(submissions).toHaveLength(2))
       await expect.element(dialog).toHaveAttribute('data-state', 'open')
       await expect.element(busyAction).toBeDisabled()
-      await act(async () =>
-        release(
-          new Response(null, {
-            status: 302,
-            headers: {
-              Location: '/settings/integrations?status=slack-disconnected',
-            },
-          }),
-        ),
-      )
+      await release(2, { kind: 'ok' })
       await vi.waitFor(() =>
-        expect(router.state.location.search).toBe('?status=slack-disconnected'),
+        expect(
+          container.querySelector(
+            '[data-settings-status="slack-disconnected"]',
+          ),
+        ).not.toBeNull(),
       )
       await expect.element(dialog).not.toBeInTheDocument()
       expect(submissions).toEqual([expectedPost, expectedPost])
@@ -164,13 +173,17 @@ test.each(['retry', 'dismiss and reopen'] as const)(
 
 // Revalidation can remove the permission-dependent controls after a submission.
 // A real router/browser is needed to observe the dialog unmount and surviving alert.
-test.each(['forbidden', 'invalid', 'not-found'] as const)(
+test.each(['forbidden', 'not-found'] as const)(
   'Slack action %s remains visible outside permission-dependent controls',
   async (error) => {
     let canManage = true
-    let release:
-      | ((result: { error: string; connectionId?: string }) => void)
-      | undefined
+    let release!: (result: { kind: string }) => void
+    services.deleteWorkspaceSlackConnection.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }),
+    )
     function SettingsContext() {
       const currentUserIsAdmin = useLoaderData<boolean>()
       return (
@@ -203,12 +216,14 @@ test.each(['forbidden', 'invalid', 'not-found'] as const)(
               path: '/settings/integrations',
               loader: () => ({ connections: removed ? [] : connections }),
               Component: ConnectionPage,
-              action: () =>
-                new Promise<{ error: string; connectionId?: string }>(
-                  (resolve) => {
-                    release = resolve
-                  },
-                ),
+              action: ({ request }) =>
+                disconnect({
+                  request,
+                  context: new RouterContextProvider(),
+                  params: {},
+                  url: new URL(request.url),
+                  pattern: '/settings/integrations',
+                }),
             },
           ],
         },
@@ -225,46 +240,32 @@ test.each(['forbidden', 'invalid', 'not-found'] as const)(
         exact: true,
       })
       await expect.element(trigger).toBeEnabled()
-      if (error !== 'invalid') {
-        await trigger.click()
-        await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: 'Disconnect', exact: true })
-          .click()
-        await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-        await expect.element(page.getByRole('alertdialog')).toBeInTheDocument()
-        if (error === 'forbidden') canManage = false
-        else removed = true
-      } else {
-        // Invalid submissions need an error even without a submitted dialog.
-        void router.navigate('/settings/integrations', {
-          formMethod: 'post',
-          formData: new FormData(),
-        })
-        await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-      }
-      await act(async () =>
-        release!({
-          error,
-          ...(error !== 'invalid' ? { connectionId: 'slack' } : {}),
-        }),
-      )
-      await vi.waitFor(() => expect(router.state.navigation.state).toBe('idle'))
+      await trigger.click()
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Disconnect', exact: true })
+        .click()
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+      await act(async () => release({ kind: error }))
+      await expect
+        .element(page.getByRole('alertdialog').getByRole('alert'))
+        .toBeVisible()
+      if (error === 'forbidden') canManage = false
+      else removed = true
+      await act(async () => {
+        await router.revalidate()
+      })
       await expect
         .element(page.getByRole('alertdialog'))
         .not.toBeInTheDocument()
       await expect
         .element(page.getByRole('alert'))
         .toHaveTextContent(
-          (error !== 'invalid'
-            ? 'Could not disconnect Example team from Slack.'
-            : '') +
+          'Could not disconnect Example team from Slack.' +
             bindI18n('en').t(
               error === 'forbidden'
                 ? 'team.status.forbidden'
-                : error === 'not-found'
-                  ? 'team.status.notFound'
-                  : 'team.status.invalid',
+                : 'team.status.notFound',
             ),
         )
       expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1)
@@ -273,17 +274,6 @@ test.each(['forbidden', 'invalid', 'not-found'] as const)(
           .element(page.getByRole('alert'))
           .toMatchTextContent(/Example team/)
         await expect.element(trigger).toBeDisabled()
-        release = undefined
-        void router.navigate('/settings/integrations', {
-          formMethod: 'post',
-          formData: new FormData(),
-        })
-        await vi.waitFor(() => expect(release).toBeTypeOf('function'))
-        await act(async () => release!({ error: 'invalid' }))
-        await expect
-          .element(page.getByRole('alert'))
-          .toHaveTextContent(bindI18n('en').t('team.status.invalid'))
-        expect(document.querySelectorAll('[role="alert"]')).toHaveLength(1)
       }
     } finally {
       await act(async () => root.unmount())

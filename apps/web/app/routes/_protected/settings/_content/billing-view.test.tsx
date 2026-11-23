@@ -128,7 +128,7 @@ describe('billing plan comparison', () => {
   test('renders the shared interval and currency toggles from the pricing page', () => {
     const html = renderCheckout('team')
 
-    expect(html.match(/<fieldset/g)).toHaveLength(2)
+    expect(html.match(/<legend/g)).toHaveLength(2)
     expect(html).toContain('支払い周期')
     expect(html).toContain('2か月分お得')
     expect(html).toContain('通貨')

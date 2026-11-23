@@ -64,9 +64,12 @@ describe('/settings/integrations loader', () => {
 
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
-    const result = await loader({ context: {} } as never)
+    const result = await loader({
+      request: new Request('https://example.test/settings/integrations'),
+      context: {},
+    } as never)
 
-    expect(result.connections).toEqual([
+    expect(result.data.connections).toEqual([
       {
         id: 'sw-a',
         teamName: 'Slack A',
@@ -89,9 +92,12 @@ describe('/settings/integrations loader', () => {
 
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
-    const result = await loader({ context: {} } as never)
+    const result = await loader({
+      request: new Request('https://example.test/settings/integrations'),
+      context: {},
+    } as never)
 
-    expect(result.connections).toEqual([])
+    expect(result.data.connections).toEqual([])
   })
 })
 
@@ -138,11 +144,14 @@ describe('/settings/integrations action', () => {
       context: {},
     } as never)
 
-    expect(response).toBeInstanceOf(Response)
-    expect((response as Response).status).toBe(302)
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/integrations?status=slack-disconnected',
-    )
+    expect(response).toMatchObject({
+      data: {
+        ok: true,
+        code: 'slack-disconnected',
+        intent: 'disconnect-slack',
+      },
+      init: { status: 200 },
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://slack.com/api/auth.revoke',
       {
@@ -181,7 +190,10 @@ describe('/settings/integrations action', () => {
       context: {},
     } as never)
 
-    expect(response).toEqual({ error: 'forbidden', connectionId: 'sw-a' })
+    expect(response).toMatchObject({
+      data: { ok: false, code: 'forbidden', intent: 'disconnect-slack' },
+      init: { status: 403 },
+    })
     expect(fetchMock).not.toHaveBeenCalled()
     const remaining = await db
       .selectFrom('slack_workspaces')
@@ -210,7 +222,10 @@ describe('/settings/integrations action', () => {
       context: {},
     } as never)
 
-    expect(response).toEqual({ error: 'not-found', connectionId: 'sw-b' })
+    expect(response).toMatchObject({
+      data: { ok: false, code: 'not-found', intent: 'disconnect-slack' },
+      init: { status: 404 },
+    })
     expect(fetchMock).not.toHaveBeenCalled()
     const remaining = await db
       .selectFrom('slack_workspaces')

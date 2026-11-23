@@ -1,5 +1,6 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Form, Link, useActionData, useNavigation } from 'react-router'
+import { Link, useActionData, useFetcher } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -14,6 +15,7 @@ import { formatRelative } from '~/lib/datetime'
 import { withLang } from '~/lib/connect-link'
 import type { ApiTokenListItem } from '~/services/api-tokens.server'
 import { CredentialTable } from './credential-table'
+import { StatusBanner } from './settings-banner'
 import { CreatedTokenPanel } from './created-token-panel'
 import { RevokeDialog } from './revoke-dialog'
 import { CliSessionsSection } from './cli-sessions-section'
@@ -25,45 +27,65 @@ export default function ApiTokensPage({
   loaderData: Awaited<ReturnType<typeof loader>>
 }) {
   const [target, setTarget] = useState<ApiTokenListItem | null>(null)
-  const actionData = useActionData<typeof action>()
-  const navigation = useNavigation()
+  const fetcher = useFetcher<typeof action>()
+  // A submission made before hydration arrives as the route's action data.
+  const nativeResult = useActionData<typeof action>()
+  const actionData =
+    fetcher.state === 'idle' ? (fetcher.data ?? nativeResult) : undefined
+  const [successCount, setSuccessCount] = useState(() =>
+    nativeResult?.ok && nativeResult.code === 'created' ? 1 : 0,
+  )
+  useSettingsEntryChange(() => {
+    fetcher.reset()
+    setSuccessCount(0)
+  })
+  const onRevoked = () => setSuccessCount((count) => count + 1)
   const createFormRef = useRef<HTMLFormElement>(null)
   const createdToken = useMemo(
     () =>
-      actionData?.kind === 'created'
+      actionData?.ok && actionData.code === 'created'
         ? { name: actionData.name, token: actionData.token }
         : loaderData.createdToken,
     [actionData, loaderData.createdToken],
   )
   const { locale, t } = useT()
-  const isCreating = Boolean(
-    navigation.formAction === '/settings/tokens' &&
-    navigation.formData?.get('intent') === 'create',
-  )
+  const isCreating = fetcher.state !== 'idle'
   const createError =
-    actionData?.kind === 'name-required'
+    actionData?.code === 'name-required'
       ? t('team.tokens.nameRequired')
-      : actionData?.kind === 'name-too-long'
+      : actionData?.code === 'name-too-long'
         ? t('team.tokens.nameTooLong')
         : undefined
 
   useEffect(() => {
-    if (actionData?.kind === 'created') createFormRef.current?.reset()
-  }, [actionData])
+    if (fetcher.data?.ok && fetcher.data.code === 'created') {
+      createFormRef.current?.reset()
+      setSuccessCount((count) => count + 1)
+    }
+  }, [fetcher.data])
 
   return (
     <SettingsPage>
+      {successCount > 0 && <StatusBanner key={successCount} status="ok" />}
       <SettingsSection
         title={t('settings.connections')}
         description={t('settings.connections.body')}
       />
-      <CliSessionsSection cliFamilies={loaderData.cliFamilies} />
+      <CliSessionsSection
+        cliFamilies={loaderData.cliFamilies}
+        onRevoked={onRevoked}
+      />
       <SettingsSection
         headingId="api-tokens-heading"
         title={t('team.tokens.api.title')}
         description={t('team.tokens.body')}
       >
-        <Form ref={createFormRef} method="post" action="/settings/tokens">
+        <fetcher.Form
+          ref={createFormRef}
+          onSubmit={() => setSuccessCount(0)}
+          method="post"
+          action="/settings/tokens"
+        >
           <input type="hidden" name="intent" value="create" />
           <InlineFields>
             <Field
@@ -94,7 +116,7 @@ export default function ApiTokensPage({
               {t('team.tokens.create')}
             </Button>
           </InlineFields>
-        </Form>
+        </fetcher.Form>
 
         {createdToken ? (
           <CreatedTokenPanel
@@ -118,6 +140,7 @@ export default function ApiTokensPage({
         </CredentialTable>
         {target && (
           <RevokeDialog
+            onRevoked={onRevoked}
             target={{ intent: 'revoke', tokenId: target.id, name: target.name }}
             fallbackFocusId="api-tokens-heading"
             returnFocusId={`revoke-${target.id}`}

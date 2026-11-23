@@ -1,3 +1,4 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import { CredentialTable } from './credential-table'
 import { useState } from 'react'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -12,7 +13,9 @@ import { RevokeDialog, type RevokeTarget } from './revoke-dialog'
 
 export function CliSessionsSection({
   cliFamilies,
+  onRevoked,
 }: {
+  onRevoked: () => void
   cliFamilies: CliRefreshCredentialFamily[]
 }) {
   const [dialog, setDialog] = useState<{
@@ -20,6 +23,7 @@ export function CliSessionsSection({
     triggerId: string
   } | null>(null)
   const [noop, setNoop] = useState(false)
+  useSettingsEntryChange(() => setNoop(false))
   function open(target: RevokeTarget, triggerId: string) {
     setNoop(false)
     setDialog({ target, triggerId })
@@ -85,6 +89,7 @@ export function CliSessionsSection({
       ) : null}
       {dialog && (
         <RevokeDialog
+          onRevoked={onRevoked}
           target={dialog.target}
           fallbackFocusId="cli-sessions-heading"
           returnFocusId={dialog.triggerId}

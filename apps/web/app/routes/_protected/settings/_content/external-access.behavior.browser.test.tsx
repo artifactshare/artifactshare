@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import {
   createMemoryRouter,
   Outlet,
-  redirect,
+  RouterContextProvider,
   RouterProvider,
   useLoaderData,
 } from 'react-router'
@@ -11,12 +11,21 @@ import { expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import type { WorkspaceLinkPolicy } from '~/lib/link-sharing-policy'
-import ExternalAccessPage, { screen } from './external-access'
+import ExternalAccessPage, {
+  screen,
+  action as policyAction,
+} from './external-access'
 import '~/app.css'
 
-vi.mock('~/services/link-sharing.server', () => ({}))
-vi.mock('~/services/db.server', () => ({}))
-vi.mock('~/middleware/context', () => ({}))
+const services = vi.hoisted(() => ({
+  previewWorkspaceExternalAccessPolicy: vi.fn(),
+  updateWorkspaceExternalAccessPolicy: vi.fn(),
+}))
+vi.mock('~/services/link-sharing.server', () => services)
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'owner' }),
+}))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
 
 function Page() {
@@ -34,6 +43,19 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
     linkExpiryMaxDays: 90,
   }
   const submissions: FormData[] = []
+  services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'preview',
+    previousMaximumDays: 90,
+    maximumDays: 90,
+    shortenedLinkCount: 0,
+  })
+  services.updateWorkspaceExternalAccessPolicy.mockImplementation(
+    (_db, _user, patch) => {
+      if (submissions.length === 1) return { kind: 'forbidden' }
+      policy = { ...policy, ...patch }
+      return { kind: 'ok', policy, shortenedLinkCount: 0 }
+    },
+  )
   const router = createMemoryRouter(
     [
       {
@@ -47,21 +69,16 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
             path: '/settings/external-access',
             Component: Page,
             loader: () => policy,
-            action: async ({ request }) => {
-              const form = await request.formData()
+            action: async ({ request, params }) => {
+              const form = await request.clone().formData()
               submissions.push(form)
-              if (submissions.length === 1) return { kind: 'forbidden' }
-              policy = {
-                ...policy,
-                linkSharingEnabled: form
-                  .getAll('linkSharingEnabled')
-                  .includes('true'),
-                externalPostingEnabled: form
-                  .getAll('externalPostingEnabled')
-                  .includes('true'),
-                linkExpiryDefaultDays: Number(form.get('defaultDays')),
-              }
-              return redirect('/settings/external-access?status=ok')
+              return policyAction({
+                request,
+                params,
+                context: new RouterContextProvider(),
+                url: new URL(request.url),
+                pattern: '/settings/external-access',
+              })
             },
           },
           { path: '/away', element: <p>Away</p> },
@@ -117,11 +134,13 @@ test('dirty toggles are discarded on navigation, retained on failure, and saved 
       .getByRole('button', { name: 'Save changes', exact: true })
       .click()
     await vi.waitFor(() =>
-      expect(router.state.location.search).toBe('?status=ok'),
+      expect(
+        container.querySelector('[data-settings-status="ok"]'),
+      ).not.toBeNull(),
     )
     await expect.element(page.getByRole('alert')).not.toBeInTheDocument()
     await vi.waitFor(() =>
-      expect(container.querySelectorAll('[role="status"]')).toHaveLength(0),
+      expect(container.querySelectorAll('[role="status"]')).toHaveLength(1),
     )
     expect(policy).toMatchObject({
       linkSharingEnabled: false,
@@ -157,6 +176,34 @@ test.each([
     const submissions: FormData[] = []
     let saveAttempts = 0
     let previewAttempts = 0
+    services.previewWorkspaceExternalAccessPolicy.mockImplementation(
+      (_db, _user, patch) => {
+        if (saveAttempts >= 2) return { kind: 'forbidden' }
+        if (proposed === 120) policy = { ...policy, linkExpiryMaxDays: 180 }
+        if (
+          !submissions.at(-1)?.has('confirmedMaximum') &&
+          ++previewAttempts === 2
+        )
+          return { kind: 'forbidden' }
+        return {
+          kind: 'preview',
+          previousMaximumDays: policy.linkExpiryMaxDays,
+          maximumDays: patch.linkExpiryMaxDays,
+          shortenedLinkCount: count,
+        }
+      },
+    )
+    services.updateWorkspaceExternalAccessPolicy.mockImplementation(
+      (_db, _user, patch) => {
+        if (++saveAttempts === 1) return { kind: 'forbidden' }
+        policy = { ...policy, ...patch }
+        return { kind: 'ok', policy, shortenedLinkCount: count }
+      },
+    )
+    let releasePreviewReload!: () => void
+    const previewReload = new Promise<void>((resolve) => {
+      releasePreviewReload = resolve
+    })
     const router = createMemoryRouter(
       [
         {
@@ -169,32 +216,24 @@ test.each([
             {
               path: '/settings/external-access',
               Component: Page,
-              loader: () => policy,
-              action: async ({ request }) => {
-                const form = await request.formData()
-                submissions.push(form)
-                if (saveAttempts >= 2) return { kind: 'forbidden' }
-                if (proposed === 120)
-                  policy = { ...policy, linkExpiryMaxDays: 180 }
+              loader: async () => {
                 if (
-                  form.get('intent') === 'preview-external-access' ||
-                  !form.has('confirmedMaximum')
-                ) {
-                  if (++previewAttempts === 2) return { kind: 'forbidden' }
-                  return {
-                    kind: 'preview',
-                    previousMaximumDays: proposed === 120 ? 180 : maximum,
-                    maximumDays: Number(form.get('maxDays')),
-                    shortenedLinkCount: count,
-                  }
-                }
-                if (++saveAttempts === 1) return { kind: 'forbidden' }
-                policy = {
-                  ...policy,
-                  linkExpiryMaxDays: Number(form.get('maxDays')),
-                  linkSharingEnabled: false,
-                }
-                return redirect('/settings/external-access?status=ok')
+                  submissions.length === 1 &&
+                  submissions[0].get('intent') === 'preview-external-access'
+                )
+                  await previewReload
+                return policy
+              },
+              action: async ({ request, params }) => {
+                const form = await request.clone().formData()
+                submissions.push(form)
+                return policyAction({
+                  request,
+                  params,
+                  context: new RouterContextProvider(),
+                  url: new URL(request.url),
+                  pattern: '/settings/external-access',
+                })
               },
             },
           ],
@@ -237,6 +276,8 @@ test.each([
         name: 'Save changes',
         exact: true,
       })
+      await expect.element(confirm).toBeEnabled()
+      releasePreviewReload()
       expect(confirm.element().className.includes('bg-destructive')).toBe(
         count > 0,
       )
@@ -303,6 +344,7 @@ test.each([
       await expect.element(dialog).not.toBeInTheDocument()
       expect(submissions.at(-1)?.get('intent')).toBe('preview-external-access')
     } finally {
+      releasePreviewReload()
       await act(async () => root.unmount())
       router.dispose()
       container.remove()
@@ -319,6 +361,9 @@ test('invalid or refused preview cannot save and a later non-reduction bypasses 
     linkExpiryMaxDays: 90,
   }
   const submissions: string[] = []
+  services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'forbidden',
+  })
   const router = createMemoryRouter(
     [
       {
@@ -332,10 +377,16 @@ test('invalid or refused preview cannot save and a later non-reduction bypasses 
             path: '/settings/external-access',
             Component: Page,
             loader: () => policy,
-            action: async ({ request }) => {
-              const form = await request.formData()
+            action: async ({ request, params }) => {
+              const form = await request.clone().formData()
               submissions.push(String(form.get('intent')))
-              return { kind: 'forbidden' }
+              return policyAction({
+                request,
+                params,
+                context: new RouterContextProvider(),
+                url: new URL(request.url),
+                pattern: '/settings/external-access',
+              })
             },
           },
         ],
@@ -388,6 +439,22 @@ test('successful recovery with unchanged persisted values clears the previous sa
     linkExpiryMaxDays: 90,
   }
   const submissions: FormData[] = []
+  services.previewWorkspaceExternalAccessPolicy.mockImplementation(
+    (_db, _user, patch) =>
+      patch.linkExpiryDefaultDays > 90
+        ? { kind: 'invalid-policy' }
+        : {
+            kind: 'preview',
+            previousMaximumDays: 90,
+            maximumDays: 90,
+            shortenedLinkCount: 0,
+          },
+  )
+  services.updateWorkspaceExternalAccessPolicy.mockResolvedValue({
+    kind: 'ok',
+    policy,
+    shortenedLinkCount: 0,
+  })
   const router = createMemoryRouter(
     [
       {
@@ -401,12 +468,16 @@ test('successful recovery with unchanged persisted values clears the previous sa
             path: '/settings/external-access',
             Component: Page,
             loader: () => policy,
-            action: async ({ request }) => {
-              const form = await request.formData()
+            action: async ({ request, params }) => {
+              const form = await request.clone().formData()
               submissions.push(form)
-              if (Number(form.get('defaultDays')) > policy.linkExpiryMaxDays!)
-                return { kind: 'invalid-policy' }
-              return redirect('/settings/external-access?status=ok')
+              return policyAction({
+                request,
+                params,
+                context: new RouterContextProvider(),
+                url: new URL(request.url),
+                pattern: '/settings/external-access',
+              })
             },
           },
         ],
@@ -432,7 +503,9 @@ test('successful recovery with unchanged persisted values clears the previous sa
     await defaultDays.fill('30')
     await save.click()
     await vi.waitFor(() =>
-      expect(router.state.location.search).toBe('?status=ok'),
+      expect(
+        container.querySelector('[data-settings-status="ok"]'),
+      ).not.toBeNull(),
     )
     await expect.element(save).toBeEnabled()
     await expect.element(page.getByRole('alert')).not.toBeInTheDocument()
@@ -474,7 +547,9 @@ test.each(['preview', 'forbidden'] as const)(
       externalPostingEnabled: false,
     }
     const previewResult = {
-      kind: 'preview',
+      ok: true,
+      intent: 'preview-external-access',
+      code: 'preview',
       previousMaximumDays: 90,
       maximumDays: 30,
       shortenedLinkCount: 2,
@@ -482,6 +557,17 @@ test.each(['preview', 'forbidden'] as const)(
       resume: 'linkSharing',
     }
     const submissions: FormData[] = []
+    services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+      kind: 'preview',
+      previousMaximumDays: 90,
+      maximumDays: 30,
+      shortenedLinkCount: 2,
+    })
+    services.updateWorkspaceExternalAccessPolicy.mockResolvedValue({
+      kind: 'ok',
+      policy,
+      shortenedLinkCount: 2,
+    })
     const router = createMemoryRouter(
       [
         {
@@ -495,12 +581,16 @@ test.each(['preview', 'forbidden'] as const)(
               id: 'settings',
               path: '/settings/external-access',
               element: <ExternalAccessPage loaderData={{ policy }} />,
-              action: async ({ request }) => {
-                const form = await request.formData()
+              action: async ({ request, params }) => {
+                const form = await request.clone().formData()
                 submissions.push(form)
-                if (form.get('intent') === 'preview-external-access')
-                  return previewResult
-                return redirect('/settings/external-access?status=ok')
+                return policyAction({
+                  request,
+                  params,
+                  context: new RouterContextProvider(),
+                  url: new URL(request.url),
+                  pattern: '/settings/external-access',
+                })
               },
             },
           ],
@@ -510,7 +600,15 @@ test.each(['preview', 'forbidden'] as const)(
         initialEntries: ['/settings/external-access'],
         hydrationData: {
           actionData: {
-            settings: kind === 'preview' ? previewResult : { kind, draft },
+            settings:
+              kind === 'preview'
+                ? previewResult
+                : {
+                    ok: false,
+                    code: kind,
+                    intent: 'update-external-access',
+                    draft,
+                  },
           },
         },
       },
@@ -535,7 +633,9 @@ test.each(['preview', 'forbidden'] as const)(
         .getByRole('button', { name: 'Save changes', exact: true })
         .click()
       await vi.waitFor(() =>
-        expect(router.state.location.search).toBe('?status=ok'),
+        expect(
+          container.querySelector('[data-settings-status="ok"]'),
+        ).not.toBeNull(),
       )
       await expect.element(dialog).not.toBeInTheDocument()
       const saved = submissions.at(-1)
@@ -558,7 +658,7 @@ test.each(['preview', 'forbidden'] as const)(
 
 // The real router and Radix exit animation expose duplicate alerts during dismissal.
 test.each([30, 90])(
-  'server maximum %s controls confirmation and failed-save dismissal has one alert',
+  'server maximum %s controls confirmation and failed-save dismissal ends the attempt',
   async (storedMaximum) => {
     const policy: WorkspaceLinkPolicy = {
       plan: 'team',
@@ -569,6 +669,15 @@ test.each([30, 90])(
     }
     const submissions: string[] = []
     const disabledDuringHandoff: boolean[] = []
+    services.previewWorkspaceExternalAccessPolicy.mockResolvedValue({
+      kind: 'preview',
+      previousMaximumDays: storedMaximum,
+      maximumDays: 60,
+      shortenedLinkCount: 0,
+    })
+    services.updateWorkspaceExternalAccessPolicy.mockResolvedValue({
+      kind: 'forbidden',
+    })
     const router = createMemoryRouter(
       [
         {
@@ -582,18 +691,16 @@ test.each([30, 90])(
               path: '/settings/external-access',
               Component: Page,
               loader: () => policy,
-              action: async ({ request }) => {
-                const form = await request.formData()
-                const intent = String(form.get('intent'))
-                submissions.push(intent)
-                return intent === 'preview-external-access'
-                  ? {
-                      kind: 'preview',
-                      previousMaximumDays: storedMaximum,
-                      maximumDays: 60,
-                      shortenedLinkCount: 0,
-                    }
-                  : { kind: 'forbidden' }
+              action: async ({ request, params }) => {
+                const form = await request.clone().formData()
+                submissions.push(String(form.get('intent')))
+                return policyAction({
+                  request,
+                  params,
+                  context: new RouterContextProvider(),
+                  url: new URL(request.url),
+                  pattern: '/settings/external-access',
+                })
               },
             },
           ],
@@ -661,13 +768,18 @@ test.each([30, 90])(
             .getByRole('button', { name: 'Keep editing', exact: true })
             .click()
           await expect.element(dialog).not.toBeInTheDocument()
-          expect(closingAlertCounts.length).toBeGreaterThan(0)
-          expect(closingAlertCounts.every((count) => count === 1)).toBe(true)
+          // The failure stays in the closing dialog and is never duplicated;
+          // dismissing ends the attempt, so the form does not repeat it.
+          expect(closingAlertCounts[0]).toBe(1)
+          expect(closingAlertCounts.every((count) => count <= 1)).toBe(true)
+          expect(document.querySelectorAll('[role="alert"]')).toHaveLength(0)
         } finally {
           observer.disconnect()
         }
       }
-      await expect.element(page.getByRole('alert')).toBeVisible()
+      if (storedMaximum === 30)
+        await expect.element(page.getByRole('alert')).toBeVisible()
+      else expect(document.querySelectorAll('[role="alert"]')).toHaveLength(0)
       if (storedMaximum === 30) {
         expect(disabledDuringHandoff.length).toBeGreaterThan(0)
         expect(disabledDuringHandoff.every(Boolean)).toBe(true)

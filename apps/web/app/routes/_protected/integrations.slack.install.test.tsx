@@ -1,4 +1,16 @@
 import type { Kysely } from 'kysely'
+import { TooltipProvider } from '~/components/ui/tooltip'
+import { renderToStaticMarkup } from 'react-dom/server'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  RouterContextProvider,
+  Outlet,
+} from 'react-router'
+import IntegrationsPage, {
+  loader as integrationsLoader,
+} from './settings/_content/integrations'
+import { bindI18n } from '~/lib/i18n'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -129,8 +141,53 @@ describe('/integrations/slack/install loader', () => {
     expect(response).toBeInstanceOf(Response)
     expect((response as Response).status).toBe(302)
     expect((response as Response).headers.get('Location')).toBe(
-      '/settings/integrations?status=forbidden',
+      '/settings/integrations',
     )
+    const cookie = response.headers.get('Set-Cookie')?.split(';')[0]
+    if (!cookie) throw new Error('Missing launch notice')
+    const url = new URL(
+      response.headers.get('Location')!,
+      'https://example.test',
+    )
+    for (const currentCookie of [cookie, '']) {
+      const result = await integrationsLoader({
+        request: new Request(url, { headers: { Cookie: currentCookie } }),
+        url,
+        context: new RouterContextProvider(),
+        params: {},
+        pattern: '/settings/integrations',
+      })
+      const clear = new Headers(result.init?.headers).get('Set-Cookie')
+      const router = createMemoryRouter(
+        [
+          {
+            element: <Outlet context={{ currentUserIsAdmin: false }} />,
+            children: [
+              {
+                path: url.pathname,
+                element: <IntegrationsPage loaderData={result.data} />,
+              },
+            ],
+          },
+        ],
+        { initialEntries: [url.pathname] },
+      )
+      try {
+        const html = renderToStaticMarkup(
+          <TooltipProvider>
+            <RouterProvider router={router} />
+          </TooltipProvider>,
+        )
+        expect(html.includes(bindI18n('en').t('team.status.forbidden'))).toBe(
+          Boolean(currentCookie),
+        )
+        if (currentCookie)
+          expect(clear).toMatch(/slack-install-notice=.*Max-Age=0/)
+        else expect(clear).toBeNull()
+      } finally {
+        router.dispose()
+      }
+    }
   })
 })
 

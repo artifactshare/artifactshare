@@ -385,7 +385,7 @@ test('requires locale wrappers to have a matching canonical sibling screen', () 
     localeSource
       .replaceAll('/settings/profile', '/settings/billing')
       .replace('/ja/settings/billing', '/ja/settings/billing/')
-      .replace('setup: {}', "setup: { query: '?status=invalid' }"),
+      .replace('setup: {}', "setup: { query: '?status=checkout-success' }"),
   )
   assert.deepEqual(
     checkScreenLedger({
@@ -1280,6 +1280,13 @@ test('validates typed fill values and same-route action fixtures', () => {
     readRouteSource: () => 'export default function Profile() {}',
   }
   assert.deepEqual(checkScreenLedger(base), [])
+  const missingReady = structuredClone(base.screens[0])
+  missingReady.id = 'settings-general'
+  missingReady.states[0].id = 'result-error'
+  assert.match(
+    checkScreenLedger({ ...base, screens: [missingReady] }).join(' '),
+    /missing post-interaction readiness/,
+  )
   base.screens[0].states[0].setup.interactions[0].value = 30
   assert.match(checkScreenLedger(base).join(' '), /fill requires a string/)
   base.screens[0].states[0].setup.actionResponse.route = '/settings/other'
@@ -1307,7 +1314,7 @@ test('Settings capture URLs must stay on their owning route and use a registered
     })
   for (const query of [
     '?status=checkout-success&status=unknown',
-    '?status=invalid&extra=1',
+    '?status=checkout-cancelled&extra=1',
     '#details',
   ])
     assert.deepEqual(check(query), [])
@@ -1329,9 +1336,11 @@ test('Settings capture URLs must stay on their owning route and use a registered
 
 test('Settings captures select only the intended route results', () => {
   const expected = {
-    settings: ['ok', 'removed-transfer-failed', 'invalid'],
-    'settings-general': ['ok', 'invalid'],
-    'settings-billing': ['checkout-success', 'checkout-cancelled', 'invalid'],
+    settings: [],
+    'settings-general': [],
+    'settings-billing': ['checkout-success', 'checkout-cancelled'],
+    'settings-integrations': ['slack-team-in-use'],
+    'settings-external-access': [],
     'settings-tokens': [],
     'settings-analytics': [],
     'settings-activity': [],

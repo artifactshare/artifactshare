@@ -1,15 +1,14 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import { IconAlertTriangle, IconPlug as Plug } from '@tabler/icons-react'
-import { useState, type ReactNode } from 'react'
-import {
-  useSubmit,
-  useActionData,
-  Link,
-  redirect,
-  useNavigation,
-  useOutletContext,
-  useSearchParams,
-} from 'react-router'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useFetcher, data, Link, useOutletContext } from 'react-router'
 import { SettingsPage } from '~/components/form/settings-page'
+import { readSlackInstallFailure } from '~/lib/slack-install-notice.server'
+import { settingsFailure } from '~/lib/settings-submission'
+import {
+  confirmationResult,
+  runConfirmedMutation,
+} from '~/lib/settings-confirmation'
 import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
 import {
   SettingsBanner,
@@ -119,8 +118,11 @@ export const screen = {
           route: '/settings/integrations',
           method: 'POST',
           intent: 'disconnect-slack',
+          status: 409,
           data: {
-            error: 'external-failed',
+            ok: false,
+            intent: 'disconnect-slack',
+            code: 'external-failed',
             connectionId:
               'dev-screen-team-settings-integrations-slack-connected-slack',
           },
@@ -144,49 +146,56 @@ export const screen = {
       description:
         'Disconnected Slack connection with an explicit success notice',
       setup: {
-        scenario: 'settings-integrations/slack-disconnected',
-        reseedBeforeCapture: true,
-        query: '?status=slack-disconnected',
-        ready: {
-          selector: '[role="status"]:has-text("disconnected")',
-          description: 'Explicit disconnected notice',
-        },
-      },
-    },
-    {
-      id: 'slack-disconnect-page-error',
-      description: 'Slack failure remains visible after dismissing the dialog',
-      setup: {
         scenario: 'settings-integrations/slack-connected',
         reseedBeforeCapture: true,
+        interactions: [
+          { action: 'click', selector: 'button:text-is("Disconnect")' },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+          },
+        ],
         actionResponse: {
           route: '/settings/integrations',
           method: 'POST',
           intent: 'disconnect-slack',
           data: {
-            error: 'external-failed',
+            ok: true,
+            code: 'slack-disconnected',
+            intent: 'disconnect-slack',
             connectionId:
               'dev-screen-team-settings-integrations-slack-connected-slack',
           },
         },
-        interactions: [
-          {
-            action: 'click',
-            selector: 'button:text-is("Disconnect")',
-            readySelector: '[role="alertdialog"]',
-          },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] button:text-is("Disconnect")',
-            readySelector: '[role="alertdialog"] [role="alert"]',
-          },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] button:text-is("Cancel")',
-            readySelector:
-              'body:not(:has([role="alertdialog"])) [role="alert"]',
-          },
-        ],
+        postInteractionReady: {
+          selector:
+            'body:not(:has([id^="disconnect-"])) [role="status"][data-settings-status="slack-disconnected"]',
+          description: 'Explicit disconnected notice',
+        },
+      },
+    },
+    {
+      id: 'slack-connected-return',
+      description: 'Notice after returning from a Slack install, shown once',
+      setup: {
+        scenario: 'settings-integrations/slack-connected',
+        query: '?connected=slack',
+        ready: {
+          selector: '[role="status"][data-settings-status="slack-connected"]',
+          description: 'Slack connected notice',
+        },
+      },
+    },
+    {
+      id: 'slack-team-in-use-return',
+      description:
+        'Notice after a Slack install for a team another workspace uses',
+      setup: {
+        query: '?status=slack-team-in-use',
+        ready: {
+          selector: '[data-settings-status="slack-team-in-use"]',
+          description: 'Slack team in use notice',
+        },
       },
     },
     {
@@ -238,134 +247,104 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const connections = await listWorkspaceSlackConnections(
-    createDb(),
-    user.workspaceId,
+  const [connections, notice] = await Promise.all([
+    listWorkspaceSlackConnections(createDb(), user.workspaceId),
+    readSlackInstallFailure(request),
+  ])
+  return data(
+    { connections, ...(notice && { launchFailure: notice.code }) },
+    notice ? { headers: { 'Set-Cookie': notice.clearCookie } } : {},
   )
-  return { connections }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
-  const user = requireUser(context)
   const form = await request.formData()
-  const intent = stringValue(form.get('intent'))
-  if (intent !== 'disconnect-slack') {
-    return { error: 'invalid' as const }
+  const intent = stringValue(form.get('intent')) ?? ''
+  const submit = async () => {
+    const user = requireUser(context)
+    if (intent !== 'disconnect-slack') return settingsFailure(intent, 'invalid')
+    const connectionId = stringValue(form.get('connectionId'))
+    if (!connectionId) return settingsFailure(intent, 'invalid')
+    const result = await deleteWorkspaceSlackConnection(
+      createDb(),
+      user,
+      connectionId,
+    )
+    if (result.kind !== 'ok') return settingsFailure(intent, result.kind)
+    return data(
+      { ok: true as const, code: 'slack-disconnected', intent, connectionId },
+      { status: 200 },
+    )
   }
+  return intent === 'disconnect-slack' ? runConfirmedMutation(submit) : submit()
+}
 
-  const connectionId = stringValue(form.get('connectionId'))
-  if (!connectionId) {
-    return { error: 'invalid' as const }
-  }
-
-  const result = await deleteWorkspaceSlackConnection(
-    createDb(),
-    user,
-    connectionId,
-  )
-  if (result.kind !== 'ok') return { error: result.kind, connectionId }
-  return redirect('/settings/integrations?status=slack-disconnected')
+export async function clientAction({
+  request,
+  serverAction,
+}: Route.ClientActionArgs) {
+  const intent = (await request.clone().formData()).get('intent')
+  return intent === 'disconnect-slack'
+    ? confirmationResult(intent, serverAction)
+    : serverAction()
 }
 
 export default function IntegrationsPage({
   loaderData,
 }: Pick<Route.ComponentProps, 'loaderData'>) {
-  const [searchParams] = useSearchParams()
-  const actionData = useActionData<typeof action>()
-  const [openConnectionId, setOpenConnectionId] = useState<string | null>(null)
-  const [selectedConnection, setSelectedConnection] =
-    useState<SlackConnectionListItem | null>(null)
-  const showConnectedBanner = searchParams.get('connected') === 'slack'
-  const { locale, t } = useT()
-  const { connections } = loaderData
+  const fetcher = useFetcher<typeof action>()
+  useSettingsEntryChange(fetcher.reset)
+  const [selected, setSelected] = useState<SlackConnectionListItem | null>(null)
+  const [open, setOpen] = useState(false)
+  const pending = fetcher.state !== 'idle'
+  const result = pending ? undefined : fetcher.data
+  useEffect(() => {
+    if (result?.ok) setOpen(false)
+  }, [result])
+  const connections = result?.ok
+    ? loaderData.connections.filter(
+        (connection) => connection.id !== result.connectionId,
+      )
+    : loaderData.connections
   const { currentUserIsAdmin } = useOutletContext<SettingsLayoutContext>()
-  const navigation = useNavigation()
-  const pending = navigation.state !== 'idle'
-  const pendingDisconnectId =
-    navigation.formAction === '/settings/integrations' &&
-    navigation.formData?.get('intent') === 'disconnect-slack'
-      ? stringValue(navigation.formData.get('connectionId'))
-      : null
-  const submittedConnection =
-    selectedConnection?.id === actionData?.connectionId
-      ? selectedConnection
-      : connections.find(
-          (connection) => connection.id === actionData?.connectionId,
-        )
   const dialogRendered =
+    open &&
+    selected &&
     currentUserIsAdmin &&
-    connections.some((connection) => connection.id === openConnectionId)
-
+    connections.some((connection) => connection.id === selected.id)
   return (
     <SettingsPage>
-      {actionData?.error && !pending && !dialogRendered ? (
-        <SettingsBanner kind="error">
-          {submittedConnection ? (
-            <p>
-              {t('team.integrations.slack.disconnectFailed', {
-                name: submittedConnection.teamName,
-              })}
-            </p>
-          ) : null}
-          <p>{t(settingsNotice(actionData.error).message)}</p>
-        </SettingsBanner>
-      ) : null}
-      {showConnectedBanner ? (
-        <SettingsBanner kind="success">
-          <span>{t('team.integrations.slack.connected')}</span>
-        </SettingsBanner>
-      ) : null}
-
-      <SettingsSection
-        title={t('team.integrations.slack.title')}
-        description={t('team.integrations.slack.body')}
-      >
-        {!currentUserIsAdmin ? (
-          <p className="text-muted-foreground text-sm">
-            {t('team.integrations.slack.memberGuidance')}
-          </p>
-        ) : null}
-        {connections.length === 0 ? (
-          <SlackEmptyState canManage={currentUserIsAdmin} />
-        ) : (
-          <>
-            <Stack gap="3">
-              {connections.map((connection) => (
-                <SlackConnectionCard
-                  key={connection.id}
-                  connection={connection}
-                  locale={locale}
-                  canManage={currentUserIsAdmin}
-                  pending={pendingDisconnectId === connection.id}
-                  onDisconnectOpenChange={(open) => {
-                    if (open) setSelectedConnection(connection)
-                    setOpenConnectionId(open ? connection.id : null)
-                  }}
-                />
-              ))}
-            </Stack>
-            <div className="pt-4">
-              {currentUserIsAdmin ? (
-                <Button asChild variant="outline" size="sm">
-                  <Link to="/integrations/slack/install">
-                    {t('team.integrations.slack.addAnother')}
-                  </Link>
-                </Button>
-              ) : (
-                <AdminOnlyTooltip
-                  label={t('team.integrations.slack.adminOnly')}
-                >
-                  <Button variant="outline" size="sm" type="button" disabled>
-                    {t('team.integrations.slack.addAnother')}
-                  </Button>
-                </AdminOnlyTooltip>
-              )}
-            </div>
-          </>
-        )}
-      </SettingsSection>
+      {loaderData.launchFailure && (
+        <StatusBanner status={loaderData.launchFailure} />
+      )}
+      {result?.ok && <StatusBanner status={result.code} />}
+      {result && !result.ok && !dialogRendered && (
+        <DisconnectFailure selected={selected} code={result.code} />
+      )}
+      {dialogRendered && (
+        <DisconnectDialog
+          selected={selected}
+          fetcher={fetcher}
+          close={(next) => {
+            setOpen(next)
+            // Dismissing ends the attempt: its failure is not repeated on
+            // the page while the connection is still listed.
+            if (!next && !pending && result && !result.ok) fetcher.reset()
+          }}
+        />
+      )}
+      <SlackConnections
+        connections={connections}
+        currentUserIsAdmin={currentUserIsAdmin}
+        pendingId={pending ? selected?.id : undefined}
+        onDisconnect={(connection) => {
+          fetcher.reset()
+          setSelected(connection)
+          setOpen(true)
+        }}
+      />
     </SettingsPage>
   )
 }
@@ -407,9 +386,9 @@ export function SlackConnectionCard({
   locale,
   canManage,
   pending,
-  onDisconnectOpenChange,
+  onDisconnect,
 }: {
-  onDisconnectOpenChange?: (open: boolean) => void
+  onDisconnect: () => void
   connection: SlackConnectionListItem
   locale: Locale
   canManage: boolean
@@ -500,11 +479,17 @@ export function SlackConnectionCard({
             )
           ) : null}
           {canManage ? (
-            <SlackDisconnectDialog
-              connection={connection}
-              pending={pending}
-              onOpenChange={onDisconnectOpenChange}
-            />
+            <Button
+              id={`disconnect-${connection.id}`}
+              type="button"
+              className="max-stack:w-full"
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={onDisconnect}
+            >
+              {t('team.integrations.slack.disconnect')}
+            </Button>
           ) : (
             <AdminOnlyTooltip label={adminOnly}>
               <Button
@@ -521,73 +506,6 @@ export function SlackConnectionCard({
         </div>
       </CardFooter>
     </Card>
-  )
-}
-
-function SlackDisconnectDialog({
-  connection,
-  pending: navigationPending,
-  onOpenChange,
-}: {
-  onOpenChange?: (open: boolean) => void
-  connection: SlackConnectionListItem
-  pending: boolean
-}) {
-  const { t } = useT()
-  const [dialogState, setDialogState] = useState<
-    'closed' | 'confirming' | 'submitted'
-  >('closed')
-  const submit = useSubmit()
-  const actionData = useActionData<typeof action>()
-  const navigation = useNavigation()
-  const [searchParams] = useSearchParams()
-  const status = searchParams.get('status')
-  const pending = navigationPending || navigation.state !== 'idle'
-  const completed = dialogState === 'submitted' && !pending
-  const error = completed ? actionData?.error : undefined
-  const disconnectOpen =
-    dialogState !== 'closed' &&
-    !(completed && !error && status === 'slack-disconnected')
-  return (
-    <ConfirmActionDialog
-      open={disconnectOpen}
-      onOpenChange={(open) => {
-        setDialogState(open ? 'confirming' : 'closed')
-        onOpenChange?.(open)
-      }}
-      destructive
-      awaitResult
-      pending={pending}
-      title={t('team.integrations.slack.disconnectTitle', {
-        name: connection.teamName,
-      })}
-      description={t('team.integrations.slack.disconnectBody')}
-      action={t(
-        error === 'external-failed'
-          ? 'dialog.retry'
-          : 'team.integrations.slack.disconnect',
-      )}
-      pendingLabel={t('team.integrations.slack.disconnecting')}
-      result={error ? <StatusBanner status={error} /> : undefined}
-      onConfirm={() => {
-        setDialogState('submitted')
-        void submit(
-          { intent: 'disconnect-slack', connectionId: connection.id },
-          { method: 'post', action: '/settings/integrations' },
-        )
-      }}
-      trigger={
-        <Button
-          className="max-stack:w-full"
-          variant="outline"
-          size="sm"
-          type="button"
-          disabled={pending}
-        >
-          {t('team.integrations.slack.disconnect')}
-        </Button>
-      }
-    />
   )
 }
 
@@ -609,5 +527,129 @@ function AdminOnlyTooltip({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+function SlackConnections({
+  connections,
+  currentUserIsAdmin,
+  pendingId,
+  onDisconnect,
+}: {
+  connections: SlackConnectionListItem[]
+  currentUserIsAdmin: boolean
+  pendingId?: string
+  onDisconnect: (connection: SlackConnectionListItem) => void
+}) {
+  const { locale, t } = useT()
+  return (
+    <SettingsSection
+      headingId="slack-heading"
+      title={t('team.integrations.slack.title')}
+      description={t('team.integrations.slack.body')}
+    >
+      {!currentUserIsAdmin ? (
+        <p className="text-muted-foreground text-sm">
+          {t('team.integrations.slack.memberGuidance')}
+        </p>
+      ) : null}
+      {connections.length === 0 ? (
+        <SlackEmptyState canManage={currentUserIsAdmin} />
+      ) : (
+        <>
+          <Stack gap="3">
+            {connections.map((connection) => (
+              <SlackConnectionCard
+                key={connection.id}
+                connection={connection}
+                locale={locale}
+                canManage={currentUserIsAdmin}
+                pending={connection.id === pendingId}
+                onDisconnect={() => onDisconnect(connection)}
+              />
+            ))}
+          </Stack>
+          <div className="pt-4">
+            {currentUserIsAdmin ? (
+              <Button asChild variant="outline" size="sm">
+                <Link to="/integrations/slack/install">
+                  {t('team.integrations.slack.addAnother')}
+                </Link>
+              </Button>
+            ) : (
+              <AdminOnlyTooltip label={t('team.integrations.slack.adminOnly')}>
+                <Button variant="outline" size="sm" type="button" disabled>
+                  {t('team.integrations.slack.addAnother')}
+                </Button>
+              </AdminOnlyTooltip>
+            )}
+          </div>
+        </>
+      )}
+    </SettingsSection>
+  )
+}
+
+function DisconnectFailure({
+  selected,
+  code,
+}: {
+  selected: SlackConnectionListItem | null
+  code: string
+}) {
+  const { t } = useT()
+  return (
+    <SettingsBanner kind="error">
+      {selected && (
+        <p>
+          {t('team.integrations.slack.disconnectFailed', {
+            name: selected.teamName,
+          })}
+        </p>
+      )}
+      <p>{t(settingsNotice(code).message)}</p>
+    </SettingsBanner>
+  )
+}
+
+function DisconnectDialog({
+  selected,
+  fetcher,
+  close,
+}: {
+  selected: SlackConnectionListItem
+  fetcher: ReturnType<typeof useFetcher<typeof action>>
+  close: (open: boolean) => void
+}) {
+  const { t } = useT()
+  const pending = fetcher.state !== 'idle'
+  const result = pending ? undefined : fetcher.data
+  return (
+    <ConfirmActionDialog
+      open
+      awaitResult
+      destructive
+      pending={pending}
+      returnFocusId={`disconnect-${selected.id}`}
+      fallbackFocusId="slack-heading"
+      onOpenChange={close}
+      title={t('team.integrations.slack.disconnectTitle', {
+        name: selected.teamName,
+      })}
+      description={t('team.integrations.slack.disconnectBody')}
+      action={t(
+        result && !result.ok
+          ? 'dialog.retry'
+          : 'team.integrations.slack.disconnect',
+      )}
+      pendingLabel={t('team.integrations.slack.disconnecting')}
+      result={result && !result.ok && <StatusBanner status={result.code} />}
+      onConfirm={() => {
+        void fetcher.submit(
+          { intent: 'disconnect-slack', connectionId: selected.id },
+          { method: 'post' },
+        )
+      }}
+    />
   )
 }

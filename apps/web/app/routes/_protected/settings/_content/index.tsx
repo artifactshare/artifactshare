@@ -1,14 +1,34 @@
-import { useState } from 'react'
-import { Form, redirect, useNavigation, useOutletContext } from 'react-router'
-import type { Route } from './+types/index'
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
 import {
-  NO_ASSET_TRANSFER,
-  RemoveMemberDialog,
-} from '../+components/remove-member-dialog'
-import { RecipientPicker } from '../+components/recipient-picker'
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  createContext,
+  useContext,
+} from 'react'
+import {
+  Form,
+  data as actionData,
+  useFetcher,
+  useRevalidator,
+  useOutletContext,
+} from 'react-router'
+import type { Route } from './+types/index'
+import { NO_ASSET_TRANSFER } from '../+components/recipient-picker'
+import { settingsFailure } from '~/lib/settings-submission'
+import {
+  confirmationResult,
+  runConfirmedMutation,
+} from '~/lib/settings-confirmation'
+import { StatusBanner } from '../+components/settings-banner'
+import { simulateRemovedAssetTransferFailure } from '~/services/dev-screen-state.server'
 import { TeamActions } from '../+components/team-actions'
-import { TransferOwnerDialog } from '../+components/transfer-owner-dialog'
-import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
+import {
+  MemberConfirmation,
+  isMemberConfirmation,
+  type MemberTarget,
+} from '../+components/member-confirmation'
 import { Pager } from '~/components/form/pager'
 import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
 import { TeamUser } from '../+components/team-user'
@@ -21,16 +41,6 @@ import { Button } from '~/components/ui/button'
 import { Field, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { IconButton } from '~/components/app/icon-button'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -122,8 +132,24 @@ export const screen = {
       id: 'result-success',
       description: 'Saved confirmation',
       setup: {
-        query: '?status=ok',
-        ready: {
+        scenario: 'settings/result-warning',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-member-action="revoke-cli-sessions"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+          },
+        ],
+        postInteractionReady: {
           selector: '[role="status"][data-settings-status="ok"]',
           description: 'Saved confirmation',
         },
@@ -134,12 +160,32 @@ export const screen = {
       description: 'Removed member with a file available for transfer',
       setup: {
         scenario: 'settings/result-warning',
-        query: '?status=removed-transfer-failed',
+        reseedBeforeCapture: true,
         ready: {
+          selector: 'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          description: 'Active member actions are ready',
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          },
+          { action: 'click', selector: '[data-member-action="remove-member"]' },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [role="radio"][id$="-self"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+          },
+        ],
+        postInteractionReady: {
           selector:
-            '#removed-members tbody tr:has([data-owned-file-count="1"]:visible) [data-transfer-removed-files]:enabled',
+            '#removed-members tr:has([data-owned-file-count="1"]:visible) button[id$="-removed-member"][data-transfer-removed-files]:enabled',
           visibleWith: [
-            '[role="status"][data-settings-status="removed-transfer-failed"]',
+            '[role="alertdialog"] [role="status"][data-settings-status="removed-transfer-failed"]',
           ],
           description: 'Removed member with a file available for transfer',
         },
@@ -149,8 +195,31 @@ export const screen = {
       id: 'result-error',
       description: 'Invalid input alert',
       setup: {
-        query: '?status=invalid',
-        ready: {
+        scenario: 'settings/result-warning',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings',
+          method: 'POST',
+          intent: 'revoke-cli-sessions',
+          status: 400,
+          data: { ok: false, code: 'invalid', intent: 'revoke-cli-sessions' },
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          },
+          {
+            action: 'click',
+            selector: '[data-member-action="revoke-cli-sessions"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+          },
+        ],
+        postInteractionReady: {
           selector: '[role="alert"][data-settings-status="invalid"]',
           description: 'Invalid input alert',
         },
@@ -173,98 +242,128 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
-  const user = requireUser(context)
-
   const form = await request.formData()
-  const intent = stringValue(form.get('intent'))
-  if (!intent) return redirect('/settings?status=invalid')
+  const intent = stringValue(form.get('intent')) ?? ''
+  return runConfirmedMutation(async () => {
+    const user = requireUser(context)
 
-  const db = createDb()
-  let result: TeamMutationResult
-  switch (intent) {
-    case 'transfer-owner': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await transferWorkspaceOwner(db, user, userId)
-      break
-    }
-    case 'grant-admin': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await grantWorkspaceAdmin(db, user, userId)
-      break
-    }
-    case 'revoke-admin': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await revokeWorkspaceAdmin(db, user, userId)
-      break
-    }
-    case 'revoke-cli-sessions': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await revokeWorkspaceMemberCliSessions(db, user, userId)
-      if (result.kind === 'bot-revoke-not-supported') {
-        // Document <Form> POST: a JSON 403 would never render. Redirect with
-        // the status key so SETTINGS_STATUS_MESSAGES shows the message.
-        return redirect('/settings?status=bot-revoke-not-supported')
+    const db = createDb()
+    let result: TeamMutationResult
+    switch (intent) {
+      case 'transfer-owner': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await transferWorkspaceOwner(db, user, userId)
+        break
       }
-      break
-    }
-    case 'remove-member': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await removeWorkspaceMember(db, user, userId)
-      if (result.kind === 'ok') {
-        const recipientUserId = stringValue(form.get('recipientUserId'))
-        if (recipientUserId && recipientUserId !== NO_ASSET_TRANSFER) {
-          const transferResult = await transferRemovedMemberAssets(
-            db,
-            user,
-            userId,
-            recipientUserId,
-          )
-          if (transferResult.kind !== 'ok') {
-            return redirect('/settings?status=removed-transfer-failed')
+      case 'grant-admin': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await grantWorkspaceAdmin(db, user, userId)
+        break
+      }
+      case 'revoke-admin': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await revokeWorkspaceAdmin(db, user, userId)
+        break
+      }
+      case 'revoke-cli-sessions': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await revokeWorkspaceMemberCliSessions(db, user, userId)
+        break
+      }
+      case 'remove-member': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await removeWorkspaceMember(db, user, userId)
+        if (result.kind === 'ok') {
+          const recipientUserId = stringValue(form.get('recipientUserId'))
+          if (recipientUserId && recipientUserId !== NO_ASSET_TRANSFER) {
+            const transferResult = simulateRemovedAssetTransferFailure(
+              request,
+              user.workspaceId,
+              userId,
+            )
+              ? { kind: 'invalid' }
+              : await transferRemovedMemberAssets(
+                  db,
+                  user,
+                  userId,
+                  recipientUserId,
+                )
+            if (transferResult.kind !== 'ok') {
+              return actionData(
+                {
+                  ok: false as const,
+                  code: 'removed-transfer-failed',
+                  intent,
+                  removalCommitted: true,
+                },
+                { status: 409 },
+              )
+            }
           }
+          return actionData(
+            { ok: true as const, code: 'removed', intent },
+            { status: 200 },
+          )
         }
-        return redirect('/settings?status=removed')
+        break
       }
-      break
-    }
-    case 'transfer-removed-assets': {
-      const userId = stringValue(form.get('userId'))
-      const recipientUserId = stringValue(form.get('recipientUserId'))
-      if (
-        !userId ||
-        !recipientUserId ||
-        recipientUserId === NO_ASSET_TRANSFER
-      ) {
-        return redirect('/settings?status=invalid')
+      case 'transfer-removed-assets': {
+        const userId = stringValue(form.get('userId'))
+        const recipientUserId = stringValue(form.get('recipientUserId'))
+        if (
+          !userId ||
+          !recipientUserId ||
+          recipientUserId === NO_ASSET_TRANSFER
+        ) {
+          return settingsFailure(intent, 'invalid')
+        }
+        result = await transferRemovedMemberAssets(
+          db,
+          user,
+          userId,
+          recipientUserId,
+        )
+        break
       }
-      result = await transferRemovedMemberAssets(
-        db,
-        user,
-        userId,
-        recipientUserId,
-      )
-      break
-    }
-    case 'restore-member': {
-      const userId = stringValue(form.get('userId'))
-      if (!userId) return redirect('/settings?status=invalid')
-      result = await restoreWorkspaceMember(db, user, userId)
-      if (result.kind === 'not-found') {
-        return redirect('/settings?status=restore-unavailable')
+      case 'restore-member': {
+        const userId = stringValue(form.get('userId'))
+        if (!userId) return settingsFailure(intent, 'invalid')
+        result = await restoreWorkspaceMember(db, user, userId)
+        if (result.kind === 'not-found') {
+          return settingsFailure(intent, 'restore-unavailable')
+        }
+        break
       }
-      break
+      default:
+        return settingsFailure(intent, 'invalid')
     }
-    default:
-      return redirect('/settings?status=invalid')
-  }
 
-  return redirect(`/settings?status=${result.kind}`)
+    return result.kind === 'ok'
+      ? actionData({ ok: true as const, code: 'ok', intent }, { status: 200 })
+      : settingsFailure(intent, result.kind)
+  })
 }
+
+export async function clientAction({
+  request,
+  serverAction,
+}: Route.ClientActionArgs) {
+  const intent =
+    stringValue((await request.clone().formData()).get('intent')) ?? ''
+  return isMemberConfirmation(intent)
+    ? confirmationResult(intent, serverAction)
+    : serverAction()
+}
+
+const MemberActions = createContext<{
+  open: (target: MemberTarget) => void
+  pendingId?: string
+} | null>(null)
 
 export default function TeamMembersPage({
   loaderData,
@@ -273,30 +372,65 @@ export default function TeamMembersPage({
   const isUpgrade = shell.kind === 'upgrade'
   const canManage = loaderData.currentUserIsAdmin
 
+  const [target, setTarget] = useState<MemberTarget | null>(null)
+  const fetcher = useFetcher<typeof action>()
+  useSettingsEntryChange(fetcher.reset)
+  const { reset } = fetcher
+  const { revalidate } = useRevalidator()
+  const result = fetcher.state === 'idle' ? fetcher.data : undefined
+  const consumed = useRef<typeof result>(undefined)
+  useEffect(() => {
+    if (!result || consumed.current === result) return
+    consumed.current = result
+    if (result.ok) setTarget(null)
+    else if ('removalCommitted' in result && result.removalCommitted)
+      void revalidate()
+  }, [result, revalidate])
+  const pendingId = fetcher.state !== 'idle' ? target?.member.id : undefined
+  const controls = useMemo(
+    () => ({
+      open: (next: MemberTarget) => {
+        reset()
+        setTarget(next)
+      },
+      pendingId,
+    }),
+    [reset, pendingId],
+  )
   return (
-    <SettingsPage>
-      <MemberSection
-        members={loaderData.membersPage.members}
-        total={loaderData.membersPage.total}
-        page={loaderData.membersPage.page}
-        filters={loaderData.filters}
-        currentUser={shell.user}
-        canManage={canManage}
-        currentUserRole={loaderData.currentUserRole}
-      />
-
-      {canManage ? (
-        <RemovedMemberSection
-          members={loaderData.removedMembers}
-          canManage={canManage}
+    <MemberActions.Provider value={controls}>
+      <SettingsPage>
+        {result?.ok && <StatusBanner status={result.code} />}
+        {target && (
+          <MemberConfirmation
+            target={target}
+            currentUser={shell.user}
+            close={() => setTarget(null)}
+            fetcher={fetcher}
+          />
+        )}
+        <MemberSection
+          members={loaderData.membersPage.members}
+          total={loaderData.membersPage.total}
+          page={loaderData.membersPage.page}
+          filters={loaderData.filters}
           currentUser={shell.user}
+          canManage={canManage}
+          currentUserRole={loaderData.currentUserRole}
         />
-      ) : null}
 
-      {isUpgrade ? (
-        <UpgradeNotice titleKey="team.upgrade" isAdmin={canManage} />
-      ) : null}
-    </SettingsPage>
+        {canManage ? (
+          <RemovedMemberSection
+            members={loaderData.removedMembers}
+            canManage={canManage}
+          />
+        ) : null}
+
+        {isUpgrade ? (
+          <UpgradeNotice titleKey="team.upgrade" isAdmin={canManage} />
+        ) : null}
+      </SettingsPage>
+    </MemberActions.Provider>
   )
 }
 
@@ -453,34 +587,11 @@ function MemberRow({
   currentUserRole: WorkspaceMemberRole
 }) {
   const currentUserId = currentUser.id
-  const navigation = useNavigation()
   const { locale, t } = useT()
-  const [removeDialogOpen, setRemoveDialogOpen] = useState(false)
-  const [transferOwnerDialogOpen, setTransferOwnerDialogOpen] = useState(false)
-  const [revokeCliDialogOpen, setRevokeCliDialogOpen] = useState(false)
-  const [selectedRecipientUserId, setSelectedRecipientUserId] = useState<
-    string | null
-  >(null)
-  const recipientUserId = selectedRecipientUserId ?? currentUserId
-  const removeFormId = `remove-member-${member.id}`
-  const pendingIntent = navigation.formData
-    ? stringValue(navigation.formData.get('intent'))
-    : null
-  const pendingUserId = navigation.formData
-    ? stringValue(navigation.formData.get('userId'))
-    : null
-  const pendingForMember = Boolean(
-    navigation.formData && pendingUserId === member.id,
-  )
-  const removePending = pendingForMember && pendingIntent === 'remove-member'
-  const transferOwnerFormId = `transfer-owner-${member.id}`
-  const transferOwnerPending =
-    pendingForMember && pendingIntent === 'transfer-owner'
-  const revokeCliPending =
-    pendingForMember && pendingIntent === 'revoke-cli-sessions'
-  const grantAdminFormId = `grant-admin-${member.id}`
-  const revokeAdminFormId = `revoke-admin-${member.id}`
-  const revokeCliSessionsFormId = `revoke-cli-sessions-${member.id}`
+  const actions = useContext(MemberActions)
+  const triggerId = `member-menu-${member.id}`
+  const open = (intent: MemberTarget['intent']) =>
+    actions?.open({ intent, member, triggerId })
   const {
     isOwner,
     isAdmin,
@@ -525,119 +636,14 @@ function MemberRow({
               canManageRoles,
             }}
             member={member}
-            pendingForMember={pendingForMember}
-            grantAdminFormId={grantAdminFormId}
-            revokeAdminFormId={revokeAdminFormId}
-            onTransfer={() => setTransferOwnerDialogOpen(true)}
-            onRevokeCli={() => setRevokeCliDialogOpen(true)}
-            onRemove={() => setRemoveDialogOpen(true)}
-          />
-          {canManageRoles ? (
-            <>
-              <Form
-                method="post"
-                action="?index"
-                id={transferOwnerFormId}
-                className="hidden"
-              >
-                <input type="hidden" name="intent" value="transfer-owner" />
-                <input type="hidden" name="userId" value={member.id} />
-              </Form>
-              <Form
-                method="post"
-                action="?index"
-                id={grantAdminFormId}
-                className="hidden"
-              >
-                <input type="hidden" name="intent" value="grant-admin" />
-                <input type="hidden" name="userId" value={member.id} />
-              </Form>
-              <Form
-                method="post"
-                action="?index"
-                id={revokeAdminFormId}
-                className="hidden"
-              >
-                <input type="hidden" name="intent" value="revoke-admin" />
-                <input type="hidden" name="userId" value={member.id} />
-              </Form>
-              <TransferOwnerDialog
-                open={transferOwnerDialogOpen}
-                onOpenChange={setTransferOwnerDialogOpen}
-                onConfirm={() => {
-                  const form = document.getElementById(transferOwnerFormId)
-                  if (form instanceof HTMLFormElement) {
-                    form.requestSubmit()
-                  }
-                }}
-                memberName={displayName(member)}
-                pending={transferOwnerPending}
-              />
-            </>
-          ) : null}
-          {eligibleForCliRevoke ? (
-            <>
-              <Form
-                method="post"
-                action="?index"
-                id={revokeCliSessionsFormId}
-                className="hidden"
-              >
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="revoke-cli-sessions"
-                />
-                <input type="hidden" name="userId" value={member.id} />
-              </Form>
-              <ConfirmActionDialog
-                open={revokeCliDialogOpen}
-                onOpenChange={setRevokeCliDialogOpen}
-                pending={revokeCliPending}
-                title={t('team.members.revokeCliSessionsConfirm.title', {
-                  name: displayName(member),
-                })}
-                description={t('team.members.revokeCliSessionsConfirm.body')}
-                action={t('team.members.revokeCliSessions')}
-                onConfirm={() => {
-                  const form = document.getElementById(revokeCliSessionsFormId)
-                  if (form instanceof HTMLFormElement) form.requestSubmit()
-                }}
-              />
-            </>
-          ) : null}
-          <Form
-            method="post"
-            action="?index"
-            id={removeFormId}
-            className="hidden"
-          >
-            <input type="hidden" name="intent" value="remove-member" />
-            <input type="hidden" name="userId" value={member.id} />
-            <input
-              type="hidden"
-              name="recipientUserId"
-              value={recipientUserId}
-            />
-          </Form>
-          <RemoveMemberDialog
-            open={removeDialogOpen}
-            onOpenChange={(open) => {
-              setRemoveDialogOpen(open)
-              if (open) setSelectedRecipientUserId(null)
-            }}
-            onConfirm={() => {
-              const form = document.getElementById(removeFormId)
-              if (form instanceof HTMLFormElement) {
-                form.requestSubmit()
-              }
-            }}
-            memberName={displayName(member)}
-            pending={removePending}
-            currentUser={currentUser}
-            excludeUserId={member.id}
-            recipientUserId={recipientUserId}
-            onRecipientUserIdChange={setSelectedRecipientUserId}
+            pendingForMember={actions?.pendingId === member.id}
+            triggerId={triggerId}
+            onRoleChange={() =>
+              open(member.role === 'admin' ? 'revoke-admin' : 'grant-admin')
+            }
+            onRemove={() => open('remove-member')}
+            onTransfer={() => open('transfer-owner')}
+            onRevokeCli={() => open('revoke-cli-sessions')}
           />
         </TeamActions>
       </TableCell>
@@ -648,11 +654,9 @@ function MemberRow({
 function RemovedMemberSection({
   members,
   canManage,
-  currentUser,
 }: {
   members: RemovedTeamMember[]
   canManage: boolean
-  currentUser: TeamMember
 }) {
   const { t } = useT()
 
@@ -683,7 +687,6 @@ function RemovedMemberSection({
                 key={member.id}
                 member={member}
                 canManage={canManage}
-                currentUser={currentUser}
               />
             ))}
           </TableBody>
@@ -696,32 +699,13 @@ function RemovedMemberSection({
 function RemovedMemberRow({
   member,
   canManage,
-  currentUser,
 }: {
   member: RemovedTeamMember
   canManage: boolean
-  currentUser: TeamMember
 }) {
-  const currentUserId = currentUser.id
-  const navigation = useNavigation()
   const { t } = useT()
-  const [transferOpen, setTransferOpen] = useState(false)
-  const [restoreOpen, setRestoreOpen] = useState(false)
-  const [selectedRecipientUserId, setSelectedRecipientUserId] = useState<
-    string | null
-  >(null)
-  const recipientUserId = selectedRecipientUserId ?? currentUserId
-  const pendingIntent = navigation.formData
-    ? stringValue(navigation.formData.get('intent'))
-    : null
-  const pendingUserId = navigation.formData
-    ? stringValue(navigation.formData.get('userId'))
-    : null
-  const pendingForMember = pendingUserId === member.id
-  const transferPending =
-    pendingForMember && pendingIntent === 'transfer-removed-assets'
-  const restorePending = pendingForMember && pendingIntent === 'restore-member'
-
+  const actions = useContext(MemberActions)
+  const pendingForMember = actions?.pendingId === member.id
   return (
     <TableRow className="flex min-w-0 flex-col md:table-row">
       <TableCell className="min-w-0 max-md:w-full max-md:whitespace-normal">
@@ -745,7 +729,14 @@ function RemovedMemberRow({
               !canManage || member.ownedArtifactCount === 0 || pendingForMember
             }
             data-transfer-removed-files
-            onClick={() => setTransferOpen(true)}
+            id={`transfer-removed-assets-${member.id}`}
+            onClick={() =>
+              actions?.open({
+                intent: 'transfer-removed-assets',
+                member,
+                triggerId: `transfer-removed-assets-${member.id}`,
+              })
+            }
           >
             {t('team.removedMembers.transfer')}
           </Button>
@@ -754,86 +745,18 @@ function RemovedMemberRow({
             size="sm"
             type="button"
             disabled={!canManage || pendingForMember}
-            onClick={() => setRestoreOpen(true)}
+            id={`restore-member-${member.id}`}
+            onClick={() =>
+              actions?.open({
+                intent: 'restore-member',
+                member,
+                triggerId: `restore-member-${member.id}`,
+              })
+            }
           >
             {t('team.removedMembers.restore')}
           </Button>
         </TeamActions>
-        <AlertDialog
-          open={transferOpen}
-          onOpenChange={(open) => {
-            setTransferOpen(open)
-            if (open) setSelectedRecipientUserId(null)
-          }}
-        >
-          <AlertDialogContent size="sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {t('team.removedMembers.transferConfirm.title', {
-                  name: displayName(member),
-                })}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {t('team.removedMembers.transferConfirm.body')}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <RecipientPicker
-              excludeUserId={member.id}
-              currentUser={currentUser}
-              value={recipientUserId}
-              onChange={setSelectedRecipientUserId}
-              disabled={transferPending}
-              allowNone={false}
-            />
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={transferPending}>
-                {t('confirm.cancel')}
-              </AlertDialogCancel>
-              <Form method="post" action="?index">
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="transfer-removed-assets"
-                />
-                <input type="hidden" name="userId" value={member.id} />
-                <input
-                  type="hidden"
-                  name="recipientUserId"
-                  value={recipientUserId}
-                />
-                <AlertDialogAction type="submit" disabled={transferPending}>
-                  {t('team.removedMembers.transferConfirm.action')}
-                </AlertDialogAction>
-              </Form>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        <AlertDialog open={restoreOpen} onOpenChange={setRestoreOpen}>
-          <AlertDialogContent size="sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {t('team.removedMembers.restoreConfirm.title', {
-                  name: displayName(member),
-                })}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {t('team.removedMembers.restoreConfirm.body')}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={restorePending}>
-                {t('confirm.cancel')}
-              </AlertDialogCancel>
-              <Form method="post" action="?index">
-                <input type="hidden" name="intent" value="restore-member" />
-                <input type="hidden" name="userId" value={member.id} />
-                <AlertDialogAction type="submit" disabled={restorePending}>
-                  {t('team.removedMembers.restoreConfirm.action')}
-                </AlertDialogAction>
-              </Form>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </TableCell>
     </TableRow>
   )
@@ -870,8 +793,8 @@ function MemberActionsMenu({
   permissions,
   member,
   pendingForMember,
-  grantAdminFormId,
-  revokeAdminFormId,
+  triggerId,
+  onRoleChange,
   onTransfer,
   onRevokeCli,
   onRemove,
@@ -885,8 +808,8 @@ function MemberActionsMenu({
   >
   member: TeamContributor
   pendingForMember: boolean
-  grantAdminFormId: string
-  revokeAdminFormId: string
+  triggerId: string
+  onRoleChange: () => void
   onTransfer: () => void
   onRevokeCli: () => void
   onRemove: () => void
@@ -905,6 +828,7 @@ function MemberActionsMenu({
       <DropdownMenuTrigger asChild>
         <IconButton
           type="button"
+          id={triggerId}
           icon={IconDots}
           size="md"
           disabled={pendingForMember}
@@ -913,22 +837,12 @@ function MemberActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {canManageRoles && member.role === 'member' ? (
-          <DropdownMenuItem
-            onSelect={() => {
-              const form = document.getElementById(grantAdminFormId)
-              if (form instanceof HTMLFormElement) form.requestSubmit()
-            }}
-          >
+          <DropdownMenuItem onSelect={onRoleChange}>
             {t('team.members.makeAdmin')}
           </DropdownMenuItem>
         ) : null}
         {canManageRoles && member.role === 'admin' ? (
-          <DropdownMenuItem
-            onSelect={() => {
-              const form = document.getElementById(revokeAdminFormId)
-              if (form instanceof HTMLFormElement) form.requestSubmit()
-            }}
-          >
+          <DropdownMenuItem onSelect={onRoleChange}>
             {t('team.members.removeAdmin')}
           </DropdownMenuItem>
         ) : null}
@@ -938,13 +852,20 @@ function MemberActionsMenu({
           </DropdownMenuItem>
         ) : null}
         {eligibleForCliRevoke ? (
-          <DropdownMenuItem onSelect={onRevokeCli}>
+          <DropdownMenuItem
+            data-member-action="revoke-cli-sessions"
+            onSelect={onRevokeCli}
+          >
             {t('team.members.revokeCliSessions')}
           </DropdownMenuItem>
         ) : null}
         {canManageRoles && eligibleForRemove ? <DropdownMenuSeparator /> : null}
         {eligibleForRemove ? (
-          <DropdownMenuItem variant="destructive" onSelect={onRemove}>
+          <DropdownMenuItem
+            data-member-action="remove-member"
+            variant="destructive"
+            onSelect={onRemove}
+          >
             {t('team.members.remove')}
           </DropdownMenuItem>
         ) : null}

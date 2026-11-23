@@ -783,7 +783,8 @@ test('capture inline failure is router-decodable and matched actions are never f
       route: '/settings/external-access',
       method: 'POST',
       intent: 'update-external-access',
-      data: { kind: 'forbidden' },
+      status: 403,
+      data: { ok: false, code: 'forbidden', intent: 'update-external-access' },
     },
     'https://example.test',
   )
@@ -808,12 +809,16 @@ test('capture inline failure is router-decodable and matched actions are never f
   await handler(route)
   await actionFixture.waitForMatch()
   assert.equal(forwarded, 0)
+  assert.equal(fulfilled.status, 403)
+  assert.equal(fulfilled.headers['X-Remix-Response'], 'yes')
   assert.equal(fulfilled.contentType, 'text/x-script')
   const decoded = await UNSAFE_decodeViaTurboStream(
     new Response(fulfilled.body).body,
     globalThis,
   )
-  assert.deepEqual(decoded.value, { data: { kind: 'forbidden' } })
+  assert.deepEqual(decoded.value, {
+    data: { ok: false, code: 'forbidden', intent: 'update-external-access' },
+  })
   await handler(route)
   await assert.rejects(
     actionFixture.assertMatched(),

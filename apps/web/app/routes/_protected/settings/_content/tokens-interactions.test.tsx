@@ -1,11 +1,29 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  RouterContextProvider,
+  useLoaderData,
+} from 'react-router'
 import { expect, test, vi } from 'vitest'
+import { TooltipProvider } from '~/components/ui/tooltip'
 import { bindI18n } from '~/lib/i18n'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
+const services = vi.hoisted(() => ({
+  createApiToken: vi.fn(),
+  revokeApiToken: vi.fn(),
+  revokeCliRefreshCredentialFamily: vi.fn(),
+}))
+vi.mock('~/services/api-tokens.server', () => services)
+vi.mock('~/services/cli-refresh-credentials.server', () => services)
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'owner' }),
+}))
+import { action as tokenAction } from './tokens'
 import { ConfirmActionDialog } from '../+components/confirm-action-dialog'
 import ApiTokensPage from '../+components/ai-tools-page'
 
@@ -47,17 +65,24 @@ test.each(['token', 'session', 'session-noop'] as const)(
     })
     let serverData = data
     const submissions: FormData[] = []
-    const action = vi.fn(async ({ request }: { request: Request }) => {
-      const form = await request.formData()
-      submissions.push(form)
+    services.revokeApiToken.mockImplementation(() => {
+      serverData = { ...data, tokens: [] }
+      return true
+    })
+    services.revokeCliRefreshCredentialFamily.mockImplementation(async () => {
       if (kind === 'session-noop') await actionGate
-      serverData =
-        form.get('intent') === 'revoke'
-          ? { ...data, tokens: [] }
-          : { ...data, cliFamilies: [] }
-      return kind === 'session-noop'
-        ? { kind: 'cli-revoke-noop' }
-        : { kind: 'revoked', intent: form.get('intent') }
+      serverData = { ...data, cliFamilies: [] }
+      return kind === 'session-noop' ? 'noop' : 'ok'
+    })
+    const action = vi.fn(async ({ request }: { request: Request }) => {
+      submissions.push(await request.clone().formData())
+      return tokenAction({
+        request,
+        context: new RouterContextProvider(),
+        params: {},
+        url: new URL(request.url),
+        pattern: '/settings/tokens',
+      })
     })
     const router = createMemoryRouter(
       [
@@ -148,6 +173,88 @@ test.each(['token', 'session', 'session-noop'] as const)(
     }
   },
 )
+
+test('create then revoke replaces the success notice and keeps the created credential', async () => {
+  services.createApiToken.mockResolvedValue({
+    name: 'New credential',
+    token: 'example-token-value',
+  })
+  services.revokeApiToken.mockResolvedValue(true)
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/settings/tokens',
+        action: (args) =>
+          tokenAction({
+            ...args,
+            context: new RouterContextProvider(),
+            url: new URL(args.request.url),
+            pattern: '/settings/tokens',
+          }),
+        element: (
+          <TooltipProvider>
+            <ApiTokensPage
+              loaderData={{
+                tokens: [
+                  {
+                    id: 'old',
+                    name: 'Old credential',
+                    createdAt: '2026-01-01',
+                    lastUsedAt: null,
+                  },
+                ],
+                cliFamilies: [],
+                createdToken: null,
+              }}
+            />
+          </TooltipProvider>
+        ),
+      },
+    ],
+    { initialEntries: ['/settings/tokens'] },
+  )
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />))
+    const input = container.querySelector<HTMLInputElement>('#token-name')!
+    input.value = 'New credential'
+    await act(async () =>
+      input
+        .form!.querySelector<HTMLButtonElement>('button[type=submit]')!
+        .click(),
+    )
+    const notices = () =>
+      container.querySelectorAll('[data-settings-status="ok"]')
+    await vi.waitFor(() => expect(notices()).toHaveLength(1))
+    const createdNotice = notices()[0]
+    expect(container.textContent).toContain('example-token-value')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Revoke Old credential"]',
+        )!
+        .click(),
+    )
+    const confirm = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="alertdialog"] button',
+      ),
+    ].find((button) => button.textContent === 'Revoke')!
+    await act(async () => confirm.click())
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+    )
+    expect(notices()).toHaveLength(1)
+    expect(notices()[0]).not.toBe(createdNotice)
+    expect(container.textContent).toContain('example-token-value')
+  } finally {
+    await act(async () => root.unmount())
+    router.dispose()
+    container.remove()
+  }
+})
 
 test('shared confirmation labels pending work even without a caller label', async () => {
   const container = document.createElement('div')

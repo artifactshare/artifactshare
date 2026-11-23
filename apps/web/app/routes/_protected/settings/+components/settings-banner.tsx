@@ -16,11 +16,14 @@ export function SettingsBanner({
   className,
   kind,
   urgent = false,
+  announce = true,
   children,
   ...props
 }: Omit<ComponentProps<typeof Alert>, 'role'> & {
   kind: SettingsNoticeKind
   urgent?: boolean
+  // False when an enclosing live region already announces the message.
+  announce?: boolean
 }) {
   const Icon =
     kind === 'success'
@@ -32,7 +35,11 @@ export function SettingsBanner({
     <Alert
       {...props}
       role={
-        kind === 'error' || (kind === 'warning' && urgent) ? 'alert' : 'status'
+        !announce
+          ? undefined
+          : kind === 'error' || (kind === 'warning' && urgent)
+            ? 'alert'
+            : 'status'
       }
       className={cn(
         'text-foreground rounded-[var(--r-md)] px-[var(--spacing-4)] py-[var(--spacing-3)]',
@@ -63,6 +70,8 @@ export type BillingStatusKey =
 type SettingsStatusKey =
   | TeamMutationResult['kind']
   | BillingStatusKey
+  | 'slack-connected'
+  | 'submission-interrupted'
   | 'slack-disconnected'
   | 'invalid-patch'
   | 'billing-unavailable'
@@ -86,6 +95,14 @@ const SETTINGS_STATUS_NOTICES: Record<
   SettingsStatusKey,
   { message: TKey; kind: SettingsNoticeKind }
 > = {
+  'submission-interrupted': {
+    message: 'settings.submissionInterrupted',
+    kind: 'error',
+  },
+  'slack-connected': {
+    message: 'team.integrations.slack.connected',
+    kind: 'success',
+  },
   ok: { message: 'team.status.ok', kind: 'success' },
   'slack-disconnected': {
     message: 'team.integrations.slack.disconnected',

@@ -148,9 +148,9 @@ function RecipientOption({
   detail?: string
 }) {
   return (
-    <div className="flex items-center gap-[var(--spacing-2)]">
+    <div className="flex min-w-0 items-center gap-[var(--spacing-2)]">
       <RadioGroupItem id={id} value={value} />
-      <Label htmlFor={id} className="min-w-0 font-normal">
+      <Label htmlFor={id} className="min-w-0 flex-1 font-normal">
         <span className="truncate">{label}</span>
         {detail ? (
           <span className="text-muted-foreground ml-[var(--spacing-1)] truncate text-xs">

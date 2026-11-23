@@ -515,11 +515,10 @@ describe('/settings/billing action', () => {
       context: {},
     } as never)
 
-    expect(response).toBeInstanceOf(Response)
-    expect((response as Response).status).toBe(302)
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/billing?status=forbidden',
-    )
+    expect(response).toMatchObject({
+      data: { ok: false, intent: 'checkout', code: 'forbidden' },
+      init: { status: 403 },
+    })
   })
 
   test('admin checkout is rejected when an owner exists', async () => {
@@ -542,9 +541,10 @@ describe('/settings/billing action', () => {
       context: {},
     } as never)
 
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/billing?status=forbidden',
-    )
+    expect(response).toMatchObject({
+      data: { ok: false, intent: 'checkout', code: 'forbidden' },
+      init: { status: 403 },
+    })
   })
 
   test('checkout falls back to jpy for JP requests without currency', async () => {
@@ -634,9 +634,10 @@ describe('/settings/billing action', () => {
       context: {},
     } as never)
 
-    expect((response as Response).headers.get('Location')).toBe(
-      '/settings/billing?status=invalid',
-    )
+    expect(response).toMatchObject({
+      data: { ok: false, intent: 'checkout', code: 'invalid' },
+      init: { status: 400 },
+    })
     expect(createCheckoutSessionMock).not.toHaveBeenCalled()
   })
 

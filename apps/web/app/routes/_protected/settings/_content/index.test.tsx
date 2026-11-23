@@ -1,6 +1,12 @@
-import { RouterContextProvider } from 'react-router'
+import {
+  RouterContextProvider,
+  RouterProvider,
+  createMemoryRouter,
+  Outlet,
+  useFetcher,
+} from 'react-router'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AnchorHTMLAttributes, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -25,34 +31,7 @@ vi.mock('~/services/team-management.server', () => services)
 const pageState = vi.hoisted(() => ({
   context: null as unknown,
   locale: 'en' as 'en' | 'ja',
-  navigation: { formData: undefined as FormData | undefined },
 }))
-
-vi.mock('react-router', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router')>()
-  return {
-    ...actual,
-    Form: ({ children, ...props }: { children: ReactNode }) => (
-      <form {...props}>{children}</form>
-    ),
-    Link: ({
-      children,
-      to,
-      ...props
-    }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) => (
-      <a href={to} {...props}>
-        {children}
-      </a>
-    ),
-    useNavigation: () => pageState.navigation,
-    useOutletContext: () => pageState.context,
-    useFetcher: () => ({
-      state: 'idle',
-      data: undefined,
-      load: () => {},
-    }),
-  }
-})
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
@@ -225,7 +204,9 @@ vi.mock('../+components/upgrade-notice', () => ({ UpgradeNotice: () => null }))
 import { action } from './index'
 import TeamMembersPage from './index'
 import BotsPage from './bots'
-import { TransferOwnerDialog } from '../+components/transfer-owner-dialog'
+import { MemberConfirmation } from '../+components/member-confirmation'
+import type { TeamContributor } from '~/lib/team-management'
+import type { WorkspaceBotRow } from '~/services/bot-members.server'
 
 function postForm(fields: Record<string, string>) {
   const form = new URLSearchParams(fields)
@@ -239,7 +220,7 @@ function postForm(fields: Record<string, string>) {
 function member(
   id: string,
   role: 'owner' | 'admin' | 'member',
-): Record<string, unknown> {
+): TeamContributor {
   return {
     id,
     role,
@@ -256,16 +237,13 @@ function member(
 function renderPage({
   currentUserRole,
   members,
-  navigation,
   locale = 'en',
 }: {
   currentUserRole: 'owner' | 'admin' | 'member'
-  members: Record<string, unknown>[]
-  navigation?: { formData: FormData | undefined }
+  members: TeamContributor[]
   locale?: 'en' | 'ja'
 }) {
   pageState.locale = locale
-  pageState.navigation = navigation ?? { formData: undefined }
   pageState.context = {
     kind: 'team',
     workspace: { id: 'workspace', name: 'Example', plan: 'team' },
@@ -279,21 +257,25 @@ function renderPage({
     currentUserRole,
   }
   const loaderData = {
-    admin: {
-      id: 'owner',
-      email: 'owner@example.com',
-      name: 'owner',
-      image: null,
-    },
-    membersPage: { members, total: members.length },
+    membersPage: { members, total: members.length, page: 1 },
     removedMembers: [],
     currentUserRole,
     currentUserIsAdmin: currentUserRole !== 'member',
     filters: { query: '', role: 'all', activity: 'all', page: 1 },
-  }
+  } satisfies Parameters<typeof TeamMembersPage>[0]['loaderData']
   return renderToStaticMarkup(
-    <TeamMembersPage
-      {...({ loaderData } as unknown as Parameters<typeof TeamMembersPage>[0])}
+    <RouterProvider
+      router={createMemoryRouter([
+        {
+          element: <Outlet context={pageState.context} />,
+          children: [
+            {
+              path: '/',
+              element: <TeamMembersPage loaderData={loaderData} />,
+            },
+          ],
+        },
+      ])}
     />,
   )
 }
@@ -303,7 +285,7 @@ describe('/settings role actions', () => {
     ['ok', 'removed'],
     ['invalid', 'removed-transfer-failed'],
   ])(
-    'redirects after removal and a transfer returning %s',
+    'reports the committed removal after a transfer returning %s',
     async (kind, status) => {
       services.removeWorkspaceMember.mockResolvedValueOnce({ kind: 'ok' })
       services.transferRemovedMemberAssets.mockResolvedValueOnce({ kind })
@@ -319,12 +301,16 @@ describe('/settings role actions', () => {
         url: new URL(request.url),
         pattern: '/settings',
       })
-      expect(response.headers.get('Location')).toBe(
-        '/settings?status=' + status,
-      )
+      expect(response.data).toEqual({
+        code: status,
+        ok: kind === 'ok',
+        intent: 'remove-member',
+        ...(kind !== 'ok' && { removalCommitted: true }),
+      })
+      expect(response.init?.status).toBe(kind === 'ok' ? 200 : 409)
     },
   )
-  test('redirects invalid owner input to the invalid banner', async () => {
+  test('returns an invalid result for missing owner input', async () => {
     const request = postForm({ intent: 'grant-admin' })
     const response = await action({
       request,
@@ -333,7 +319,10 @@ describe('/settings role actions', () => {
       url: new URL(request.url),
       pattern: '/settings',
     })
-    expect(response.headers.get('Location')).toBe('/settings?status=invalid')
+    expect(response).toMatchObject({
+      data: { ok: false, code: 'invalid', intent: 'grant-admin' },
+      init: { status: 400 },
+    })
   })
   test.each([
     ['grant-admin', 'grantWorkspaceAdmin'],
@@ -348,7 +337,10 @@ describe('/settings role actions', () => {
       context: new Map(),
     } as never)
 
-    expect(response.headers.get('Location')).toBe('/settings?status=ok')
+    expect(response).toMatchObject({
+      data: { ok: true, code: 'ok', intent },
+      init: { status: 200 },
+    })
     expect(services[service as keyof typeof services]).toHaveBeenCalledWith(
       {},
       { id: 'owner', workspaceId: 'workspace' },
@@ -388,7 +380,7 @@ describe('/settings rendered member management', () => {
 
     expect(html.match(/Make admin/g)).toHaveLength(1)
     expect(html.match(/Remove admin/g)).toHaveLength(1)
-    expect(html.match(/name="intent" value="transfer-owner"/g)).toHaveLength(2)
+    expect(html.match(/>Transfer ownership</g)).toHaveLength(2)
     expect(html.match(/aria-label="Member actions menu"/g)).toHaveLength(2)
     expect(html).toContain('Owner')
   })
@@ -428,35 +420,36 @@ describe('/settings rendered member management', () => {
     expect(html).not.toContain('Member actions menu')
     expect(html).not.toContain('Role guides')
   })
-
-  test('only the submitted member row disables its menu trigger', () => {
-    const formData = new FormData()
-    formData.set('intent', 'remove-member')
-    formData.set('userId', 'member')
-    const html = renderPage({
-      currentUserRole: 'admin',
-      members: [member('member', 'member'), member('other', 'member')],
-      navigation: { formData },
-    })
-
-    expect(html).toMatch(/disabled=""[^>]*aria-label="Member actions menu"/)
-    expect(html).toMatch(/aria-label="Member actions menu"(?![^>]*disabled)/)
-  })
 })
 
-describe('TransferOwnerDialog', () => {
+describe('ownership transfer confirmation', () => {
   test.each([
     ['en', 'You will become an admin after this transfer.'],
     ['ja', '移譲後、あなた自身は管理者になります。'],
   ] as const)('renders the %s ownership consequence', (locale, copy) => {
     pageState.locale = locale
     const html = renderToStaticMarkup(
-      <TransferOwnerDialog
-        open
-        onOpenChange={vi.fn()}
-        onConfirm={vi.fn()}
-        memberName="Target"
-        pending={false}
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '/',
+            Component: function Confirmation() {
+              const fetcher = useFetcher<typeof action>()
+              return (
+                <MemberConfirmation
+                  target={{
+                    intent: 'transfer-owner',
+                    member: member('target', 'member'),
+                    triggerId: 'transfer',
+                  }}
+                  currentUser={member('owner', 'owner')}
+                  close={() => {}}
+                  fetcher={fetcher}
+                />
+              )
+            },
+          },
+        ])}
       />,
     )
 
@@ -465,8 +458,7 @@ describe('TransferOwnerDialog', () => {
 })
 
 describe('/settings/bots page', () => {
-  function renderWithBots(bots: unknown[]) {
-    pageState.navigation = { formData: undefined }
+  function renderWithBots(bots: WorkspaceBotRow[]) {
     pageState.context = {
       kind: 'team',
       workspace: { id: 'workspace', name: 'Example', plan: 'team' },
@@ -482,17 +474,22 @@ describe('/settings/bots page', () => {
     const loaderData = {
       bots,
       botCreationEnabled: true,
-      projects: [{ id: 'proj1', name: 'Project 1' }],
     }
     return renderToStaticMarkup(
-      <BotsPage
-        {...({ loaderData } as unknown as Parameters<typeof BotsPage>[0])}
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '/',
+            element: <BotsPage loaderData={loaderData} />,
+          },
+        ])}
       />,
     )
   }
 
   const activeBot = {
     id: 'bot1',
+    cancelable: false,
     name: 'Deploy bot',
     email: 'bot-abc@bots.artifactshare.invalid',
     botStoppedAt: null,

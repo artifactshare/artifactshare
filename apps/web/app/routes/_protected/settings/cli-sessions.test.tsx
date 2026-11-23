@@ -51,6 +51,7 @@ test.each([
         path: '/',
         element: (
           <CliSessionsSection
+            onRevoked={vi.fn()}
             cliFamilies={(
               [undefined, 'unrestricted', 'agent', 'publisher'] as const
             ).map((preset, index) => ({
@@ -98,7 +99,11 @@ describe('/settings/cli-sessions actions', () => {
       pattern: '/settings/tokens',
     })
 
-    expect(result).toEqual({ kind: 'revoked', intent: 'revoke-cli-family' })
+    expect(result.data).toEqual({
+      ok: true,
+      code: 'revoked',
+      intent: 'revoke-cli-family',
+    })
     expect(services.revokeCliRefreshCredentialFamily).toHaveBeenCalledWith(
       {},
       'current-user',
@@ -115,8 +120,9 @@ describe('/settings/cli-sessions actions', () => {
       pattern: '/settings/tokens',
     })
 
-    expect(result).toEqual({
-      kind: 'revoke-failed',
+    expect(result.data).toEqual({
+      ok: false,
+      code: 'revoke-failed',
       intent: 'revoke-cli-family',
     })
     expect(services.revokeCliRefreshCredentialFamily).not.toHaveBeenCalled()
@@ -131,8 +137,9 @@ describe('/settings/cli-sessions actions', () => {
       pattern: '/settings/tokens',
     })
 
-    expect(result).toEqual({
-      kind: 'revoked',
+    expect(result.data).toEqual({
+      ok: true,
+      code: 'revoked',
       intent: 'revoke-all-cli-families',
     })
     expect(services.revokeAllCliRefreshCredentialFamilies).toHaveBeenCalledWith(
@@ -141,7 +148,7 @@ describe('/settings/cli-sessions actions', () => {
     )
   })
   test.each(['revoke-cli-family', 'revoke-all-cli-families'] as const)(
-    'failed %s produces retryable data',
+    'unexpected %s service exceptions propagate',
     async (intent) => {
       const service =
         intent === 'revoke-cli-family'
@@ -149,15 +156,15 @@ describe('/settings/cli-sessions actions', () => {
           : services.revokeAllCliRefreshCredentialFamilies
       service.mockRejectedValueOnce(new Error('unavailable'))
       const req = request({ intent, familyId: 'family-a' })
-      expect(
-        await action({
+      await expect(
+        action({
           request: req,
           context: new RouterContextProvider(),
           url: new URL(req.url),
           params: {},
           pattern: '/settings/tokens',
         }),
-      ).toEqual({ kind: 'revoke-failed', intent })
+      ).rejects.toThrow('unavailable')
     },
   )
 })

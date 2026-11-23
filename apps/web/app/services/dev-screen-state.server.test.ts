@@ -20,6 +20,7 @@ import {
   devScreenUserEmail,
   ensureDevScreenState,
   isDevScreenStateRequest,
+  simulateRemovedAssetTransferFailure,
   isScreenScenario,
   seedDevScreenArtifactBodies,
   seedDevScreenState,
@@ -222,6 +223,32 @@ describe('dev screen state requests', () => {
     expect(
       isDevScreenStateRequest(request, 'settings-tokens/created-secret'),
     ).toBe(false)
+  })
+
+  test('only the seeded member in the warning capture experiences the transfer failure', () => {
+    const url = 'https://example.com/settings'
+    const request = new Request(url, {
+      headers: {
+        'X-ArtifactShare-Dev-Screen-State': 'settings/result-warning',
+      },
+    })
+    expect(
+      simulateRemovedAssetTransferFailure(
+        request,
+        'team',
+        'team-removed-member',
+      ),
+    ).toBe(true)
+    expect(
+      simulateRemovedAssetTransferFailure(
+        new Request(url),
+        'team',
+        'team-removed-member',
+      ),
+    ).toBe(false)
+    expect(simulateRemovedAssetTransferFailure(request, 'team', 'other')).toBe(
+      false,
+    )
   })
 
   test('creates scenario workspaces with the product expiry starting policy', async () => {
@@ -2924,31 +2951,57 @@ test('refreshing the transfer warning restores its removed member and owned file
       expect(await loadRemovedWorkspaceMembers(db, id)).toEqual([])
       await seedDevScreenState(db, scenario, id, id, now)
     }
-    const [member] = await loadRemovedWorkspaceMembers(db, workspaceId)
-    expect(member.ownedArtifactCount).toBe(1)
-    await db
-      .updateTable('shareables')
-      .set({ owner_user_id: workspaceId })
-      .where('owner_user_id', '=', member.id)
-      .execute()
-    expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toMatchObject([
-      { ownedArtifactCount: 0 },
-    ])
-    await db
-      .updateTable('workspace_members')
-      .set({ status: 'active' })
-      .where('user_id', '=', member.id)
-      .execute()
-    await db
-      .updateTable('shareables')
-      .set({ owner_user_id: other.workspaceId })
-      .where('workspace_id', '=', other.workspaceId)
-      .execute()
-    await seedDevScreenState(db, scenario, workspaceId, workspaceId, now)
-    expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([member])
-    expect(
-      await loadRemovedWorkspaceMembers(db, other.workspaceId),
-    ).toMatchObject([{ ownedArtifactCount: 0 }])
+    const memberId = workspaceId + '-removed-member'
+    const membership = (id: string) =>
+      db
+        .selectFrom('workspace_members')
+        .innerJoin('users', 'users.id', 'workspace_members.user_id')
+        .select(['users.workspace_id', 'role', 'status'])
+        .where('user_id', '=', id + '-removed-member')
+        .executeTakeFirstOrThrow()
+    const owner = (id: string) =>
+      db
+        .selectFrom('shareables')
+        .select('owner_user_id')
+        .where('workspace_id', '=', id)
+        .executeTakeFirstOrThrow()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await membership(workspaceId)).toEqual({
+        workspace_id: workspaceId,
+        role: 'member',
+        status: 'active',
+      })
+      expect(await owner(workspaceId)).toEqual({ owner_user_id: memberId })
+      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([])
+      if (attempt === 0) {
+        for (const id of [workspaceId, other.workspaceId]) {
+          await db
+            .updateTable('workspace_members')
+            .set({ status: 'removed' })
+            .where('user_id', '=', id + '-removed-member')
+            .execute()
+          await db
+            .updateTable('shareables')
+            .set({ owner_user_id: id })
+            .where('workspace_id', '=', id)
+            .execute()
+        }
+        await db
+          .updateTable('users')
+          .set({ workspace_id: other.workspaceId })
+          .where('id', '=', memberId)
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, workspaceId, now)
+      }
+    }
+    expect(await membership(other.workspaceId)).toEqual({
+      workspace_id: other.workspaceId,
+      role: 'member',
+      status: 'removed',
+    })
+    expect(await owner(other.workspaceId)).toEqual({
+      owner_user_id: other.workspaceId,
+    })
   } finally {
     await db.destroy()
   }

@@ -515,8 +515,7 @@ describe('billing service', () => {
     )
 
     expect(result).toEqual({
-      kind: 'ok',
-      url: '/settings/billing?status=plan-change-requested',
+      kind: 'accepted',
     })
     expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       items: [{ id: 'si_fixed', price: prices.teamYearly }],
