@@ -161,7 +161,13 @@ if (
         'settings-tokens',
       ]) {
         if (!manifest.some((entry) => entry.screen === screen))
-          throw new Error('Missing screen: ' + screen)
+          throw new Error(
+            'Missing screen: ' +
+              screen +
+              (screen === 'settings-billing'
+                ? ' (billing states need pnpm screens:capture:local)'
+                : ''),
+          )
       }
       const { screens } = await import('./screen-ledger.mjs')
       const general = screens.find((screen) => screen.id === 'settings-general')

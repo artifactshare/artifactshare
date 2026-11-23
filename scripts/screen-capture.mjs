@@ -985,6 +985,12 @@ export function planCaptureJobs(requested, { local }) {
   const notice = leftOut.length
     ? `Leaving out ${leftOut.join(', ')}: they need the local fake Stripe; capture them with pnpm screens:capture:local.`
     : null
+  // A run with nothing to capture must not replace an earlier capture under
+  // the same label with an empty one.
+  if (jobs.length === 0)
+    throw new Error(
+      'No capture jobs remain for the selected screens. Billing states need pnpm screens:capture:local.',
+    )
   return { selected, jobs, notice }
 }
 

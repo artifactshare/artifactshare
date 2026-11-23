@@ -1391,7 +1391,7 @@ function billingPresentation(
   data: Pick<BillingView, 'plan' | 'hasSubscription'>,
 ) {
   if (data.hasSubscription) return 'subscribed'
-  return data.plan === 'free' ? 'purchase' : 'paid-plan'
+  return data.plan === 'plus' || data.plan === 'team' ? 'paid-plan' : 'purchase'
 }
 
 function BillingActions({

@@ -376,6 +376,15 @@ test.each([
   },
 )
 
+test('a workspace whose stored plan is not a known paid plan keeps checkout as Free', () => {
+  const html = renderBillingPage(1, null, {
+    plan: 'legacy',
+    hasSubscription: false,
+    stripeSubscriptionStatus: 'none',
+  })
+  expect(html).toContain('value="checkout"')
+})
+
 test('near-limit owner gets no billing next step when billing is unavailable', () => {
   const html = renderBillingPage(1, null, {
     storageUsedBytes: 95,

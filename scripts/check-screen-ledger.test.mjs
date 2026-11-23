@@ -1497,3 +1497,12 @@ test('capture ledger rejects an expected boundary without its exact HTTP status'
     true,
   )
 })
+
+test('screens:capture refuses a run that only selects billing, before it touches the output', () => {
+  const billing = ledgerScreens.filter((screen) => screen.id === 'settings-billing')
+  assert.throws(
+    () => planCaptureJobs(billing, { local: false }),
+    /No capture jobs remain[^\n]*pnpm screens:capture:local/u,
+  )
+  assert.ok(planCaptureJobs(billing, { local: true }).jobs.length > 0)
+})
