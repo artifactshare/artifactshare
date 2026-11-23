@@ -587,11 +587,11 @@ describe('team-management service', () => {
     await db.destroy()
   })
 
-  test('ensureWorkspaceAdmin leaves an existing admin unchanged', async () => {
+  test('ensureWorkspaceAdmin promotes an existing admin before an earlier member', async () => {
     seedWorkspace(sqlite, 'free')
     seedUser(sqlite, 'u1', '2026-05-25T00:00:00.000Z')
     seedUser(sqlite, 'u2', '2026-05-26T00:00:00.000Z')
-    seedAdmin(sqlite, 'u1')
+    seedAdmin(sqlite, 'u2')
 
     const adminId = await ensureWorkspaceAdmin(
       db,
@@ -599,22 +599,38 @@ describe('team-management service', () => {
       '2026-06-28T00:00:00.000Z',
     )
 
-    expect(adminId).toBe('u1')
-    expect(readRole(sqlite, 'u1')).toBe('owner')
+    expect(adminId).toBe('u2')
+    expect(readRole(sqlite, 'u2')).toBe('owner')
   })
 
-  test('loadWorkspaceOwner repairs a workspace without an owner', async () => {
+  test('General excludes a removed owner without changing either membership', async () => {
     seedWorkspace(sqlite, 'free')
     seedUser(sqlite, 'u1')
 
-    const owner = await loadWorkspaceOwner(db, 'ws1')
-
-    expect(owner?.id).toBe('u1')
-    expect(owner?.email).toBe('u1@example.com')
-    expect(readRole(sqlite, 'u1')).toBe('owner')
+    seedUser(sqlite, 'former')
+    seedOwner(sqlite, 'former')
+    sqlite.exec(
+      "UPDATE workspace_members SET status = 'removed' WHERE user_id = 'former'",
+    )
+    const memberships = db
+      .selectFrom('workspace_members')
+      .selectAll()
+      .orderBy('user_id')
+    const before = await memberships.execute()
+    expect(await loadWorkspaceOwner(db, 'ws1')).toBeNull()
+    expect(await requireWorkspaceAdmin(db, user('u1'))).toEqual({
+      kind: 'forbidden',
+    })
+    expect(await requireWorkspaceAdmin(db, user('former'))).toEqual({
+      kind: 'forbidden',
+    })
+    expect(await requireWorkspaceAdmin(db, user('missing'))).toEqual({
+      kind: 'forbidden',
+    })
+    expect(await memberships.execute()).toEqual(before)
   })
 
-  test('free workspace shows upgrade state and bootstraps an admin', async () => {
+  test('free workspace shows upgrade state and keeps its recorded members', async () => {
     seedWorkspace(sqlite, 'free')
     seedUser(sqlite, 'u1')
     seedUser(sqlite, 'u2')
@@ -623,13 +639,13 @@ describe('team-management service', () => {
     const shell = await loadSettingsShell(db, user('u1'))
 
     expect(shell.kind).toBe('upgrade')
-    expect(data.currentUserIsAdmin).toBe(true)
+    expect(data.currentUserIsAdmin).toBe(false)
     expect(data.membersPage.members).toHaveLength(2)
     expect(data.membersPage.members.map((member) => member.id).sort()).toEqual([
       'u1',
       'u2',
     ])
-    expect(readRole(sqlite, 'u1')).toBe('owner')
+    expect(readRole(sqlite, 'u1')).toBe('member')
   })
 
   test('plus workspace returns admin and workspace members', async () => {
@@ -715,7 +731,7 @@ describe('team-management service', () => {
     expect(readWorkspaceName(sqlite)).toBe('Example')
   })
 
-  test('team workspace bootstraps the earliest contributor as admin when missing', async () => {
+  test('Members preserves contributor roles in an ownerless workspace', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1', '2026-05-26T00:00:00.000Z')
     seedUser(sqlite, 'u2', '2026-05-25T00:00:00.000Z')
@@ -741,6 +757,11 @@ describe('team-management service', () => {
     const data = await loadMembersPageData(db, user('u1'), filters())
 
     expect(data.membersPage.members).toHaveLength(2)
+    expect(data.currentUserRole).toBe('admin')
+    expect(data.membersPage.members.some((member) => member.isAdmin)).toBe(
+      false,
+    )
+    expect(readRole(sqlite, 'u1')).toBe('admin')
     const nonContributor = data.membersPage.members.find(
       (member) => member.id === 'u2',
     )
@@ -765,7 +786,7 @@ describe('team-management service', () => {
     expect(data.membersPage.members.map((member) => member.id)).toEqual(['u1'])
   })
 
-  test('team workspace falls back to earliest user when no contributor exists', async () => {
+  test('Members lists users without contribution history', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1', '2026-05-26T00:00:00.000Z')
     seedUser(sqlite, 'u2', '2026-05-25T00:00:00.000Z')
@@ -919,7 +940,7 @@ describe('team-management service', () => {
     expect(readRole(sqlite, 'u1')).toBe('owner')
   })
 
-  test('admin mutation bootstraps missing admin before checking authorization', async () => {
+  test('ownership transfer is forbidden in an ownerless workspace', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1', '2026-05-25T00:00:00.000Z')
     seedUser(sqlite, 'u2', '2026-05-26T00:00:00.000Z')
@@ -1675,7 +1696,8 @@ describe('team-management service', () => {
 
     const result = await removeWorkspaceMember(db, user('u1'), 'u2')
 
-    expect(result).toEqual({ kind: 'not-found' })
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(readRole(sqlite, 'u1')).toBe('member')
     expect(readUserWorkspaceId(sqlite, 'u2')).toBe('ws1')
     expect(readWorkspaceCount(sqlite)).toBe(workspaceCountBefore)
     expect(readMembershipStatus(sqlite, 'u2', 'ws1')).toBe('active')
@@ -1811,14 +1833,13 @@ describe('team-management service', () => {
     }
     seedOwner(sqlite, 'u0000')
 
-    const page1 = await loadWorkspaceMembersPage(db, 'ws1', 'u0000', filters())
+    const page1 = await loadWorkspaceMembersPage(db, 'ws1', filters())
     expect(page1.total).toBe(1000)
     expect(page1.members).toHaveLength(50)
 
     const page3 = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u0000',
       filters({ page: 3 }),
     )
     expect(page3.members).toHaveLength(50)
@@ -1827,7 +1848,6 @@ describe('team-management service', () => {
     const overflow = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u0000',
       filters({ page: 999 }),
     )
     expect(overflow.members).toHaveLength(50)
@@ -1851,7 +1871,6 @@ describe('team-management service', () => {
     const byName = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ query: 'alice' }),
     )
     expect(byName.members.map((member) => member.id)).toEqual(['u1'])
@@ -1859,7 +1878,6 @@ describe('team-management service', () => {
     const byEmail = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ query: 'u2@example' }),
     )
     expect(byEmail.members.map((member) => member.id)).toEqual(['u2'])
@@ -1867,7 +1885,6 @@ describe('team-management service', () => {
     const escaped = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ query: '100%' }),
     )
     expect(escaped.members.map((member) => member.id)).toEqual(['u3'])
@@ -1876,7 +1893,6 @@ describe('team-management service', () => {
     const unicodeFolded = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ query: 'ÄLICE' }),
     )
     expect(unicodeFolded.members.map((member) => member.id)).toEqual(['u4'])
@@ -1894,7 +1910,6 @@ describe('team-management service', () => {
     const admins = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ role: 'admin' }),
     )
     expect(admins.members.map((member) => member.id)).toEqual(['u2'])
@@ -1902,7 +1917,6 @@ describe('team-management service', () => {
     const active = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ activity: 'active' }),
     )
     expect(active.members.map((member) => member.id)).toEqual(['u3'])
@@ -1910,7 +1924,6 @@ describe('team-management service', () => {
     const inactive = await loadWorkspaceMembersPage(
       db,
       'ws1',
-      'u1',
       filters({ activity: 'inactive' }),
     )
     expect(inactive.members.map((member) => member.id).sort()).toEqual([
@@ -2298,6 +2311,14 @@ describe('team-management service', () => {
     seedOwner(sqlite, 'u1')
     seedMember(sqlite, 'u2')
 
+    expect(await loadWorkspaceOwner(db, 'ws1')).toMatchObject({
+      id: 'u1',
+      email: 'u1@example.com',
+    })
+    const data = await loadMembersPageData(db, user('u1'), filters())
+    expect(
+      data.membersPage.members.find((member) => member.id === 'u1'),
+    ).toMatchObject({ role: 'owner', isAdmin: true })
     const adminId = await ensureWorkspaceAdmin(
       db,
       'ws1',

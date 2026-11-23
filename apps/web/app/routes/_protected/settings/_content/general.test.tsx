@@ -25,7 +25,7 @@ function postForm(fields: Record<string, string>) {
   })
 }
 
-function renderPage(currentUserIsAdmin: boolean) {
+function renderPage(currentUserIsAdmin: boolean, hasOwner = true) {
   const context = {
     workspace: { name: 'Example' },
     currentUserIsAdmin,
@@ -40,12 +40,14 @@ function renderPage(currentUserIsAdmin: boolean) {
           element: (
             <GeneralPage
               loaderData={{
-                owner: {
-                  id: 'owner',
-                  name: 'Owner',
-                  email: 'owner@example.com',
-                  image: null,
-                },
+                owner: hasOwner
+                  ? {
+                      id: 'owner',
+                      name: 'Owner',
+                      email: 'owner@example.com',
+                      image: null,
+                    }
+                  : null,
               }}
             />
           ),
@@ -98,6 +100,13 @@ describe('/settings/general rendered page', () => {
     expect(html).toMatch(/id="workspace-name"[^>]*disabled/)
     expect(html).toMatch(/type="submit"[^>]*disabled/)
     expect(html).not.toContain('Role guides')
+  })
+
+  test('shows an empty owner section when the workspace is ownerless', () => {
+    const html = renderPage(true, false)
+    expect(html).toContain('Workspace owner')
+    expect(html).not.toContain('owner@example.com')
+    expect(renderPage(true)).toContain('owner@example.com')
   })
 
   test('orders display name, owner, and role guides for admins', () => {

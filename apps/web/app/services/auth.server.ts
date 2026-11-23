@@ -92,9 +92,13 @@ const BEARER_SCHEME = 'bearer '
 const CLI_DEVICE_CLIENT_ID = 'artifactshare-cli'
 const UTF8_DECODER = new TextDecoder()
 const BETTER_AUTH_COOKIE_CACHE_SECONDS = 5 * 60
-const pendingSignupState = new Map<
-  string,
-  { method: SignupMethod; workspaceCreated: boolean }
+const pendingSignupState = new WeakMap<
+  object,
+  {
+    method: SignupMethod
+    workspaceCreated: boolean
+    personalWorkspaceId: string | null
+  }
 >()
 
 interface SessionWorkspaceContext {
@@ -102,8 +106,6 @@ interface SessionWorkspaceContext {
   selfUploadEnabled: boolean
   hd: string | null
   msTenantId: string | null
-  hasActiveOwner: boolean
-  claimBackedIdentity: boolean
   kind: 'human' | 'bot'
 }
 
@@ -402,6 +404,28 @@ function buildAuth() {
                 }
               : undefined
           },
+          after: async (session, context) => {
+            if (
+              context?.path !== '/sign-in/email-otp' &&
+              context?.path !== '/sign-in/social' &&
+              !authRouteFromDatabaseHookContext(context)
+            )
+              return
+            const user = await db
+              .selectFrom('users')
+              .select(['id', 'email', 'workspace_id'])
+              .where('id', '=', session.userId)
+              .where('kind', '=', 'human')
+              .executeTakeFirstOrThrow()
+            const moved = await maybeMoveUserToClaimedWorkspace(db, {
+              userId: user.id,
+              email: user.email,
+              currentWorkspaceId: user.workspace_id,
+            })
+            if (!moved) {
+              await ensureWorkspaceAdmin(db, user.workspace_id, nowIso())
+            }
+          },
         },
       },
       user: {
@@ -437,10 +461,12 @@ function buildAuth() {
                 : authRoute === 'oauth-microsoft'
                   ? 'microsoft'
                   : 'email'
-            pendingSignupState.set(u.email.toLowerCase(), {
-              method,
-              workspaceCreated: created,
-            })
+            if (context)
+              pendingSignupState.set(context, {
+                method,
+                workspaceCreated: created,
+                personalWorkspaceId: created ? workspaceId : null,
+              })
             return {
               data: {
                 ...u,
@@ -449,15 +475,12 @@ function buildAuth() {
               },
             }
           },
-          after: async (user) => {
+          after: async (user, context) => {
             if (!user) return
-            // Consume the signup marker first: the unconditional delete avoids
-            // a Map leak if a later step throws, and recording the pending row
-            // before the membership/admin writes means a failure there does not
-            // lose the analytics row (the user row is already committed).
-            const key = user.email.toLowerCase()
-            const signup = pendingSignupState.get(key)
-            pendingSignupState.delete(key)
+            // Better Auth passes the creating endpoint context to both hooks,
+            // including when the after-hook runs after the user transaction.
+            const signup = context && pendingSignupState.get(context)
+            if (context) pendingSignupState.delete(context)
             if (signup) {
               try {
                 await insertPendingSignup(db, {
@@ -480,6 +503,16 @@ function buildAuth() {
             const workspaceId = row?.workspace_id
             if (!workspaceId) return
             const now = nowIso()
+            if (signup?.personalWorkspaceId === workspaceId) {
+              await ensureActiveWorkspaceMembership(
+                db,
+                user.id,
+                workspaceId,
+                now,
+                { personalWorkspaceOwner: true },
+              )
+              return
+            }
             await ensureActiveWorkspaceMembership(db, user.id, workspaceId, now)
             await ensureWorkspaceAdmin(db, workspaceId, now)
           },
@@ -1105,42 +1138,13 @@ async function resolveBrowserSessionContext(
   let sessionDb: Kysely<DB> | undefined
   const getDb = () => (sessionDb ??= createSessionDb())
   try {
-    let context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
+    const context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
     if (!context) return null
     // Invariant: cookie-derived session resolution never returns a bot user.
     // Bots authenticate only through bearer CLI sessions with an agent
     // authority; any cookie session that maps onto a bot row is treated as
     // unauthenticated regardless of entry point.
     if (context.kind === 'bot') return null
-    if (context.claimBackedIdentity && !context.hasActiveOwner) {
-      await ensureWorkspaceAdmin(getDb(), context.workspaceId, nowIso())
-      context = { ...context, hasActiveOwner: true }
-    }
-    const emailDomain = normalizeEmailDomain(sessionUser.email)
-    const shouldCheckClaimMove =
-      emailDomain &&
-      !isPublicEmailDomain(emailDomain) &&
-      normalizeEmailDomain(context.hd) !== emailDomain
-    const movedWorkspaceId = shouldCheckClaimMove
-      ? await maybeMoveUserToClaimedWorkspace(getDb(), {
-          userId: sessionUser.id,
-          email: sessionUser.email,
-          currentWorkspaceId: context.workspaceId,
-        })
-      : null
-    if (movedWorkspaceId) {
-      await clearWorkspaceCreatedIfMoved(getDb(), {
-        userId: sessionUser.id,
-        originalWorkspaceId: context.workspaceId,
-        finalWorkspaceId: movedWorkspaceId,
-      })
-      const movedContext = await loadWorkspaceContextByUserId(
-        getDb(),
-        sessionUser.id,
-      )
-      if (!movedContext) return null
-      context = movedContext
-    }
     // The cookie cache can hold a stale emailVerified=false right after an
     // email-code sign-in promotes the DB row (better-auth writes the cookie from
     // the pre-update user). Re-read the fresh flag only in that case, so a
@@ -1156,13 +1160,8 @@ async function resolveBrowserSessionContext(
       )
         ? await readUserImage(getDb(), sessionUser.id)
         : null)
-    const {
-      hasActiveOwner: _hasActiveOwner,
-      claimBackedIdentity: _claimBackedIdentity,
-      ...sessionContext
-    } = context
     return {
-      user: { ...sessionUser, ...sessionContext, emailVerified, image },
+      user: { ...sessionUser, ...context, emailVerified, image },
       sessionExpiresAtMs,
     }
   } finally {
@@ -1183,35 +1182,8 @@ async function buildSessionUserFromBearerRow(
   db: Kysely<DB>,
   user: BearerUserRow,
 ): Promise<SessionUser | null> {
-  let context = await loadWorkspaceContextByUserId(db, user.id)
+  const context = await loadWorkspaceContextByUserId(db, user.id)
   if (!context) return null
-  // Domain-claim workspace moves are a human-only mechanism: a bot's
-  // workspace_id is its host workspace and must never move.
-  if (context.kind === 'human') {
-    if (context.claimBackedIdentity && !context.hasActiveOwner) {
-      await ensureWorkspaceAdmin(db, context.workspaceId, nowIso())
-      context = { ...context, hasActiveOwner: true }
-    }
-    const movedWorkspaceId = await maybeMoveUserToClaimedWorkspace(db, {
-      userId: user.id,
-      email: user.email,
-      currentWorkspaceId: context.workspaceId,
-    })
-    if (movedWorkspaceId) {
-      await clearWorkspaceCreatedIfMoved(db, {
-        userId: user.id,
-        originalWorkspaceId: context.workspaceId,
-        finalWorkspaceId: movedWorkspaceId,
-      })
-      context = await loadWorkspaceContextByUserId(db, user.id)
-      if (!context) return null
-    }
-  }
-  const {
-    hasActiveOwner: _hasActiveOwner,
-    claimBackedIdentity: _claimBackedIdentity,
-    ...sessionContext
-  } = context
   return {
     id: user.id,
     email: user.email,
@@ -1219,7 +1191,7 @@ async function buildSessionUserFromBearerRow(
     name: user.name,
     image: user.image,
     locale: user.locale,
-    ...sessionContext,
+    ...context,
   }
 }
 
@@ -1342,7 +1314,7 @@ async function loadWorkspaceContextByUserId(
   const row = await db
     .selectFrom('users')
     .innerJoin('workspaces', 'workspaces.id', 'users.workspace_id')
-    .select((eb) => [
+    .select([
       'users.workspace_id',
       'users.kind',
       'workspaces.hd',
@@ -1366,16 +1338,6 @@ async function loadWorkspaceContextByUserId(
                  claims.domain
         LIMIT 1
       )`.as('claimed_domain'),
-      eb
-        .exists(
-          eb
-            .selectFrom('workspace_members')
-            .select('user_id')
-            .whereRef('workspace_members.workspace_id', '=', 'workspaces.id')
-            .where('workspace_members.status', '=', 'active')
-            .where('workspace_members.role', '=', 'owner'),
-        )
-        .as('has_active_owner'),
     ])
     .where('users.id', '=', userId)
     .executeTakeFirst()
@@ -1385,8 +1347,6 @@ async function loadWorkspaceContextByUserId(
     selfUploadEnabled: row.self_upload_enabled === 1,
     hd: row.hd ?? row.claimed_domain ?? null,
     msTenantId: row.ms_tenant_id ?? null,
-    hasActiveOwner: Boolean(row.has_active_owner),
-    claimBackedIdentity: row.claimed_domain !== null,
     kind: row.kind,
   }
 }

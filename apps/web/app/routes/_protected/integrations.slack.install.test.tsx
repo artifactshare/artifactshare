@@ -62,11 +62,14 @@ describe('/integrations/slack/install loader', () => {
     await seedAdmin(db, 'u-a', 'ws-a')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
+    const memberships = db.selectFrom('workspace_members').selectAll()
+    const before = await memberships.execute()
     const response = await loader({
       request: new Request('https://example.test/integrations/slack/install'),
       context: {},
     } as never)
 
+    expect(await memberships.execute()).toEqual(before)
     expect(response).toBeInstanceOf(Response)
     expect((response as Response).status).toBe(302)
     const location = (response as Response).headers.get('Location')
@@ -131,13 +134,21 @@ describe('/integrations/slack/install loader', () => {
 
   test('non-admin is redirected to integrations settings with forbidden status', async () => {
     await seedAdmin(db, 'u-a', 'ws-a')
-    requireUserMock.mockReturnValue(sessionUser('u-b', 'ws-a'))
+    await db
+      .updateTable('workspace_members')
+      .set({ role: 'member' })
+      .where('user_id', '=', 'u-a')
+      .execute()
+    requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
+    const memberships = db.selectFrom('workspace_members').selectAll()
+    const before = await memberships.execute()
     const response = await loader({
       request: new Request('https://example.test/integrations/slack/install'),
       context: {},
     } as never)
 
+    expect(await memberships.execute()).toEqual(before)
     expect(response).toBeInstanceOf(Response)
     expect((response as Response).status).toBe(302)
     expect((response as Response).headers.get('Location')).toBe(

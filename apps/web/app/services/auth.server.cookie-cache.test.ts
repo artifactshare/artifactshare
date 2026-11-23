@@ -320,7 +320,7 @@ describe('getSessionUser cookie cache', () => {
     ).resolves.toMatchObject({ workspaceId: 'ws1', hd: 'corp.com' })
   })
 
-  test('repairs an ownerless claimed workspace during browser session resolution', async () => {
+  test('leaves an ownerless claimed workspace unchanged during browser session resolution', async () => {
     seedSession(sqlite, 'u1', 'sess_cookie_cache')
     sqlite.exec(`
       UPDATE workspaces SET hd = NULL, email_domain = 'example.com' WHERE id = 'ws1';
@@ -347,6 +347,10 @@ describe('getSessionUser cookie cache', () => {
       );
     `)
 
+    const memberships = sqlite.prepare(
+      'SELECT * FROM workspace_members ORDER BY workspace_id, user_id',
+    )
+    const before = memberships.all()
     await expect(
       getSessionUser(
         cachedSessionRequest({
@@ -355,13 +359,7 @@ describe('getSessionUser cookie cache', () => {
         }),
       ),
     ).resolves.toMatchObject({ workspaceId: 'ws1', hd: 'example.com' })
-    expect(
-      sqlite
-        .prepare(
-          "SELECT user_id, role FROM workspace_members WHERE workspace_id = 'ws1' ORDER BY user_id",
-        )
-        .all(),
-    ).toEqual([{ user_id: 'u-admin', role: 'owner' }])
+    expect(memberships.all()).toEqual(before)
   })
 
   test('uses the claim matching the user email in a multi-domain workspace', async () => {
@@ -418,7 +416,7 @@ describe('getSessionUser cookie cache', () => {
     })
   })
 
-  test('moves a verified viewer into its claimed workspace on session resolution', async () => {
+  test('keeps a pending mover in the source workspace during cookie resolution', async () => {
     seedSession(sqlite, 'u1', 'sess_cookie_cache')
     sqlite.exec(`
       UPDATE workspaces
@@ -449,6 +447,10 @@ describe('getSessionUser cookie cache', () => {
         'u1', 'email', 1, '2026-06-26T00:00:00.000Z', NULL, NULL
       );
     `)
+    const memberships = sqlite.prepare(
+      'SELECT * FROM workspace_members ORDER BY workspace_id,user_id',
+    )
+    const before = memberships.all()
 
     const user = await getSessionUser(
       cachedSessionRequest({
@@ -458,19 +460,21 @@ describe('getSessionUser cookie cache', () => {
     )
 
     expect(user).toMatchObject({
-      workspaceId: 'ws-claimed',
-      selfUploadEnabled: true,
+      id: 'u1',
+      workspaceId: 'ws1',
+      selfUploadEnabled: false,
     })
     expect(
       sqlite.prepare("SELECT workspace_id FROM users WHERE id = 'u1'").get(),
-    ).toEqual({ workspace_id: 'ws-claimed' })
+    ).toEqual({ workspace_id: 'ws1' })
     expect(
       sqlite
         .prepare(
           "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
         )
         .get(),
-    ).toEqual({ workspace_created: 0 })
+    ).toEqual({ workspace_created: 1 })
+    expect(memberships.all()).toEqual(before)
   })
 })
 

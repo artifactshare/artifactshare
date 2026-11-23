@@ -1,3 +1,4 @@
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -197,6 +198,80 @@ describe('Better Auth OAuth workspace integration', () => {
     await fixture?.db.destroy()
     fixture = null
     sqliteRef.current = null
+  })
+
+  test('a returning Google ID-token sign-in repairs the linked user’s ownerless workspace', async () => {
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = fixture.sqlite
+    const profile = {
+      sub: 'google-returning',
+      email: 'returning@example.com',
+      email_verified: true,
+      name: 'Returning user',
+    }
+    const { id } = await createGoogleUserThroughCallback(
+      await getAuthContext(),
+      profile,
+    )
+    const user = await fixture.db
+      .selectFrom('users')
+      .select('workspace_id')
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+    await fixture.db
+      .deleteFrom('workspace_members')
+      .where('user_id', '=', id)
+      .execute()
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 })
+    const jwk = {
+      ...keys.publicKey.export({ format: 'jwk' }),
+      kid: 'test-key',
+      alg: 'RS256',
+      use: 'sig',
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const payload = {
+      ...profile,
+      iss: 'https://accounts.google.com',
+      aud: 'test-google-client-id',
+      iat: now,
+      exp: now + 600,
+    }
+    const input = [{ kid: jwk.kid, alg: jwk.alg }, payload]
+      .map((value) => Buffer.from(JSON.stringify(value)).toString('base64url'))
+      .join('.')
+    const token =
+      input +
+      '.' +
+      sign('RSA-SHA256', Buffer.from(input), keys.privateKey).toString(
+        'base64url',
+      )
+    const fetchKeys = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (url) => {
+        if (String(url) !== 'https://www.googleapis.com/oauth2/v3/certs')
+          throw new Error('Unexpected provider request')
+        return Response.json({ keys: [jwk] })
+      })
+    try {
+      const response = await createAuth().handler(
+        new Request('https://example.com/api/auth/sign-in/social', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ provider: 'google', idToken: { token } }),
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ user: { id } })
+      await expectUserWorkspaceMember(
+        fixture.db,
+        id,
+        user.workspace_id,
+        'owner',
+      )
+    } finally {
+      fetchKeys.mockRestore()
+    }
   })
 
   test('Google hd joins an existing claim through profile mapping and hooks', async () => {

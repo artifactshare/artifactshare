@@ -594,6 +594,66 @@ describe('workspace domain claims', () => {
     ])
   })
 
+  test('an explicit move replaces a removed owner and preserves removal history', async () => {
+    const db = setup()
+    await seedWorkspace(db, { id: 'source', hd: null })
+    await seedWorkspace(db, { id: 'destination', hd: null })
+    await seedUser(db, {
+      id: 'former',
+      email: 'former@example.com',
+      workspaceId: 'destination',
+    })
+    await seedUser(db, {
+      id: 'mover',
+      email: 'mover@example.com',
+      workspaceId: 'source',
+    })
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'destination',
+        user_id: 'former',
+        role: 'owner',
+        status: 'removed',
+        created_at: '2025',
+        updated_at: '2026',
+        removed_at: '2026',
+        removed_by: 'former',
+      })
+      .execute()
+    expect(
+      await moveUserToWorkspaceForOAuth(db, {
+        userId: 'mover',
+        email: 'mover@example.com',
+        currentWorkspaceId: 'source',
+        targetWorkspaceId: 'destination',
+      }),
+    ).toBe('destination')
+    expect(
+      await db
+        .selectFrom('workspace_members')
+        .select(['user_id', 'role', 'status', 'removed_at', 'removed_by'])
+        .where('workspace_id', '=', 'destination')
+        .orderBy('user_id')
+        .execute(),
+    ).toEqual([
+      {
+        user_id: 'former',
+        role: 'member',
+        status: 'removed',
+        removed_at: '2026',
+        removed_by: 'former',
+      },
+      {
+        user_id: 'mover',
+        role: 'owner',
+        status: 'active',
+        removed_at: null,
+        removed_by: null,
+      },
+    ])
+  })
+
   test('repairs an ownerless claimed workspace when the user is already there', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
