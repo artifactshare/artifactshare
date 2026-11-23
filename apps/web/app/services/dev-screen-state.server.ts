@@ -3,11 +3,9 @@ import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
+import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
-import {
-  LINK_SHARING_PLAN_DEFAULTS,
-  linkExpiryStartingColumns,
-} from '~/lib/link-sharing-policy'
+import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
 import type { DB } from '~/types/db'
 
 export function devShareableId(seed: string): string {
@@ -336,9 +334,9 @@ async function syncCaptureSubscription(
   db: Kysely<DB>,
   scenario: string,
   workspaceId: string,
-  env: BillingEnv | undefined,
+  billingEnv: BillingEnv | undefined,
 ) {
-  const { billing, stripe } = captureStripeClient(env, scenario)
+  const { billing, stripe } = captureStripeClient(billingEnv, scenario)
   const result = await syncWorkspaceSubscription(
     db,
     stripe,
@@ -371,21 +369,21 @@ async function setNearLimitUsage(db: Kysely<DB>, workspaceId: string) {
 /**
  * Creates the isolated workspace anchor used by screen-capture scenarios.
  * The paid billing states also need `billing`, the local capture's fake
- * Stripe configuration.
+ * Stripe configuration; dev sign-in passes none and uses the Worker env.
  */
 export async function ensureDevScreenState(
   db: Kysely<DB>,
   scenario: string,
   now: string,
   plan: 'free' | 'plus' | 'team',
-  billing?: BillingEnv,
+  billing: BillingEnv | undefined = env,
 ): Promise<{ workspaceId: string }> {
   if (!isScreenScenario(scenario))
     throw new Error(`Unknown screen scenario: ${scenario}`)
   const workspaceId = scenarioWorkspaceId(plan, scenario)
   const existing = await db
     .selectFrom('workspaces')
-    .select('id')
+    .select(['id', 'stripe_subscription_id'])
     .where('id', '=', workspaceId)
     .executeTakeFirst()
   if (!existing) {
@@ -412,9 +410,10 @@ export async function ensureDevScreenState(
       .execute()
   }
   if (scenario.startsWith('settings-billing/')) {
-    // Every billing state starts from the same Free workspace without a
-    // contract, so a contract state then holds exactly what the sync stores
-    // for a first paid contract, and a re-seed rebuilds the same row.
+    // Every billing seed rebuilds the same starting row: Free billing fields,
+    // no contract, and the sharing settings a new workspace starts with. A
+    // contract state then holds exactly what the sync stores for a first paid
+    // contract, however often the state is seeded.
     await db
       .updateTable('workspaces')
       .set({
@@ -424,13 +423,8 @@ export async function ensureDevScreenState(
         stripe_subscription_status: 'none',
         storage_used_bytes: 0,
         storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
-        link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
-          ? 1
-          : 0,
-        external_posting_enabled: LINK_SHARING_PLAN_DEFAULTS.free
-          .externalPostingEnabled
-          ? 1
-          : 0,
+        link_sharing_enabled: 1,
+        external_posting_enabled: 0,
       })
       .where('id', '=', workspaceId)
       .execute()

@@ -69,12 +69,16 @@ export const LOCAL_CAPTURE_MODES = {
   screens: {
     command: 'pnpm screens:capture:local',
     launcher: 'scripts/run-screen-capture.mjs',
+    // Tells the screen capture that this run's fake Stripe is up, so it keeps
+    // the local-only billing states. `screens:capture` never passes it.
+    modeArgs: ['--local-fake-stripe'],
     parse: async (argv) => (await screenCapture()).parseArgs(argv),
     needsCli: false,
   },
   walkthroughs: {
     command: 'pnpm walkthroughs:capture:local',
     launcher: 'scripts/run-task-walkthroughs.mjs',
+    modeArgs: [],
     parse: async (argv) =>
       (await walkthroughCapture()).parseWalkthroughArgs(argv),
     needsCli: true,
@@ -127,6 +131,31 @@ export async function portIsFree(port, hosts = LOOPBACK_HOSTS) {
     await closeServer(server)
   }
   return true
+}
+
+/**
+ * Binds every selected port on `host` until `release`, so a listener the
+ * kernel places meanwhile (the fake Stripe's port 0) can take none of them.
+ * Explicitly configured ports may lie in the kernel's ephemeral range. A
+ * connection a hold accepts is closed at once, so no client can keep the
+ * release (and with it startup or teardown) waiting.
+ */
+export async function holdPorts(ports, host = '127.0.0.1') {
+  const held = []
+  const release = () => Promise.all(held.map(closeServer))
+  for (const port of new Set(ports))
+    try {
+      const server = await listen(port, host)
+      server.on('connection', (socket) => socket.destroy())
+      held.push(server)
+    } catch (error) {
+      await release()
+      throw new Error(
+        `${host}:${port} was taken after it was selected (${error?.code ?? error}); rerun to choose other ports`,
+        { cause: error },
+      )
+    }
+  return { release }
 }
 
 /**
@@ -279,11 +308,14 @@ const DOTENV_ASSIGNMENT =
 export function writeCaptureStripeVars(path, origin) {
   const values = captureStripeVars(origin)
   const names = new Set(Object.keys(values))
+  // Line endings are normalized first, as dotenv does, so every copied
+  // Stripe line is matched whatever the file's line endings.
   const kept = readFileSync(path, 'utf8')
+    .replace(/\r\n?/gu, '\n')
     .replace(DOTENV_ASSIGNMENT, (assignment, name) =>
       names.has(name) ? '' : assignment,
     )
-    .split(/\r?\n/u)
+    .split('\n')
   while (kept.length && kept.at(-1) === '') kept.pop()
   writeFileSync(
     path,
@@ -510,7 +542,7 @@ export function localCaptureCommands({
     capture: {
       name: 'capture',
       command: process.execPath,
-      args: [join(root, spec.launcher), ...argv],
+      args: [join(root, spec.launcher), ...spec.modeArgs, ...argv],
       cwd: root,
       env: {
         ...env,
@@ -1203,6 +1235,7 @@ export async function runLocalCapture({
     commands = localCaptureCommands,
     owner = new OwnedProcesses(),
     relay = startLoopbackRelay,
+    hold = holdPorts,
     stripe = startCaptureStripe,
     stripeVars = writeCaptureStripeVars,
     checks = readinessChecks,
@@ -1278,9 +1311,18 @@ export async function runLocalCapture({
       await step(owner.run(command))
     }
     // The prepared variables get the fake's values before any service reads
-    // them; a fake that cannot listen stops the capture here.
-    stripeStart = stripe()
-    const fakeStripe = await step(stripeStart)
+    // them; a fake that cannot listen stops the capture here. The selected
+    // ports are held while it binds, so its kernel-chosen port is none of
+    // them; they are free again before the relay and services bind them.
+    const holding = hold(Object.values(ports))
+    let fakeStripe
+    try {
+      await step(holding)
+      stripeStart = stripe()
+      fakeStripe = await step(stripeStart)
+    } finally {
+      await (await holding.catch(() => null))?.release()
+    }
     stripeVars(files.vars.path, fakeStripe.origin)
     log(`local capture: fake Stripe ${fakeStripe.origin}`)
     relayHandle = await step(relay(ports.app))

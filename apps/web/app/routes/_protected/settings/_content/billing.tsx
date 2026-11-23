@@ -1384,8 +1384,13 @@ function subscriptionStatusLabel(
   return t('billing.subscription.other')
 }
 
-function billingPresentation(data: Pick<BillingView, 'hasSubscription'>) {
-  return data.hasSubscription ? 'subscribed' : 'purchase'
+// A Team workspace without an active subscription gets no purchase controls
+// and no presentation of its own.
+function billingPresentation(
+  data: Pick<BillingView, 'plan' | 'hasSubscription'>,
+) {
+  if (data.hasSubscription) return 'subscribed'
+  return data.plan === 'team' ? 'team-plan' : 'purchase'
 }
 
 function BillingActions({
@@ -1398,8 +1403,10 @@ function BillingActions({
   const { locale } = useT()
   if (!loaderData.canManage) return <ReadOnlyNotice />
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
-  if (loaderData.hasSubscription)
+  const presentation = billingPresentation(loaderData)
+  if (presentation === 'subscribed')
     return <SubscribedActions contract={loaderData.contract} />
+  if (presentation === 'team-plan') return null
   if (awaitingCheckoutReflection) return <CheckoutPendingNotice />
   return (
     <CheckoutActions

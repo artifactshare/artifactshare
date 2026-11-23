@@ -88,6 +88,7 @@ describe('/settings/billing loader', () => {
   afterEach(async () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
     dbState.db = null
     await db.destroy()
   })

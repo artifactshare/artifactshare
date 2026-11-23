@@ -353,6 +353,40 @@ test('near-limit Free owner keeps billing guidance and checkout without a self-l
   expect(html).toContain('value="checkout"')
 })
 
+test('a Team workspace without a subscription shows its plan and usage but no checkout or plan guidance', () => {
+  const html = renderBillingPage(1, null, {
+    plan: 'team',
+    hasSubscription: false,
+    stripeSubscriptionStatus: 'none',
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+  })
+  expect(html).toContain('>Team')
+  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+  expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
+  expect(banner).not.toContain('上限を増やすには')
+  expect(html).not.toContain('value="checkout"')
+  expect(html).not.toContain('data-plan="plus"')
+})
+
+test('a near-limit Plus workspace without a subscription keeps its checkout cards and plan guidance', () => {
+  const html = renderBillingPage(1, null, {
+    plan: 'plus',
+    hasSubscription: false,
+    stripeSubscriptionStatus: 'none',
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+  })
+  expect(html).toContain('>Plus')
+  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
+  expect(banner).toContain(
+    '上限を増やすには、このページのプランから選んでください。',
+  )
+  expect(html).toContain('value="checkout"')
+  expect(html).toContain('data-plan="plus"')
+  expect(html).toContain('data-plan="team"')
+})
+
 test('near-limit owner gets no billing next step when billing is unavailable', () => {
   const html = renderBillingPage(1, null, {
     storageUsedBytes: 95,

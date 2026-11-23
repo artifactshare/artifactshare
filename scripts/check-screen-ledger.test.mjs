@@ -9,7 +9,9 @@ import {
   needsLocalSandbox,
   devShareableId,
   navigateForCapture,
+  parseArgs,
   pathFor,
+  planCaptureJobs,
   runCaptureJobs,
   waitForInteractionTarget,
   captureFailure,
@@ -90,6 +92,60 @@ test('billing captures default to the purchase seed and keep the purchase varian
       false,
     )
   }
+})
+
+test('screens:capture plans no billing contract state and names them in one line; the local mode argument plans them', (t) => {
+  const contractStates = [
+    'settings-billing/subscribed',
+    'settings-billing/past-due',
+    'settings-billing/continuing-near-limit',
+  ]
+  const screenIds = ['settings-billing', 'settings-general']
+  const argv = screenIds.flatMap((id) => ['--screen', id])
+  // Every capture of a state: each locale, both viewports and both themes.
+  const allJobIds = ledgerScreens
+    .filter((screen) => screenIds.includes(screen.id))
+    .flatMap((screen) =>
+      screen.states.flatMap((state) =>
+        Object.keys(screen.route).flatMap((locale) =>
+          ['desktop', 'mobile'].flatMap((viewport) =>
+            ['light', 'dark'].map(
+              (theme) =>
+                `${screen.id}/${state.id}/${viewport}/${theme}/${locale}`,
+            ),
+          ),
+        ),
+      ),
+    )
+    .sort()
+  const jobIds = (plan) => plan.jobs.map((job) => job.id).sort()
+  const isContractJob = (id) =>
+    contractStates.some((state) => id.startsWith(`${state}/`))
+
+  // The variable an earlier version read does not select the local mode.
+  const inherited = process.env.LOCAL_CAPTURE_FAKE_STRIPE
+  t.after(() => {
+    if (inherited === undefined) delete process.env.LOCAL_CAPTURE_FAKE_STRIPE
+    else process.env.LOCAL_CAPTURE_FAKE_STRIPE = inherited
+  })
+  process.env.LOCAL_CAPTURE_FAKE_STRIPE = '1'
+  const plainArgs = parseArgs(argv)
+  assert.equal(plainArgs.local, false)
+  const plain = planCaptureJobs(plainArgs.selected, { local: plainArgs.local })
+  assert.deepEqual(
+    jobIds(plain),
+    allJobIds.filter((id) => !isContractJob(id)),
+  )
+  assert.equal(plain.notice.split('\n').length, 1)
+  for (const id of contractStates) assert.ok(plain.notice.includes(id), id)
+  assert.match(plain.notice, /pnpm screens:capture:local/u)
+
+  const localArgs = parseArgs(['--local-fake-stripe', ...argv])
+  assert.equal(localArgs.local, true)
+  const local = planCaptureJobs(localArgs.selected, { local: localArgs.local })
+  assert.deepEqual(jobIds(local), allJobIds)
+  assert.ok(allJobIds.some(isContractJob))
+  assert.equal(local.notice, null)
 })
 
 test('allows a state to capture anonymously from an authenticated scenario seed', () => {

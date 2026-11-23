@@ -2565,7 +2565,7 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
           .executeTakeFirstOrThrow(),
       ).toEqual({ image: null, name: 'Owner' })
     }
-    // Both Free billing states rebuild their defined row on a re-seed,
+    // Both Free billing states rebuild the same starting row on a re-seed,
     // whatever the previous seed or an edit left behind.
     for (const [state, used] of [
       ['purchase', 0],
@@ -2928,7 +2928,7 @@ describe('paid billing capture states', () => {
   let billing: BillingEnv
   beforeAll(async () => {
     fake = await startCaptureStripe({
-      now: new Date('2026-07-15T12:00:00.000Z'),
+      clock: () => new Date('2026-07-15T12:00:00.000Z'),
     })
     billing = captureStripeVars(fake.origin)
   })
@@ -2947,8 +2947,9 @@ describe('paid billing capture states', () => {
     async (state, status, used) => {
       const { db } = createMigratedInMemoryDb()
       try {
-        // Every seed rebuilds the state: a repeated sign-in after the row
-        // drifted stores the same row the sync stores for a first contract.
+        // Every seed rebuilds the billing state: a repeated sign-in after the
+        // billing fields drifted stores the same row the sync stores for a
+        // first contract.
         let seeded: unknown
         for (let signIn = 0; signIn < 2; signIn++) {
           if (signIn === 1)
@@ -2961,10 +2962,8 @@ describe('paid billing capture states', () => {
                 stripe_subscription_status: 'canceled',
                 storage_quota_bytes: 1,
                 storage_used_bytes: 1,
-                link_sharing_enabled: 0,
                 link_expiry_default_days: 7,
                 link_expiry_max_days: 90,
-                external_posting_enabled: 0,
               })
               .execute()
           const { workspaceId } = await ensureDevScreenState(
@@ -3030,6 +3029,26 @@ describe('paid billing capture states', () => {
               nextInvoiceAt: '2026-08-01T00:00:00.000Z',
             })
         }
+        // Seeding again after the row changed rebuilds the same row: the
+        // capture shows what the sync stores for a first paid contract.
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0, storage_used_bytes: 1 })
+          .execute()
+        const { workspaceId } = await ensureDevScreenState(
+          db,
+          `settings-billing/${state}`,
+          now,
+          'team',
+          billing,
+        )
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .selectAll()
+            .where('id', '=', workspaceId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual(seeded)
       } finally {
         await db.destroy()
       }

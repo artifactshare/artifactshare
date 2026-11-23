@@ -106,6 +106,22 @@ pnpm screens:capture -- --screen about --label before
 pnpm screens:capture -- --all --audit-gaps
 ```
 
+`screens:capture` leaves out the local-only billing states described under
+[Run without a running server](#run-without-a-running-server). The other
+`settings-billing` states (default, the purchase variants, the checkout results
+and near-limit) still need a dev server whose variables configure billing, all
+seven Stripe values. The checked-in `.dev.vars` template leaves Stripe
+unconfigured. On that setup their seeds succeed and the page loads, but it
+shows the billing-unavailable notice instead of the plan cards. `result-error`
+stops at the wait for its click target
+`[data-plan="plus"] button[type="submit"]`: after Playwright's default
+30-second locator timeout it fails with `interaction_precondition`, which is
+not retried. Every other one of these
+states fails with `readiness_timeout` after its `SCREEN_CAPTURE_RETRIES`
+retries, because its ready selector needs the plan cards or the checkout
+notice. The run then exits nonzero. Use `screens:capture:local` for the full
+Settings matrix.
+
 `SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`; `SCREEN_CAPTURE_SANDBOX_URL` names the sandbox that belongs to it (default `https://localhost:5174` beside the default app). `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
 
 ## Run without a running server
@@ -187,12 +203,18 @@ Each run:
    fails the run instead. It waits until they are gone, stops the fake Stripe,
    then removes its runtime directory.
 
-The `settings-billing` states depend on that fake: the subscribed, past-due and
-continuing-near-limit seeds store their contract by running the production
-subscription sync against it, and every billing state reads its configuration
-from the synthetic values. Capture them with `screens:capture:local`; against
-a developer's own `pnpm dev` the paid seeds fail rather than read real Stripe,
-and `/dev/sign-in` does not offer them.
+The `settings-billing` subscribed, past-due and continuing-near-limit states
+are local-only: their seeds store the contract by running the production
+subscription sync against that fake. `screens:capture:local` captures them.
+`screens:capture` (against a developer's own `pnpm dev`) leaves them out of its
+job list before it seeds anything, from a fixed list in
+`scripts/screen-capture.mjs`, and prints one line naming them and saying they
+need `screens:capture:local`. Only `scripts/local-capture.mjs` keeps them: it
+passes `--local-fake-stripe` to `scripts/run-screen-capture.mjs`, which
+`screens:capture` runs without that argument. No environment variable selects
+the mode.
+Any seed or sign-in error still stops a capture. `/dev/sign-in` does not offer
+the billing states.
 
 Ports are chosen automatically from free loopback ports in 20000–32767, never 5173–5175, so a
 developer's `pnpm dev` and any other listener keep running; the command never

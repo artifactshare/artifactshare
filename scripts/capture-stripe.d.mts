@@ -36,7 +36,7 @@ export function captureStripeResponse(
 
 export function startCaptureStripe(options?: {
   host?: string
-  now?: Date
+  clock?: () => Date
 }): Promise<{
   origin: string
   close: () => Promise<void>

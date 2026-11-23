@@ -694,9 +694,13 @@ export function parseArgs(argv) {
   let all = false
   let label = 'latest'
   let auditGaps = false
+  let local = false
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--') continue
     else if (argv[i] === '--audit-gaps') auditGaps = true
+    // Passed only by `scripts/local-capture.mjs`, which runs the fake Stripe
+    // the local-only billing states need; `screens:capture` never passes it.
+    else if (argv[i] === '--local-fake-stripe') local = true
     else if (argv[i] === '--all') all = true
     else if (argv[i] === '--screen') ids.push(argv[++i])
     else if (argv[i] === '--label') label = argv[++i] ?? ''
@@ -718,7 +722,7 @@ export function parseArgs(argv) {
   const selected = selectedIds.map((id) =>
     screens.find((screen) => screen.id === id),
   )
-  return { selected, label, auditGaps }
+  return { selected, label, auditGaps, local }
 }
 
 // apps/web/app/services/dev-screen-state.server.ts の devShareableId と同一
@@ -944,6 +948,55 @@ export async function runCaptureJobs({
   }
 }
 
+// Billing states whose seed syncs a contract from the local capture's fake
+// Stripe (`scripts/capture-stripe.mjs`). Only `screens:capture:local` runs
+// that fake, so `screens:capture` leaves them out of its job list.
+const LOCAL_ONLY_CAPTURE_STATES = [
+  'settings-billing/subscribed',
+  'settings-billing/past-due',
+  'settings-billing/continuing-near-limit',
+]
+
+/**
+ * The screens and jobs of a run. Without the local capture (`local` false)
+ * the local-only states are left out, and `notice` is the one line that
+ * names them; otherwise `notice` is null.
+ */
+export function planCaptureJobs(requested, { local }) {
+  const leftOut = []
+  const selected = requested.map((screen) => {
+    if (local) return screen
+    const states = []
+    for (const state of screen.states) {
+      const id = `${screen.id}/${state.id}`
+      if (LOCAL_ONLY_CAPTURE_STATES.includes(id)) leftOut.push(id)
+      else states.push(state)
+    }
+    return states.length === screen.states.length
+      ? screen
+      : { ...screen, states }
+  })
+  const jobs = []
+  for (const screen of selected)
+    for (const locale of Object.keys(screen.route))
+      for (const state of screen.states)
+        for (const viewport of Object.keys(VIEWPORTS))
+          for (const theme of THEMES)
+            jobs.push({
+              id: `${screen.id}/${state.id}/${viewport}/${theme}/${locale}`,
+              screen,
+              locale,
+              state,
+              viewport,
+              theme,
+              order: jobs.length,
+            })
+  const notice = leftOut.length
+    ? `Leaving out ${leftOut.join(', ')}: they need the local fake Stripe; capture them with pnpm screens:capture:local.`
+    : null
+  return { selected, jobs, notice }
+}
+
 async function captureScreensLocked({
   argv = process.argv.slice(2),
   baseUrl = process.env.SCREEN_CAPTURE_BASE_URL ?? 'https://localhost:5173',
@@ -951,7 +1004,8 @@ async function captureScreensLocked({
 } = {}) {
   validateLedger()
   const head = cleanCaptureHead()
-  const { selected, label, auditGaps } = parseArgs(argv)
+  const parsed = parseArgs(argv)
+  const { label, auditGaps } = parsed
   // Validated before any browser or seed work so bad input fails fast.
   const validatedConcurrency = Number(
     process.env.SCREEN_CAPTURE_CONCURRENCY ?? 6,
@@ -973,7 +1027,7 @@ async function captureScreensLocked({
     )
   }
   await assertCaptureServerHead(baseUrl, head)
-  if (needsLocalSandbox(baseUrl, selected)) {
+  if (needsLocalSandbox(baseUrl, parsed.selected)) {
     const sandboxOrigin = localSandboxOrigin(baseUrl)
     const sandbox = DEV_SERVICES.filter(
       (service) => service.name === 'sandbox',
@@ -992,6 +1046,13 @@ async function captureScreensLocked({
       `Playwright is unavailable from the web workspace. Run pnpm install and pnpm --filter @artifactshare/web exec playwright install chromium. ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  // Data-mutating states run after every ordinary capture, so their seeds
+  // cannot leak into other screens' default states within a run. Any seed
+  // or sign-in error stops the run.
+  const { selected, jobs, notice } = planCaptureJobs(parsed.selected, {
+    local: parsed.local,
+  })
+  if (notice) console.log(notice)
   const seeds = await resolveSeeds(baseUrl, selected)
   const outDir = screenCaptureOutputDirectory(label, outputRoot)
   await removeCaptureOutput(outputRoot, outDir)
@@ -1014,22 +1075,6 @@ async function captureScreensLocked({
   const manifest = []
   let retried = 0
   const gapFailures = []
-  // Data-mutating states run after every ordinary capture, so their seeds
-  // cannot leak into other screens' default states within a run.
-  const jobs = []
-  for (const screen of selected)
-    for (const locale of Object.keys(screen.route))
-      for (const state of screen.states)
-        for (const viewport of Object.keys(VIEWPORTS))
-          for (const theme of THEMES)
-            jobs.push({
-              screen,
-              locale,
-              state,
-              viewport,
-              theme,
-              order: jobs.length,
-            })
   const captureJob = async (job, attempt = 0) => {
     const { screen, locale, state, viewport, theme, order } = job
     let retry = false

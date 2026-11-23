@@ -45,9 +45,9 @@ const SUBSCRIPTION_ID =
 
 /**
  * The current monthly period of every fixture subscription, in Unix seconds:
- * the UTC calendar month containing `now`. A fake instance fixes it when it
- * starts, so all its replies agree and the billing page shows a contract in
- * its current period, renewing at the start of next month.
+ * the UTC calendar month containing `now`. A fake instance computes it for
+ * each request, so a contract is always in its current period, renewing at
+ * the start of next month, however long the instance runs.
  */
 export function captureStripePeriod(now = new Date()) {
   const year = now.getUTCFullYear()
@@ -176,8 +176,8 @@ function invoicePreview(form, period) {
 /**
  * The reply to one request. Only `GET /v1/subscriptions/:id` for a fixture
  * subscription and `POST /v1/invoices/create_preview` for a change of one are
- * answered, and only for the synthetic secret key. `period` is the instance's
- * `captureStripePeriod`.
+ * answered, and only for the synthetic secret key. `period` is the
+ * `captureStripePeriod` at the time of the request.
  */
 export function captureStripeResponse(
   { method, path, authorization, body },
@@ -185,7 +185,10 @@ export function captureStripeResponse(
 ) {
   if (authorization !== `Bearer ${CAPTURE_STRIPE_SECRET_KEY}`)
     return stripeError(401, 'authentication_error', 'Invalid API key.')
-  const { pathname } = new URL(path, 'http://capture.invalid')
+  // The path is the request target up to its query, matched as written: a
+  // target such as `//host/v1/...` is no supported path, not a URL whose
+  // authority could be skipped.
+  const pathname = path.split('?', 1)[0]
   const subscriptionPath = /^\/v1\/subscriptions\/([^/]+)$/u.exec(pathname)
   if (method === 'GET' && subscriptionPath) {
     let id
@@ -217,12 +220,12 @@ const MAX_BODY_BYTES = 64 * 1024
 /**
  * Starts the fake on a loopback port the kernel chooses (bound exclusively,
  * so no other listener can answer in its place). Resolves once it listens.
+ * `clock` gives the time each request's period is computed from.
  */
 export async function startCaptureStripe({
   host = '127.0.0.1',
-  now = new Date(),
+  clock = () => new Date(),
 } = {}) {
-  const period = captureStripePeriod(now)
   const server = createServer((request, response) => {
     let body = ''
     let size = 0
@@ -242,7 +245,7 @@ export async function startCaptureStripe({
                 authorization: request.headers.authorization,
                 body,
               },
-              period,
+              captureStripePeriod(clock()),
             )
       response.writeHead(reply.status, { 'content-type': 'application/json' })
       response.end(JSON.stringify(reply.body))
