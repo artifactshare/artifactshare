@@ -40,6 +40,55 @@ export type BillingEnv = {
   STRIPE_PRICE_TEAM_YEARLY: string
   STRIPE_PRODUCT_STORAGE_OVERAGE: string
   STRIPE_PORTAL_CONFIGURATION: string
+  /**
+   * Development only: the Stripe API origin (`http://127.0.0.1:4242`) the
+   * local capture's fake Stripe answers on. Production builds ignore it.
+   */
+  STRIPE_API_ORIGIN?: string
+}
+
+export type StripeApiOverride = {
+  host: string
+  port: number
+  protocol: 'http' | 'https'
+}
+
+/**
+ * Parses a configured Stripe API origin. A value that is not a bare HTTP(S)
+ * origin with an explicit port is rejected, never silently replaced by the
+ * real Stripe API.
+ */
+export function parseStripeApiOrigin(value: string): StripeApiOverride {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`STRIPE_API_ORIGIN is not a URL: ${value}`)
+  }
+  // URL drops a port equal to the scheme default (`:80`, `:443`), so the
+  // explicit port is read from the written authority instead.
+  const port = Number(
+    /^https?:\/\/(?:\[[^\]]*\]|[^/?#:@[\]]+):(\d+)\/?$/iu.exec(value)?.[1],
+  )
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      `STRIPE_API_ORIGIN must be an http(s) origin with a port from 1 to 65535: ${value}`,
+    )
+  return {
+    host: url.hostname,
+    port,
+    protocol: url.protocol === 'http:' ? 'http' : 'https',
+  }
 }
 
 export type BillingMutationResult =
@@ -62,8 +111,17 @@ export function createStripeClient(env: BillingEnv): Stripe {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Missing STRIPE_SECRET_KEY')
   }
+  // Only a development build may point the client elsewhere; production
+  // compiles this branch away and always talks to the real Stripe API. A
+  // present but empty or partial override is an error, never "no override".
+  const override =
+    import.meta.env.DEV && env.STRIPE_API_ORIGIN !== undefined
+      ? parseStripeApiOrigin(env.STRIPE_API_ORIGIN)
+      : null
   return new Stripe(env.STRIPE_SECRET_KEY, {
     httpClient: Stripe.createFetchHttpClient(),
+    // A local fake answers once; a retry would only hide its refusal.
+    ...(override ? { ...override, maxNetworkRetries: 0 } : {}),
   })
 }
 

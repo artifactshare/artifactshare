@@ -509,6 +509,53 @@ describe('a valid session', () => {
       screen.unmount()
     }
   })
+
+  test.each([
+    ['plan', 'plus', 'monthly', -16.5],
+    ['interval', 'team', 'yearly', 261],
+  ] as const)(
+    'opening the %s change previews that change and shows its proration',
+    async (_, plan, interval, amount) => {
+      services.preview.mockClear()
+      services.preview.mockResolvedValue({
+        ...healthyEstimate,
+        prorationAmount: amount,
+      })
+      const screen = await mount(billingPage)
+      try {
+        await dom.press(
+          await dom.find(() =>
+            screen.container.querySelector<HTMLElement>(
+              `#billing-change-${plan}-${interval}`,
+            ),
+          ),
+        )
+        const dialog = await dom.find(() =>
+          dom.byRole(document.body, 'alertdialog'),
+        )
+        await vi.waitFor(() =>
+          expect(dialog.textContent).toContain(
+            t(
+              amount < 0
+                ? 'billing.confirm.prorationCredit'
+                : 'billing.confirm.prorationCharge',
+              { amount: formatPrice('usd', Math.abs(amount)) },
+            ),
+          ),
+        )
+        expect(services.preview).toHaveBeenCalledOnce()
+        expect(services.preview).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          workspaceRow,
+          plan,
+          interval,
+        )
+      } finally {
+        screen.unmount()
+      }
+    },
+  )
 })
 
 describe('an expired session during a confirmation', () => {

@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
@@ -8,7 +9,12 @@ vi.mock('~/hooks/use-t', async () => {
   return { useT: () => bindI18n('ja') }
 })
 
-import BillingPage, { CheckoutActions, DowngradeImpact } from './billing'
+import BillingPage, {
+  CheckoutActions,
+  DowngradeImpact,
+  screen,
+} from './billing'
+import { BILLING_PRICES, formatPrice } from '~/lib/billing-prices'
 import type { SubscriptionContract } from '~/services/billing.server'
 
 function renderCheckout(
@@ -263,19 +269,20 @@ describe('subscribed contract management', () => {
   })
 })
 
-test('Team without a subscription has no purchase offer while Free retains checkout', () => {
-  const team = renderBillingPage(null, null, {
-    hasSubscription: false,
-    stripeSubscriptionStatus: 'none',
-  })
-  expect(team).toContain(
-    'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20billing%20help"',
-  )
-  expect(team.match(/mailto:support@/g)).toHaveLength(1)
-  expect(team).toContain('Team（サブスクリプションなし）')
-  expect(team).not.toContain('value="checkout"')
-  expect(renderBillingPage(1)).toContain('value="checkout"')
+test('a Team workspace without a subscription has no retired label or support presentation', () => {
+  for (const storageUsedBytes of [0, 95]) {
+    const html = renderBillingPage(null, null, {
+      hasSubscription: false,
+      stripeSubscriptionStatus: 'none',
+      storageUsedBytes,
+      storageQuotaBytes: 100,
+    })
+    expect(html).not.toContain('mailto:')
+    expect(html).not.toContain('Team（サブスクリプションなし）')
+    expect(html).not.toContain('サポートにお問い合わせください')
+  }
 })
+
 test('near-limit warning applies to capped plans while continuing subscriptions show overage guidance', () => {
   const capped = renderBillingPage(1, null, {
     storageUsedBytes: 90,
@@ -333,27 +340,6 @@ test.each([true, false])(
   },
 )
 
-test('near-limit Team owner without a subscription gets support guidance without a billing offer', () => {
-  const html = renderBillingPage(null, null, {
-    hasSubscription: false,
-    stripeSubscriptionStatus: 'none',
-    storageUsedBytes: 95,
-    storageQuotaBytes: 100,
-  })
-  const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-  expect(html.match(/mailto:support@/g)).toHaveLength(1)
-  expect(html).toContain(
-    'このワークスペースの請求については、サポートにお問い合わせください。',
-  )
-  expect(banner).not.toContain(
-    '上限を増やすには、このページのプランから選んでください。',
-  )
-  expect(banner).toContain(
-    'href="mailto:support@artifactshare.com?subject=Artifact%20Share%20upgrade%20help%3A%20storage"',
-  )
-  expect(html).not.toContain('value="checkout"')
-})
-
 test('near-limit Free owner keeps billing guidance and checkout without a self-link', () => {
   const html = renderBillingPage(1, null, {
     storageUsedBytes: 95,
@@ -378,4 +364,154 @@ test('near-limit owner gets no billing next step when billing is unavailable', (
   expect(banner).not.toContain('上限を増やすには')
   expect(banner).not.toContain('href=')
   expect(html).not.toContain('value="checkout"')
+})
+
+// The capture's purchase states, as the screen declares them.
+const purchaseVariants = screen.states.flatMap(
+  (
+    state,
+  ): Array<{
+    id: string
+    interval: 'monthly' | 'yearly'
+    currency: 'jpy' | 'usd'
+  }> => {
+    const setup: { scenario?: string; query?: string } = state.setup
+    const query = new URLSearchParams(setup.query)
+    const interval = query.get('interval')
+    const currency = query.get('currency')
+    return setup.scenario === 'settings-billing/purchase' &&
+      (interval === 'monthly' || interval === 'yearly') &&
+      (currency === 'jpy' || currency === 'usd')
+      ? [{ id: state.id, interval, currency }]
+      : []
+  },
+)
+
+test('the screen declares the four purchase variants', () => {
+  expect(purchaseVariants.map((variant) => variant.id)).toEqual([
+    'monthly-jpy',
+    'monthly-usd',
+    'yearly-jpy',
+    'yearly-usd',
+  ])
+})
+
+test.each(purchaseVariants)(
+  'purchase variant $id selects its interval and currency on both cards',
+  ({ interval, currency }) => {
+    const html = renderBillingPage(1, null, {
+      stripeSubscriptionStatus: 'none',
+      defaultCurrency: currency,
+      initialInterval: interval,
+    })
+    expect(
+      [...html.matchAll(/aria-pressed="true"[^>]*>([^<]+)</g)].map(
+        ([, label]) => label.trim(),
+      ),
+    ).toEqual([
+      interval === 'monthly' ? '月払い' : '年払い',
+      currency.toUpperCase(),
+    ])
+    const cards = Object.fromEntries(
+      html
+        .split('data-plan="')
+        .slice(1)
+        .map((card) => [card.slice(0, card.indexOf('"')), card]),
+    )
+    for (const plan of ['plus', 'team'] as const) {
+      const price = formatPrice(
+        currency,
+        BILLING_PRICES[plan][currency][
+          interval === 'monthly' ? 'month' : 'year'
+        ],
+      )
+      expect(cards[plan]).toContain(`>${price} <span`)
+    }
+    // What each card's form actually submits when its button is pressed.
+    // happy-dom applies neither a disabled fieldset to its descendants nor
+    // to FormData, so every control and each of its ancestors, inside or
+    // around the form, must be free of `disabled`.
+    const doc = new Window().document
+    doc.body.innerHTML = html
+    for (const plan of ['plus', 'team'] as const) {
+      const form = doc
+        .querySelector(`[data-plan="${plan}"]`)!
+        .querySelector('form')!
+      const submit = form.querySelector('button')!
+      expect(submit.type, plan).toBe('submit')
+      // happy-dom leaves an empty submitter value out of FormData while a
+      // browser sends it, so a named button would go unseen below.
+      expect(submit.getAttribute('name'), plan).toBeNull()
+      // form.elements also lists controls joined through a form attribute
+      // from outside the form, with ancestors the form does not contain.
+      for (const control of [submit, ...form.elements])
+        expect(
+          control.closest('[disabled]'),
+          `${plan} ${control.getAttribute('name') ?? 'submit'}`,
+        ).toBeNull()
+      expect(
+        [...new doc.defaultView!.FormData(form, submit).entries()],
+        plan,
+      ).toEqual([
+        ['intent', 'checkout'],
+        ['plan', plan],
+        ['interval', interval],
+        ['currency', currency],
+      ])
+    }
+  },
+)
+
+test.each([true, false])(
+  'the default Free purchase page offers enabled Plus and Team checkout when configured=%s',
+  (billingConfigured) => {
+    const html = renderBillingPage(1, null, {
+      stripeSubscriptionStatus: 'none',
+      billingConfigured,
+    })
+    expect(html).not.toContain('data-billing-contract-details')
+    expect(html).not.toContain('カスタマーポータルを開く')
+    expect(html.includes('data-billing-unavailable')).toBe(!billingConfigured)
+    const checkout = [
+      ...html.matchAll(
+        /data-plan="(plus|team)"[\s\S]*?<button([^>]*type="submit"[^>]*)>/g,
+      ),
+    ]
+    expect(checkout.map(([, plan]) => plan)).toEqual(
+      billingConfigured ? ['plus', 'team'] : [],
+    )
+    for (const [, , attributes] of checkout)
+      expect(attributes).not.toContain(' disabled=""')
+    expect(html).not.toMatch(/<fieldset disabled/)
+  },
+)
+
+test('a continuing subscription near its included storage shows the overage estimate', () => {
+  const includedBytes = 100 * 1024 ** 3
+  const html = renderBillingPage(
+    null,
+    { ...teamMonthlyContract, currency: 'usd', amount: 29 },
+    {
+      storageUsedBytes: includedBytes * 0.95,
+      storageQuotaBytes: includedBytes,
+      includedBytes,
+      showOverageProjection: true,
+      overageProjection: { gb: 0, currency: 'usd', amount: 0 },
+      monthlyEstimate: {
+        currency: 'usd',
+        planAmount: 0,
+        overageAmount: 0,
+        totalAmount: 0,
+        planCharge: 'none',
+        cancelAtPeriodEnd: false,
+        planDate: '2026-08-15T00:00:00.000Z',
+        overageGb: 0,
+        overageEnabled: true,
+      },
+    },
+  )
+  expect(html).toContain('id="billing-estimate-overage"')
+  expect(html.match(/>プラン込み容量</g)).toHaveLength(1)
+  expect(html).toContain('95%')
+  expect(html).not.toContain('role="alert"')
 })

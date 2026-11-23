@@ -62,8 +62,6 @@
   "search/palette-daily-limit",
   "search/continuation-error",
   "settings-billing/continuing-near-limit",
-  "settings-billing/team-unsubscribed-high-usage",
-  "settings-billing/team-unsubscribed",
   "settings-billing/purchase",
   "settings-bots/long-email",
   "settings-general/forbidden",

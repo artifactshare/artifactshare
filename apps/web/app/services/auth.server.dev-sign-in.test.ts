@@ -19,10 +19,16 @@ const testRefs = vi.hoisted(() => ({
   googleClientSecret: 'test-google-client-secret',
   microsoftClientId: 'test-microsoft-client-id',
   microsoftClientSecret: 'test-microsoft-client-secret',
+  captureStripeOrigin: 'http://127.0.0.1:4242',
 }))
 
-vi.mock('cloudflare:workers', () => ({
+// The local capture's synthetic Stripe settings; the paid scenario test
+// answers their loopback origin in process with the fake's own replies.
+vi.mock('cloudflare:workers', async () => ({
   env: {
+    ...(
+      await import('../../../../scripts/capture-stripe.mjs')
+    ).captureStripeVars(testRefs.captureStripeOrigin),
     DB: createD1MockFromSqliteRef(testRefs.sqliteRef),
     BETTER_AUTH_SECRET: testRefs.authSecret,
     BETTER_AUTH_URL: 'https://example.com',
@@ -41,6 +47,7 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
+import { captureStripeResponse } from '../../../../scripts/capture-stripe.mjs'
 import {
   createAuth,
   DEV_SIGN_IN_ADMIN_EMAIL,
@@ -554,9 +561,37 @@ describe('ensureDevSignInUser', () => {
   })
 
   test('keeps billing subscriptions unique when personas sign in in changing order', async () => {
-    for (const persona of ['free-owner', 'plus-owner', 'team-owner'] as const) {
-      await ensureDevSignInUser(db, persona, 'settings-billing/subscribed')
+    const requested: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init)
+        const url = new URL(request.url)
+        if (url.origin !== testRefs.captureStripeOrigin)
+          throw new Error(`Unexpected request: ${request.url}`)
+        requested.push(url.pathname)
+        const reply = captureStripeResponse({
+          method: request.method,
+          path: url.pathname + url.search,
+          authorization: request.headers.get('authorization'),
+          body: await request.text(),
+        })
+        return Response.json(reply.body, { status: reply.status })
+      },
+    )
+    try {
+      for (const persona of [
+        'free-owner',
+        'plus-owner',
+        'team-owner',
+      ] as const) {
+        await ensureDevSignInUser(db, persona, 'settings-billing/subscribed')
+      }
+    } finally {
+      vi.unstubAllGlobals()
     }
+    // Each persona's subscription came through the sync service.
+    expect(requested).toHaveLength(3)
 
     const workspaces = await db
       .selectFrom('users')

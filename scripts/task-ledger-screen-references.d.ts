@@ -85,8 +85,6 @@ export type TaskLedgerScreenReference =
   | 'settings-billing/result-success'
   | 'settings-billing/result-warning'
   | 'settings-billing/subscribed'
-  | 'settings-billing/team-unsubscribed'
-  | 'settings-billing/team-unsubscribed-high-usage'
   | 'settings-billing/yearly-jpy'
   | 'settings-billing/yearly-usd'
   | 'settings-bots/cancel-bot-dialog'

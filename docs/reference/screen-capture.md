@@ -155,6 +155,17 @@ Each run:
    fixtures are always built in the copy from HEAD (also in CI), never taken
    from the checkout, and a failed build stops the run. It does not install
    Git hooks.
+   It then starts its own fake Stripe (`scripts/capture-stripe.mjs`) on a
+   kernel-chosen `127.0.0.1` port and writes synthetic Stripe values over
+   every Stripe variable in the runtime copy: an obviously fake secret key,
+   price, overage product and portal IDs, an empty webhook secret, and
+   `STRIPE_API_ORIGIN` pointing at the fake. Stripe variables inherited from
+   the environment are not passed to any child. The app honours
+   `STRIPE_API_ORIGIN` only in a development build, so a capture never
+   reaches real Stripe even when the checkout's `.dev.vars` holds test-mode
+   keys. The fake answers only the subscription reads and plan-change
+   previews of the billing capture states and refuses every other request.
+   If it cannot listen, the run stops before any service starts.
 3. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
    current HEAD, with the TLS certificate, and waits until each answers as
    itself on `127.0.0.1` and `[::1]`, the app reaches og-image through its
@@ -173,8 +184,15 @@ Each run:
    run's ownership tag in its environment, or a live descendant of such a
    process), so a reused process ID is never signalled; a process it tracked
    that is still running but can no longer be proved its own is reported and
-   fails the run instead. It waits until they are gone, then removes its
-   runtime directory.
+   fails the run instead. It waits until they are gone, stops the fake Stripe,
+   then removes its runtime directory.
+
+The `settings-billing` states depend on that fake: the subscribed, past-due and
+continuing-near-limit seeds store their contract by running the production
+subscription sync against it, and every billing state reads its configuration
+from the synthetic values. Capture them with `screens:capture:local`; against
+a developer's own `pnpm dev` the paid seeds fail rather than read real Stripe,
+and `/dev/sign-in` does not offer them.
 
 Ports are chosen automatically from free loopback ports in 20000–32767, never 5173–5175, so a
 developer's `pnpm dev` and any other listener keep running; the command never

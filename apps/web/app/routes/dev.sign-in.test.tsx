@@ -115,9 +115,23 @@ describe('/dev/sign-in loader', () => {
       'settings-billing/subscribed',
       'settings-billing/near-limit',
       'settings-billing/continuing-near-limit',
+      'settings-billing/purchase',
+      'settings-billing/past-due',
       'viewer/bridge-attribution',
     ])
       expect(result.scenarios).not.toContain(scenario)
+  })
+
+  test('no longer lists the retired Team-without-subscription billing states', async () => {
+    const result = await loader({
+      request: new Request('https://artifactshare.test/dev/sign-in'),
+    } as never)
+
+    expect(result.scenarios).toContain('settings/result-warning')
+    expect(result.scenarios).not.toContain('settings-billing/team-unsubscribed')
+    expect(result.scenarios).not.toContain(
+      'settings-billing/team-unsubscribed-high-usage',
+    )
   })
 })
 

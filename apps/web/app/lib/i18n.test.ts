@@ -7,8 +7,6 @@ import ja from '~/i18n/ja.json'
 test.each([
   'team.inventory.filter.apply',
   'team.removedMembers.empty',
-  'billing.teamUnsubscribed.body',
-  'billing.contactSupport',
   'team.integrations.slack.memberEmpty',
   'team.tokens.revoke.title',
   'team.tokens.revoke.body',

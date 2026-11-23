@@ -47,6 +47,51 @@ test('viewer retention history capture opens the seeded latest-only artifact', (
   ])
 })
 
+test('billing captures default to the purchase seed and keep the purchase variants and checkout error', () => {
+  const billing = ledgerScreens.find(
+    (screen) => screen.id === 'settings-billing',
+  )
+  const state = (id) => billing.states.find((candidate) => candidate.id === id)
+  assert.equal(state('default').setup.scenario, 'settings-billing/purchase')
+  assert.match(state('default').setup.ready.selector, /\[data-plan="team"\]/)
+  assert.deepEqual(
+    ['monthly-jpy', 'monthly-usd', 'yearly-jpy', 'yearly-usd'].map((id) => [
+      state(id).setup.scenario,
+      state(id).setup.query,
+    ]),
+    [
+      ['settings-billing/purchase', '?interval=monthly&currency=jpy'],
+      ['settings-billing/purchase', '?interval=monthly&currency=usd'],
+      ['settings-billing/purchase', '?interval=yearly&currency=jpy'],
+      ['settings-billing/purchase', '?interval=yearly&currency=usd'],
+    ],
+  )
+  const error = state('result-error').setup
+  assert.equal(error.scenario, 'settings-billing/purchase')
+  assert.deepEqual(error.interactions, [
+    { action: 'click', selector: '[data-plan="plus"] button[type="submit"]' },
+  ])
+  assert.deepEqual(error.actionResponse, {
+    route: '/settings/billing',
+    method: 'POST',
+    intent: 'checkout',
+    status: 409,
+    data: { ok: false, code: 'billing-unavailable', intent: 'checkout' },
+  })
+  assert.ok(
+    error.postInteractionReady.visibleWith.includes(
+      '[data-plan="plus"] form [role="alert"][data-settings-status="billing-unavailable"]',
+    ),
+  )
+  for (const retired of ['team-unsubscribed', 'team-unsubscribed-high-usage']) {
+    assert.equal(state(retired), undefined)
+    assert.equal(
+      screenScenarioAllowlist.has(`settings-billing/${retired}`),
+      false,
+    )
+  }
+})
+
 test('allows a state to capture anonymously from an authenticated scenario seed', () => {
   const screen = { auth: 'team-owner' }
   const state = {

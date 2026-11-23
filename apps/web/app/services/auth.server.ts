@@ -1801,7 +1801,8 @@ export async function ensureDevSignInUser(
       ? DEV_SIGN_IN_CONFIG['team-owner'].email
       : config.email
   const workspaceId = scenario
-    ? (await ensureDevScreenState(db, scenario, now, config.plan)).workspaceId
+    ? (await ensureDevScreenState(db, scenario, now, config.plan, env))
+        .workspaceId
     : await ensureDevSignInWorkspace(
         db,
         config.plan,
