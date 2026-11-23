@@ -1,28 +1,61 @@
 import type { ShouldRevalidateFunctionArgs } from 'react-router'
 
 /**
- * Settings submissions that cannot change the shell. After one of them the
- * page keeps the shell it already shows and refreshes only its own data.
- * `*` covers every submission to that path. Submissions that can change the
- * shell (the workspace name, the plan, the viewer's role, ownership or
- * membership) are not listed and refresh it like any other revalidation.
+ * What the Settings shell shows: the workspace (name, plan, storage), the
+ * viewer's role, and the joined projects in the header with their unread
+ * counts.
  */
-const SHELL_NEUTRAL_SUBMISSIONS: Record<string, readonly string[]> = {
-  '/settings': ['revoke-cli-sessions', 'transfer-removed-assets'],
-  '/settings/tokens': [
-    'create',
-    'revoke',
-    'revoke-cli-family',
-    'revoke-all-cli-families',
-  ],
-  '/settings/bots': ['destinations', 'create', 'stop', 'cancel', 'reissue'],
-  '/settings/integrations': ['disconnect-slack'],
-  '/settings/external-access': [
-    'preview-external-access',
-    'update-external-access',
-  ],
-  '/settings/billing': ['portal'],
-  '/set-analytics-consent': ['*'],
+type ShellPart = 'workspace' | 'role' | 'joined-projects' | 'unread-counts'
+
+/**
+ * Every submission made from a Settings page, by action path and intent, with
+ * the parts of the shell it can change. `*` covers every submission to that
+ * path. After a submission that changes none of them the page keeps the shell
+ * it already shows and refreshes only its own data; any other submission, and
+ * any submission not listed, refreshes the shell like any other revalidation.
+ */
+export const SETTINGS_SUBMISSION_SHELL_CHANGES: Record<
+  string,
+  Readonly<Record<string, readonly ShellPart[]>>
+> = {
+  '/settings': {
+    'grant-admin': ['role'],
+    'revoke-admin': ['role'],
+    'transfer-owner': ['role'],
+    'remove-member': ['role', 'joined-projects', 'unread-counts'],
+    'restore-member': ['role', 'joined-projects', 'unread-counts'],
+    'revoke-cli-sessions': [],
+    // The removed member's files become the viewer's, unread ones included.
+    'transfer-removed-assets': ['joined-projects', 'unread-counts'],
+  },
+  '/settings/general': { 'update-workspace-name': ['workspace'] },
+  '/settings/billing': {
+    'change-plan': ['workspace'],
+    checkout: ['workspace'],
+    portal: [],
+  },
+  '/settings/tokens': {
+    create: [],
+    revoke: [],
+    'revoke-cli-family': [],
+    'revoke-all-cli-families': [],
+  },
+  '/settings/bots': {
+    destinations: [],
+    create: [],
+    stop: [],
+    cancel: [],
+    reissue: [],
+  },
+  '/settings/integrations': { 'disconnect-slack': [] },
+  '/settings/external-access': {
+    'preview-external-access': [],
+    // Link sharing decides which files count as unread.
+    'update-external-access': ['unread-counts'],
+  },
+  '/set-analytics-consent': { '*': [] },
+  // The theme switch in the header.
+  '/set-theme': { '*': [] },
 }
 
 function submissionIntent({
@@ -74,8 +107,9 @@ function sameEntry(currentUrl: URL, nextUrl: URL) {
 }
 
 /**
- * Whether the Settings shell reloads after a revalidation. Only a known
- * shell-neutral submission that stays on the same entry keeps the shell it
+ * Whether the Settings shell reloads after a revalidation. Only a listed
+ * submission that changes no part of the shell and stays on the same entry
+ * keeps the shell it
  * already has; navigations, explicit or external-return revalidations and
  * unknown submissions keep the router's own decision. A native POST that
  * renders a document does not ask: it loads a fresh shell.
@@ -93,10 +127,10 @@ export function settingsShellShouldRevalidate(
   if (!formAction || !formMethod || formMethod.toUpperCase() === 'GET')
     return defaultShouldRevalidate
   if (!sameEntry(currentUrl, nextUrl)) return defaultShouldRevalidate
-  const neutral = SHELL_NEUTRAL_SUBMISSIONS[actionPath(formAction, currentUrl)]
-  if (!neutral) return defaultShouldRevalidate
-  const intent = submissionIntent(args)
-  return neutral.includes('*') || neutral.includes(intent)
-    ? false
-    : defaultShouldRevalidate
+  const intents =
+    SETTINGS_SUBMISSION_SHELL_CHANGES[actionPath(formAction, currentUrl)]
+  if (!intents) return defaultShouldRevalidate
+  const key = Object.hasOwn(intents, '*') ? '*' : submissionIntent(args)
+  const changes = Object.hasOwn(intents, key) ? intents[key] : undefined
+  return changes?.length === 0 ? false : defaultShouldRevalidate
 }

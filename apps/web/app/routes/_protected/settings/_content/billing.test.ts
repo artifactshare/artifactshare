@@ -164,7 +164,7 @@ describe('/settings/billing loader', () => {
     loadSubscriptionContractMock.mockResolvedValueOnce(contract)
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -214,7 +214,7 @@ describe('/settings/billing loader', () => {
         .mockRejectedValue(new Error('projection unavailable'))
 
       const result = await loader({
-        context: {},
+        context: new RouterContextProvider(),
         request: new Request('https://example.test/settings/billing'),
       } as never)
 
@@ -246,7 +246,10 @@ describe('/settings/billing loader', () => {
     ) as Request<unknown, IncomingRequestCfProperties<unknown>>
     Object.defineProperty(request, 'cf', { value: { country: 'JP' } })
 
-    const result = await loader({ context: {}, request } as never)
+    const result = await loader({
+      context: new RouterContextProvider(),
+      request,
+    } as never)
 
     expect(result.defaultCurrency).toBe('jpy')
   })
@@ -256,7 +259,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -285,7 +288,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -323,7 +326,7 @@ describe('/settings/billing loader', () => {
     await seedContainer(db, 'inbox', 'inbox', null)
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -339,7 +342,7 @@ describe('/settings/billing loader', () => {
       await seedAdmin(db, 'u-a', 'ws-a')
       requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
       const result = await loader({
-        context: {},
+        context: new RouterContextProvider(),
         request: new Request(`https://example.test/settings/billing${search}`),
       } as never)
       expect(result).toMatchObject({
@@ -358,7 +361,7 @@ describe('/settings/billing loader', () => {
     await seedAdmin(db, 'u-a', 'ws-a')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request(`https://example.test/settings/billing${search}`),
     } as never)
     expect(result.entryContext).toBe(entryContext)
@@ -375,7 +378,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -393,7 +396,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request(
         'https://example.test/settings/billing?reason=project_limit',
       ),
@@ -414,7 +417,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -425,7 +428,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -485,7 +488,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -511,7 +514,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -537,7 +540,7 @@ describe('/settings/billing action', () => {
         },
         { country: 'JP' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -574,7 +577,7 @@ describe('/settings/billing action', () => {
         },
         { country: 'JP' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -604,7 +607,7 @@ describe('/settings/billing action', () => {
         interval: 'monthly',
         currency: 'eur',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -628,7 +631,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'yearly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -661,7 +664,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(
@@ -694,7 +697,7 @@ describe('/settings/billing action', () => {
         },
         { cookie: '__as_locale=ja' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(

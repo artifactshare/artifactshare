@@ -1,4 +1,4 @@
-import type { RouterContextProvider } from 'react-router'
+import { createContext, type RouterContextProvider } from 'react-router'
 import type {
   SettingsShellData,
   WorkspaceMemberRole,
@@ -32,14 +32,15 @@ type SettingsRequestReads = {
   role?: Promise<WorkspaceMemberRole | null>
 }
 
-// Keyed by the request's router context, so a read never outlives its request.
-const requests = new WeakMap<object, SettingsRequestReads>()
+// Kept in the request's own router context, so a read never outlives its
+// request.
+const settingsRequestReads = createContext<SettingsRequestReads | null>(null)
 
 function readsFor(context: Readonly<RouterContextProvider>) {
-  let reads = requests.get(context)
+  let reads = context.get(settingsRequestReads)
   if (!reads) {
     reads = {}
-    requests.set(context, reads)
+    context.set(settingsRequestReads, reads)
   }
   return reads
 }

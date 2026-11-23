@@ -15,6 +15,7 @@ import { bindI18n } from '~/lib/i18n'
 import { userContext } from '~/middleware/context'
 import * as dom from '~/test/dom-actions'
 import * as settingsLayout from './_layout'
+import { SETTINGS_SUBMISSION_SHELL_CHANGES } from './+lib/shell-revalidation'
 import SettingsContent from './_content/_layout'
 import * as general from './_content/general'
 import * as tokens from './_content/tokens'
@@ -149,7 +150,7 @@ function submission(
 
 // Every Settings submission and whether it can change the shell, listed from
 // the pages' own forms rather than from the decision's tables.
-test.each([
+const SUBMISSIONS = [
   ['/settings?index', 'grant-admin', false, true],
   ['/settings?index', 'revoke-admin', false, true],
   ['/settings?index', 'transfer-owner', false, true],
@@ -158,8 +159,11 @@ test.each([
   ['/settings/general', 'update-workspace-name', false, true],
   ['/settings/billing', 'change-plan', false, true],
   ['/settings/billing', 'checkout', false, true],
+  // The transferred files can be unread and count in the header.
+  ['/settings?index', 'transfer-removed-assets', false, true],
+  // Turning link sharing back on counts shared files as unread again.
+  ['/settings/external-access', 'update-external-access', false, true],
   ['/settings?index', 'revoke-cli-sessions', false, false],
-  ['/settings?index', 'transfer-removed-assets', false, false],
   ['/settings/tokens', 'create', false, false],
   ['/settings/tokens', 'revoke', false, false],
   ['/settings/tokens', 'revoke-cli-family', false, false],
@@ -171,12 +175,15 @@ test.each([
   ['/settings/bots', 'reissue', true, false],
   ['/settings/integrations', 'disconnect-slack', false, false],
   ['/settings/external-access', 'preview-external-access', false, false],
-  ['/settings/external-access', 'update-external-access', false, false],
   ['/settings/billing', 'portal', false, false],
   ['/set-analytics-consent', '', false, false],
+  // The header's theme switch, available on every Settings page.
+  ['/set-theme', '', false, false],
   ['/settings/tokens', 'something-new', false, true],
   ['/settings/other', 'create', false, true],
-] as const)(
+] as const
+
+test.each(SUBMISSIONS)(
   'a %s %s submission (JSON: %s) rereads the shell: %s',
   (action, intent, json, rereads) => {
     expect(
@@ -184,6 +191,19 @@ test.each([
     ).toBe(rereads)
   },
 )
+
+test('the decision table lists no submission this file does not check', () => {
+  const checked = new Set(
+    SUBMISSIONS.map(([action, intent]) => {
+      const path = action.replace('?index', '')
+      return `${path} ${intent || '*'}`
+    }),
+  )
+  const listed = Object.entries(SETTINGS_SUBMISSION_SHELL_CHANGES).flatMap(
+    ([path, intents]) => Object.keys(intents).map((i) => `${path} ${i}`),
+  )
+  expect(listed.filter((entry) => !checked.has(entry))).toEqual([])
+})
 
 test('a submission that moves to another entry keeps the router decision', () => {
   const args = {

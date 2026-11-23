@@ -31,6 +31,7 @@ import * as members from './_content/index'
 import * as bots from './_content/bots'
 import * as billing from './_content/billing'
 import * as externalAccess from './_content/external-access'
+import { settingsActiveRole } from './+lib/settings-request.server'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 const reads = vi.hoisted(() => ({
@@ -395,6 +396,19 @@ test('members and the shell share one workspace, role and joined-project read', 
   expect(joined).toHaveBeenCalledTimes(1)
 })
 
+// The Workers runtime forbids keeping a request's promises in a cache that
+// outlives it, so the reads are stored on the request's own router context.
+test("a request's Settings reads are kept on its router context", async () => {
+  const context = signedIn('owner')
+  const stored = vi.spyOn(context, 'set')
+  const role = settingsActiveRole(context)
+  expect(settingsActiveRole(context)).toBe(role)
+  expect(stored).toHaveBeenCalledTimes(1)
+  expect(stored.mock.calls[0]?.[1]).toMatchObject({ role })
+  await expect(role).resolves.toBe('owner')
+  expect(viewerMembershipReads('owner')).toBe(1)
+})
+
 test('the admin gate, the shell and bots share one role read', async () => {
   await browserAt('/settings/bots', 'admin')
   expect(workspaceReads()).toBe(1)
@@ -508,7 +522,7 @@ test.each([
       router,
       MEMBERS,
       '/settings?index',
-      'transfer-removed-assets',
+      'revoke-cli-sessions',
     )
     expect(revalidation?.searchParams.get('_routes')).toBe(MEMBERS)
     expect(removed()).toBe(admitted)
