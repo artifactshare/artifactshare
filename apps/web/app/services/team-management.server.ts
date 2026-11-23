@@ -1533,7 +1533,7 @@ export async function ensureWorkspaceAdmin(
   const existing = await owner.executeTakeFirst()
   if (existing) return existing.user_id
 
-  // Keep candidate eligibility and ordering in sync with migration 0133.
+  // Migration 0133 uses the same owner selection but preserves source timestamps.
   const candidate = db
     .selectFrom('users as u')
     .leftJoin('workspace_members as m', (join) =>

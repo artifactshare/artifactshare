@@ -411,8 +411,6 @@ function buildAuth() {
               !authRouteFromDatabaseHookContext(context)
             )
               return
-            // A session lookup can move the user and delete their old workspace.
-            // Insert from the current user row, then read it for claim and owner repair.
             const now = nowIso()
             await ensureActiveWorkspaceMembership(db, session.userId, null, now)
             const user = await db
@@ -1142,22 +1140,13 @@ async function resolveBrowserSessionContext(
   let sessionDb: Kysely<DB> | undefined
   const getDb = () => (sessionDb ??= createSessionDb())
   try {
-    let context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
+    const context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
     if (!context) return null
     // Invariant: cookie-derived session resolution never returns a bot user.
     // Bots authenticate only through bearer CLI sessions with an agent
     // authority; any cookie session that maps onto a bot row is treated as
     // unauthenticated regardless of entry point.
     if (context.kind === 'bot') return null
-    const domain = normalizeEmailDomain(sessionUser.email)
-    if (
-      domain &&
-      !isPublicEmailDomain(domain) &&
-      normalizeEmailDomain(context.hd) !== domain
-    ) {
-      context = await resolveClaimMove(getDb(), sessionUser, context, domain)
-      if (!context) return null
-    }
     // The cookie cache can hold a stale emailVerified=false right after an
     // email-code sign-in promotes the DB row (better-auth writes the cookie from
     // the pre-update user). Re-read the fresh flag only in that case, so a
@@ -1182,24 +1171,6 @@ async function resolveBrowserSessionContext(
   }
 }
 
-async function resolveClaimMove(
-  db: Kysely<DB>,
-  user: { id: string; email: string },
-  context: SessionWorkspaceContext,
-  domain: string | null,
-): Promise<SessionWorkspaceContext | null> {
-  const targetWorkspaceId = await findWorkspaceIdByDomainClaim(db, domain)
-  if (!targetWorkspaceId || targetWorkspaceId === context.workspaceId)
-    return context
-  const moved = await moveUserToWorkspaceForOAuth(db, {
-    userId: user.id,
-    email: user.email,
-    currentWorkspaceId: context.workspaceId,
-    targetWorkspaceId,
-  })
-  return moved ? loadWorkspaceContextByUserId(db, user.id) : context
-}
-
 type BearerUserRow = {
   id: string
   email: string
@@ -1213,17 +1184,8 @@ async function buildSessionUserFromBearerRow(
   db: Kysely<DB>,
   user: BearerUserRow,
 ): Promise<SessionUser | null> {
-  let context = await loadWorkspaceContextByUserId(db, user.id)
+  const context = await loadWorkspaceContextByUserId(db, user.id)
   if (!context) return null
-  if (context.kind === 'human') {
-    context = await resolveClaimMove(
-      db,
-      user,
-      context,
-      normalizeEmailDomain(user.email),
-    )
-    if (!context) return null
-  }
   return {
     id: user.id,
     email: user.email,

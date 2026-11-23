@@ -62,6 +62,7 @@ vi.mock('cloudflare:workers', () => ({
   })(),
 }))
 
+import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { runWithEndpointContext } from '@better-auth/core/context'
 import { createAuth } from './auth.server'
 import { ensureWorkspaceDomainClaim } from './workspace-domain-claims.server'
@@ -273,6 +274,45 @@ describe('Better Auth OAuth workspace integration', () => {
       fetchKeys.mockRestore()
     }
   })
+
+  test.each(['google', 'microsoft'])(
+    'a returning %s callback moves the linked user and repairs the claimed workspace',
+    async (provider) => {
+      fixture = createD1BatchFixture({ sqlite: sqliteRef })
+      sqliteRef.current = fixture.sqlite
+      const { db } = fixture
+      const context = await betterAuth<BetterAuthOptions>(createAuth().options)
+        .$context
+      const callback = {
+        path: '/callback/:id',
+        params: { id: provider },
+        context,
+      }
+      const userId = await runWithEndpointContext(callback, async () => {
+        const user = await context.internalAdapter.createUser(
+          {
+            email: 'returning@corp.com',
+            emailVerified: true,
+            name: 'Returning user',
+          },
+          { method: 'oauth', oauth: { providerId: provider, profile: {} } },
+        )
+        await context.internalAdapter.createAccount({
+          userId: user.id,
+          providerId: provider,
+          accountId: 'returning-account',
+        })
+        return user.id
+      })
+      await seedClaim(db, 'ws-claimed')
+
+      await runWithEndpointContext(callback, () =>
+        context.internalAdapter.createSession(userId),
+      )
+
+      await expectUserWorkspaceMember(db, userId, 'ws-claimed', 'owner')
+    },
+  )
 
   test('Google hd joins an existing claim through profile mapping and hooks', async () => {
     fixture = createD1BatchFixture({ sqlite: sqliteRef })

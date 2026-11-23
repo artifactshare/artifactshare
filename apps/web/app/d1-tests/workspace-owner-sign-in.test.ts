@@ -6,7 +6,7 @@ import { applyBrowserFixtureSchema } from '../test/browser-fixture-schema'
 import * as batches from '../lib/d1-batch.server'
 import * as team from '../services/team-management.server'
 import * as claims from '../services/workspace-domain-claims.server'
-import { createAuth } from '../services/auth.server'
+import { createAuth, getSessionUserFromBearer } from '../services/auth.server'
 import { createDb } from '../services/db.server'
 
 vi.mock('cloudflare:workers', async () => ({
@@ -246,27 +246,26 @@ test('sign-in restores a missing membership after signup into an owned claimed w
   )
 })
 
-test('sign-in completes when a claim move deletes the source before membership recovery', async () => {
-  const domain = 'concurrent-move.example'
+test('a user with a new domain claim moves at the next sign-in', async () => {
+  const domain = 'next-sign-in.example'
   const email = 'new@' + domain
   expect((await signIn(email)).status).toBe(200)
   const user = await userWorkspace(email)
+  const session = await db
+    .selectFrom('sessions')
+    .select('token')
+    .where('user_id', '=', user.id)
+    .executeTakeFirstOrThrow()
   await claimedWorkspace(domain, 'owned')
 
-  const ensure = team.ensureActiveWorkspaceMembership
-  let moved
-  vi.spyOn(team, 'ensureActiveWorkspaceMembership').mockImplementationOnce(
-    async (...args) => {
-      moved = await claims.maybeMoveUserToClaimedWorkspace(db, {
-        userId: user.id,
-        email,
-        currentWorkspaceId: user.workspace_id,
-      })
-      return ensure(...args)
-    },
-  )
+  const request = new Request(upgradeEnvironment.BETTER_AUTH_URL, {
+    headers: { authorization: `Bearer ${session.token}` },
+  })
+  expect(await getSessionUserFromBearer(request)).toMatchObject({
+    id: user.id,
+    workspaceId: user.workspace_id,
+  })
   const response = await signIn(email)
-  expect(moved).toBe(domain)
   expect(
     await db
       .selectFrom('workspaces')
@@ -358,6 +357,11 @@ test('a committed claim move keeps its signup attribution when destination repai
   )
   expect((await signIn(email)).status).toBe(500)
   expect((await userWorkspace(email)).workspace_id).toBe(domain)
+  expect(
+    (await members(domain)).filter(
+      (row) => row.role === 'owner' && row.status === 'active',
+    ),
+  ).toEqual([])
   const attribution = db
     .selectFrom('pending_signup_analytics')
     .select('workspace_created')

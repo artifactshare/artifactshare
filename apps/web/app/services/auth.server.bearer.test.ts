@@ -161,7 +161,7 @@ describe('getSessionUserFromBearer', () => {
     expect(await rows.execute()).toEqual(before)
   })
 
-  test('session bearer moves the user into the claimed workspace', async () => {
+  test('session bearer keeps the current workspace while a domain claim move is pending', async () => {
     const sessionToken = 'sess_claim_move'
     seedSession(sqlite, 'u1', sessionToken)
     sqlite.exec(`
@@ -189,12 +189,19 @@ describe('getSessionUserFromBearer', () => {
       );
     `)
 
+    const memberships = db
+      .selectFrom('workspace_members')
+      .selectAll()
+      .orderBy('workspace_id')
+      .orderBy('user_id')
+    const before = await memberships.execute()
+
     await expect(
       getSessionUserFromBearer(bearerRequest(sessionToken)),
     ).resolves.toMatchObject({
       id: 'u1',
-      workspaceId: 'ws-claimed',
-      selfUploadEnabled: true,
+      workspaceId: 'ws1',
+      selfUploadEnabled: false,
     })
     expect(
       sqlite
@@ -202,14 +209,8 @@ describe('getSessionUserFromBearer', () => {
           "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
         )
         .get(),
-    ).toEqual({ workspace_created: 0 })
-    expect(
-      sqlite
-        .prepare(
-          "SELECT workspace_id, role, status FROM workspace_members WHERE user_id = 'u1'",
-        )
-        .all(),
-    ).toEqual([{ workspace_id: 'ws-claimed', role: 'owner', status: 'active' }])
+    ).toEqual({ workspace_created: 1 })
+    expect(await memberships.execute()).toEqual(before)
   })
 })
 

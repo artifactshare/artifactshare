@@ -779,7 +779,7 @@ describe('CLI device authorization intent', () => {
     ).toBeNull()
   })
 
-  test('a fixed project becomes available when the bearer session moves to its workspace', async () => {
+  test('a pending claim move keeps the destination project unavailable to the bearer session', async () => {
     seedUser(sqlite, 'mover')
     seedSession(sqlite, 'mover', 'pending-mover')
     sqlite.exec(`
@@ -788,7 +788,6 @@ describe('CLI device authorization intent', () => {
       UPDATE users SET workspace_id = 'personal' WHERE id = 'mover';
       INSERT INTO workspace_domain_claims (domain, workspace_id, source, created_at, updated_at)
       VALUES ('example.com','ws1','google_hd','2025','2025');
-      UPDATE deviceCode SET userId = 'mover' WHERE id = 'dc1';
     `)
     await storeDeviceAuthorizationIntent('device-1', {
       preset: 'agent',
@@ -796,24 +795,24 @@ describe('CLI device authorization intent', () => {
       projectSelector: 'project-1',
     })
     expect(
-      await loadAgentApprovalContext(
-        'ABCD1234',
-        'mover',
-        'personal',
-        'mover@example.com',
-      ),
+      await loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
     ).toMatchObject({
-      fixedProject: null,
-      fixedProjectError: true,
+      fixedProject: { id: 'project-1' },
+      fixedProjectError: false,
     })
+    sqlite.exec("UPDATE deviceCode SET userId = 'mover' WHERE id = 'dc1'")
     const auth =
       await vi.importActual<typeof import('./auth.server')>('./auth.server')
     const request = new Request('https://example.test/device', {
       headers: { Authorization: 'Bearer pending-mover' },
     })
+    const memberships = sqlite.prepare(
+      'SELECT * FROM workspace_members ORDER BY workspace_id, user_id',
+    )
+    const before = memberships.all()
     const session = await auth.getSessionUserFromBearer(request)
     if (!session) throw new Error('Expected a signed-in device user')
-    expect(session.workspaceId).toBe('ws1')
+    expect(session.workspaceId).toBe('personal')
     expect(
       await loadAgentApprovalContext(
         'ABCD1234',
@@ -822,20 +821,8 @@ describe('CLI device authorization intent', () => {
         session.email,
       ),
     ).toMatchObject({
-      fixedProject: { id: 'project-1' },
-      fixedProjectError: false,
-    })
-
-    sqlite.exec(
-      "UPDATE workspace_members SET role = 'member' WHERE workspace_id = 'ws1' AND role = 'owner'",
-    )
-    const memberships = sqlite.prepare(
-      "SELECT * FROM workspace_members WHERE workspace_id = 'ws1' ORDER BY user_id",
-    )
-    const before = memberships.all()
-    expect(await auth.getSessionUserFromBearer(request)).toMatchObject({
-      id: 'mover',
-      workspaceId: 'ws1',
+      fixedProject: null,
+      fixedProjectError: true,
     })
     expect(memberships.all()).toEqual(before)
   })
