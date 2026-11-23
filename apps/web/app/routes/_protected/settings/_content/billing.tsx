@@ -1073,7 +1073,10 @@ function BillingForm({ children }: { children: ReactNode }) {
   const fetcher = useFetcher<typeof action>()
   useSettingsEntryChange(fetcher.reset)
   return (
-    <fetcher.Form method="post">
+    <fetcher.Form
+      method="post"
+      className="flex flex-col gap-[var(--spacing-2)]"
+    >
       <fieldset disabled={fetcher.state !== 'idle'}>{children}</fieldset>
       {fetcher.state === 'idle' && fetcher.data && (
         <StatusBanner status={fetcher.data.code} />

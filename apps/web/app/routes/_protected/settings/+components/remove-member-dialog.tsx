@@ -41,6 +41,8 @@ export function RemoveMemberDialog({
       title={t(`${copy}.title`, { name: displayName(member) })}
       description={t(`${copy}.body`, { name: displayName(member) })}
       action={committed ? null : t(`${copy}.action`)}
+      // After the removal went through, dismissing cannot undo it.
+      dismissLabel={committed ? t('common.close') : dialog.dismissLabel}
       onConfirm={() => submit(recipient)}
       result={
         <>

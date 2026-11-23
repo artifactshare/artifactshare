@@ -281,7 +281,10 @@ function WorkspaceNameSection({
         canManage ? undefined : t('team.workspace.name.readOnly')
       }
     >
-      <fetcher.Form method="post">
+      <fetcher.Form
+        method="post"
+        className="flex flex-col gap-[var(--spacing-2)]"
+      >
         {!pending && result && !result.ok && (
           <StatusBanner status={result.code} />
         )}

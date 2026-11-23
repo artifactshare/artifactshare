@@ -511,7 +511,6 @@ function ExternalAccessForm({
 
   return (
     <SettingsPage>
-      {saved && <StatusBanner status={saved.code} />}
       <save.Form
         method="post"
         className="gap-section flex flex-col"
@@ -545,6 +544,7 @@ function ExternalAccessForm({
           shortened={shortened}
         />
         {previewResult === null ? banner(formFailure) : null}
+        {saved && <StatusBanner status={saved.code} />}
         {canEdit ? (
           <div className="space-y-2">
             {dirty ? (

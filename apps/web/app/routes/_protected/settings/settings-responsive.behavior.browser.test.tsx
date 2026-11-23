@@ -1327,9 +1327,10 @@ test.each([
     if (id === 'result-warning') {
       const removeCalls = services.removeWorkspaceMember.mock.calls.length
       services.transferRemovedMemberAssets.mockResolvedValue({ kind: 'ok' })
+      // The removal went through, so the dialog offers Close, not Cancel.
       await page
         .getByRole('alertdialog')
-        .getByRole('button', { name: bindI18n('ja').t('confirm.cancel') })
+        .getByRole('button', { name: bindI18n('ja').t('common.close') })
         .click()
       await page
         .getByRole('button', {

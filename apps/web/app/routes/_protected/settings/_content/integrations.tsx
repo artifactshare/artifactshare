@@ -175,6 +175,30 @@ export const screen = {
       },
     },
     {
+      id: 'slack-connected-return',
+      description: 'Notice after returning from a Slack install, shown once',
+      setup: {
+        scenario: 'settings-integrations/slack-connected',
+        query: '?connected=slack',
+        ready: {
+          selector: '[role="status"][data-settings-status="slack-connected"]',
+          description: 'Slack connected notice',
+        },
+      },
+    },
+    {
+      id: 'slack-team-in-use-return',
+      description:
+        'Notice after a Slack install for a team another workspace uses',
+      setup: {
+        query: '?status=slack-team-in-use',
+        ready: {
+          selector: '[data-settings-status="slack-team-in-use"]',
+          description: 'Slack team in use notice',
+        },
+      },
+    },
+    {
       id: 'slack-member-empty',
       description: 'Member guidance to ask a workspace admin to connect Slack',
       setup: {
