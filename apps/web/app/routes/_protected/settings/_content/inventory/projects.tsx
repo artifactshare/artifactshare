@@ -6,7 +6,7 @@ import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { loadWorkspaceInventoryProjectsPage } from '~/services/team-management.server'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
-import { requireInventoryAccess } from '~/services/access.server'
+import { requireSettingsAdminPage } from '../../+lib/settings-admin.server'
 import { ProjectsTable } from './+components/projects-table'
 import { Pager } from '~/components/form/pager'
 import { parsePageParam } from '~/lib/pagination'
@@ -48,9 +48,9 @@ export const screen = {
 } satisfies ScreenSpec
 
 export async function loader({ request, context }: Route.LoaderArgs) {
+  requireSettingsAdminPage(context)
   const user = requireUser(context)
   const db = createDb()
-  await requireInventoryAccess(db, user)
   const raw = parsePageParam(new URL(request.url).searchParams)
   return {
     projects: await loadWorkspaceInventoryProjectsPage(

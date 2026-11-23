@@ -36,6 +36,11 @@ import {
   updateWorkspaceExternalAccessPolicy,
 } from '~/services/link-sharing.server'
 import type { ScreenSpec } from '~/types/screen'
+import { normalizeWorkspaceLinkPolicy } from '~/lib/link-sharing-policy'
+import {
+  settingsShellLoads,
+  settingsWorkspace,
+} from '../+lib/settings-request.server'
 
 export const screen = {
   id: 'settings-external-access',
@@ -328,9 +333,13 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-export async function loader({ context }: Route.LoaderArgs) {
+// With the shell running in this request, the policy comes from the same
+// workspace read; a policy refresh on its own uses the feature reader.
+export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const policy = await loadWorkspaceLinkPolicy(createDb(), user.workspaceId)
+  const policy = settingsShellLoads(request)
+    ? normalizeWorkspaceLinkPolicy(await settingsWorkspace(context))
+    : await loadWorkspaceLinkPolicy(createDb(), user.workspaceId)
   if (!policy) throw new Response('Not found', { status: 404 })
   return { policy }
 }

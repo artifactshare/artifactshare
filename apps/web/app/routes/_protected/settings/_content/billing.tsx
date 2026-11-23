@@ -1,7 +1,7 @@
 import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
-import { logErrorDiagnostic } from '~/lib/error-diagnostics.server'
 import {
   loadUsage,
+  sharedOverageProjection,
   type UsageLoaderData,
 } from '../+components/billing-usage.server'
 import {
@@ -9,13 +9,14 @@ import {
   shouldShowUsageWarning,
 } from '../+components/billing-usage'
 import { env } from 'cloudflare:workers'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import {
   data as actionData,
   Link,
   redirect,
   useActionData,
   useFetcher,
+  useLocation,
   useOutletContext,
 } from 'react-router'
 import { BillingSelection } from '~/components/app/billing-toggle'
@@ -84,13 +85,25 @@ import {
   resolveMonthlyEstimate,
   type MonthlyEstimate,
 } from '~/services/billing.server'
-import { loadCurrentMonthOverageProjection } from '~/services/billing-usage.server'
 import { allowsStorageOverage } from '~/lib/billing-plan.server'
 import { createDb } from '~/services/db.server'
 import { requireWorkspaceBillingOwner } from '~/services/team-management.server'
 import { formatBytes } from '~/lib/format'
+import {
+  isSessionExpired,
+  useSignInOnSessionExpired,
+  type SessionExpired,
+} from '~/lib/session-expired'
 import { pricingCopyForBilling } from '~/lib/pricing-content'
-import { isExternalPostingEnabledForWorkspace } from '~/lib/project-external-posting.server'
+import {
+  canUseExternalPosting,
+  normalizeWorkspaceLinkPolicy,
+} from '~/lib/link-sharing-policy'
+import {
+  settingsActiveRole,
+  settingsWorkspace,
+} from '../+lib/settings-request.server'
+import { settingsShellShouldRevalidate } from '../+lib/shell-revalidation'
 import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
 import { countActiveProjects } from '~/services/projects.server'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
@@ -304,7 +317,7 @@ export const screen = {
   ],
 } satisfies ScreenSpec
 
-type BillingLoaderData = UsageLoaderData & {
+type BillingView = UsageLoaderData & {
   canManage: boolean
   plan: string
   stripeSubscriptionStatus: string
@@ -323,6 +336,12 @@ type BillingLoaderData = UsageLoaderData & {
   monthlyEstimate: MonthlyEstimate | null
 }
 
+/** The plan and storage the page shows come from the Settings shell. */
+type BillingLoaderData = Omit<
+  BillingView,
+  'plan' | 'storageUsedBytes' | 'storageQuotaBytes'
+>
+
 export async function loader({
   context,
   request,
@@ -330,17 +349,12 @@ export async function loader({
   const user = requireUser(context)
   const db = createDb()
 
-  const workspace = await db
-    .selectFrom('workspaces')
-    .select([
-      'plan',
-      'stripe_subscription_status',
-      'stripe_subscription_id',
-      'storage_used_bytes',
-      'storage_quota_bytes',
-    ])
-    .where('id', '=', user.workspaceId)
-    .executeTakeFirstOrThrow()
+  // The same workspace row and active membership the Settings shell reads in
+  // this request; billing-only fields stay in this response.
+  const [workspace, role] = await Promise.all([
+    settingsWorkspace(context),
+    settingsActiveRole(context),
+  ])
 
   const hasSubscription = Boolean(
     workspace.stripe_subscription_id &&
@@ -348,8 +362,7 @@ export async function loader({
   )
   const stripeConfigured = isBillingConfigured(env)
   // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
-  const billingAuthorization = await requireWorkspaceBillingOwner(db, user)
-  const canManage = billingAuthorization.kind === 'ok'
+  const canManage = role === 'owner'
   const useDevFixture =
     canManage &&
     (isDevScreenStateRequest(request, 'settings-billing/subscribed') ||
@@ -375,7 +388,7 @@ export async function loader({
   const [activeProjectCount, externalPostingEnabled, contract] =
     await Promise.all([
       countActiveProjects(db, user.workspaceId),
-      isExternalPostingEnabledForWorkspace(db, user.workspaceId),
+      canUseExternalPosting(normalizeWorkspaceLinkPolicy(workspace)),
       useDevFixture
         ? devContract
         : canManage &&
@@ -390,19 +403,11 @@ export async function loader({
           : Promise.resolve(null),
     ])
 
-  // projection と計上判定で月境界をまたがないよう同じ時刻を使う。
+  // projection と計上判定で月境界をまたがないよう同じ時刻を使う。使用量と月額見込みは
+  // 同じ projection を共有する。
   const estimateNow = new Date()
-  const projection =
-    canManage && contract
-      ? await loadCurrentMonthOverageProjection(
-          db,
-          user.workspaceId,
-          estimateNow,
-        ).catch((error) => {
-          logErrorDiagnostic('billing.projection', error)
-          return null
-        })
-      : null
+  const readProjection = sharedOverageProjection(user.workspaceId, estimateNow)
+  const projection = canManage && contract ? await readProjection() : null
   const monthlyEstimate = resolveMonthlyEstimate(
     contract,
     projection,
@@ -434,17 +439,18 @@ export async function loader({
           ? ('plusOverage' as const)
           : ('default' as const)
   return {
-    ...(await loadUsage({ context, ...(canManage ? { contract } : {}) })),
+    ...(await loadUsage({
+      workspace,
+      projection: readProjection,
+      ...(canManage ? { contract } : {}),
+    })),
     canManage,
-    plan: workspace.plan,
     stripeSubscriptionStatus: workspace.stripe_subscription_status,
     hasSubscription,
     billingConfigured,
     defaultCurrency: initialCurrency,
     initialPlan,
     initialInterval,
-    storageUsedBytes: workspace.storage_used_bytes,
-    storageQuotaBytes,
     activeProjectCount,
     projectLimit: projectLimitForPlan(normalizedPlan),
     entryContext,
@@ -453,6 +459,10 @@ export async function loader({
     monthlyEstimate,
   }
 }
+
+// Billing reads the same workspace row as the shell, so a submission that
+// keeps the shell (opening the Stripe portal) keeps billing's data too.
+export const shouldRevalidate = settingsShellShouldRevalidate
 
 export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData()
@@ -578,17 +588,23 @@ async function submitBilling(
 }
 
 export default function BillingPage({
-  loaderData,
+  loaderData: billing,
 }: {
   loaderData: BillingLoaderData
 }) {
-  const shell = useOutletContext<SettingsLayoutContext | null>()
+  const shell = useOutletContext<SettingsLayoutContext>()
+  const loaderData: BillingView = {
+    ...billing,
+    plan: shell.workspace.plan,
+    storageUsedBytes: shell.workspace.storageUsedBytes,
+    storageQuotaBytes: shell.workspace.storageQuotaBytes,
+  }
   // Checkout and Portal submitted before hydration report a failure here; a
   // success has already moved to Stripe.
   const nativeResult = useActionData<typeof action>()
   const { t, locale } = useT()
   const awaitingCheckoutReflection =
-    shell?.externalResult === 'checkout-success' &&
+    shell.externalResult === 'checkout-success' &&
     !loaderData.hasSubscription &&
     loaderData.plan !== 'plus' &&
     loaderData.plan !== 'team'
@@ -682,7 +698,7 @@ function BillingStorageSection({
 }: {
   showStorageWarning: boolean
   loaderData: Pick<
-    BillingLoaderData,
+    BillingView,
     | keyof UsageLoaderData
     | 'storageUsedBytes'
     | 'storageQuotaBytes'
@@ -768,7 +784,7 @@ function NearLimitNextStep({
   canManage,
   billingConfigured,
   presentation,
-}: Pick<BillingLoaderData, 'canManage' | 'billingConfigured'> & {
+}: Pick<BillingView, 'canManage' | 'billingConfigured'> & {
   presentation: ReturnType<typeof billingPresentation>
 }) {
   const { t } = useT()
@@ -967,7 +983,7 @@ export function shouldShowBillingContext({
 }: {
   canManage: boolean
   plan: string
-  entryContext: BillingLoaderData['entryContext']
+  entryContext: BillingView['entryContext']
   awaitingCheckoutReflection: boolean
 }): boolean {
   if (awaitingCheckoutReflection || !canManage || plan === 'team') return false
@@ -1212,8 +1228,18 @@ function ChangeContractOption({
   const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
   const result = change.state === 'idle' ? change.data : undefined
   const open = requestedOpen && !result?.ok
-  const preview = useFetcher<PlanChangePreview>()
+  // Each opening reads its own estimate, so a late answer to a dismissed
+  // confirmation (including an expired session) never reaches the next one.
+  // It belongs to the history entry it was opened on: a late answer after the
+  // user moved to another entry never sends them to sign in from there.
+  const previewId = useId()
+  const [opening, setOpening] = useState({ count: 0, entry: '' })
+  const preview = useFetcher<PlanChangePreview | SessionExpired>({
+    key: `${previewId}-${opening.count}`,
+  })
   const { load } = preview
+  const entry = useLocation().key
+  useSignInOnSessionExpired(preview.data, open ? opening.entry : null)
   const newPrice = contractPrice(contract, plan, interval)
 
   useEffect(() => {
@@ -1223,7 +1249,7 @@ function ChangeContractOption({
   }, [open, plan, interval, load])
 
   const { prorationText, nextInvoiceAtLabel } = planChangePreviewLabels(
-    preview.data,
+    isSessionExpired(preview.data) ? undefined : preview.data,
     preview.state,
     locale,
     t,
@@ -1240,6 +1266,7 @@ function ChangeContractOption({
         className="h-full min-h-7 w-full flex-col py-[var(--spacing-2)] whitespace-normal"
         onClick={() => {
           change.reset()
+          setOpening(({ count }) => ({ count: count + 1, entry }))
           setOpen(true)
         }}
       >
@@ -1394,7 +1421,7 @@ function subscriptionStatusLabel(
 }
 
 function billingPresentation(
-  data: Pick<BillingLoaderData, 'plan' | 'hasSubscription'>,
+  data: Pick<BillingView, 'plan' | 'hasSubscription'>,
 ) {
   return data.hasSubscription
     ? 'subscribed'
@@ -1427,7 +1454,7 @@ function BillingActions({
   presentation,
   awaitingCheckoutReflection,
 }: {
-  loaderData: BillingLoaderData
+  loaderData: BillingView
   showStorageWarning: boolean
   presentation: ReturnType<typeof billingPresentation>
   awaitingCheckoutReflection: boolean

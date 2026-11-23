@@ -10,7 +10,7 @@ import {
   loadWorkspaceInventoryArtifactsPage,
   parseInventoryArtifactsFilters,
 } from '~/services/team-management.server'
-import { requireInventoryAccess } from '~/services/access.server'
+import { requireSettingsAdminPage } from '../../+lib/settings-admin.server'
 import { ArtifactFilters } from './+components/artifact-filters'
 import { ArtifactsTable } from './+components/artifacts-table'
 import { Pager } from '~/components/form/pager'
@@ -67,9 +67,9 @@ export const screen = {
 } satisfies ScreenSpec
 
 export async function loader({ request, context }: Route.LoaderArgs) {
+  requireSettingsAdminPage(context)
   const user = requireUser(context)
   const db = createDb()
-  await requireInventoryAccess(db, user)
   const filters = parseInventoryArtifactsFilters(
     new URL(request.url).searchParams,
   )

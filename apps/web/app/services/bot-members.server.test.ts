@@ -46,6 +46,7 @@ import { createRequestContext } from '~/lib/error-diagnostics.server'
 import { userContext } from '~/middleware/context'
 import * as serverEntry from '~/entry.server'
 import { action as botsAction } from '~/routes/_protected/settings/_content/bots'
+import { settingsAdminMiddleware } from '~/routes/_protected/settings/+lib/settings-admin.server'
 
 const ADMIN = { id: 'admin1', workspaceId: 'ws1' }
 
@@ -1154,6 +1155,7 @@ test.each([
           path: 'settings/bots',
           module: {
             default: () => null,
+            middleware: [settingsAdminMiddleware],
             action: (args) =>
               botsAction({ ...args, params: {}, pattern: '/settings/bots' }),
           },

@@ -9,6 +9,10 @@ type AuthMiddleware =
 const expectedMiddleware: Record<string, AuthMiddleware> = {
   '_home/_protected/_layout.tsx': 'requireUserMiddleware',
   '_protected/_layout.tsx': 'requireUserMiddleware',
+  // Fetched only by Settings confirmations: an expired session is a 401 the
+  // confirmation handles, not a sign-in redirect to the resource itself.
+  '_protected/settings/billing-preview.tsx': 'requireUserApiMiddleware',
+  '_protected/settings/recipients.tsx': 'requireUserApiMiddleware',
   'api.access-requests.$id.tsx': 'requireUserApiMiddleware',
   'api.access-requests.count.tsx': 'requireUserApiMiddleware',
   'api.access-requests.tsx': 'requireUserApiMiddleware',

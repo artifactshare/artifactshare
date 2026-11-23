@@ -13,6 +13,7 @@ import { bindI18n } from '~/lib/i18n'
 import { BotSection } from '../+components/bot-section'
 import '~/app.css'
 import { action as botAction } from './bots'
+import { settingsAdminGate } from '../+lib/settings-admin.server'
 const services = vi.hoisted(() => ({
   updateWorkspaceBotDestinations: vi.fn(),
   createWorkspaceBot: vi.fn(),
@@ -34,10 +35,13 @@ function submitBot({
   request,
   params,
 }: Pick<Parameters<typeof botAction>[0], 'request' | 'params'>) {
+  // The admin gate admitted this admin; the gate has its own tests.
+  const context = new RouterContextProvider()
+  context.set(settingsAdminGate, 'allowed')
   return botAction({
     request,
     params,
-    context: new RouterContextProvider(),
+    context,
     url: new URL(request.url),
     pattern: '/settings/bots',
   })

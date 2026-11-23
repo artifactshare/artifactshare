@@ -49,9 +49,22 @@ const teamMonthlyContract: SubscriptionContract = {
 function renderBillingPage(
   projectLimit: number | null,
   contract = projectLimit === null ? teamMonthlyContract : null,
-  overrides: Partial<Parameters<typeof BillingPage>[0]['loaderData']> = {},
+  overrides: Partial<
+    Parameters<typeof BillingPage>[0]['loaderData'] & {
+      plan: string
+      storageUsedBytes: number
+      storageQuotaBytes: number
+    }
+  > = {},
   currentUserIsAdmin = true,
 ) {
+  // Plan and storage are shell data the page reads from the Settings outlet.
+  const {
+    plan = projectLimit === null ? 'team' : 'free',
+    storageUsedBytes = 0,
+    storageQuotaBytes = 100 * 1024 * 1024,
+    ...billingOverrides
+  } = overrides
   const loaderData: Parameters<typeof BillingPage>[0]['loaderData'] = {
     showOverageProjection: false,
     includedBytes: 100 * 1024 ** 3,
@@ -59,27 +72,31 @@ function renderBillingPage(
     contributorCount: null,
     contract,
     canManage: true,
-    plan: projectLimit === null ? 'team' : 'free',
     stripeSubscriptionStatus: projectLimit === null ? 'active' : '',
     hasSubscription: projectLimit === null,
     billingConfigured: true,
     defaultCurrency: 'jpy',
     initialPlan: 'team',
     initialInterval: 'monthly',
-    storageUsedBytes: 0,
-    storageQuotaBytes: 100 * 1024 * 1024,
     activeProjectCount: 4,
     projectLimit,
     entryContext: 'default',
     externalPostingEnabled: true,
     monthlyEstimate: null,
-    ...overrides,
+    ...billingOverrides,
   }
   const router = createMemoryRouter(
     [
       {
         path: '/',
-        element: <Outlet context={{ currentUserIsAdmin }} />,
+        element: (
+          <Outlet
+            context={{
+              currentUserIsAdmin,
+              workspace: { plan, storageUsedBytes, storageQuotaBytes },
+            }}
+          />
+        ),
         children: [
           { index: true, element: <BillingPage loaderData={loaderData} /> },
         ],

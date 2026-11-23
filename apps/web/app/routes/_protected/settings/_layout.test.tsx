@@ -6,7 +6,7 @@ import { bindI18n } from '~/lib/i18n'
 import SettingsLayout, { loader } from './_layout'
 
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
-vi.mock('~/services/team-management.server', () => ({
+vi.mock('./+lib/settings-request.server', () => ({
   loadSettingsShell: () => ({}),
 }))
 const projects = vi.hoisted(() => vi.fn())

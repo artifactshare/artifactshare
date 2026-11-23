@@ -21,6 +21,7 @@ import {
   setReducedMotion,
 } from './app/test/mermaid-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
+import { settingsRouteTree } from './app/test/settings-routes-browser-command'
 import { anchorLifecycleScenario } from './app/test/anchor-clock-browser-command'
 import {
   staticSiteCommentSite,
@@ -96,6 +97,7 @@ export default defineConfig({
         ),
         settingsContrastCapture,
         settingsContrastReport,
+        settingsRouteTree,
         previewSecurity,
         usercontentDelivery,
         projectPlacementDestinations,

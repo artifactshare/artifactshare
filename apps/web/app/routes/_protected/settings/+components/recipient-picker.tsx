@@ -1,10 +1,15 @@
 import { useEffect, useId, useState } from 'react'
-import { useFetcher } from 'react-router'
+import { useFetcher, useLocation } from 'react-router'
 import { Field, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { Label } from '~/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
 import { useT } from '~/hooks/use-t'
+import {
+  isSessionExpired,
+  useSignInOnSessionExpired,
+  type SessionExpired,
+} from '~/lib/session-expired'
 import { displayName, type RecipientSearchData } from '~/lib/team-management'
 
 export const NO_ASSET_TRANSFER = 'none'
@@ -30,8 +35,11 @@ export function RecipientPicker({
   const idPrefix = useId()
   const [query, setQuery] = useState('')
   const trimmed = query.trim()
-  const fetcher = useFetcher<RecipientSearchData>()
+  const fetcher = useFetcher<RecipientSearchData | SessionExpired>()
   const { load } = fetcher
+  // The picker only exists inside an open confirmation, opened on this entry.
+  const [openedOn] = useState(useLocation().key)
+  useSignInOnSessionExpired(fetcher.data, openedOn)
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -42,7 +50,11 @@ export function RecipientPicker({
   }, [trimmed, excludeUserId, load])
 
   const { data, results, failed, loading, noResults, truncated } =
-    recipientSearchState(fetcher.data, fetcher.state, trimmed)
+    recipientSearchState(
+      isSessionExpired(fetcher.data) ? undefined : fetcher.data,
+      fetcher.state,
+      trimmed,
+    )
   const [picked, setPicked] = useState<{ id: string; label: string } | null>(
     null,
   )

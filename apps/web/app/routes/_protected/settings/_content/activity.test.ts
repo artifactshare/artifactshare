@@ -1,49 +1,38 @@
+import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
+import { settingsAdminGate } from '../+lib/settings-admin.server'
 
 const mocks = vi.hoisted(() => ({
   requireUser: vi.fn(() => ({ id: 'u1', workspaceId: 'ws1' })),
-  workspaceAdminQuery: vi.fn(),
   loadAuditEventsPage: vi.fn(),
 }))
 
 vi.mock('~/middleware/context', () => ({ requireUser: mocks.requireUser }))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
-vi.mock('~/services/access.server', () => ({
-  workspaceAdminQuery: mocks.workspaceAdminQuery,
-}))
 vi.mock('~/services/team-management.server', () => ({
   loadAuditEventsPage: mocks.loadAuditEventsPage,
 }))
 
 import { loader } from './activity'
 
+// Refusals are the admin gate's, covered with the real route topology in
+// settings-admin-gate.test.ts.
 describe('/settings/activity loader', () => {
-  test('redirects non-admin users to settings', async () => {
-    mocks.workspaceAdminQuery.mockReturnValueOnce({
-      executeTakeFirst: vi.fn().mockResolvedValue(null),
-    })
-
-    await expect(
-      loader({
-        context: {},
-        request: new Request('https://example.test/settings/activity'),
-      } as never),
-    ).rejects.toMatchObject({ status: 302, headers: expect.any(Headers) })
-    expect(mocks.loadAuditEventsPage).not.toHaveBeenCalled()
-  })
-
-  test('loads activity data for admins', async () => {
+  test('loads the requested page of activity for an admitted admin', async () => {
     const data = { events: [], total: 0, page: 1 }
-    mocks.workspaceAdminQuery.mockReturnValueOnce({
-      executeTakeFirst: vi.fn().mockResolvedValue({ user_id: 'u1' }),
-    })
     mocks.loadAuditEventsPage.mockResolvedValueOnce(data)
+    const context = new RouterContextProvider()
+    context.set(settingsAdminGate, 'allowed')
+    const url = new URL('https://example.test/settings/activity?page=2')
 
     await expect(
       loader({
-        context: {},
-        request: new Request('https://example.test/settings/activity?page=2'),
-      } as never),
+        context,
+        request: new Request(url),
+        params: {},
+        url,
+        pattern: '/settings/activity',
+      }),
     ).resolves.toEqual(data)
     expect(mocks.loadAuditEventsPage).toHaveBeenCalledWith({}, 'ws1', 2)
   })

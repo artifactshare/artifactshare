@@ -3,7 +3,8 @@ import { Link, useLocation } from 'react-router'
 import type { Route } from './+types/_layout'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
-import { loadSettingsShell } from '~/services/team-management.server'
+import { loadSettingsShell } from './+lib/settings-request.server'
+import { settingsShellShouldRevalidate } from './+lib/shell-revalidation'
 import {
   BreadcrumbItem,
   BreadcrumbLink,
@@ -35,13 +36,15 @@ export type SettingsLayoutContext = SettingsLoaderData & {
   externalResult?: string | null
 }
 
+// Settings is the only reader of the shell: pages receive it through the
+// outlet context and load only their own data.
 export async function loader({
   context,
 }: Route.LoaderArgs): Promise<SettingsLoaderData> {
   const user = requireUser(context)
   const db = createDb()
   const [settingsShell, joinedProjects] = await Promise.all([
-    loadSettingsShell(db, user),
+    loadSettingsShell(context),
     listJoinedProjectsForDropdown(db, user, 5)
       .then((rows) =>
         rows.map((row) => ({
@@ -62,6 +65,8 @@ export async function loader({
     joinedProjects,
   }
 }
+
+export const shouldRevalidate = settingsShellShouldRevalidate
 
 export default function SettingsLayout({
   loaderData,

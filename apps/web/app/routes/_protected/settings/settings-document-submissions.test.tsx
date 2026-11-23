@@ -1,12 +1,13 @@
 // A form submitted before the client hydrates is a plain document POST. The
 // returned page must show its result where a hydrated submission would.
 import type { ComponentProps, ReactElement } from 'react'
-import type { ActionFunction } from 'react-router'
+import { UNSAFE_withComponentProps, type ActionFunction } from 'react-router'
 import { expect, test, vi } from 'vitest'
 import { documentPost, documentRequestHandler } from '~/test/document-request'
 import * as general from './_content/general'
 import * as tokens from './_content/tokens'
 import * as billing from './_content/billing'
+import * as settingsLayout from './_layout'
 
 const { updateWorkspaceName, createApiToken, stripe } = vi.hoisted(() => ({
   updateWorkspaceName: vi.fn(),
@@ -27,7 +28,41 @@ vi.mock('cloudflare:workers', () => ({
 }))
 vi.mock('~/middleware/context', async (original) => ({
   ...(await original<typeof import('~/middleware/context')>()),
-  requireUser: () => ({ id: 'owner', workspaceId: 'workspace' }),
+  requireUser: () => ({
+    id: 'owner',
+    workspaceId: 'workspace',
+    email: 'owner@example.test',
+    name: 'Owner',
+    image: null,
+  }),
+}))
+// The Settings shell's own reads, counted per returned document.
+const shellReads = vi.hoisted(() => ({
+  shell: vi.fn(async () => ({
+    kind: 'team' as const,
+    workspace: {
+      id: 'workspace',
+      name: 'Freshly read workspace',
+      hd: null,
+      plan: 'team',
+      storageUsedBytes: 0,
+      storageQuotaBytes: 100000,
+    },
+    currentUserIsAdmin: true,
+    currentUserRole: 'owner' as const,
+  })),
+  joined: vi.fn(async () => []),
+}))
+vi.mock('./+lib/settings-request.server', () => ({
+  loadSettingsShell: shellReads.shell,
+}))
+vi.mock('~/services/project-membership.server', () => ({
+  listJoinedProjectsForDropdown: shellReads.joined,
+}))
+// The shared chrome is not what this checks.
+vi.mock('../../_home/+components/topbar', () => ({ Topbar: () => null }))
+vi.mock('../../_home/+components/bottom-tab-bar', () => ({
+  BottomTabBar: () => null,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => ({
@@ -52,7 +87,13 @@ const shell = {
   kind: 'team',
   currentUserIsAdmin: true,
   currentUserRole: 'owner',
-  workspace: { id: 'workspace', name: 'Example workspace' },
+  workspace: {
+    id: 'workspace',
+    name: 'Example workspace',
+    plan: 'free',
+    storageUsedBytes: 0,
+    storageQuotaBytes: 100000,
+  },
 }
 
 async function submit(
@@ -104,6 +145,38 @@ test('General shows a saved name and an invalid name in the returned page', asyn
   )
   expect(invalid.status).toBe(400)
   expect(invalid.html).toMatch(/data-settings-status="invalid"/)
+})
+
+test('a native token POST renders Settings with one fresh shell and its result', async () => {
+  createApiToken.mockResolvedValueOnce({
+    token: 'as_document_token',
+    name: 'Reports',
+  })
+  shellReads.shell.mockClear()
+  shellReads.joined.mockClear()
+  const handle = documentRequestHandler({
+    path: '/settings/tokens',
+    Page: TokensPage,
+    action: tokensAction,
+    layout: {
+      loader: (args) =>
+        settingsLayout.loader({ ...args, params: {}, pattern: '/settings' }),
+      Component: UNSAFE_withComponentProps(settingsLayout.default),
+    },
+  })
+  const response = await handle(
+    documentPost('https://app.example.test/settings/tokens', {
+      intent: 'create',
+      name: 'Reports',
+    }),
+  )
+  const html = await response.text()
+  expect(response.status).toBe(200)
+  expect(html).toContain('as_document_token')
+  // The returned document shows the freshly read shell.
+  expect(html).toContain('Freshly read workspace')
+  expect(shellReads.shell).toHaveBeenCalledTimes(1)
+  expect(shellReads.joined).toHaveBeenCalledTimes(1)
 })
 
 test('API token creation shows the new token or the name error in the returned page', async () => {
@@ -170,7 +243,6 @@ test('Billing shows a checkout it could not start in the returned page', async (
 
 const billingLoaderData: ComponentProps<typeof billing.default>['loaderData'] =
   {
-    plan: 'free',
     canManage: true,
     billingConfigured: true,
     hasSubscription: false,
@@ -178,8 +250,6 @@ const billingLoaderData: ComponentProps<typeof billing.default>['loaderData'] =
     defaultCurrency: 'usd',
     initialPlan: 'plus',
     initialInterval: 'monthly',
-    storageUsedBytes: 0,
-    storageQuotaBytes: 100000,
     activeProjectCount: 0,
     projectLimit: null,
     entryContext: 'default',

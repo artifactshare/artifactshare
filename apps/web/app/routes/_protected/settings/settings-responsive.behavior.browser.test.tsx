@@ -43,7 +43,8 @@ const services = vi.hoisted(() => ({
   removeWorkspaceMember: vi.fn(),
   transferRemovedMemberAssets: vi.fn(),
   revokeWorkspaceMemberCliSessions: vi.fn(),
-  loadMembersPageData: vi.fn(),
+  loadWorkspaceMembersPage: vi.fn(),
+  loadRemovedWorkspaceMembers: vi.fn(),
   parseMembersPageFilters: () => ({
     query: '',
     role: 'all',
@@ -52,6 +53,9 @@ const services = vi.hoisted(() => ({
   }),
 }))
 vi.mock('~/services/team-management.server', () => services)
+vi.mock('./+lib/settings-request.server', () => ({
+  settingsActiveAdmin: async () => true,
+}))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
@@ -271,6 +275,11 @@ const shell = {
     initial: 'O',
   },
 }
+// Billing shows the plan and storage of the Settings shell.
+const freePlanShell = {
+  ...shell,
+  workspace: { ...shell.workspace, plan: 'free' },
+}
 function createTestRouter(...args: Parameters<typeof createMemoryRouter>) {
   const router = createMemoryRouter(...args)
   onTestFinished(() => router.dispose())
@@ -300,17 +309,22 @@ async function withScreen(
     router: ReturnType<typeof createMemoryRouter>,
   ) => Promise<void>,
   path = '/settings/bots',
-  settingsShell = true,
+  settingsShell: boolean | typeof shell = true,
   action?: NonNullable<
     Parameters<typeof createMemoryRouter>[0][number]['action']
   >,
 ) {
+  const layoutShell = settingsShell === true ? shell : settingsShell
   const router = createTestRouter(
     [
       {
         element: (
           <TooltipProvider>
-            {settingsShell ? <SettingsLayout loaderData={shell} /> : <Outlet />}
+            {layoutShell ? (
+              <SettingsLayout loaderData={layoutShell} />
+            ) : (
+              <Outlet />
+            )}
           </TooltipProvider>
         ),
         children: [
@@ -1044,15 +1058,12 @@ test.each(['en', 'ja'] as const)(
 
 const billingData = {
   canManage: true,
-  plan: 'free',
   stripeSubscriptionStatus: '',
   hasSubscription: false,
   billingConfigured: true,
   defaultCurrency: 'jpy' as const,
   initialPlan: 'team' as const,
   initialInterval: 'monthly' as const,
-  storageUsedBytes: 0,
-  storageQuotaBytes: 100000000000,
   activeProjectCount: 1,
   projectLimit: null,
   entryContext: 'default' as const,
@@ -1065,8 +1076,6 @@ const billingData = {
   contributorCount: 1,
 }
 const memberRows = {
-  currentUserIsAdmin: true,
-  currentUserRole: 'owner',
   membersPage: {
     members: [
       {
@@ -1212,16 +1221,15 @@ test.each([
   services.revokeWorkspaceMemberCliSessions.mockResolvedValue({
     kind: id === 'result-error' ? 'invalid' : 'ok',
   })
-  services.loadMembersPageData.mockImplementation(() => ({
-    ...memberRows,
-    membersPage: {
-      ...memberRows.membersPage,
-      members: removed ? [] : [target],
-    },
-    removedMembers: removed
+  services.loadWorkspaceMembersPage.mockImplementation(() => ({
+    ...memberRows.membersPage,
+    members: removed ? [] : [target],
+  }))
+  services.loadRemovedWorkspaceMembers.mockImplementation(() =>
+    removed
       ? [{ ...target, ownedArtifactCount: id === 'missing-transfer' ? 0 : 1 }]
       : [],
-  }))
+  )
   const router = createTestRouter(
     [
       {
@@ -1457,6 +1465,13 @@ for (const theme of ['light', 'dark'])
             content,
             async (container) => {
               expect(container.querySelector('main'), path).not.toBeNull()
+              // Settings draws its own top and bottom bars around the page.
+              for (const bar of ['#app-topbar', '[data-bottom-tab-bar]'])
+                await expect
+                  .element(page.elementLocator(container.querySelector(bar)!), {
+                    message: `${path} ${bar}`,
+                  })
+                  .toBeVisible()
               expect(
                 document.documentElement.scrollWidth,
                 path,
@@ -1593,6 +1608,7 @@ for (const theme of ['light', 'dark'])
               }
             },
             path,
+            path === '/settings/billing' ? freePlanShell : true,
           )
       } finally {
         if (previousTheme === undefined)
@@ -1660,6 +1676,7 @@ test.each(
             }
         },
         '/settings/billing',
+        freePlanShell,
       )
       await withScreen(
         <PricingPage locale={locale} initialCurrency="usd" signedIn={false} />,

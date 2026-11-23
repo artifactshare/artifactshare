@@ -1,4 +1,3 @@
-import { redirect } from 'react-router'
 import type { Route } from './+types/activity'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { SettingsPage } from '~/components/form/settings-page'
@@ -22,7 +21,7 @@ import {
 } from '~/lib/team-management'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
-import { workspaceAdminQuery } from '~/services/access.server'
+import { requireSettingsAdminPage } from '../+lib/settings-admin.server'
 import { loadAuditEventsPage } from '~/services/team-management.server'
 import { parsePageParam } from '~/lib/pagination'
 import type { TKey } from '~/i18n/messages'
@@ -59,17 +58,11 @@ function activityPageLink(page: number): string {
   return `/settings/activity?page=${page}`
 }
 
-export async function loader({ request, context }: Route.LoaderArgs) {
+export function loader({ request, context }: Route.LoaderArgs) {
+  requireSettingsAdminPage(context)
   const user = requireUser(context)
-  const db = createDb()
-  const admin = await workspaceAdminQuery(
-    db,
-    user.id,
-    user.workspaceId,
-  ).executeTakeFirst()
-  if (!admin) throw redirect('/settings')
   return loadAuditEventsPage(
-    db,
+    createDb(),
     user.workspaceId,
     parsePageParam(new URL(request.url).searchParams),
   )

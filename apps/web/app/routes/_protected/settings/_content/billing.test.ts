@@ -34,17 +34,12 @@ vi.mock('~/services/db.server', () => ({
 
 const requireUserMock = vi.hoisted(() => vi.fn())
 const createCheckoutSessionMock = vi.hoisted(() => vi.fn())
-const externalPostingEnabledMock = vi.hoisted(() => vi.fn(() => true))
 const loadSubscriptionContractMock = vi.hoisted(() =>
   vi.fn<typeof billing.loadSubscriptionContract>(() => Promise.resolve(null)),
 )
 
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
-}))
-
-vi.mock('~/lib/project-external-posting.server', () => ({
-  isExternalPostingEnabledForWorkspace: externalPostingEnabledMock,
 }))
 
 vi.mock('~/services/billing.server', async (importOriginal) => {
@@ -58,6 +53,7 @@ vi.mock('~/services/billing.server', async (importOriginal) => {
 })
 
 import { action, loader, shouldShowBillingContext } from './billing'
+import { loadSettingsShell } from '../+lib/settings-request.server'
 
 describe('/settings/billing loader', () => {
   let db: Kysely<DB>
@@ -68,7 +64,6 @@ describe('/settings/billing loader', () => {
     dbState.db = db
     await seedBase(db)
     createCheckoutSessionMock.mockReset()
-    externalPostingEnabledMock.mockClear()
   })
 
   afterEach(async () => {
@@ -169,7 +164,7 @@ describe('/settings/billing loader', () => {
     loadSubscriptionContractMock.mockResolvedValueOnce(contract)
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -185,15 +180,12 @@ describe('/settings/billing loader', () => {
       overageProjection: { gb: 0, currency: 'usd', amount: 0 },
       contract,
       canManage: true,
-      plan: 'plus',
       stripeSubscriptionStatus: 'active',
       hasSubscription: true,
       billingConfigured: true,
       defaultCurrency: 'usd',
       initialPlan: 'team',
       initialInterval: 'monthly',
-      storageUsedBytes: 0,
-      storageQuotaBytes: 10 * 1024 * 1024 * 1024,
       activeProjectCount: 0,
       projectLimit: 20,
       entryContext: 'default',
@@ -217,37 +209,27 @@ describe('/settings/billing loader', () => {
         cancelAtPeriodEnd: false,
       })
       const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-      vi.spyOn(
-        billingUsage,
-        'loadCurrentMonthOverageProjection',
-      ).mockRejectedValue(new Error('projection unavailable'))
+      const projection = vi
+        .spyOn(billingUsage, 'loadCurrentMonthOverageProjection')
+        .mockRejectedValue(new Error('projection unavailable'))
 
       const result = await loader({
-        context: {},
+        context: new RouterContextProvider(),
         request: new Request('https://example.test/settings/billing'),
       } as never)
 
+      // Usage and, for the owner, the monthly estimate share one projection.
+      expect(projection).toHaveBeenCalledTimes(1)
       const operations = log.mock.calls.map(([diagnostic]) => diagnostic)
       expect(operations).toEqual([
-        ...(userId === 'u-a'
-          ? [
-              {
-                operation: 'billing.projection',
-                cause: 'Error',
-                frames: expect.any(Array),
-              },
-            ]
-          : []),
         {
-          operation: 'billing.usage.projection',
+          operation: 'billing.projection',
           cause: 'Error',
           frames: expect.any(Array),
         },
       ])
       expect(result).toMatchObject({
-        plan: 'plus',
         canManage: userId === 'u-a',
-        storageUsedBytes: 0,
         showOverageProjection: true,
         overageProjection: null,
         monthlyEstimate: null,
@@ -264,7 +246,10 @@ describe('/settings/billing loader', () => {
     ) as Request<unknown, IncomingRequestCfProperties<unknown>>
     Object.defineProperty(request, 'cf', { value: { country: 'JP' } })
 
-    const result = await loader({ context: {}, request } as never)
+    const result = await loader({
+      context: new RouterContextProvider(),
+      request,
+    } as never)
 
     expect(result.defaultCurrency).toBe('jpy')
   })
@@ -272,22 +257,19 @@ describe('/settings/billing loader', () => {
   test('free loader returns the free quotas and disabled external posting policy', async () => {
     await seedAdmin(db, 'u-a', 'ws-a')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
-    externalPostingEnabledMock.mockResolvedValueOnce(false)
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
     expect(result).toMatchObject({
-      plan: 'free',
-      storageQuotaBytes: 100 * 1024 * 1024,
       projectLimit: 5,
       externalPostingEnabled: false,
     })
   })
 
-  test('loader preserves a viewer workspace zero-byte storage quota', async () => {
+  test('the shell billing shows preserves a zero-byte storage quota', async () => {
     await db
       .updateTable('workspaces')
       .set({ storage_quota_bytes: 0 })
@@ -295,12 +277,9 @@ describe('/settings/billing loader', () => {
       .execute()
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
-    const result = await loader({
-      context: {},
-      request: new Request('https://example.test/settings/billing'),
-    } as never)
+    const shell = await loadSettingsShell(new RouterContextProvider())
 
-    expect(result.storageQuotaBytes).toBe(0)
+    expect(shell.workspace.storageQuotaBytes).toBe(0)
   })
 
   test('non-owner loader returns read-only billing data without owner contact', async () => {
@@ -309,7 +288,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -320,15 +299,12 @@ describe('/settings/billing loader', () => {
       overageProjection: { gb: 0, currency: null, amount: null },
       contract: null,
       canManage: false,
-      plan: 'team',
       stripeSubscriptionStatus: 'active',
       hasSubscription: true,
       billingConfigured: true,
       defaultCurrency: 'usd',
       initialPlan: 'team',
       initialInterval: 'monthly',
-      storageUsedBytes: 0,
-      storageQuotaBytes: 100 * 1024 * 1024 * 1024,
       activeProjectCount: 0,
       projectLimit: null,
       entryContext: 'default',
@@ -350,7 +326,7 @@ describe('/settings/billing loader', () => {
     await seedContainer(db, 'inbox', 'inbox', null)
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -366,7 +342,7 @@ describe('/settings/billing loader', () => {
       await seedAdmin(db, 'u-a', 'ws-a')
       requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
       const result = await loader({
-        context: {},
+        context: new RouterContextProvider(),
         request: new Request(`https://example.test/settings/billing${search}`),
       } as never)
       expect(result).toMatchObject({
@@ -385,7 +361,7 @@ describe('/settings/billing loader', () => {
     await seedAdmin(db, 'u-a', 'ws-a')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request(`https://example.test/settings/billing${search}`),
     } as never)
     expect(result.entryContext).toBe(entryContext)
@@ -402,7 +378,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -420,7 +396,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request(
         'https://example.test/settings/billing?reason=project_limit',
       ),
@@ -441,7 +417,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -452,7 +428,7 @@ describe('/settings/billing loader', () => {
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
     const result = await loader({
-      context: {},
+      context: new RouterContextProvider(),
       request: new Request('https://example.test/settings/billing'),
     } as never)
 
@@ -512,7 +488,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -538,7 +514,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -564,7 +540,7 @@ describe('/settings/billing action', () => {
         },
         { country: 'JP' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -601,7 +577,7 @@ describe('/settings/billing action', () => {
         },
         { country: 'JP' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -631,7 +607,7 @@ describe('/settings/billing action', () => {
         interval: 'monthly',
         currency: 'eur',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(response).toMatchObject({
@@ -655,7 +631,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'yearly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect((response as Response).headers.get('Location')).toBe(
@@ -688,7 +664,7 @@ describe('/settings/billing action', () => {
         plan: 'plus',
         interval: 'monthly',
       }),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(
@@ -721,7 +697,7 @@ describe('/settings/billing action', () => {
         },
         { cookie: '__as_locale=ja' },
       ),
-      context: {},
+      context: new RouterContextProvider(),
     } as never)
 
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(
@@ -870,6 +846,7 @@ async function updateWorkspacePlan(
             : 100 * 1024 * 1024,
       stripe_subscription_status: status,
       stripe_subscription_id: subscriptionId,
+      external_posting_enabled: plan === 'free' ? 0 : 1,
     })
     .where('id', '=', workspaceId)
     .execute()

@@ -1,4 +1,3 @@
-import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -13,29 +12,23 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-const workspaceRow = vi.hoisted(() => ({
+const workspaceRow: {
+  current: {
+    id: string
+    plan: string
+    stripe_subscription_status: string
+    stripe_subscription_id: string | null
+  }
+} = {
   current: {
     id: 'ws1',
     plan: 'team',
     stripe_subscription_status: 'active',
     stripe_subscription_id: 'sub_1',
-  } as Record<string, unknown>,
-}))
+  },
+}
 
-vi.mock('~/middleware/context', () => ({
-  requireUser: () => ({ id: 'u1', workspaceId: 'ws1' }),
-}))
-vi.mock('~/services/db.server', () => ({
-  createDb: () => ({
-    selectFrom: () => ({
-      select: () => ({
-        where: () => ({
-          executeTakeFirstOrThrow: () => Promise.resolve(workspaceRow.current),
-        }),
-      }),
-    }),
-  }),
-}))
+vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 
 const projectionMock = vi.hoisted(() =>
   vi.fn(() =>
@@ -65,8 +58,18 @@ vi.mock('~/services/team-management.server', () => ({
   countWorkspaceContributors: countContributorsMock,
 }))
 
-import { loadUsage as loader } from '../+components/billing-usage.server'
+import {
+  loadUsage,
+  sharedOverageProjection,
+} from '../+components/billing-usage.server'
 import { shouldShowUsageWarning } from '../+components/billing-usage'
+
+function usage() {
+  return loadUsage({
+    workspace: workspaceRow.current,
+    projection: sharedOverageProjection('ws1', new Date()),
+  })
+}
 
 describe('shouldShowUsageWarning', () => {
   test.each([
@@ -94,7 +97,7 @@ describe('/settings/usage loader', () => {
       cancelAtPeriodEnd: false,
     })
 
-    const result = await loader({ context: {} } as never)
+    const result = await usage()
 
     expect(result.overageProjection).toEqual({
       gb: 3,
@@ -113,7 +116,7 @@ describe('/settings/usage loader', () => {
       cancelAtPeriodEnd: false,
     })
 
-    const result = await loader({ context: {} } as never)
+    const result = await usage()
 
     expect(result.overageProjection).toEqual({
       gb: 3,
@@ -125,7 +128,7 @@ describe('/settings/usage loader', () => {
   test('omits the amount when the contract currency is unknown', async () => {
     contractMock.mockResolvedValueOnce(null)
 
-    const result = await loader({ context: {} } as never)
+    const result = await usage()
 
     expect(result.overageProjection).toEqual({
       gb: 3,
@@ -137,12 +140,12 @@ describe('/settings/usage loader', () => {
   test('keeps usage data when projection fails', async () => {
     projectionMock.mockRejectedValueOnce(new Error('query failed'))
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const result = await loader({ context: new RouterContextProvider() })
+    const result = await usage()
     expect(result.overageProjection).toBeNull()
     expect(log.mock.calls).toEqual([
       [
         {
-          operation: 'billing.usage.projection',
+          operation: 'billing.projection',
           cause: 'Error',
           frames: expect.any(Array),
         },
@@ -158,7 +161,7 @@ describe('/settings/usage loader', () => {
       stripe_subscription_id: null,
     }
 
-    const result = await loader({ context: {} } as never)
+    const result = await usage()
 
     expect(result.showOverageProjection).toBe(false)
     expect(result.overageProjection).toBeNull()
