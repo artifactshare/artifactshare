@@ -6,9 +6,6 @@ import { bindI18n } from '~/lib/i18n'
 
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
-vi.mock('~/services/dev-screen-state.server', () => ({
-  isDevScreenStateRequest: () => false,
-}))
 vi.mock('~/services/team-management.server', () => ({}))
 vi.mock('~/services/db.server', () => ({}))
 vi.mock('~/middleware/context', () => ({}))

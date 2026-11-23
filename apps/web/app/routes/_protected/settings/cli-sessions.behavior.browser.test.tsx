@@ -21,9 +21,6 @@ vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'current-user' }),
 }))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
-vi.mock('~/services/dev-screen-state.server', () => ({
-  isDevScreenStateRequest: vi.fn(),
-}))
 vi.mock('~/services/api-tokens.server', () => ({
   createApiToken: vi.fn(),
   listApiTokens: vi.fn(),

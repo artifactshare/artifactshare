@@ -51,9 +51,6 @@ vi.mock('~/services/db.server', () => ({
     }),
   }),
 }))
-vi.mock('~/services/dev-screen-state.server', () => ({
-  simulateRemovedAssetTransferFailure: () => false,
-}))
 vi.mock('~/services/team-management.server', () => ({
   transferWorkspaceOwner: mutate,
   grantWorkspaceAdmin: mutate,

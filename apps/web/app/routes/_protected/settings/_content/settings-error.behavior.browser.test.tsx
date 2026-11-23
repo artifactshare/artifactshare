@@ -24,7 +24,7 @@ import * as inventory from './inventory/_layout'
 import * as inventoryIndex from './inventory/index'
 import * as inventoryProjects from './inventory/projects'
 import * as inventoryArtifacts from './inventory/artifacts'
-import GeneralPage, { action as updateGeneral, screen } from './general'
+import GeneralPage, { action as updateGeneral } from './general'
 import BillingPage from './billing'
 
 const { updateWorkspaceName, viewer, adminReads, adminRead } = vi.hoisted(
@@ -236,9 +236,10 @@ test.each(['loader', 'action', 'preview'])(
           '[data-screen-capture-error="route-error-boundary"]',
         ),
       ).toBeNull()
-      const ready = screen.states.find(
-        (state) => state.id === 'unexpected-error',
-      )?.setup.ready
+      // The live Settings boundary capture's readiness: recovery link, top bar
+      // and Settings navigation.
+      const ready = bots.screen.states.find((state) => state.id === 'forbidden')
+        ?.setup.ready
       if (!ready) throw new Error('Missing Settings error readiness')
       await server.commands.waitForScreenReady(ready)
       if (fault === 'loader') {

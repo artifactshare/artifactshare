@@ -17,7 +17,6 @@ import {
   revokeAllCliRefreshCredentialFamilies,
 } from '~/services/cli-refresh-credentials.server'
 import { createDb } from '~/services/db.server'
-import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { ScreenSpec } from '~/types/screen'
 import ApiTokensPage, {
   MAX_TOKEN_NAME_LENGTH,
@@ -263,23 +262,43 @@ export const screen = {
       description: '作成直後のシークレットを表示する状態',
       setup: {
         scenario: 'settings-tokens/created-secret',
+        reseedBeforeCapture: true,
+        interactions: [
+          {
+            action: 'fill',
+            selector: '#token-name',
+            value: 'Release automation',
+          },
+          {
+            action: 'click',
+            selector: 'form:has(#token-name) button[type="submit"]',
+          },
+        ],
+        postInteractionReady: {
+          selector: 'form:has(#token-name) ~ [role="status"] code:visible',
+          description: 'One-time secret returned by the create action',
+        },
       },
     },
   ],
 } satisfies ScreenSpec
 
-export async function loader({ context, request }: Route.LoaderArgs) {
+type CreatedToken = { name: string; token: string }
+
+export async function loader({ context }: Route.LoaderArgs): Promise<{
+  tokens: Awaited<ReturnType<typeof listApiTokens>>
+  // A new secret is shown only from the create action's response.
+  createdToken: CreatedToken | null
+  cliFamilies: Awaited<ReturnType<typeof listCliRefreshCredentialFamilies>>
+}> {
   const user = requireUser(context)
   const db = createDb()
   const tokens = await listApiTokens(db, user.id)
-  const createdToken = isDevScreenStateRequest(
-    request,
-    'settings-tokens/created-secret',
-  )
-    ? { name: 'CLI deploy', token: 'as_dev_screen_created_secret' }
-    : null
+  // Keep the existing order: the CLI read starts only after the token list
+  // succeeds, so a failed first read issues no second query.
+  // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
   const cliFamilies = await listCliRefreshCredentialFamilies(db, user.id)
-  return { tokens, createdToken, cliFamilies }
+  return { tokens, createdToken: null, cliFamilies }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {

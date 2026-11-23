@@ -3,7 +3,7 @@
 // it starts real Wrangler/Vite services and Chromium, which unit mocks cannot
 // stand in for (registry discovery, Worker persistence, dual-stack binding).
 //
-// Every case runs in one disposable checkout outside this tree: a clone of
+// Each top-level case runs in its own disposable checkout outside this tree: a clone of
 // HEAD with the current working tree committed on top (so an uncommitted
 // implementation is what runs), dependencies installed offline, and none of the
 // git-ignored inputs (.dev.vars, certificates, schema, fixtures, CLI build).
@@ -519,83 +519,194 @@ async function inspectRunningStack(checkout, topology, descendants) {
   )
 }
 
-test(
-  'local capture commands own an isolated stack from a fresh checkout',
-  { timeout: 120 * 60_000 },
-  async (t) => {
-    const base = mkdtempSync(join(tmpdir(), 'artifactshare-local-capture-it-'))
-    t.after(() => rmSync(base, { recursive: true, force: true }))
-    const checkout = makeCheckout(base)
-    assert.ok(
-      existsSync(join(checkout, 'scripts/local-capture.mjs')),
-      'the checkout lacks the implementation',
+/**
+ * A disposable checkout of the working tree, its isolation sentinels and the
+ * check that a command left them as they were. Each top-level case owns one.
+ */
+async function ownedCheckout(t) {
+  const base = mkdtempSync(join(tmpdir(), 'artifactshare-local-capture-it-'))
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const checkout = makeCheckout(base)
+  assert.ok(
+    existsSync(join(checkout, 'scripts/local-capture.mjs')),
+    'the checkout lacks the implementation',
+  )
+  // Inputs the commands need but must never create in the checkout.
+  const absentInputs = [
+    '.dev.vars',
+    '.dev-certs/cert.pem',
+    'fixtures/static-sites/react-spa',
+    'packages/cli/dist',
+  ]
+  for (const input of absentInputs)
+    assert.equal(
+      existsSync(join(checkout, input)),
+      false,
+      `${input} must start missing`,
     )
-    // Inputs the commands need but must never create in the checkout.
-    const absentInputs = [
-      '.dev.vars',
-      '.dev-certs/cert.pem',
-      'fixtures/static-sites/react-spa',
-      'packages/cli/dist',
-    ]
+  const shared = checkoutSentinels(checkout)
+  const sharedBefore = treeSnapshot(shared)
+  assert.equal(git(checkout, ['status', '--porcelain']), '')
+  const baseCommit = git(checkout, ['rev-parse', 'HEAD'])
+  const outputRoot = screenCaptureOutputRoot((file, args) =>
+    git(checkout, args),
+  )
+  const home = sentinelHome(base)
+  const sentinels = treeSnapshot(home.registries)
+  const listeners = await syntheticListeners()
+  t.after(() => listeners.close())
+  const assertIsolated = async () => {
+    assert.deepEqual(
+      treeSnapshot(home.registries),
+      sentinels,
+      'a default registry changed',
+    )
+    assert.deepEqual(
+      treeSnapshot(shared),
+      sharedBefore,
+      'a checkout file read by pnpm dev changed',
+    )
     for (const input of absentInputs)
       assert.equal(
         existsSync(join(checkout, input)),
         false,
-        `${input} must start missing`,
+        `${input} was created in the checkout`,
       )
-    const shared = checkoutSentinels(checkout)
-    const sharedBefore = treeSnapshot(shared)
-    assert.equal(git(checkout, ['status', '--porcelain']), '')
-    const baseCommit = git(checkout, ['rev-parse', 'HEAD'])
-    const outputRoot = screenCaptureOutputRoot((file, args) =>
-      git(checkout, args),
+    assert.deepEqual(
+      await listeners.commandClients(),
+      [],
+      'the command connected to an unrelated listener',
     )
-    const home = sentinelHome(base)
-    const sentinels = treeSnapshot(home.registries)
-    const listeners = await syntheticListeners()
-    t.after(() => listeners.close())
-    const assertIsolated = async () => {
-      assert.deepEqual(
-        treeSnapshot(home.registries),
-        sentinels,
-        'a default registry changed',
-      )
-      assert.deepEqual(
-        treeSnapshot(shared),
-        sharedBefore,
-        'a checkout file read by pnpm dev changed',
-      )
-      for (const input of absentInputs)
-        assert.equal(
-          existsSync(join(checkout, input)),
-          false,
-          `${input} was created in the checkout`,
-        )
-      assert.deepEqual(
-        await listeners.commandClients(),
-        [],
-        'the command connected to an unrelated listener',
-      )
-      assert.ok(listeners.servers.every((server) => server.listening))
-    }
-    const commitVariant = (file, from, to) => {
-      const path = join(checkout, file)
-      const source = readFileSync(path, 'utf8')
+    assert.ok(listeners.servers.every((server) => server.listening))
+  }
+  const commitVariant = (file, from, to) => {
+    const path = join(checkout, file)
+    const source = readFileSync(path, 'utf8')
+    assert.ok(
+      source.includes(from),
+      `${file} no longer contains the fault target`,
+    )
+    writeFileSync(path, source.replace(from, to))
+    git(checkout, [
+      ...IDENTITY,
+      'commit',
+      '--quiet',
+      '-am',
+      `fault variant: ${file}`,
+    ])
+  }
+  const restore = () =>
+    git(checkout, ['reset', '--quiet', '--hard', baseCommit])
+  return {
+    checkout,
+    baseCommit,
+    outputRoot,
+    home,
+    assertIsolated,
+    commitVariant,
+    restore,
+  }
+}
+
+const SETTINGS_SCREENS = [
+  'settings',
+  'settings-activity',
+  'settings-analytics',
+  'settings-billing',
+  'settings-bots',
+  'settings-external-access',
+  'settings-general',
+  'settings-integrations',
+  'settings-inventory-artifacts',
+  'settings-inventory-projects',
+  'settings-tokens',
+]
+
+// Chromium and the owned services are needed: the token form's real action,
+// the admin gate's real 403 for a Team member, and the browser-matched removal
+// confirmation can only be observed through the installed capture launcher.
+test(
+  'Settings captures succeed on the owned stack',
+  { timeout: 120 * 60_000 },
+  async (t) => {
+    const { checkout, outputRoot, home, assertIsolated } =
+      await ownedCheckout(t)
+    const label = 'settings-errors'
+    const result = await runCommand(checkout, home.env, 'pnpm', [
+      'screens:capture:local',
+      '--',
+      ...SETTINGS_SCREENS.flatMap((id) => ['--screen', id]),
+      '--label',
+      label,
+    ])
+    assert.equal(result.code, 0, result.output.slice(-6000))
+    const { screens } = await import('./screen-ledger.mjs')
+    const { planCaptureJobs } = await import('./screen-capture.mjs')
+    const { jobs } = planCaptureJobs(
+      SETTINGS_SCREENS.map((id) => screens.find((screen) => screen.id === id)),
+      { local: true },
+    )
+    const manifest = JSON.parse(
+      readFileSync(join(outputRoot, label, 'manifest.json'), 'utf8'),
+    )
+    const full = manifest.filter((entry) => !entry.section)
+    const key = (entry) =>
+      [
+        entry.screen,
+        entry.state,
+        entry.viewport,
+        entry.theme,
+        entry.locale,
+      ].join('/')
+    assert.deepEqual(
+      full.map(key).sort(),
+      jobs.map((job) => job.id).sort(),
+      'the manifest does not hold one full capture per planned job',
+    )
+    for (const entry of manifest) {
+      assert.equal(entry.status, 'success', key(entry))
       assert.ok(
-        source.includes(from),
-        `${file} no longer contains the fault target`,
+        readFileSync(join(outputRoot, label, entry.file)).length > 0,
+        `empty screenshot ${entry.file}`,
       )
-      writeFileSync(path, source.replace(from, to))
-      git(checkout, [
-        ...IDENTITY,
-        'commit',
-        '--quiet',
-        '-am',
-        `fault variant: ${file}`,
-      ])
     }
-    const restore = () =>
-      git(checkout, ['reset', '--quiet', '--hard', baseCommit])
+    for (const state of [
+      'settings-tokens/created-secret',
+      'settings-bots/forbidden',
+      'settings/result-warning',
+      'settings/result-warning-transfer',
+    ])
+      assert.equal(
+        full.filter((entry) => `${entry.screen}/${entry.state}` === state)
+          .length,
+        4,
+        `${state} was not captured in every viewport and theme`,
+      )
+    assert.match(result.output, /Screen captures: \d+ succeeded, 0 failed/)
+    // The label check runs on the files the capture wrote.
+    execFileSync(
+      process.execPath,
+      ['scripts/screen-capture-output.mjs', '--check-labels', label],
+      { cwd: checkout, env: home.env, stdio: 'pipe' },
+    )
+    assertStopped(result)
+    await assertIsolated()
+  },
+)
+
+test(
+  'local capture commands own an isolated stack from a fresh checkout',
+  { timeout: 120 * 60_000 },
+  async (t) => {
+    const {
+      checkout,
+      baseCommit,
+      outputRoot,
+      home,
+      assertIsolated,
+      commitVariant,
+      restore,
+    } = await ownedCheckout(t)
 
     await t.test(
       'a fresh checkout captures one screen and leaves nothing running',

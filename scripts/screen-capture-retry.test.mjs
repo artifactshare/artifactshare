@@ -129,39 +129,97 @@ test('label verification requires the current checkout revision on every screens
   )
 })
 
-test('settings-errors verification detects a state missing from both the ledger and the manifest', async () => {
+test('settings-errors verification requires the Bots 403 and standalone root evidence in every variant', async () => {
   const { screens } = await import('./screen-ledger.mjs')
-  const general = screens.find((screen) => screen.id === 'settings-general')
   const manifest = []
-  for (const state of general.states.filter(
-    (candidate) => candidate.expectedError,
-  )) {
-    for (const viewport of ['desktop', 'mobile']) {
-      for (const theme of ['light', 'dark']) {
-        manifest.push({
-          screen: general.id,
-          state: state.id,
-          viewport,
-          theme,
-          httpStatus: state.expectedStatus,
-          boundaryMarker: state.expectedError,
-          readySelector: state.setup.ready.selector,
-        })
+  for (const [screenId, stateId] of [
+    ['settings-bots', 'forbidden'],
+    ['settings-general', 'root-error'],
+  ]) {
+    const screen = screens.find((candidate) => candidate.id === screenId)
+    const state = screen.states.find((candidate) => candidate.id === stateId)
+    for (const locale of Object.keys(screen.route)) {
+      for (const viewport of ['desktop', 'mobile']) {
+        for (const theme of ['light', 'dark']) {
+          manifest.push({
+            screen: screenId,
+            state: state.id,
+            locale,
+            viewport,
+            theme,
+            httpStatus: state.expectedStatus,
+            boundaryMarker: state.expectedError,
+            readySelector: state.setup.ready.selector,
+          })
+        }
       }
     }
   }
-  verifySettingsErrorEvidence(general, manifest)
-  assert.throws(
-    () =>
-      verifySettingsErrorEvidence(
-        {
-          ...general,
-          states: general.states.filter((state) => state.id !== 'root-error'),
-        },
-        manifest.filter((entry) => entry.state !== 'root-error'),
-      ),
-    /Missing required error state: root-error/,
-  )
+  verifySettingsErrorEvidence(screens, manifest)
+
+  for (const [screenId, stateId] of [
+    ['settings-bots', 'forbidden'],
+    ['settings-general', 'root-error'],
+  ]) {
+    const withoutState = screens.map((screen) =>
+      screen.id === screenId
+        ? {
+            ...screen,
+            states: screen.states.filter((state) => state.id !== stateId),
+          }
+        : screen,
+    )
+    assert.throws(
+      () =>
+        verifySettingsErrorEvidence(
+          withoutState,
+          manifest.filter(
+            (entry) => entry.screen !== screenId || entry.state !== stateId,
+          ),
+        ),
+      new RegExp(`Missing required error state: ${screenId}/${stateId}`),
+    )
+  }
+
+  // Each owner's evidence is checked on its own: the other owner's entries
+  // stay valid while one variant of this owner is wrong.
+  for (const [screenId, stateId, otherMarker] of [
+    ['settings-bots', 'forbidden', 'route-error-boundary'],
+    ['settings-general', 'root-error', 'settings-error-boundary'],
+  ]) {
+    const target = manifest.findIndex(
+      (entry) =>
+        entry.screen === screenId &&
+        entry.viewport === 'mobile' &&
+        entry.theme === 'dark',
+    )
+    for (const change of [
+      { httpStatus: 200 },
+      { boundaryMarker: otherMarker },
+      { readySelector: '#app-topbar' },
+      // Evidence for a locale the screen does not declare stands in for none.
+      { locale: 'ja' },
+    ]) {
+      const variant = manifest.with(target, { ...manifest[target], ...change })
+      assert.throws(
+        () => verifySettingsErrorEvidence(screens, variant),
+        new RegExp(
+          `Missing error evidence: ${screenId}/${stateId}/en/mobile/dark`,
+        ),
+      )
+    }
+    // Only another locale's entries for this owner are rejected.
+    assert.throws(
+      () =>
+        verifySettingsErrorEvidence(
+          screens,
+          manifest.map((entry) =>
+            entry.screen === screenId ? { ...entry, locale: 'ja' } : entry,
+          ),
+        ),
+      new RegExp(`Missing error evidence: ${screenId}/${stateId}/en/`),
+    )
+  }
 })
 
 test('legacy captures remain intact and ignored after updating the ignore rules', (t) => {

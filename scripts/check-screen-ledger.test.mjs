@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { checkScreenLedger, hasDefaultExport } from './check-screen-ledger.mjs'
 import {
   CaptureFailure,
@@ -1507,4 +1518,179 @@ test('screens:capture refuses a run that only selects billing, before it touches
     /No capture jobs remain[^\n]*pnpm screens:capture:local/u,
   )
   assert.ok(planCaptureJobs(billing, { local: true }).jobs.length > 0)
+})
+
+const SETTINGS_ROUTES = fileURLToPath(
+  new URL('../apps/web/app/routes/_protected/settings/', import.meta.url),
+)
+
+/**
+ * Non-test source files under `dir` (relative paths) that mention
+ * dev-screen-state or `isDevScreenStateRequest`.
+ */
+function settingsCaptureStateMentions(dir) {
+  // JavaScript and TypeScript sources, including `.mts`/`.cts`; test files
+  // carry `.test.` or `.spec.` before the extension.
+  return readdirSync(dir, { recursive: true })
+    .filter(
+      (file) =>
+        /\.[cm]?[jt]sx?$/.test(file) &&
+        !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file),
+    )
+    .filter((file) =>
+      /dev-screen-state|isDevScreenStateRequest/.test(
+        readFileSync(join(dir, file), 'utf8'),
+      ),
+    )
+    .sort()
+}
+
+test('Settings routes and components do not mention dev-screen-state', () => {
+  assert.ok(existsSync(join(SETTINGS_ROUTES, '_content/index.tsx')))
+  assert.deepEqual(settingsCaptureStateMentions(SETTINGS_ROUTES), [])
+  // Declaring a capture scenario in screen metadata is not a capture check.
+  assert.ok(
+    readFileSync(join(SETTINGS_ROUTES, '_content/tokens.tsx'), 'utf8').includes(
+      "scenario: 'settings-tokens/created-secret'",
+    ),
+  )
+
+  const fixture = mkdtempSync(join(tmpdir(), 'settings-guard-'))
+  try {
+    mkdirSync(join(fixture, '_content'))
+    writeFileSync(
+      join(fixture, '_content/tokens.tsx'),
+      "export const loader = ({ request }) => isDevScreenStateRequest(request, 'settings-tokens/created-secret')",
+    )
+    writeFileSync(
+      join(fixture, '_content/legacy-helper.cjs'),
+      "module.exports = require('~/services/dev-screen-state.server')",
+    )
+    writeFileSync(
+      join(fixture, '_content/tokens.test.tsx'),
+      "import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'",
+    )
+    writeFileSync(
+      join(fixture, '_content/capture.test.mjs'),
+      "import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'",
+    )
+    writeFileSync(
+      join(fixture, '_content/capture-helper.mts'),
+      "export { isDevScreenStateRequest } from '~/services/dev-screen-state.server'",
+    )
+    writeFileSync(
+      join(fixture, '_content/tokens.spec.tsx'),
+      "import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'",
+    )
+    assert.deepEqual(settingsCaptureStateMentions(fixture), [
+      join('_content', 'capture-helper.mts'),
+      join('_content', 'legacy-helper.cjs'),
+      join('_content', 'tokens.tsx'),
+    ])
+  } finally {
+    rmSync(fixture, { recursive: true, force: true })
+  }
+})
+
+test('the created-secret capture submits the real token form and waits for its result', () => {
+  const tokens = ledgerScreens.find((screen) => screen.id === 'settings-tokens')
+  const state = tokens.states.find(({ id }) => id === 'created-secret')
+  assert.equal(state.setup.scenario, 'settings-tokens/created-secret')
+  assert.equal(state.setup.reseedBeforeCapture, true)
+  assert.equal(state.setup.actionResponse, undefined)
+  const [fill, submit, ...rest] = state.setup.interactions ?? []
+  assert.deepEqual(rest, [])
+  assert.equal(fill?.action, 'fill')
+  assert.equal(fill.selector, '#token-name')
+  assert.notEqual(fill.value.trim(), '')
+  assert.notEqual(fill.value, 'CLI deploy')
+  assert.equal(submit?.action, 'click')
+  assert.match(submit.selector, /^form:has\(#token-name\) /)
+  // The created-token panel renders only from the action's response.
+  assert.match(
+    state.setup.postInteractionReady.selector,
+    /\[role="status"\] code/,
+  )
+})
+
+test('the Members warning capture submits the removal and waits for the committed dialog', () => {
+  const members = ledgerScreens.find((screen) => screen.id === 'settings')
+  const { setup } = members.states.find(({ id }) => id === 'result-warning')
+  assert.deepEqual(setup.actionResponse, {
+    route: '/settings',
+    method: 'POST',
+    intent: 'remove-member',
+    status: 409,
+    data: {
+      ok: false,
+      code: 'removed-transfer-failed',
+      intent: 'remove-member',
+      removalCommitted: true,
+    },
+  })
+  assert.equal(
+    setup.interactions.at(-1).selector,
+    '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+  )
+  // Only a committed removal drops the destructive confirmation; an
+  // uncommitted failure keeps it, so the readiness must require its absence.
+  assert.ok(
+    setup.postInteractionReady.visibleWith.some(
+      (selector) =>
+        selector.includes(':not(:has([data-slot="alert-dialog-action"]))') &&
+        selector.includes('removed-transfer-failed'),
+    ),
+  )
+})
+
+test('the Members transfer capture closes the committed warning before waiting for the row', () => {
+  const members = ledgerScreens.find((screen) => screen.id === 'settings')
+  const warning = members.states.find(({ id }) => id === 'result-warning')
+  const { setup } = members.states.find(
+    ({ id }) => id === 'result-warning-transfer',
+  )
+  assert.deepEqual(setup.actionResponse, warning.setup.actionResponse)
+  const confirm = setup.interactions.at(-2)
+  assert.equal(confirm.selector, warning.setup.interactions.at(-1).selector)
+  // Close only after the committed warning replaced the confirmation.
+  assert.equal(
+    confirm.readySelector,
+    warning.setup.postInteractionReady.visibleWith[0],
+  )
+  assert.equal(
+    setup.interactions.at(-1).selector,
+    '[role="alertdialog"] [data-slot="alert-dialog-cancel"]',
+  )
+  // The modal backdrop blurs the row, so readiness requires no open dialog.
+  assert.match(
+    setup.postInteractionReady.selector,
+    /^body:not\(:has\(\[role="alertdialog"\]\)\) #removed-members .*button\[data-transfer-removed-files\]:enabled$/,
+  )
+})
+
+test('the Settings 403 capture is a Team member opening the admin-only Bots page', () => {
+  const bots = ledgerScreens.find((screen) => screen.id === 'settings-bots')
+  const state = bots.states.find(({ id }) => id === 'forbidden')
+  assert.equal(state.expectedStatus, 403)
+  assert.equal(state.expectedError, 'settings-error-boundary')
+  assert.equal(state.setup.auth, 'team-member')
+  assert.equal(state.setup.scenario, undefined)
+  assert.equal(state.setup.actionResponse, undefined)
+  assert.equal(state.setup.interactions, undefined)
+  assert.match(state.setup.ready.selector, /a\[href="\/settings"\]/)
+})
+
+test('the synthetic General content errors are retired and the root error remains', () => {
+  const general = ledgerScreens.find(
+    (screen) => screen.id === 'settings-general',
+  )
+  const ids = general.states.map((state) => state.id)
+  for (const retired of ['forbidden', 'not-found', 'unexpected-error']) {
+    assert.ok(!ids.includes(retired), retired)
+    assert.ok(!screenScenarioAllowlist.has(`settings-general/${retired}`))
+  }
+  const root = general.states.find((state) => state.id === 'root-error')
+  assert.equal(root.setup.scenario, 'settings-general/root-error')
+  assert.equal(root.expectedError, 'route-error-boundary')
+  assert.equal(root.expectedStatus, 500)
 })

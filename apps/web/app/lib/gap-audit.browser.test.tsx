@@ -164,6 +164,16 @@ describe('scenario visual regression: gap audit fixtures', () => {
       ),
     ).toHaveLength(1)
   })
+  test('keeps a marked secret out of finding descriptions', () => {
+    const findings = fixture(
+      '<div style="height:20px;background:red">Visible label</div><div style="height:20px;background:red">Token <code data-gap-audit-redact>as_secret_value</code></div>',
+    )
+    expect(findings).toHaveLength(1)
+    const serialized = JSON.stringify(findings)
+    expect(serialized).not.toContain('as_secret_value')
+    expect(serialized).toContain('Token [redacted]')
+    expect(serialized).toContain('Visible label')
+  })
   test('ignores padding boxes when their ink has space', () => {
     expect(
       fixture(

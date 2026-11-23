@@ -22,7 +22,6 @@ import {
   runConfirmedMutation,
 } from '~/lib/settings-confirmation'
 import { StatusBanner } from '../+components/settings-banner'
-import { simulateRemovedAssetTransferFailure } from '~/services/dev-screen-state.server'
 import { TeamActions } from '../+components/team-actions'
 import {
   MemberConfirmation,
@@ -159,10 +158,25 @@ export const screen = {
     },
     {
       id: 'result-warning',
-      description: 'Removed member with a file available for transfer',
+      description:
+        'Committed-removal transfer warning in the open dialog over the refreshed member list',
       setup: {
         scenario: 'settings/result-warning',
         reseedBeforeCapture: true,
+        // The transfer service has no seed-only failure for this removal, so
+        // the browser receives the action's committed-removal warning.
+        actionResponse: {
+          route: '/settings',
+          method: 'POST',
+          intent: 'remove-member',
+          status: 409,
+          data: {
+            ok: false,
+            code: 'removed-transfer-failed',
+            intent: 'remove-member',
+            removalCommitted: true,
+          },
+        },
         ready: {
           selector: 'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
           description: 'Active member actions are ready',
@@ -185,11 +199,68 @@ export const screen = {
         ],
         postInteractionReady: {
           selector:
-            '#removed-members tr:has([data-owned-file-count="1"]:visible) button[id$="-removed-member"][data-transfer-removed-files]:enabled',
+            '#removed-members tr:has([data-owned-file-count="1"]:visible) button[data-transfer-removed-files]:enabled',
+          // A committed removal leaves only Close in the dialog: the
+          // destructive confirmation is gone.
           visibleWith: [
-            '[role="alertdialog"] [role="status"][data-settings-status="removed-transfer-failed"]',
+            '[role="alertdialog"]:not(:has([data-slot="alert-dialog-action"])) [role="status"][data-settings-status="removed-transfer-failed"]',
           ],
           description: 'Removed member with a file available for transfer',
+        },
+      },
+    },
+    {
+      id: 'result-warning-transfer',
+      description:
+        'After closing the committed-removal warning, the removed member with a file available for transfer',
+      setup: {
+        scenario: 'settings/result-warning',
+        reseedBeforeCapture: true,
+        actionResponse: {
+          route: '/settings',
+          method: 'POST',
+          intent: 'remove-member',
+          status: 409,
+          data: {
+            ok: false,
+            code: 'removed-transfer-failed',
+            intent: 'remove-member',
+            removalCommitted: true,
+          },
+        },
+        ready: {
+          selector: 'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          description: 'Active member actions are ready',
+        },
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
+          },
+          { action: 'click', selector: '[data-member-action="remove-member"]' },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [role="radio"][id$="-self"]',
+          },
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
+            readySelector:
+              '[role="alertdialog"]:not(:has([data-slot="alert-dialog-action"])) [role="status"][data-settings-status="removed-transfer-failed"]',
+          },
+          // The modal backdrop blurs the page, so the removed row is
+          // captured after the user closes the committed warning.
+          {
+            action: 'click',
+            selector: '[role="alertdialog"] [data-slot="alert-dialog-cancel"]',
+          },
+        ],
+        postInteractionReady: {
+          selector:
+            'body:not(:has([role="alertdialog"])) #removed-members tr:has([data-owned-file-count="1"]:visible) button[data-transfer-removed-files]:enabled',
+          description:
+            'Dialog closed; removed member with a file available for transfer',
         },
       },
     },
@@ -291,18 +362,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         if (result.kind === 'ok') {
           const recipientUserId = stringValue(form.get('recipientUserId'))
           if (recipientUserId && recipientUserId !== NO_ASSET_TRANSFER) {
-            const transferResult = simulateRemovedAssetTransferFailure(
-              request,
-              user.workspaceId,
+            const transferResult = await transferRemovedMemberAssets(
+              db,
+              user,
               userId,
+              recipientUserId,
             )
-              ? { kind: 'invalid' }
-              : await transferRemovedMemberAssets(
-                  db,
-                  user,
-                  userId,
-                  recipientUserId,
-                )
             if (transferResult.kind !== 'ok') {
               return actionData(
                 {

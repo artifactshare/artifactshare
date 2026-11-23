@@ -32,6 +32,24 @@ export const screen = {
   primaryAction: 'Botを管理する',
   states: [
     {
+      id: 'forbidden',
+      description: 'A Team member opens the admin-only Bots page (403)',
+      expectedStatus: 403,
+      expectedError: 'settings-error-boundary',
+      setup: {
+        auth: 'team-member',
+        ready: {
+          selector:
+            '[data-screen-capture-error="settings-error-boundary"] a[href="/settings"]',
+          description: 'Settings recovery and navigation are visible',
+          visibleWith: [
+            '#app-topbar',
+            'main nav a[href="/settings/billing"], main button[data-slot="sheet-trigger"]',
+          ],
+        },
+      },
+    },
+    {
       id: 'long-email',
       description: 'long-email responsive controls and content',
       setup: {

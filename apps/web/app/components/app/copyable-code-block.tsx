@@ -46,8 +46,11 @@ export function CopyableCodeBlock({
   copyTabIndex,
   className,
   copyButtonVariant,
+  secret = false,
 }: {
   code: string
+  /** Keeps a one-time secret out of capture diagnostics; it still renders. */
+  secret?: boolean
   name: string
   labels: CopyableCodeLabels
   children?: ReactNode
@@ -74,6 +77,7 @@ export function CopyableCodeBlock({
   )
   const content = (
     <code
+      data-gap-audit-redact={secret || undefined}
       className={cn(
         '[font:inherit]',
         wrap

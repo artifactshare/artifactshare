@@ -87,38 +87,60 @@ export async function createCaptureOutput(
   await mkdir(target, { recursive: true })
 }
 
-export function verifySettingsErrorEvidence(general, manifest) {
-  const errorStates = general.states.filter((state) => state.expectedError)
-  for (const id of [
-    'forbidden',
-    'not-found',
-    'unexpected-error',
-    'root-error',
-  ]) {
-    if (!errorStates.some((state) => state.id === id))
-      throw new Error('Missing required error state: ' + id)
-  }
-  for (const state of errorStates) {
-    for (const viewport of ['desktop', 'mobile'])
-      for (const theme of ['light', 'dark']) {
-        const evidence = manifest.find(
-          (entry) =>
-            entry.screen === general.id &&
-            entry.state === state.id &&
-            entry.viewport === viewport &&
-            entry.theme === theme &&
-            !entry.section,
-        )
-        if (
-          !evidence ||
-          evidence.httpStatus !== state.expectedStatus ||
-          evidence.boundaryMarker !== state.expectedError ||
-          evidence.readySelector !== state.setup.ready.selector
-        )
-          throw new Error(
-            'Missing error evidence: ' + [state.id, viewport, theme].join('/'),
+// The Settings boundary comes from a Team member's real request to an
+// admin-only page; the standalone root boundary comes from the root route.
+export const SETTINGS_ERROR_EVIDENCE = [
+  {
+    screen: 'settings-bots',
+    state: 'forbidden',
+    status: 403,
+    marker: 'settings-error-boundary',
+  },
+  {
+    screen: 'settings-general',
+    state: 'root-error',
+    status: 500,
+    marker: 'route-error-boundary',
+  },
+]
+
+export function verifySettingsErrorEvidence(screens, manifest) {
+  for (const required of SETTINGS_ERROR_EVIDENCE) {
+    const name = required.screen + '/' + required.state
+    const screen = screens.find((candidate) => candidate.id === required.screen)
+    const state = screen?.states.find(
+      (candidate) => candidate.id === required.state,
+    )
+    if (
+      !state ||
+      state.expectedStatus !== required.status ||
+      state.expectedError !== required.marker
+    )
+      throw new Error('Missing required error state: ' + name)
+    // Every locale the screen declares is captured, so each needs evidence.
+    for (const locale of Object.keys(screen.route))
+      for (const viewport of ['desktop', 'mobile'])
+        for (const theme of ['light', 'dark']) {
+          const evidence = manifest.find(
+            (entry) =>
+              entry.screen === required.screen &&
+              entry.state === required.state &&
+              entry.locale === locale &&
+              entry.viewport === viewport &&
+              entry.theme === theme &&
+              !entry.section,
           )
-      }
+          if (
+            !evidence ||
+            evidence.httpStatus !== required.status ||
+            evidence.boundaryMarker !== required.marker ||
+            evidence.readySelector !== state.setup.ready.selector
+          )
+            throw new Error(
+              'Missing error evidence: ' +
+                [name, locale, viewport, theme].join('/'),
+            )
+        }
   }
 }
 
@@ -170,8 +192,7 @@ if (
           )
       }
       const { screens } = await import('./screen-ledger.mjs')
-      const general = screens.find((screen) => screen.id === 'settings-general')
-      verifySettingsErrorEvidence(general, manifest)
+      verifySettingsErrorEvidence(screens, manifest)
     }
   }
 }
