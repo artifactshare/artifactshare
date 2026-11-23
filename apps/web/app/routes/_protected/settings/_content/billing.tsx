@@ -106,7 +106,6 @@ import {
 import { settingsShellShouldRevalidate } from '../+lib/shell-revalidation'
 import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
 import { countActiveProjects } from '~/services/projects.server'
-import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { ScreenSpec } from '~/types/screen'
 
 export const screen = {
@@ -120,11 +119,6 @@ export const screen = {
   role: '契約と請求を管理する',
   primaryAction: 'プランを管理する',
   states: [
-    {
-      id: 'team-unsubscribed-high-usage',
-      description: 'Team without a subscription at high usage',
-      setup: { scenario: 'settings-billing/team-unsubscribed-high-usage' },
-    },
     {
       id: 'monthly-jpy',
       description: 'monthly jpy plan cards',
@@ -272,11 +266,6 @@ export const screen = {
       },
     },
     {
-      id: 'team-unsubscribed',
-      description: 'Team without a subscription',
-      setup: { scenario: 'settings-billing/team-unsubscribed' },
-    },
-    {
       id: 'near-limit',
       description: 'Storage near limit',
       setup: {
@@ -295,7 +284,17 @@ export const screen = {
     {
       id: 'default',
       description: '請求設定',
-      setup: {},
+      setup: {
+        scenario: 'settings-billing/purchase',
+        ready: {
+          selector:
+            'body:not(:has([data-billing-unavailable], [data-billing-contract-details])) [data-plan="team"] form button[type="submit"]:enabled',
+          visibleWith: [
+            '[data-plan="plus"] form button[type="submit"]:enabled',
+          ],
+          description: 'Configured Free purchase controls',
+        },
+      },
     },
     {
       id: 'subscribed',
@@ -360,47 +359,23 @@ export async function loader({
     workspace.stripe_subscription_id &&
     hasActiveSubscription(workspace.stripe_subscription_status),
   )
-  const stripeConfigured = isBillingConfigured(env)
+  const billingConfigured = isBillingConfigured(env)
   // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
   const canManage = role === 'owner'
-  const useDevFixture =
-    canManage &&
-    (isDevScreenStateRequest(request, 'settings-billing/subscribed') ||
-      isDevScreenStateRequest(request, 'settings-billing/past-due') ||
-      isDevScreenStateRequest(
-        request,
-        'settings-billing/continuing-near-limit',
-      ))
-  const billingConfigured =
-    stripeConfigured ||
-    useDevFixture ||
-    (canManage &&
-      (isDevScreenStateRequest(request, 'settings-billing/purchase') ||
-        isDevScreenStateRequest(request, 'settings-billing/near-limit')))
-  const devContract: SubscriptionContract = {
-    plan: 'team',
-    interval: 'monthly',
-    currency: 'usd',
-    amount: BILLING_PRICES.team.usd.month,
-    renewsAt: '2030-01-01T00:00:00.000Z',
-    cancelAtPeriodEnd: false,
-  }
   const [activeProjectCount, externalPostingEnabled, contract] =
     await Promise.all([
       countActiveProjects(db, user.workspaceId),
       canUseExternalPosting(normalizeWorkspaceLinkPolicy(workspace)),
-      useDevFixture
-        ? devContract
-        : canManage &&
-            hasSubscription &&
-            stripeConfigured &&
-            workspace.stripe_subscription_id
-          ? loadSubscriptionContract(
-              createStripeClient(env),
-              env,
-              workspace.stripe_subscription_id,
-            )
-          : Promise.resolve(null),
+      canManage &&
+      hasSubscription &&
+      billingConfigured &&
+      workspace.stripe_subscription_id
+        ? loadSubscriptionContract(
+            createStripeClient(env),
+            env,
+            workspace.stripe_subscription_id,
+          )
+        : Promise.resolve(null),
     ])
 
   // projection と計上判定で月境界をまたがないよう同じ時刻を使う。使用量と月額見込みは
@@ -616,10 +591,7 @@ export default function BillingPage({
       loaderData.storageUsedBytes,
       loaderData.storageQuotaBytes,
     )
-  const planLabel =
-    presentation === 'team-without-subscription'
-      ? t('billing.plan.teamUnsubscribed')
-      : planDisplayName(loaderData.plan, t)
+  const planLabel = planDisplayName(loaderData.plan, t)
 
   return (
     <SettingsPage>
@@ -638,11 +610,7 @@ export default function BillingPage({
         headingId="billing-heading"
         title={t('billing.title')}
         description={
-          !loaderData.canManage
-            ? t('billing.readOnly.body')
-            : presentation === 'team-without-subscription'
-              ? t('billing.teamUnsubscribed.body')
-              : t('billing.body')
+          !loaderData.canManage ? t('billing.readOnly.body') : t('billing.body')
         }
       >
         <SettingsSubsection title={t('billing.currentPlan')}>
@@ -670,9 +638,7 @@ export default function BillingPage({
           ) : null}
 
           <BillingActions
-            showStorageWarning={showStorageWarning}
             loaderData={loaderData}
-            presentation={presentation}
             awaitingCheckoutReflection={awaitingCheckoutReflection}
           />
         </SettingsSubsection>
@@ -789,8 +755,6 @@ function NearLimitNextStep({
 }) {
   const { t } = useT()
   if (!canManage) return <p>{t('team.usage.nearLimitMember')}</p>
-  if (presentation === 'team-without-subscription')
-    return <SupportContact topic="storage" />
   if (billingConfigured && presentation === 'purchase')
     return <p data-billing-upgrade-guidance>{t('team.usage.nearLimitAdmin')}</p>
   return null
@@ -1420,53 +1384,30 @@ function subscriptionStatusLabel(
   return t('billing.subscription.other')
 }
 
+// Checkout refuses a workspace already on a paid plan, so a paid plan without
+// an active subscription gets no purchase controls and no presentation of its
+// own.
 function billingPresentation(
   data: Pick<BillingView, 'plan' | 'hasSubscription'>,
 ) {
-  return data.hasSubscription
-    ? 'subscribed'
-    : data.plan === 'team'
-      ? 'team-without-subscription'
-      : 'purchase'
-}
-
-function SupportContact({ topic }: { topic: 'billing' | 'storage' }) {
-  const { t } = useT()
-  const subject =
-    topic === 'storage'
-      ? 'Artifact Share upgrade help: storage'
-      : 'Artifact Share billing help'
-  return (
-    <p>
-      <a
-        className={inlineLinkClassName}
-        href={`mailto:support@artifactshare.com?subject=${encodeURIComponent(subject)}`}
-      >
-        {t('billing.contactSupport')}
-      </a>
-    </p>
-  )
+  if (data.hasSubscription) return 'subscribed'
+  return data.plan === 'plus' || data.plan === 'team' ? 'paid-plan' : 'purchase'
 }
 
 function BillingActions({
-  showStorageWarning,
   loaderData,
-  presentation,
   awaitingCheckoutReflection,
 }: {
   loaderData: BillingView
-  showStorageWarning: boolean
-  presentation: ReturnType<typeof billingPresentation>
   awaitingCheckoutReflection: boolean
 }) {
   const { locale } = useT()
   if (!loaderData.canManage) return <ReadOnlyNotice />
-  if (presentation === 'team-without-subscription')
-    return showStorageWarning ? null : <SupportContact topic="billing" />
-
   if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
-  if (loaderData.hasSubscription)
+  const presentation = billingPresentation(loaderData)
+  if (presentation === 'subscribed')
     return <SubscribedActions contract={loaderData.contract} />
+  if (presentation === 'paid-plan') return null
   if (awaitingCheckoutReflection) return <CheckoutPendingNotice />
   return (
     <CheckoutActions

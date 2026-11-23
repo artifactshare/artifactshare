@@ -4,6 +4,18 @@ import { sql } from 'kysely'
 import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
+import { BILLING_PRICES } from '~/lib/billing-prices'
+import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
+import {
+  captureStripeVars,
+  startCaptureStripe,
+} from '../../../../scripts/capture-stripe.mjs'
+import {
+  createStripeClient,
+  loadSubscriptionContract,
+  previewPlanChange,
+  type BillingEnv,
+} from './billing.server'
 import {
   createD1BatchFixture,
   type D1BatchSqliteRef,
@@ -12,7 +24,7 @@ import {
 vi.mock('cloudflare:workers', () => ({ env: { BUCKET: { delete: vi.fn() } } }))
 
 import type { Kysely } from 'kysely'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
@@ -2297,38 +2309,6 @@ test.each(['finite', 'unlimited', 'zero'])(
   },
 )
 
-test('past-due billing fixture survives repeated sign-in', async () => {
-  const { db } = createMigratedInMemoryDb()
-  const now = '2026-09-09T00:00:00.000Z'
-  try {
-    for (let signIn = 0; signIn < 2; signIn++) {
-      const { workspaceId } = await ensureDevScreenState(
-        db,
-        'settings-billing/past-due',
-        now,
-        'team',
-      )
-      expect(
-        await db
-          .selectFrom('workspaces')
-          .select([
-            'plan',
-            'stripe_subscription_id',
-            'stripe_subscription_status',
-          ])
-          .where('id', '=', workspaceId)
-          .executeTakeFirstOrThrow(),
-      ).toEqual({
-        plan: 'team',
-        stripe_subscription_id: `${workspaceId}-subscribed`,
-        stripe_subscription_status: 'past_due',
-      })
-    }
-  } finally {
-    await db.destroy()
-  }
-})
-
 test('external access fixture recreates a deleted shareable with retained publication history', async () => {
   const { db } = createMigratedInMemoryDb()
   const now = '2026-09-09T00:00:00.000Z'
@@ -2585,42 +2565,66 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
           .executeTakeFirstOrThrow(),
       ).toEqual({ image: null, name: 'Owner' })
     }
-    const purchase = await ensureDevScreenState(
-      db,
-      'settings-billing/purchase',
-      now,
-      'team',
-    )
-    await db
-      .updateTable('workspaces')
-      .set({
-        plan: 'team',
-        stripe_subscription_id: 'fixture-subscription',
-        storage_used_bytes: 123,
-        storage_quota_bytes: 456,
-      })
-      .where('id', '=', purchase.workspaceId)
-      .execute()
-    await ensureDevScreenState(db, 'settings-billing/purchase', now, 'team')
-    expect(
+    // Both Free billing states rebuild the same starting row on a re-seed,
+    // whatever the previous seed or an edit left behind.
+    for (const [state, used] of [
+      ['purchase', 0],
+      ['near-limit', Math.round(PLAN_STORAGE_QUOTA_BYTES.free * 0.95)],
+    ] as const) {
+      const scenario = `settings-billing/${state}`
+      const { workspaceId: billingWorkspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
       await db
-        .selectFrom('workspaces')
-        .select([
-          'plan',
-          'storage_used_bytes',
-          'storage_quota_bytes',
-          'stripe_subscription_id',
-          'stripe_subscription_status',
-        ])
-        .where('id', '=', purchase.workspaceId)
-        .executeTakeFirstOrThrow(),
-    ).toEqual({
-      plan: 'free',
-      storage_used_bytes: 0,
-      storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
-      stripe_subscription_id: null,
-      stripe_subscription_status: 'none',
-    })
+        .updateTable('workspaces')
+        .set({
+          plan: 'team',
+          stripe_customer_id: 'cus_stale',
+          stripe_subscription_id: 'fixture-subscription',
+          stripe_subscription_status: 'active',
+          storage_used_bytes: 123,
+          storage_quota_bytes: 456,
+          link_sharing_enabled: 0,
+          external_posting_enabled: 1,
+          link_expiry_default_days: 7,
+          link_expiry_max_days: 90,
+        })
+        .where('id', '=', billingWorkspaceId)
+        .execute()
+      await ensureDevScreenState(db, scenario, now, 'team')
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select([
+            'plan',
+            'stripe_customer_id',
+            'stripe_subscription_id',
+            'stripe_subscription_status',
+            'storage_used_bytes',
+            'storage_quota_bytes',
+            'link_sharing_enabled',
+            'external_posting_enabled',
+            'link_expiry_default_days',
+            'link_expiry_max_days',
+          ])
+          .where('id', '=', billingWorkspaceId)
+          .executeTakeFirstOrThrow(),
+        state,
+      ).toEqual({
+        plan: 'free',
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        stripe_subscription_status: 'none',
+        storage_used_bytes: used,
+        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+        link_sharing_enabled: 1,
+        external_posting_enabled: 0,
+        ...linkExpiryStartingColumns(),
+      })
+    }
   } finally {
     await db.destroy()
   }
@@ -2869,59 +2873,227 @@ test.each(['team', 'plus'] as const)(
   },
 )
 
-test.each([
-  ['team-unsubscribed', 0, PLAN_STORAGE_QUOTA_BYTES.team],
-  [
-    'team-unsubscribed-high-usage',
-    PLAN_STORAGE_QUOTA_BYTES.team * 0.95,
-    PLAN_STORAGE_QUOTA_BYTES.team,
-  ],
-  [
-    'near-limit',
-    PLAN_STORAGE_QUOTA_BYTES.free * 0.95,
-    PLAN_STORAGE_QUOTA_BYTES.free,
-  ],
-  ['continuing-near-limit', 100_000_000_000, 120_000_000_000],
-] as const)(
-  'billing capture %s restores usage and quota',
-  async (state, used, quota) => {
-    const { db } = createMigratedInMemoryDb()
-    try {
-      const { workspaceId } = await ensureDevScreenState(
-        db,
-        'settings-billing/' + state,
-        '2026-07-31T12:00:00.000Z',
-        'team',
-      )
-      const row = await db
+test('billing capture near-limit puts a Free workspace near its production quota', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      'settings-billing/near-limit',
+      '2026-07-31T12:00:00.000Z',
+      'team',
+    )
+    expect(
+      await db
         .selectFrom('workspaces')
         .select([
+          'plan',
+          'stripe_subscription_id',
           'storage_used_bytes',
           'storage_quota_bytes',
-          'stripe_subscription_id',
-          'plan',
         ])
         .where('id', '=', workspaceId)
-        .executeTakeFirstOrThrow()
-      expect(row.storage_used_bytes).toBe(used)
-      expect(row.storage_quota_bytes).toBe(quota)
-      if (state === 'near-limit')
-        expect(row).toMatchObject({
-          plan: 'free',
-          stripe_subscription_id: null,
-        })
-      if (state.startsWith('team-unsubscribed'))
-        expect(row).toMatchObject({
-          plan: 'team',
-          stripe_subscription_id: null,
-        })
-      if (state === 'continuing-near-limit')
-        expect(used / (100 * 1024 ** 3)).toBeGreaterThan(0.9)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      plan: 'free',
+      stripe_subscription_id: null,
+      storage_used_bytes: Math.round(PLAN_STORAGE_QUOTA_BYTES.free * 0.95),
+      storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+    })
+  } finally {
+    await db.destroy()
+  }
+})
+
+test.each([
+  'settings-billing/team-unsubscribed',
+  'settings-billing/team-unsubscribed-high-usage',
+])(
+  'retired billing state %s can no longer be selected or seeded',
+  async (scenario) => {
+    expect(isScreenScenario(scenario)).toBe(false)
+    const { db } = createMigratedInMemoryDb()
+    try {
+      await expect(
+        ensureDevScreenState(db, scenario, '2026-07-31T12:00:00.000Z', 'team'),
+      ).rejects.toThrow('Unknown screen scenario')
     } finally {
       await db.destroy()
     }
   },
 )
+
+describe('paid billing capture states', () => {
+  const now = '2026-07-31T12:00:00.000Z'
+  let fake: Awaited<ReturnType<typeof startCaptureStripe>>
+  let billing: BillingEnv
+  beforeAll(async () => {
+    fake = await startCaptureStripe({
+      clock: () => new Date('2026-07-15T12:00:00.000Z'),
+    })
+    billing = captureStripeVars(fake.origin)
+  })
+  afterAll(() => fake.close())
+
+  test.each([
+    ['subscribed', 'active', null],
+    ['past-due', 'past_due', null],
+    [
+      'continuing-near-limit',
+      'active',
+      Math.round(PLAN_STORAGE_QUOTA_BYTES.team * 0.95),
+    ],
+  ] as const)(
+    '%s stores the fake Stripe contract through the sync service',
+    async (state, status, used) => {
+      const { db } = createMigratedInMemoryDb()
+      try {
+        // Every seed rebuilds the billing state: a repeated sign-in after the
+        // billing fields drifted stores the same row the sync stores for a
+        // first contract.
+        let seeded: unknown
+        for (let signIn = 0; signIn < 2; signIn++) {
+          if (signIn === 1)
+            await db
+              .updateTable('workspaces')
+              .set({
+                plan: 'plus',
+                stripe_customer_id: 'cus_stale',
+                stripe_subscription_id: 'sub_other',
+                stripe_subscription_status: 'canceled',
+                storage_quota_bytes: 1,
+                storage_used_bytes: 1,
+                link_expiry_default_days: 7,
+                link_expiry_max_days: 90,
+              })
+              .execute()
+          const { workspaceId } = await ensureDevScreenState(
+            db,
+            `settings-billing/${state}`,
+            now,
+            'team',
+            billing,
+          )
+          const row = await db
+            .selectFrom('workspaces')
+            .selectAll()
+            .where('id', '=', workspaceId)
+            .executeTakeFirstOrThrow()
+          expect(row, `sign-in ${signIn}`).toMatchObject({
+            plan: 'team',
+            stripe_subscription_id: `sub_capture_${workspaceId}`,
+            stripe_subscription_status: status,
+            storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.team,
+            storage_used_bytes: used ?? 0,
+            // The first-contract defaults the sync applies to Team.
+            link_sharing_enabled: 1,
+            external_posting_enabled: 1,
+            ...linkExpiryStartingColumns(),
+          })
+          if (signIn === 0) seeded = row
+          else expect(row).toEqual(seeded)
+          const stripe = createStripeClient(billing)
+          expect(
+            await loadSubscriptionContract(
+              stripe,
+              billing,
+              row.stripe_subscription_id!,
+            ),
+          ).toEqual({
+            plan: 'team',
+            interval: 'monthly',
+            currency: 'usd',
+            amount: BILLING_PRICES.team.usd.month,
+            renewsAt: '2026-08-01T00:00:00.000Z',
+            cancelAtPeriodEnd: false,
+          })
+          // The two changes the page offers: the preview decodes the price
+          // difference the fake invoice reports, in display units.
+          for (const [plan, interval, amount] of [
+            [
+              'plus',
+              'monthly',
+              BILLING_PRICES.plus.usd.month - BILLING_PRICES.team.usd.month,
+            ],
+            [
+              'team',
+              'yearly',
+              BILLING_PRICES.team.usd.year - BILLING_PRICES.team.usd.month,
+            ],
+          ] as const)
+            expect(
+              await previewPlanChange(stripe, billing, row, plan, interval),
+            ).toEqual({
+              kind: 'ok',
+              currency: 'usd',
+              prorationAmount: amount,
+              nextInvoiceAt: '2026-08-01T00:00:00.000Z',
+            })
+        }
+        // Seeding again after the row changed rebuilds the same row: the
+        // capture shows what the sync stores for a first paid contract.
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0, storage_used_bytes: 1 })
+          .execute()
+        const { workspaceId } = await ensureDevScreenState(
+          db,
+          `settings-billing/${state}`,
+          now,
+          'team',
+          billing,
+        )
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .selectAll()
+            .where('id', '=', workspaceId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual(seeded)
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test('setup fails without the fake Stripe or a successful sync, recording no paid state', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      for (const [env, failure] of [
+        [undefined, 'fake Stripe'],
+        [{ ...billing, STRIPE_API_ORIGIN: undefined }, 'fake Stripe'],
+        [
+          { ...billing, STRIPE_API_ORIGIN: 'http://stripe.example.test:4242' },
+          'fake Stripe',
+        ],
+        [{ ...billing, STRIPE_SECRET_KEY: 'not-the-capture-key' }, 'API key'],
+        [
+          { ...billing, STRIPE_PRICE_TEAM_MONTHLY: 'price_other_team' },
+          'unknown-price',
+        ],
+      ] as const)
+        await expect(
+          ensureDevScreenState(
+            db,
+            'settings-billing/subscribed',
+            now,
+            'team',
+            env,
+          ),
+        ).rejects.toThrow(failure)
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select('id')
+          .where('stripe_subscription_id', 'is not', null)
+          .execute(),
+      ).toEqual([])
+    } finally {
+      log.mockRestore()
+      await db.destroy()
+    }
+  })
+})
 
 test('refreshing the transfer warning restores its removed member and owned file', async () => {
   const { db } = createMigratedInMemoryDb()

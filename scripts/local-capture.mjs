@@ -1,7 +1,8 @@
 // Runs `screens:capture` or `walkthroughs:capture` against a private local
 // stack: prepares missing inputs, starts the app, sandbox and og-image dev
 // services for the current HEAD on their own ports, registry and persistence,
-// runs the capture, and stops everything it started on every exit path.
+// with a loopback fake Stripe (`scripts/capture-stripe.mjs`) in place of real
+// Stripe, runs the capture, and stops everything it started on every exit path.
 //
 //   node scripts/local-capture.mjs screens -- --screen about
 //   node scripts/local-capture.mjs walkthroughs -- --task share-file-link
@@ -20,6 +21,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { request } from 'node:https'
 import { connect, createServer } from 'node:net'
@@ -28,6 +30,7 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
+import { captureStripeVars, startCaptureStripe } from './capture-stripe.mjs'
 import {
   certificateSupportsDevelopmentHosts,
   DEV_SERVICES,
@@ -66,12 +69,16 @@ export const LOCAL_CAPTURE_MODES = {
   screens: {
     command: 'pnpm screens:capture:local',
     launcher: 'scripts/run-screen-capture.mjs',
+    // Tells the screen capture that this run's fake Stripe is up, so it keeps
+    // the local-only billing states. `screens:capture` never passes it.
+    modeArgs: ['--local-fake-stripe'],
     parse: async (argv) => (await screenCapture()).parseArgs(argv),
     needsCli: false,
   },
   walkthroughs: {
     command: 'pnpm walkthroughs:capture:local',
     launcher: 'scripts/run-task-walkthroughs.mjs',
+    modeArgs: [],
     parse: async (argv) =>
       (await walkthroughCapture()).parseWalkthroughArgs(argv),
     needsCli: true,
@@ -124,6 +131,31 @@ export async function portIsFree(port, hosts = LOOPBACK_HOSTS) {
     await closeServer(server)
   }
   return true
+}
+
+/**
+ * Binds every selected port on `host` until `release`, so a listener the
+ * kernel places meanwhile (the fake Stripe's port 0) can take none of them.
+ * Explicitly configured ports may lie in the kernel's ephemeral range. A
+ * connection a hold accepts is closed at once, so no client can keep the
+ * release (and with it startup or teardown) waiting.
+ */
+export async function holdPorts(ports, host = '127.0.0.1') {
+  const held = []
+  const release = () => Promise.all(held.map(closeServer))
+  for (const port of new Set(ports))
+    try {
+      const server = await listen(port, host)
+      server.on('connection', (socket) => socket.destroy())
+      held.push(server)
+    } catch (error) {
+      await release()
+      throw new Error(
+        `${host}:${port} was taken after it was selected (${error?.code ?? error}); rerun to choose other ports`,
+        { cause: error },
+      )
+    }
+  return { release }
 }
 
 /**
@@ -262,11 +294,49 @@ export function localInputs({
   }
 }
 
+// One assignment as Wrangler's dotenv parser reads it: `NAME=value` or
+// `NAME: value`, optionally exported, with a quoted value that may span
+// lines and a trailing comment. Kept in step with dotenv's own LINE pattern.
+const DOTENV_ASSIGNMENT =
+  /^[^\S\r\n]*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(?:\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?[^\S\r\n]*(?:#.*)?$/gmu
+
+/**
+ * Rewrites the runtime variables (copied or created from the template) so
+ * every Stripe value is the fake's: each copy of a Stripe variable is removed
+ * and the synthetic values are appended once. Other settings are kept.
+ */
+export function writeCaptureStripeVars(path, origin) {
+  const values = captureStripeVars(origin)
+  const names = new Set(Object.keys(values))
+  // Line endings are normalized first, as dotenv does, so every copied
+  // Stripe line is matched whatever the file's line endings.
+  const kept = readFileSync(path, 'utf8')
+    .replace(/\r\n?/gu, '\n')
+    .replace(DOTENV_ASSIGNMENT, (assignment, name) =>
+      names.has(name) ? '' : assignment,
+    )
+    .split('\n')
+  while (kept.length && kept.at(-1) === '') kept.pop()
+  writeFileSync(
+    path,
+    [
+      ...kept,
+      '',
+      '# Written by the local capture: its fake Stripe only.',
+      ...Object.entries(values).map(([name, value]) => `${name}=${value}`),
+      '',
+    ].join('\n'),
+  )
+}
+
 // Inherited values that would point a child at another stack's URL,
 // registry, persistence, logs, caches or CLI build. They are dropped and
 // replaced below.
 const INHERITED_TOPOLOGY =
   /^(?:SCREEN_CAPTURE_BASE_URL|SCREEN_CAPTURE_SANDBOX_URL|WALKTHROUGH_CLI_ENTRY|CLOUDFLARE_DEV_REGISTRY_PATH|WRANGLER_REGISTRY_PATH|WRANGLER_LOG_PATH|WRANGLER_CONFIG_PATH|WRANGLER_CACHE_DIR|MINIFLARE_CACHE_DIR|CLOUDFLARE_CF_FETCH_[A-Z0-9_]+|ARTIFACTSHARE_DEV_[A-Z0-9_]+|LOCAL_CAPTURE_[A-Z0-9_]+)$/u
+// Inherited Stripe settings could reach real Stripe; the services read only
+// the fake's values from the runtime variables.
+const INHERITED_STRIPE = /^STRIPE_[A-Z0-9_]+$/u
 
 /**
  * The environment every child of this invocation starts from. Inherited Git
@@ -279,7 +349,10 @@ const INHERITED_TOPOLOGY =
 export function ownedEnvironment(base, runtime) {
   const env = Object.fromEntries(
     Object.entries(base).filter(
-      ([name]) => !INHERITED_TOPOLOGY.test(name) && !name.startsWith('GIT_'),
+      ([name]) =>
+        !INHERITED_TOPOLOGY.test(name) &&
+        !INHERITED_STRIPE.test(name) &&
+        !name.startsWith('GIT_'),
     ),
   )
   return {
@@ -450,6 +523,9 @@ export function localCaptureCommands({
         cwd: app,
         env: {
           ...env,
+          // The React Router CLI keeps an inherited NODE_ENV; production mode
+          // would turn off dev sign-in and the fake Stripe origin.
+          NODE_ENV: 'development',
           ARTIFACTSHARE_INCLUDE_DEV_ROUTES: '1',
           // Revision checks ask the checkout; the export has no Git metadata.
           ARTIFACTSHARE_DEV_GIT_ROOT: root,
@@ -466,7 +542,7 @@ export function localCaptureCommands({
     capture: {
       name: 'capture',
       command: process.execPath,
-      args: [join(root, spec.launcher), ...argv],
+      args: [join(root, spec.launcher), ...spec.modeArgs, ...argv],
       cwd: root,
       env: {
         ...env,
@@ -1159,6 +1235,9 @@ export async function runLocalCapture({
     commands = localCaptureCommands,
     owner = new OwnedProcesses(),
     relay = startLoopbackRelay,
+    hold = holdPorts,
+    stripe = startCaptureStripe,
+    stripeVars = writeCaptureStripeVars,
     checks = readinessChecks,
     readyTimeoutMs,
   } = deps
@@ -1204,6 +1283,7 @@ export async function runLocalCapture({
   let status = 1
   let runtime
   let relayHandle
+  let stripeStart
   try {
     const forwarded = await parseLocalCaptureArgs(mode, argv)
     const timeoutMs = readyTimeoutMs ?? readyTimeout(env)
@@ -1230,6 +1310,21 @@ export async function runLocalCapture({
       log(`local capture: ${command.name}`)
       await step(owner.run(command))
     }
+    // The prepared variables get the fake's values before any service reads
+    // them; a fake that cannot listen stops the capture here. The selected
+    // ports are held while it binds, so its kernel-chosen port is none of
+    // them; they are free again before the relay and services bind them.
+    const holding = hold(Object.values(ports))
+    let fakeStripe
+    try {
+      await step(holding)
+      stripeStart = stripe()
+      fakeStripe = await step(stripeStart)
+    } finally {
+      await (await holding.catch(() => null))?.release()
+    }
+    stripeVars(files.vars.path, fakeStripe.origin)
+    log(`local capture: fake Stripe ${fakeStripe.origin}`)
     relayHandle = await step(relay(ports.app))
     const services = plan.services.map((command) => owner.start(command))
     const serviceExit = Promise.race(
@@ -1291,6 +1386,15 @@ export async function runLocalCapture({
     }
     try {
       await relayHandle?.close()
+    } catch (error) {
+      status = 1
+      log(
+        `local capture cleanup failed: ${error instanceof Error ? error.message : error}`,
+      )
+    }
+    try {
+      // Also a fake that finished starting after an interrupt.
+      await (await stripeStart?.catch(() => null))?.close()
     } catch (error) {
       status = 1
       log(

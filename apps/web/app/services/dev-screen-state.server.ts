@@ -3,6 +3,7 @@ import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
+import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
 import type { DB } from '~/types/db'
@@ -28,13 +29,22 @@ import {
   getOrCreateInboxContainerId,
   INBOX_CONTAINER_NAME,
 } from './projects.server'
+import {
+  createStripeClient,
+  isBillingConfigured,
+  parseStripeApiOrigin,
+  type BillingEnv,
+} from './billing.server'
+import { syncWorkspaceSubscription } from './billing-sync.server'
 
 const SCREEN_SCENARIO_IDS = scenarioIds as readonly string[]
 const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 // These scenarios require a header because browser navigations cannot attach it.
 // Screens whose representative state comes from a display-only fixture keyed by
 // the capture header. A browser navigation cannot set it, so /dev/sign-in must
-// not offer them: the state would be seeded but never shown.
+// not offer them: the state would be seeded but never shown. The billing
+// states instead need the local capture's fake Stripe configuration, which a
+// developer's own dev server does not have.
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-general/forbidden',
   'settings-general/not-found',
@@ -281,12 +291,92 @@ export async function seedDevScreenArtifactBodies(
   )
 }
 
-/** Creates the isolated workspace anchor used by screen-capture scenarios. */
+// Billing capture states whose contract the sync service stores from the
+// local capture's fake Stripe (`scripts/capture-stripe.mjs`).
+const CONTRACT_SCENARIOS = new Set([
+  'settings-billing/subscribed',
+  'settings-billing/past-due',
+  'settings-billing/continuing-near-limit',
+])
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+// Storage used in the near-limit states, as a share of the actual quota:
+// above the 90% warning threshold, below the limit.
+const NEAR_LIMIT_USAGE_SHARE = 0.95
+
+/** The fake Stripe subscription of a paid billing capture workspace. */
+export function captureSubscriptionId(workspaceId: string): string {
+  return `sub_capture_${workspaceId}`
+}
+
+function captureStripeClient(
+  billing: BillingEnv | undefined,
+  scenario: string,
+): { billing: BillingEnv; stripe: ReturnType<typeof createStripeClient> } {
+  const origin = billing?.STRIPE_API_ORIGIN
+  if (
+    !billing ||
+    !isBillingConfigured(billing) ||
+    !origin ||
+    !LOOPBACK_HOSTS.has(parseStripeApiOrigin(origin).host)
+  )
+    throw new Error(
+      `${scenario} reads its contract from the local capture's fake Stripe; run it with pnpm screens:capture:local`,
+    )
+  return { billing, stripe: createStripeClient(billing) }
+}
+
+/**
+ * Stores a paid capture contract through the production sync, from the fake
+ * Stripe subscription of this workspace. Plan, status and quota are what the
+ * sync derives; any failure fails the setup.
+ */
+async function syncCaptureSubscription(
+  db: Kysely<DB>,
+  scenario: string,
+  workspaceId: string,
+  billingEnv: BillingEnv | undefined,
+) {
+  const { billing, stripe } = captureStripeClient(billingEnv, scenario)
+  const result = await syncWorkspaceSubscription(
+    db,
+    stripe,
+    billing,
+    captureSubscriptionId(workspaceId),
+  )
+  if (result.kind !== 'ok')
+    throw new Error(
+      `${scenario} could not sync its fake Stripe subscription: ${result.kind}`,
+    )
+}
+
+async function setNearLimitUsage(db: Kysely<DB>, workspaceId: string) {
+  const { storage_quota_bytes } = await db
+    .selectFrom('workspaces')
+    .select('storage_quota_bytes')
+    .where('id', '=', workspaceId)
+    .executeTakeFirstOrThrow()
+  await db
+    .updateTable('workspaces')
+    .set({
+      storage_used_bytes: Math.round(
+        storage_quota_bytes * NEAR_LIMIT_USAGE_SHARE,
+      ),
+    })
+    .where('id', '=', workspaceId)
+    .execute()
+}
+
+/**
+ * Creates the isolated workspace anchor used by screen-capture scenarios.
+ * The paid billing states also need `billing`, the local capture's fake
+ * Stripe configuration; dev sign-in passes none and uses the Worker env.
+ */
 export async function ensureDevScreenState(
   db: Kysely<DB>,
   scenario: string,
   now: string,
   plan: 'free' | 'plus' | 'team',
+  billing: BillingEnv | undefined = env,
 ): Promise<{ workspaceId: string }> {
   if (!isScreenScenario(scenario))
     throw new Error(`Unknown screen scenario: ${scenario}`)
@@ -319,76 +409,33 @@ export async function ensureDevScreenState(
       .where('id', '=', workspaceId)
       .execute()
   }
-  if (
-    scenario === 'settings-billing/subscribed' ||
-    scenario === 'settings-billing/past-due' ||
-    scenario === 'settings-billing/continuing-near-limit'
-  ) {
-    await db
-      .updateTable('workspaces')
-      .set({
-        plan: 'team',
-        stripe_subscription_id: `${workspaceId}-subscribed`,
-        stripe_subscription_status:
-          scenario === 'settings-billing/past-due' ? 'past_due' : 'active',
-      })
-      .where('id', '=', workspaceId)
-      .execute()
-  }
-  if (
-    scenario === 'settings-billing/near-limit' ||
-    scenario === 'settings-billing/continuing-near-limit'
-  ) {
-    await db
-      .updateTable('workspaces')
-      .set({
-        storage_used_bytes: scenario.endsWith('/near-limit')
-          ? PLAN_STORAGE_QUOTA_BYTES.free * 0.95
-          : 100_000_000_000,
-        storage_quota_bytes: scenario.endsWith('/near-limit')
-          ? PLAN_STORAGE_QUOTA_BYTES.free
-          : 120_000_000_000,
-        ...(scenario === 'settings-billing/near-limit'
-          ? {
-              plan: 'free',
-              stripe_subscription_id: null,
-              stripe_subscription_status: 'none',
-            }
-          : {}),
-      })
-      .where('id', '=', workspaceId)
-      .execute()
-  }
-  if (scenario === 'settings-billing/purchase') {
+  if (scenario.startsWith('settings-billing/')) {
+    // Every billing seed rebuilds the same starting row: Free billing fields,
+    // no contract, and the sharing settings a new workspace starts with. A
+    // contract state then holds exactly what the sync stores for a first paid
+    // contract, however often the state is seeded.
     await db
       .updateTable('workspaces')
       .set({
         plan: 'free',
+        stripe_customer_id: null,
         stripe_subscription_id: null,
         stripe_subscription_status: 'none',
         storage_used_bytes: 0,
         storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.free,
+        link_sharing_enabled: 1,
+        external_posting_enabled: 0,
       })
       .where('id', '=', workspaceId)
       .execute()
   }
+  if (CONTRACT_SCENARIOS.has(scenario))
+    await syncCaptureSubscription(db, scenario, workspaceId, billing)
   if (
-    scenario === 'settings-billing/team-unsubscribed' ||
-    scenario === 'settings-billing/team-unsubscribed-high-usage'
+    scenario === 'settings-billing/near-limit' ||
+    scenario === 'settings-billing/continuing-near-limit'
   )
-    await db
-      .updateTable('workspaces')
-      .set({
-        storage_used_bytes: scenario.endsWith('high-usage')
-          ? PLAN_STORAGE_QUOTA_BYTES.team * 0.95
-          : 0,
-        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.team,
-        plan: 'team',
-        stripe_subscription_id: null,
-        stripe_subscription_status: 'none',
-      })
-      .where('id', '=', workspaceId)
-      .execute()
+    await setNearLimitUsage(db, workspaceId)
   return { workspaceId }
 }
 

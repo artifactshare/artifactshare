@@ -106,6 +106,22 @@ pnpm screens:capture -- --screen about --label before
 pnpm screens:capture -- --all --audit-gaps
 ```
 
+`screens:capture` leaves out the local-only billing states described under
+[Run without a running server](#run-without-a-running-server). The other
+`settings-billing` states (default, the purchase variants, the checkout results
+and near-limit) still need a dev server whose variables configure billing, all
+seven Stripe values. The checked-in `.dev.vars` template leaves Stripe
+unconfigured. On that setup their seeds succeed and the page loads, but it
+shows the billing-unavailable notice instead of the plan cards. `result-error`
+stops at the wait for its click target
+`[data-plan="plus"] button[type="submit"]`: after Playwright's default
+30-second locator timeout it fails with `interaction_precondition`, which is
+not retried. Every other one of these
+states fails with `readiness_timeout` after its `SCREEN_CAPTURE_RETRIES`
+retries, because its ready selector needs the plan cards or the checkout
+notice. The run then exits nonzero. Use `screens:capture:local` for the full
+Settings matrix.
+
 `SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`; `SCREEN_CAPTURE_SANDBOX_URL` names the sandbox that belongs to it (default `https://localhost:5174` beside the default app). `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
 
 ## Run without a running server
@@ -155,6 +171,17 @@ Each run:
    fixtures are always built in the copy from HEAD (also in CI), never taken
    from the checkout, and a failed build stops the run. It does not install
    Git hooks.
+   It then starts its own fake Stripe (`scripts/capture-stripe.mjs`) on a
+   kernel-chosen `127.0.0.1` port and writes synthetic Stripe values over
+   every Stripe variable in the runtime copy: an obviously fake secret key,
+   price, overage product and portal IDs, an empty webhook secret, and
+   `STRIPE_API_ORIGIN` pointing at the fake. Stripe variables inherited from
+   the environment are not passed to any child. The app honours
+   `STRIPE_API_ORIGIN` only in a development build, so a capture never
+   reaches real Stripe even when the checkout's `.dev.vars` holds test-mode
+   keys. The fake answers only the subscription reads and plan-change
+   previews of the billing capture states and refuses every other request.
+   If it cannot listen, the run stops before any service starts.
 3. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
    current HEAD, with the TLS certificate, and waits until each answers as
    itself on `127.0.0.1` and `[::1]`, the app reaches og-image through its
@@ -173,8 +200,20 @@ Each run:
    run's ownership tag in its environment, or a live descendant of such a
    process), so a reused process ID is never signalled; a process it tracked
    that is still running but can no longer be proved its own is reported and
-   fails the run instead. It waits until they are gone, then removes its
-   runtime directory.
+   fails the run instead. It waits until they are gone, stops the fake Stripe,
+   then removes its runtime directory.
+
+Every `settings-billing` state is local-only: the fake Stripe values configure
+billing, and the contract states store their contract by running the
+production subscription sync against that fake. `screens:capture:local`
+captures them. `screens:capture` (against a developer's own `pnpm dev`) leaves
+every billing state out of its job list before it seeds anything, and prints
+one line naming them and saying they need `screens:capture:local`. Only `scripts/local-capture.mjs` keeps them: it
+passes `--local-fake-stripe` to `scripts/run-screen-capture.mjs`, which
+`screens:capture` runs without that argument. No environment variable selects
+the mode.
+Any seed or sign-in error still stops a capture. `/dev/sign-in` does not offer
+the billing states.
 
 Ports are chosen automatically from free loopback ports in 20000–32767, never 5173–5175, so a
 developer's `pnpm dev` and any other listener keep running; the command never

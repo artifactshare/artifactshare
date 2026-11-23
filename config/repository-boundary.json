@@ -144,6 +144,8 @@
     "scripts/public-test-audit.mjs",
     "scripts/run-screen-capture.mjs",
     "scripts/run-task-walkthroughs.mjs",
+    "scripts/capture-stripe.mjs",
+    "scripts/capture-stripe.d.mts",
     "scripts/local-capture.mjs",
     "scripts/local-capture.test.mjs",
     "scripts/local-capture.integration.mjs",

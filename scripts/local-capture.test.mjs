@@ -23,6 +23,7 @@ import {
   createRuntimeRoot,
   DEFAULT_DEV_PORTS,
   exportSource,
+  holdPorts,
   localCaptureCommands,
   localInputs,
   localTopology,
@@ -34,7 +35,14 @@ import {
   selectPorts,
   startLoopbackRelay,
   waitUntilReady,
+  writeCaptureStripeVars,
 } from './local-capture.mjs'
+import {
+  CAPTURE_STRIPE_PRICES,
+  CAPTURE_STRIPE_SECRET_KEY,
+  captureStripeVars,
+  startCaptureStripe,
+} from './capture-stripe.mjs'
 
 const PORTS = {
   app: 41101,
@@ -101,11 +109,15 @@ function fakeRun(t, plan, overrides = {}) {
       head: () => 'a'.repeat(40),
       select: () => Promise.resolve(PORTS),
       runtimeRoot: () => (runtime = createRuntimeRoot({ tmp: base })),
-      inputs: (root) => ({ certs: { dir: root.certs } }),
+      inputs: (root) => {
+        writeFileSync(root.vars, 'BETTER_AUTH_SECRET=kept\n')
+        return { certs: { dir: root.certs }, vars: { path: root.vars } }
+      },
       storeDir: () => '/store',
       commands: () => plan,
       owner: new OwnedProcesses({ graceMs: 300, killWaitMs: 2_000 }),
       relay: () => Promise.resolve({ close: () => Promise.resolve() }),
+      hold: () => Promise.resolve({ release: () => Promise.resolve() }),
       checks: () => [],
       readyTimeoutMs: 5_000,
       ...overrides,
@@ -388,13 +400,28 @@ test('every child gets this invocation registry, storage, logs and ports, never 
         ? join(runtime.source, 'packages/cli/dist/index.js')
         : undefined,
     )
+    // The local screen capture passes the mode as an explicit argument to
+    // the same launcher `screens:capture` runs without it.
+    assert.equal(
+      plan.capture.args[0],
+      join(
+        '/repo',
+        mode === 'screens'
+          ? 'scripts/run-screen-capture.mjs'
+          : 'scripts/run-task-walkthroughs.mjs',
+      ),
+    )
     assert.deepEqual(
       plan.capture.args.slice(1),
       mode === 'screens'
-        ? ['--screen', 'about']
+        ? ['--local-fake-stripe', '--screen', 'about']
         : ['--task', 'share-file-link'],
     )
   }
+  const plain = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ).scripts['screens:capture'].split(' ')
+  assert.deepEqual(plain, ['node', 'scripts/run-screen-capture.mjs'])
   assert.deepEqual(localTopology(PORTS), {
     appOrigin: 'https://localhost:41101',
     sandboxOrigin: 'https://localhost:41102',
@@ -446,6 +473,191 @@ test('a usable checkout certificate is used read-only, a missing or obsolete one
     )
     assert.equal(existsSync(join(root, '.dev.vars')), false)
   }
+})
+
+test('the services read only the fake Stripe values, from copied variables, the template or the environment', (t) => {
+  const developerKey = ['sk', 'test', 'developer'].join('_')
+  const copied = [
+    'BETTER_AUTH_SECRET=kept',
+    `STRIPE_SECRET_KEY=${developerKey}`,
+    'STRIPE_PRICE_TEAM_MONTHLY=price_developer_team',
+    'export STRIPE_PRICE_PLUS_MONTHLY=price_developer_plus',
+    'STRIPE_WEBHOOK_SECRET=developer-webhook-secret',
+    'STRIPE_API_ORIGIN=https://api.stripe.com',
+    `STRIPE_SECRET_KEY=${developerKey}`,
+    // Colon and multi-line quoted forms Wrangler's dotenv parser accepts.
+    'STRIPE_WEBHOOK_SECRET: developer-colon-secret',
+    'STRIPE_PRICE_TEAM_YEARLY="price_developer',
+    'team_yearly" # developer copy',
+    'DEV_FLAGS=bot-members',
+  ].join('\n')
+  const template = readFileSync(
+    join(import.meta.dirname, '../.dev.vars.example'),
+    'utf8',
+  )
+  const origin = 'http://127.0.0.1:4242'
+  for (const [source, content] of [
+    ['copied', copied],
+    // A .dev.vars saved with Windows or classic Mac line endings, which
+    // dotenv reads as newlines.
+    ['copied CRLF', copied.replaceAll('\n', '\r\n')],
+    ['copied CR', copied.replaceAll('\n', '\r')],
+    ['template', template],
+  ]) {
+    const runtime = createRuntimeRoot({ tmp: tempDir(t) })
+    writeFileSync(runtime.vars, content)
+    writeCaptureStripeVars(runtime.vars, origin)
+    const lines = readFileSync(runtime.vars, 'utf8').split('\n')
+    const stripe = lines
+      .filter((line) => /^\s*(?:export\s+)?STRIPE_/u.test(line))
+      .map((line) => line.split('='))
+    // Each Stripe variable appears once, with the fake's value, whichever
+    // copy a parser would keep.
+    assert.equal(
+      stripe.length,
+      Object.keys(captureStripeVars(origin)).length,
+      source,
+    )
+    assert.deepEqual(
+      Object.fromEntries(stripe),
+      captureStripeVars(origin),
+      source,
+    )
+    assert.ok(!lines.some((line) => line.includes('developer')), source)
+    assert.ok(lines.includes('DEV_FLAGS=bot-members'), source)
+    if (source !== 'template')
+      assert.ok(lines.includes('BETTER_AUTH_SECRET=kept'), source)
+  }
+  // Inherited Stripe settings never reach a child either.
+  const runtime = createRuntimeRoot({ tmp: tempDir(t) })
+  const plan = localCaptureCommands({
+    mode: 'screens',
+    argv: ['--screen', 'settings-billing'],
+    ports: PORTS,
+    runtime,
+    env: ownedEnvironment(
+      {
+        PATH: process.env.PATH,
+        STRIPE_SECRET_KEY: developerKey,
+        STRIPE_API_ORIGIN: 'https://api.stripe.com',
+        // Production mode would turn the override and dev sign-in off.
+        NODE_ENV: 'production',
+      },
+      runtime,
+    ),
+    inputs: {
+      certs: { dir: runtime.certs, generate: true },
+      vars: { path: runtime.vars, copiedFrom: null },
+    },
+    revision: 'a'.repeat(40),
+    storeDir: '/store',
+    root: '/repo',
+  })
+  for (const child of [...plan.setup, ...plan.services, plan.capture])
+    assert.deepEqual(
+      Object.keys(child.env).filter((name) => name.startsWith('STRIPE_')),
+      [],
+      child.name,
+    )
+  const app = plan.services.find((child) => child.name === 'app')
+  assert.equal(app.env.NODE_ENV, 'development')
+})
+
+test('the fake Stripe answers only fixture reads and previews on loopback, until it is closed', async () => {
+  let now = new Date('2026-11-24T10:00:00.000Z')
+  const fake = await startCaptureStripe({ clock: () => now })
+  assert.equal(new URL(fake.origin).hostname, '127.0.0.1')
+  const call = async (method, path, { body, key } = {}) => {
+    const response = await fetch(`${fake.origin}${path}`, {
+      method,
+      body,
+      headers: {
+        authorization: `Bearer ${key ?? CAPTURE_STRIPE_SECRET_KEY}`,
+        ...(body
+          ? { 'content-type': 'application/x-www-form-urlencoded' }
+          : {}),
+      },
+    })
+    return { status: response.status, body: await response.json() }
+  }
+  const id = 'sub_capture_dev-screen-free-settings-billing-past-due'
+  const preview = (price) =>
+    new URLSearchParams({
+      subscription: id,
+      'subscription_details[items][0][id]':
+        'si_capture_dev-screen-free-settings-billing-past-due',
+      'subscription_details[items][0][price]': price,
+      'subscription_details[proration_behavior]': 'always_invoice',
+      'subscription_details[proration_date]': '1800000000',
+    }).toString()
+  try {
+    const subscription = await call(
+      'GET',
+      `/v1/subscriptions/${id}?expand[0]=items.data.price`,
+    )
+    assert.equal(subscription.status, 200)
+    assert.deepEqual(
+      {
+        status: subscription.body.status,
+        workspace: subscription.body.metadata.workspace_id,
+        price: subscription.body.items.data[0].price.id,
+        period: [
+          subscription.body.items.data[0].current_period_start,
+          subscription.body.items.data[0].current_period_end,
+        ],
+      },
+      {
+        status: 'past_due',
+        workspace: 'dev-screen-free-settings-billing-past-due',
+        price: CAPTURE_STRIPE_PRICES.teamMonthly,
+        // The monthly period containing the request's time.
+        period: [Date.UTC(2026, 10, 1) / 1000, Date.UTC(2026, 11, 1) / 1000],
+      },
+    )
+    const change = await call('POST', '/v1/invoices/create_preview', {
+      body: preview(CAPTURE_STRIPE_PRICES.plusMonthly),
+    })
+    assert.equal(change.status, 200)
+    assert.deepEqual(change.body.lines.data[0].period.start, 1800000000)
+    for (const [method, path, options] of [
+      ['GET', '/v1/subscriptions/sub_1Developer'],
+      // A malformed escape is refused, not thrown inside the server.
+      ['GET', '/v1/subscriptions/sub_capture_%E0%A4%A'],
+      // So is a target that is no URL path, or one that names an authority
+      // before a fixture path.
+      ['GET', '//'],
+      ['GET', `//capture.invalid/v1/subscriptions/${id}`],
+      ['GET', '/v1/subscriptions/sub_capture_dev-screen-team-home-empty'],
+      ['GET', `/v1/subscriptions/${id}`, { key: 'not-the-capture-key' }],
+      ['POST', `/v1/subscriptions/${id}`, { body: 'items[0][price]=x' }],
+      ['POST', '/v1/customers', { body: 'metadata[workspace_id]=x' }],
+      ['POST', '/v1/checkout/sessions', { body: 'mode=subscription' }],
+      [
+        'POST',
+        '/v1/invoices/create_preview',
+        { body: preview(CAPTURE_STRIPE_PRICES.teamMonthly) },
+      ],
+    ]) {
+      const refused = await call(method, path, options)
+      assert.ok(refused.status >= 400, `${method} ${path}`)
+      assert.ok(refused.body.error, `${method} ${path}`)
+    }
+    // Still serving after every refusal, and a running instance follows the
+    // clock into the next month instead of keeping its start month.
+    now = new Date('2026-12-01T00:00:01.000Z')
+    const later = await call('GET', `/v1/subscriptions/${id}`)
+    assert.equal(later.status, 200)
+    assert.deepEqual(
+      [
+        later.body.items.data[0].current_period_start,
+        later.body.items.data[0].current_period_end,
+      ],
+      [Date.UTC(2026, 11, 1) / 1000, Date.UTC(2027, 0, 1) / 1000],
+    )
+  } finally {
+    await fake.close()
+  }
+  await assert.rejects(fetch(`${fake.origin}/v1/subscriptions/${id}`))
 })
 
 test('a walkthrough builds the CLI for HEAD into the runtime directory, even beside a stale dist', (t) => {
@@ -818,6 +1030,178 @@ test('capture, setup, readiness and service failures exit nonzero without captur
   )
 
   assert.equal(existsSync(captured), false)
+})
+
+for (const [outcome, status] of [
+  ['success', 0],
+  ['failure', 1],
+  ['SIGTERM', 143],
+]) {
+  test(`the fake Stripe serves the services from their start and is released after ${outcome}`, async (t) => {
+    const dir = tempDir(t)
+    const seen = join(dir, 'stripe-seen')
+    const origins = []
+    const waitForApp = `const wait = setInterval(() => { if (!require('fs').existsSync(${JSON.stringify(seen)})) return; clearInterval(wait); ${outcome === 'failure' ? 'process.exit(3)' : outcome === 'SIGTERM' ? `require('fs').writeFileSync(${JSON.stringify(join(dir, 'capturing'))}, ''); setInterval(() => {}, 1000)` : ''} }, 20)`
+    // As soon as it starts, the app reads a fixture subscription through
+    // the Stripe settings it was given, and records the answer.
+    const readStripe = (vars) => `
+      const fs = require('fs')
+      const settings = Object.fromEntries(fs.readFileSync(${JSON.stringify(vars)}, 'utf8').split('\\n').map((line) => line.split('=')))
+      fetch(settings.STRIPE_API_ORIGIN + '/v1/subscriptions/sub_capture_dev-screen-team-settings-billing-subscribed', {
+        headers: { authorization: 'Bearer ' + settings.STRIPE_SECRET_KEY },
+        signal: AbortSignal.timeout(5000),
+      }).then(
+        async (response) => ({ origin: settings.STRIPE_API_ORIGIN, status: response.status, workspace: (await response.json()).metadata?.workspace_id }),
+        (error) => ({ origin: settings.STRIPE_API_ORIGIN, error: String(error) }),
+      ).then((result) => fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(result)))
+      setInterval(() => {}, 1000)
+    `
+    const run = fakeRun(t, undefined, {
+      commands: ({ inputs }) => ({
+        setup: [],
+        services: [node('app', readStripe(inputs.vars.path))],
+        capture: node('capture', waitForApp),
+      }),
+      stripe: async () => {
+        const fake = await startCaptureStripe()
+        // A listener the lifecycle leaked fails the release check below;
+        // this keeps it from also holding the test process open.
+        t.after(() => fake.close().catch(() => {}))
+        origins.push(fake.origin)
+        return fake
+      },
+    })
+    if (outcome === 'SIGTERM') {
+      await until(() => existsSync(join(dir, 'capturing')), 'the capture')
+      run.signals.emit('SIGTERM')
+    }
+    assert.equal(await run.result, status, run.lines.join('\n'))
+    assert.equal(origins.length, 1)
+    assert.deepEqual(JSON.parse(readFileSync(seen, 'utf8')), {
+      origin: origins[0],
+      status: 200,
+      workspace: 'dev-screen-team-settings-billing-subscribed',
+    })
+    // Released means nothing accepts a fresh connection: a listener that
+    // accepts and stays silent, or no answer at all, is not released.
+    const { hostname, port } = new URL(origins[0])
+    const fresh = await new Promise((done) => {
+      const socket = connect({ host: hostname, port: Number(port) })
+      const timer = setTimeout(() => {
+        socket.destroy()
+        done('timeout')
+      }, 2000)
+      socket.once('connect', () => {
+        clearTimeout(timer)
+        socket.destroy()
+        done('connected')
+      })
+      socket.once('error', (error) => {
+        clearTimeout(timer)
+        done(error.code)
+      })
+    })
+    assert.equal(fresh, 'ECONNREFUSED')
+  })
+}
+
+test('a fake Stripe that cannot listen fails the capture before any service starts', async (t) => {
+  const dir = tempDir(t)
+  const started = join(dir, 'started')
+  const touch = `require('fs').writeFileSync(${JSON.stringify(started)}, '')`
+  const run = fakeRun(
+    t,
+    {
+      setup: [],
+      services: [node('app', `${touch}; setInterval(() => {}, 1000)`)],
+      capture: node('capture', touch),
+    },
+    // Not an address of this machine: the listen itself fails.
+    { stripe: () => startCaptureStripe({ host: '192.0.2.1' }) },
+  )
+  assert.equal(await run.result, 1)
+  assert.match(run.lines.join('\n'), /fake Stripe could not listen/)
+  assert.equal(existsSync(started), false)
+})
+
+test('the fake Stripe binds while the selected ports are held, and the app port is free again for the relay', async (t) => {
+  // Kernel-chosen ports, as explicit settings in the ephemeral range would be.
+  const ports = {}
+  for (const name of Object.keys(PORTS)) {
+    const server = createServer()
+    await new Promise((done) => server.listen(0, '127.0.0.1', done))
+    ports[name] = server.address().port
+    await new Promise((done) => server.close(done))
+  }
+  const whileBinding = {}
+  let fakePort
+  const run = fakeRun(
+    t,
+    {
+      setup: [],
+      services: [node('app', 'setInterval(() => {}, 1000)')],
+      capture: node('capture', ''),
+    },
+    {
+      select: () => Promise.resolve(ports),
+      hold: holdPorts,
+      relay: startLoopbackRelay,
+      stripe: async () => {
+        for (const [name, port] of Object.entries(ports))
+          whileBinding[name] = !(await portIsFree(port, ['127.0.0.1']))
+        const fake = await startCaptureStripe()
+        t.after(() => fake.close().catch(() => {}))
+        fakePort = Number(new URL(fake.origin).port)
+        return fake
+      },
+    },
+  )
+  assert.equal(await run.result, 0, run.lines.join('\n'))
+  assert.deepEqual(
+    whileBinding,
+    Object.fromEntries(Object.keys(ports).map((name) => [name, true])),
+  )
+  assert.ok(!Object.values(ports).includes(fakePort))
+})
+
+test('a client connected to a held port cannot keep the release waiting', async (t) => {
+  const probe = createServer()
+  await new Promise((done) => probe.listen(0, '127.0.0.1', done))
+  const port = probe.address().port
+  await new Promise((done) => probe.close(done))
+  const hold = await holdPorts([port])
+  // A client that connects during the hold and waits for an answer.
+  const client = connect({ host: '127.0.0.1', port })
+  // A failed assertion leaves the hold open; the client goes first so the
+  // release can finish.
+  t.after(async () => {
+    client.destroy()
+    await hold.release()
+  })
+  // The hold resets the connection; that is the expected outcome.
+  client.on('error', () => {})
+  const within = async (promise, label) => {
+    let timer
+    const outcome = await Promise.race([
+      promise.then(() => label),
+      new Promise((done) => {
+        timer = setTimeout(() => done(`not ${label}`), 2000)
+      }),
+    ])
+    clearTimeout(timer)
+    return outcome
+  }
+  // The hold accepts the connection and closes it instead of keeping it;
+  // a kept connection would make the release below wait for the client.
+  assert.equal(
+    await within(
+      new Promise((done) => client.once('close', done)),
+      'closed by the hold',
+    ),
+    'closed by the hold',
+  )
+  assert.equal(await within(hold.release(), 'released'), 'released')
+  assert.equal(await portIsFree(port, ['127.0.0.1']), true)
 })
 
 // The capture ignores SIGTERM and leaves a SIGTERM-ignoring grandchild in a

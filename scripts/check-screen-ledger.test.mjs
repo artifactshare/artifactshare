@@ -9,7 +9,9 @@ import {
   needsLocalSandbox,
   devShareableId,
   navigateForCapture,
+  parseArgs,
   pathFor,
+  planCaptureJobs,
   runCaptureJobs,
   waitForInteractionTarget,
   captureFailure,
@@ -45,6 +47,103 @@ test('viewer retention history capture opens the seeded latest-only artifact', (
     { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
     { action: 'click', selector: '[data-viewer-history-menu-item]' },
   ])
+})
+
+test('billing captures default to the purchase seed and keep the purchase variants and checkout error', () => {
+  const billing = ledgerScreens.find(
+    (screen) => screen.id === 'settings-billing',
+  )
+  const state = (id) => billing.states.find((candidate) => candidate.id === id)
+  assert.equal(state('default').setup.scenario, 'settings-billing/purchase')
+  assert.match(state('default').setup.ready.selector, /\[data-plan="team"\]/)
+  assert.deepEqual(
+    ['monthly-jpy', 'monthly-usd', 'yearly-jpy', 'yearly-usd'].map((id) => [
+      state(id).setup.scenario,
+      state(id).setup.query,
+    ]),
+    [
+      ['settings-billing/purchase', '?interval=monthly&currency=jpy'],
+      ['settings-billing/purchase', '?interval=monthly&currency=usd'],
+      ['settings-billing/purchase', '?interval=yearly&currency=jpy'],
+      ['settings-billing/purchase', '?interval=yearly&currency=usd'],
+    ],
+  )
+  const error = state('result-error').setup
+  assert.equal(error.scenario, 'settings-billing/purchase')
+  assert.deepEqual(error.interactions, [
+    { action: 'click', selector: '[data-plan="plus"] button[type="submit"]' },
+  ])
+  assert.deepEqual(error.actionResponse, {
+    route: '/settings/billing',
+    method: 'POST',
+    intent: 'checkout',
+    status: 409,
+    data: { ok: false, code: 'billing-unavailable', intent: 'checkout' },
+  })
+  assert.ok(
+    error.postInteractionReady.visibleWith.includes(
+      '[data-plan="plus"] form [role="alert"][data-settings-status="billing-unavailable"]',
+    ),
+  )
+  for (const retired of ['team-unsubscribed', 'team-unsubscribed-high-usage']) {
+    assert.equal(state(retired), undefined)
+    assert.equal(
+      screenScenarioAllowlist.has(`settings-billing/${retired}`),
+      false,
+    )
+  }
+})
+
+test('screens:capture plans no billing state and names them in one line; the local mode argument plans them', (t) => {
+  const contractStates = ledgerScreens
+    .find((screen) => screen.id === 'settings-billing')
+    .states.map((state) => `settings-billing/${state.id}`)
+  const screenIds = ['settings-billing', 'settings-general']
+  const argv = screenIds.flatMap((id) => ['--screen', id])
+  // Every capture of a state: each locale, both viewports and both themes.
+  const allJobIds = ledgerScreens
+    .filter((screen) => screenIds.includes(screen.id))
+    .flatMap((screen) =>
+      screen.states.flatMap((state) =>
+        Object.keys(screen.route).flatMap((locale) =>
+          ['desktop', 'mobile'].flatMap((viewport) =>
+            ['light', 'dark'].map(
+              (theme) =>
+                `${screen.id}/${state.id}/${viewport}/${theme}/${locale}`,
+            ),
+          ),
+        ),
+      ),
+    )
+    .sort()
+  const jobIds = (plan) => plan.jobs.map((job) => job.id).sort()
+  const isContractJob = (id) =>
+    contractStates.some((state) => id.startsWith(`${state}/`))
+
+  // The variable an earlier version read does not select the local mode.
+  const inherited = process.env.LOCAL_CAPTURE_FAKE_STRIPE
+  t.after(() => {
+    if (inherited === undefined) delete process.env.LOCAL_CAPTURE_FAKE_STRIPE
+    else process.env.LOCAL_CAPTURE_FAKE_STRIPE = inherited
+  })
+  process.env.LOCAL_CAPTURE_FAKE_STRIPE = '1'
+  const plainArgs = parseArgs(argv)
+  assert.equal(plainArgs.local, false)
+  const plain = planCaptureJobs(plainArgs.selected, { local: plainArgs.local })
+  assert.deepEqual(
+    jobIds(plain),
+    allJobIds.filter((id) => !isContractJob(id)),
+  )
+  assert.equal(plain.notice.split('\n').length, 1)
+  for (const id of contractStates) assert.ok(plain.notice.includes(id), id)
+  assert.match(plain.notice, /pnpm screens:capture:local/u)
+
+  const localArgs = parseArgs(['--local-fake-stripe', ...argv])
+  assert.equal(localArgs.local, true)
+  const local = planCaptureJobs(localArgs.selected, { local: localArgs.local })
+  assert.deepEqual(jobIds(local), allJobIds)
+  assert.ok(allJobIds.some(isContractJob))
+  assert.equal(local.notice, null)
 })
 
 test('allows a state to capture anonymously from an authenticated scenario seed', () => {
@@ -1397,4 +1496,15 @@ test('capture ledger rejects an expected boundary without its exact HTTP status'
     validateLedger([ledgerScreen([{ ...state, expectedStatus: 403 }])]),
     true,
   )
+})
+
+test('screens:capture refuses a run that only selects billing, before it touches the output', () => {
+  const billing = ledgerScreens.filter(
+    (screen) => screen.id === 'settings-billing',
+  )
+  assert.throws(
+    () => planCaptureJobs(billing, { local: false }),
+    /No capture jobs remain[^\n]*pnpm screens:capture:local/u,
+  )
+  assert.ok(planCaptureJobs(billing, { local: true }).jobs.length > 0)
 })

@@ -51,8 +51,10 @@ const subscription = {
 }
 let db: Kysely<DB>
 let requests: Request[]
-let replies: Array<{ path: string; body: unknown }>
+let replies: Array<{ path: string; body: unknown; status?: number }>
+let expectedOrigin: string
 beforeEach(async () => {
+  expectedOrigin = 'https://api.stripe.com'
   db = createMigratedInMemoryDb().db
   await db
     .insertInto('workspaces')
@@ -73,16 +75,17 @@ beforeEach(async () => {
       const reply = replies.shift()
       if (
         !reply ||
-        new URL(request.url).origin !== 'https://api.stripe.com' ||
+        new URL(request.url).origin !== expectedOrigin ||
         new URL(request.url).pathname !== reply.path
       ) {
         throw new Error(`Unexpected Stripe transport request: ${request.url}`)
       }
-      return Response.json(reply.body)
+      return Response.json(reply.body, { status: reply.status ?? 200 })
     }),
   )
 })
 afterEach(async () => {
+  vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   await db.destroy()
@@ -108,6 +111,82 @@ test('Stripe-Version is Endive on the application fetch client', async () => {
   expect(new URL(requests[0]!.url).searchParams.get('expand[0]')).toBe(
     'items.data.price.currency_options',
   )
+})
+
+const overridden: BillingEnv = {
+  ...env,
+  STRIPE_API_ORIGIN: 'http://127.0.0.1:4242',
+}
+
+test('a development client sends requests to the configured API origin without retries', async () => {
+  expectedOrigin = 'http://127.0.0.1:4242'
+  replies.push(
+    { path: '/v1/subscriptions/sub_local', body: subscription },
+    // A retryable server error: with retries the SDK would ask again.
+    {
+      path: '/v1/subscriptions/sub_local',
+      body: { error: { type: 'api_error' } },
+      status: 503,
+    },
+  )
+  const stripe = createStripeClient(overridden)
+  expect(
+    await loadSubscriptionContract(stripe, overridden, 'sub_local'),
+  ).toMatchObject({ plan: 'plus', amount: 9 })
+  expect(
+    await loadSubscriptionContract(stripe, overridden, 'sub_local'),
+  ).toBeNull()
+  expect(requests.map((request) => request.url)).toEqual([
+    'http://127.0.0.1:4242/v1/subscriptions/sub_local?expand[0]=items.data.price.currency_options',
+    'http://127.0.0.1:4242/v1/subscriptions/sub_local?expand[0]=items.data.price.currency_options',
+  ])
+})
+
+test.each([
+  ['http://127.0.0.1:80', 'http://127.0.0.1'],
+  ['https://localhost:443', 'https://localhost'],
+])(
+  'a development client keeps the explicit default port of %s',
+  async (origin, requested) => {
+    expectedOrigin = requested
+    replies.push({ path: '/v1/subscriptions/sub_local', body: subscription })
+    const configured = { ...env, STRIPE_API_ORIGIN: origin }
+    expect(
+      await loadSubscriptionContract(
+        createStripeClient(configured),
+        configured,
+        'sub_local',
+      ),
+    ).toMatchObject({ plan: 'plus' })
+    expect(new URL(requests[0]!.url).origin).toBe(requested)
+  },
+)
+
+test.each([
+  // Present but empty must not fall back to the real Stripe API.
+  '',
+  'http://:4242',
+  'http://127.0.0.1:0',
+  'http://127.0.0.1',
+  'http://127.0.0.1:4242/v1',
+])('a development client rejects the API origin %s', (origin) => {
+  expect(() =>
+    createStripeClient({ ...env, STRIPE_API_ORIGIN: origin }),
+  ).toThrow('STRIPE_API_ORIGIN')
+  expect(requests).toEqual([])
+})
+
+test('a production client ignores a configured API origin', async () => {
+  vi.stubEnv('DEV', false)
+  replies.push({ path: '/v1/subscriptions/sub_local', body: subscription })
+  expect(
+    await loadSubscriptionContract(
+      createStripeClient(overridden),
+      overridden,
+      'sub_local',
+    ),
+  ).toMatchObject({ plan: 'plus', amount: 9 })
+  expect(new URL(requests[0]!.url).origin).toBe('https://api.stripe.com')
 })
 
 test('customer and fixed-price checkout serialize billing fields and consume returned IDs and URL', async () => {

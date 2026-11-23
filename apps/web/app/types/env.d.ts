@@ -36,6 +36,8 @@ declare namespace Cloudflare {
     POST_UPLOAD_WORKFLOW?: Workflow<PostUploadWorkflowSpikePayload>
     OG_IMAGE_WORKER: Fetcher
     STRIPE_SECRET_KEY?: string
+    /** Development only: the local capture's fake Stripe origin. */
+    STRIPE_API_ORIGIN?: string
     OPENAI_APPS_CHALLENGE_TOKEN?: string
     GA4_MEASUREMENT_ID?: string
     GA4_MP_API_SECRET?: string
