@@ -161,7 +161,7 @@ describe('getSessionUserFromBearer', () => {
     expect(await rows.execute()).toEqual(before)
   })
 
-  test('session bearer preserves a pending mover’s workspace and signup attribution', async () => {
+  test('session bearer moves the user into the claimed workspace', async () => {
     const sessionToken = 'sess_claim_move'
     seedSession(sqlite, 'u1', sessionToken)
     sqlite.exec(`
@@ -188,17 +188,13 @@ describe('getSessionUserFromBearer', () => {
         'u1', 'email', 1, '2026-06-26T00:00:00.000Z', NULL, NULL
       );
     `)
-    const memberships = sqlite.prepare(
-      'SELECT * FROM workspace_members ORDER BY workspace_id,user_id',
-    )
-    const before = memberships.all()
 
     await expect(
       getSessionUserFromBearer(bearerRequest(sessionToken)),
     ).resolves.toMatchObject({
       id: 'u1',
-      workspaceId: 'ws1',
-      selfUploadEnabled: false,
+      workspaceId: 'ws-claimed',
+      selfUploadEnabled: true,
     })
     expect(
       sqlite
@@ -206,8 +202,14 @@ describe('getSessionUserFromBearer', () => {
           "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
         )
         .get(),
-    ).toEqual({ workspace_created: 1 })
-    expect(memberships.all()).toEqual(before)
+    ).toEqual({ workspace_created: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT workspace_id, role, status FROM workspace_members WHERE user_id = 'u1'",
+        )
+        .all(),
+    ).toEqual([{ workspace_id: 'ws-claimed', role: 'owner', status: 'active' }])
   })
 })
 

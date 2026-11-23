@@ -1479,7 +1479,7 @@ export async function removeWorkspaceMember(
 export async function ensureActiveWorkspaceMembership(
   db: Kysely<DB>,
   userId: string,
-  workspaceId: string,
+  workspaceId: string | null,
   now: string,
   options: {
     reactivateRemoved?: boolean
@@ -1489,7 +1489,13 @@ export async function ensureActiveWorkspaceMembership(
   const query = db
     .insertInto('workspace_members')
     .values({
-      workspace_id: workspaceId,
+      workspace_id:
+        workspaceId ??
+        db
+          .selectFrom('users')
+          .select('workspace_id')
+          .where('id', '=', userId)
+          .where('kind', '=', 'human'),
       user_id: userId,
       role: options.personalWorkspaceOwner ? 'owner' : 'member',
       status: 'active',
@@ -1527,8 +1533,7 @@ export async function ensureWorkspaceAdmin(
   const existing = await owner.executeTakeFirst()
   if (existing) return existing.user_id
 
-  // Keep the candidate ordering in sync with migration 0133. In particular,
-  // contribution updates to a membership do not establish an admin tenure.
+  // Keep candidate eligibility and ordering in sync with migration 0133.
   const candidate = db
     .selectFrom('users as u')
     .leftJoin('workspace_members as m', (join) =>
@@ -1557,14 +1562,6 @@ export async function ensureWorkspaceAdmin(
       eb.val(now).as('updated_at'),
     ])
     .orderBy(sql`CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END`)
-    .orderBy(sql`CASE WHEN m.role = 'admin' THEN (
-      SELECT CASE WHEN e.action = 'admin.grant' OR (e.action = 'owner.transfer' AND e.actor_user_id = u.id)
-        THEN e.created_at END FROM audit_events e
-      WHERE e.workspace_id = ${workspaceId} AND e.subject_type = 'user'
-        AND ((e.subject_id = u.id AND e.action IN ('admin.grant', 'admin.revoke', 'owner.transfer', 'member.remove'))
-          OR (e.actor_user_id = u.id AND e.action = 'owner.transfer'))
-      ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-    ) END ASC NULLS LAST`)
     .orderBy(sql`m.first_contributed_at ASC NULLS LAST`)
     .orderBy('u.created_at')
     .orderBy('u.id')

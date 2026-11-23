@@ -12,8 +12,7 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
     expect(index).toBeGreaterThan(0)
     applyMigrations(db, migrations.slice(0, index))
     const workspaces = [
-      'dated',
-      'undated',
+      'admins',
       'contributors',
       'registered',
       'removed',
@@ -27,14 +26,9 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
       ).run(id, id)
     const candidates = [
       // workspace, user, registration, role, contribution, last modification
-      ['dated', 'unknown', '2020', 'admin', '2020', '2020'],
-      ['dated', 'earlier', '2024', 'admin', '2022', '2025'],
-      ['dated', 'former-admin', '2017', 'admin', '2017', '2017'],
-      ['dated', '0-equal-start', '2018', 'admin', null, '2018'],
-      ['dated', 'later', '2022', 'admin', null, '2022'],
-      ['dated', 'revoked', '2019', 'admin', '2019', '2019'],
-      ['undated', 'second', '2020', 'admin', '2021', '2020'],
-      ['undated', 'first', '2021', 'admin', '2020', '2024'],
+      ['admins', 'audited', '2020', 'admin', '2021', '2023'],
+      ['admins', 'first-admin', '2021', 'admin', '2020', '2024'],
+      ['admins', 'early-member', '2018', 'member', '2019', '2020'],
       ['contributors', 'writer', '2021', 'member', '2022', '2025'],
       ['contributors', 'second-writer', '2020', 'member', '2023', '2025'],
       ['contributors', 'reader', '2020', 'member', null, '2020'],
@@ -65,7 +59,7 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
         workspace,
         id === 'bot' ? 'bot' : 'human',
         created,
-        created,
+        '2026',
         id,
       )
       if (role) {
@@ -87,15 +81,7 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
     }
     db.exec(`
       INSERT INTO audit_events (id,workspace_id,actor_user_id,subject_type,subject_id,action,created_at) VALUES
-        ('1','dated',NULL,'user','later','admin.grant','2018'),
-        ('2','dated',NULL,'user','later','owner.transfer','2019'),
-        ('3','dated','earlier','user','later','owner.transfer','2021'),
-        ('4','dated',NULL,'user','later','admin.grant','2023'),
-        ('5','dated',NULL,'user','revoked','admin.grant','2017'),
-        ('6','dated',NULL,'user','revoked','admin.revoke','2019'),
-        ('7','dated',NULL,'user','former-admin','admin.grant','2016'),
-        ('8','dated',NULL,'user','former-admin','owner.transfer','2018'),
-        ('9','dated',NULL,'user','0-equal-start','admin.grant','2021');
+        ('1','admins',NULL,'user','audited','admin.grant','2020');
     `)
     const memberships = db.prepare(
       'SELECT * FROM workspace_members ORDER BY workspace_id,user_id',
@@ -107,8 +93,11 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
       after
         .filter((row) => row.role === 'owner' && row.status === 'active')
         .map((row) => row.user_id),
-    ).toEqual(['writer', 'earlier', 'owner', 'a', 'replacement', 'first'])
-    expect(after.find((row) => row.user_id === 'a')?.created_at).toBe('2020')
+    ).toEqual(['first-admin', 'writer', 'owner', 'a', 'replacement'])
+    expect(after.find((row) => row.user_id === 'a')).toMatchObject({
+      created_at: '2020',
+      updated_at: '2020',
+    })
     for (const row of before) {
       const repaired = after.find((member) => member.user_id === row.user_id)
       if (row.user_id === 'former')
@@ -117,7 +106,6 @@ test('0133 repairs eligible workspaces once and preserves membership history', (
         expect(repaired).toEqual({
           ...row,
           role: 'owner',
-          updated_at: expect.any(String),
         })
       else expect(repaired).toEqual(row)
     }

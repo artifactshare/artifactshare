@@ -779,7 +779,7 @@ describe('CLI device authorization intent', () => {
     ).toBeNull()
   })
 
-  test('a pending mover cannot approve a fixed project in the claim destination', async () => {
+  test('a fixed project becomes available when the bearer session moves to its workspace', async () => {
     seedUser(sqlite, 'mover')
     seedSession(sqlite, 'mover', 'pending-mover')
     sqlite.exec(`
@@ -795,44 +795,49 @@ describe('CLI device authorization intent', () => {
       deviceName: 'Codex',
       projectSelector: 'project-1',
     })
-    const auth =
-      await vi.importActual<typeof import('./auth.server')>('./auth.server')
-    const session = await auth.getSessionUserFromBearer(
-      new Request('https://example.test/device', {
-        headers: { Authorization: 'Bearer pending-mover' },
-      }),
-    )
-    if (!session) throw new Error('Expected a signed-in device user')
-    const approval = await loadAgentApprovalContext(
-      'ABCD1234',
-      session.id,
-      session.workspaceId,
-      session.email,
-    )
-    expect(approval).toMatchObject({
+    expect(
+      await loadAgentApprovalContext(
+        'ABCD1234',
+        'mover',
+        'personal',
+        'mover@example.com',
+      ),
+    ).toMatchObject({
       fixedProject: null,
       fixedProjectError: true,
     })
-    expect(session.workspaceId).toBe('personal')
-    const { maybeMoveUserToClaimedWorkspace } =
-      await import('./workspace-domain-claims.server')
-    const destination = await maybeMoveUserToClaimedWorkspace(db, {
-      userId: session.id,
-      email: session.email,
-      currentWorkspaceId: session.workspaceId,
+    const auth =
+      await vi.importActual<typeof import('./auth.server')>('./auth.server')
+    const request = new Request('https://example.test/device', {
+      headers: { Authorization: 'Bearer pending-mover' },
     })
-    expect(destination).toBe('ws1')
+    const session = await auth.getSessionUserFromBearer(request)
+    if (!session) throw new Error('Expected a signed-in device user')
+    expect(session.workspaceId).toBe('ws1')
     expect(
       await loadAgentApprovalContext(
         'ABCD1234',
         session.id,
-        'ws1',
+        session.workspaceId,
         session.email,
       ),
     ).toMatchObject({
       fixedProject: { id: 'project-1' },
       fixedProjectError: false,
     })
+
+    sqlite.exec(
+      "UPDATE workspace_members SET role = 'member' WHERE workspace_id = 'ws1' AND role = 'owner'",
+    )
+    const memberships = sqlite.prepare(
+      "SELECT * FROM workspace_members WHERE workspace_id = 'ws1' ORDER BY user_id",
+    )
+    const before = memberships.all()
+    expect(await auth.getSessionUserFromBearer(request)).toMatchObject({
+      id: 'mover',
+      workspaceId: 'ws1',
+    })
+    expect(memberships.all()).toEqual(before)
   })
 
   test('resolves a fixed project by name and treats an existing invalid id as terminal', async () => {

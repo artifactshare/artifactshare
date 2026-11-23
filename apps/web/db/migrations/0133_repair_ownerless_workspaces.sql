@@ -20,32 +20,18 @@ WITH candidates AS (
   SELECT m.workspace_id, u.id, u.created_at, m.first_contributed_at, 1
   FROM workspace_members m JOIN users u ON u.id = m.user_id
   WHERE u.kind = 'human' AND m.status = 'active' AND m.role = 'admin'
-), tenures AS (
-  SELECT c.*, CASE WHEN is_admin THEN (
-    -- The latest role transition either started this tenure or ended an
-    -- earlier one. In the latter case the current start is unknown.
-    SELECT CASE WHEN e.action = 'admin.grant'
-      OR (e.action = 'owner.transfer' AND e.actor_user_id = c.id)
-      THEN e.created_at END
-    FROM audit_events e
-    WHERE e.workspace_id = c.workspace_id AND e.subject_type = 'user'
-      AND ((e.subject_id = c.id AND e.action IN ('admin.grant', 'admin.revoke', 'owner.transfer', 'member.remove'))
-        OR (e.actor_user_id = c.id AND e.action = 'owner.transfer'))
-    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-  ) END AS tenure_start
-  FROM candidates c
+), ranked AS (
+  SELECT c.*, ROW_NUMBER() OVER (
+    PARTITION BY workspace_id ORDER BY is_admin DESC,
+      first_contributed_at ASC NULLS LAST, created_at, id
+  ) AS position FROM candidates c
   WHERE NOT EXISTS (
     SELECT 1 FROM workspace_members o WHERE o.workspace_id = c.workspace_id
       AND o.role = 'owner' AND o.status = 'active'
   )
-), ranked AS (
-  SELECT *, ROW_NUMBER() OVER (
-    PARTITION BY workspace_id ORDER BY is_admin DESC, tenure_start ASC NULLS LAST,
-      first_contributed_at ASC NULLS LAST, created_at, id
-  ) AS position FROM tenures
 )
 INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at)
 SELECT workspace_id, id, 'owner', 'active',
-  created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  created_at, created_at
 FROM ranked WHERE position = 1
-ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'owner', updated_at = excluded.updated_at;
+ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'owner';

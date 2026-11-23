@@ -416,7 +416,7 @@ describe('getSessionUser cookie cache', () => {
     })
   })
 
-  test('keeps a pending mover in the source workspace during cookie resolution', async () => {
+  test('cookie resolution moves the user into the claimed workspace', async () => {
     seedSession(sqlite, 'u1', 'sess_cookie_cache')
     sqlite.exec(`
       UPDATE workspaces
@@ -447,10 +447,6 @@ describe('getSessionUser cookie cache', () => {
         'u1', 'email', 1, '2026-06-26T00:00:00.000Z', NULL, NULL
       );
     `)
-    const memberships = sqlite.prepare(
-      'SELECT * FROM workspace_members ORDER BY workspace_id,user_id',
-    )
-    const before = memberships.all()
 
     const user = await getSessionUser(
       cachedSessionRequest({
@@ -461,20 +457,26 @@ describe('getSessionUser cookie cache', () => {
 
     expect(user).toMatchObject({
       id: 'u1',
-      workspaceId: 'ws1',
-      selfUploadEnabled: false,
+      workspaceId: 'ws-claimed',
+      selfUploadEnabled: true,
     })
     expect(
       sqlite.prepare("SELECT workspace_id FROM users WHERE id = 'u1'").get(),
-    ).toEqual({ workspace_id: 'ws1' })
+    ).toEqual({ workspace_id: 'ws-claimed' })
     expect(
       sqlite
         .prepare(
           "SELECT workspace_created FROM pending_signup_analytics WHERE user_id = 'u1'",
         )
         .get(),
-    ).toEqual({ workspace_created: 1 })
-    expect(memberships.all()).toEqual(before)
+    ).toEqual({ workspace_created: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT workspace_id, role, status FROM workspace_members WHERE user_id = 'u1'",
+        )
+        .all(),
+    ).toEqual([{ workspace_id: 'ws-claimed', role: 'owner', status: 'active' }])
   })
 })
 

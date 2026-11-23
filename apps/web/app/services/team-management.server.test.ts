@@ -2279,6 +2279,20 @@ describe('team-management service', () => {
     expect(readUserWorkspaceId(sqlite, 'u2')).toBe('ws1')
   })
 
+  test('ensureWorkspaceAdmin promotes the first contributing admin regardless of audit history', async () => {
+    seedWorkspace(sqlite, 'free')
+    seedUser(sqlite, 'audited')
+    seedUser(sqlite, 'writer')
+    seedContributor(sqlite, 'writer')
+    seedAdmin(sqlite, 'audited')
+    seedAdmin(sqlite, 'writer')
+    sqlite.exec(`INSERT INTO audit_events (id,workspace_id,subject_type,subject_id,action,created_at)
+      VALUES ('grant','ws1','user','audited','admin.grant','2025')`)
+
+    await ensureWorkspaceAdmin(db, 'ws1', '2026')
+    expect(readRole(sqlite, 'writer')).toBe('owner')
+  })
+
   test('ensureWorkspaceAdmin skips removed fallback candidates', async () => {
     seedWorkspace(sqlite, 'free')
     seedUser(sqlite, 'u1', '2026-05-25T00:00:00.000Z')

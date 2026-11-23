@@ -218,6 +218,73 @@ test.each(['owned', 'removed'] as const)(
   },
 )
 
+test('sign-in restores a missing membership after signup into an owned claimed workspace fails', async () => {
+  const domain = 'recover-owned-signup.example'
+  const email = 'new@' + domain
+  await claimedWorkspace(domain, 'owned')
+  const before = await members(domain)
+  vi.spyOn(team, 'ensureActiveWorkspaceMembership').mockRejectedValueOnce(
+    new Error('membership insert failed'),
+  )
+  expect((await signIn(email)).status).toBe(500)
+  const user = await userWorkspace(email)
+  expect(user.workspace_id).toBe(domain)
+  expect(await members(domain)).toEqual(before)
+
+  expect((await signIn(email)).status).toBe(200)
+  const recovered = await members(domain)
+  expect(recovered).toHaveLength(2)
+  expect(recovered).toEqual(
+    expect.arrayContaining([
+      ...before,
+      expect.objectContaining({
+        user_id: user.id,
+        role: 'member',
+        status: 'active',
+      }),
+    ]),
+  )
+})
+
+test('sign-in completes when a claim move deletes the source before membership recovery', async () => {
+  const domain = 'concurrent-move.example'
+  const email = 'new@' + domain
+  expect((await signIn(email)).status).toBe(200)
+  const user = await userWorkspace(email)
+  await claimedWorkspace(domain, 'owned')
+
+  const ensure = team.ensureActiveWorkspaceMembership
+  let moved
+  vi.spyOn(team, 'ensureActiveWorkspaceMembership').mockImplementationOnce(
+    async (...args) => {
+      moved = await claims.maybeMoveUserToClaimedWorkspace(db, {
+        userId: user.id,
+        email,
+        currentWorkspaceId: user.workspace_id,
+      })
+      return ensure(...args)
+    },
+  )
+  const response = await signIn(email)
+  expect(moved).toBe(domain)
+  expect(
+    await db
+      .selectFrom('workspaces')
+      .select('id')
+      .where('id', '=', user.workspace_id)
+      .execute(),
+  ).toEqual([])
+  expect(response.status).toBe(200)
+  expect((await userWorkspace(email)).workspace_id).toBe(domain)
+  expect(await members(domain)).toContainEqual(
+    expect.objectContaining({
+      user_id: user.id,
+      role: 'member',
+      status: 'active',
+    }),
+  )
+})
+
 test.each(['personal', 'blocked', 'owned', 'removed', 'member'] as const)(
   'the next sign-in recovers a failed signup with a %s destination',
   async (state) => {
