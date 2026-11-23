@@ -434,7 +434,7 @@
   "team.status.removed": "Member removed.",
   "team.status.removedTransferFailed": "The member was removed, but their files could not be transferred. Try again from Removed members.",
   "team.status.restoreUnavailable": "This member cannot be restored because another person uses their current workspace.",
-  "team.status.forbidden": "Only the current admin can change workspace settings.",
+  "team.status.forbidden": "Only the workspace owner or an admin can change workspace settings.",
   "team.status.selfForbidden": "You cannot perform this action on yourself.",
   "team.status.notTeam": "Upgrade to Team before changing workspace settings.",
   "team.status.notFound": "That contributor was not found.",

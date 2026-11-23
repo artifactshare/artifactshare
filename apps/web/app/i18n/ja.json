@@ -434,7 +434,7 @@
   "team.status.removed": "メンバーを削除しました。",
   "team.status.removedTransferFailed": "メンバーはワークスペースから削除されましたが、ファイルは引き継げませんでした。「ワークスペースから削除したメンバー」の一覧からもう一度実行してください。",
   "team.status.restoreUnavailable": "このメンバーは別の人と同じワークスペースを利用しているため復帰できません。",
-  "team.status.forbidden": "現在の管理者だけがワークスペース設定を変更できます。",
+  "team.status.forbidden": "ワークスペースのオーナーか管理者だけが、ワークスペース設定を変更できます。",
   "team.status.selfForbidden": "自分自身にこの操作は実行できません。",
   "team.status.notTeam": "ワークスペース設定を変更するには Team にアップグレードしてください。",
   "team.status.notFound": "その投稿者は見つかりませんでした。",
