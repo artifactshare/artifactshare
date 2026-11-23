@@ -303,6 +303,9 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
         authorize.mockImplementationOnce(hold)
         await plus.click()
         await vi.waitFor(() => expect(releases).toHaveLength(3))
+        // The new submission replaces the earlier failure once React renders
+        // the submitting state, which a busy runner can commit after the call.
+        await expect.element(plus).toBeDisabled()
         expect(
           container.querySelector('[data-plan="plus"] form [role="alert"]'),
         ).toBeNull()
