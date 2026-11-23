@@ -673,8 +673,6 @@ test(
     for (const state of [
       'settings-tokens/created-secret',
       'settings-bots/forbidden',
-      'settings/result-warning',
-      'settings/result-warning-transfer',
     ])
       assert.equal(
         full.filter((entry) => `${entry.screen}/${entry.state}` === state)

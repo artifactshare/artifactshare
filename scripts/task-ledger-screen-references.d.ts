@@ -164,8 +164,6 @@ export type TaskLedgerScreenReference =
   | 'settings/removed-members-empty'
   | 'settings/result-error'
   | 'settings/result-success'
-  | 'settings/result-warning'
-  | 'settings/result-warning-transfer'
   | 'settings/team-member-read-only'
   | 'share-with-ai/default'
   | 'sign-in/account-not-linked'

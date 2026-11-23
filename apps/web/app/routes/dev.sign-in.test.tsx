@@ -161,8 +161,10 @@ describe('/dev/sign-in loader', () => {
     } as never)
 
     expect(result.scenarios).toContain('settings/result-warning')
+    // The created-secret state reads no header: its secret comes from the
+    // real token form, so a developer can open it from the picker.
+    expect(result.scenarios).toContain('settings-tokens/created-secret')
     for (const scenario of [
-      'settings-tokens/created-secret',
       'settings-billing/subscribed',
       'settings-billing/near-limit',
       'settings-billing/continuing-near-limit',

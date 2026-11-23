@@ -3096,52 +3096,34 @@ test('refreshing the transfer warning restores its removed member and owned file
       expect(await loadRemovedWorkspaceMembers(db, id)).toEqual([])
       await seedDevScreenState(db, scenario, id, id, now)
     }
-    // Casey is the dialog's active target; Jordan is already removed and
-    // keeps one file that the removed-members section offers to transfer.
-    const targetId = workspaceId + '-removed-member'
-    const removedId = workspaceId + '-transfer-member'
-    const membership = (id: string, suffix: string) =>
+    const memberId = workspaceId + '-removed-member'
+    const membership = (id: string) =>
       db
         .selectFrom('workspace_members')
         .innerJoin('users', 'users.id', 'workspace_members.user_id')
         .select(['users.workspace_id', 'role', 'status'])
-        .where('user_id', '=', id + suffix)
+        .where('user_id', '=', id + '-removed-member')
         .executeTakeFirstOrThrow()
-    const owner = (id: string, file: string) =>
+    const owner = (id: string) =>
       db
         .selectFrom('shareables')
         .select('owner_user_id')
-        .where('id', '=', devShareableId(id + file))
+        .where('workspace_id', '=', id)
         .executeTakeFirstOrThrow()
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await membership(workspaceId, '-removed-member')).toEqual({
+      expect(await membership(workspaceId)).toEqual({
         workspace_id: workspaceId,
         role: 'member',
         status: 'active',
       })
-      expect(await owner(workspaceId, '-transfer-file')).toEqual({
-        owner_user_id: targetId,
-      })
-      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([
-        {
-          id: removedId,
-          email: `jordan-${workspaceId}@example.test`,
-          name: 'Jordan Lee',
-          image: null,
-          ownedArtifactCount: 1,
-        },
-      ])
+      expect(await owner(workspaceId)).toEqual({ owner_user_id: memberId })
+      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([])
       if (attempt === 0) {
         for (const id of [workspaceId, other.workspaceId]) {
           await db
             .updateTable('workspace_members')
             .set({ status: 'removed' })
             .where('user_id', '=', id + '-removed-member')
-            .execute()
-          await db
-            .updateTable('workspace_members')
-            .set({ status: 'active' })
-            .where('user_id', '=', id + '-transfer-member')
             .execute()
           await db
             .updateTable('shareables')
@@ -3152,25 +3134,19 @@ test('refreshing the transfer warning restores its removed member and owned file
         await db
           .updateTable('users')
           .set({ workspace_id: other.workspaceId })
-          .where('id', 'in', [targetId, removedId])
+          .where('id', '=', memberId)
           .execute()
         await seedDevScreenState(db, scenario, workspaceId, workspaceId, now)
       }
     }
-    expect(await membership(other.workspaceId, '-removed-member')).toEqual({
+    expect(await membership(other.workspaceId)).toEqual({
       workspace_id: other.workspaceId,
       role: 'member',
       status: 'removed',
     })
-    expect(await membership(other.workspaceId, '-transfer-member')).toEqual({
-      workspace_id: other.workspaceId,
-      role: 'member',
-      status: 'active',
+    expect(await owner(other.workspaceId)).toEqual({
+      owner_user_id: other.workspaceId,
     })
-    for (const file of ['-transfer-file', '-removed-transfer-file'])
-      expect(await owner(other.workspaceId, file)).toEqual({
-        owner_user_id: other.workspaceId,
-      })
   } finally {
     await db.destroy()
   }

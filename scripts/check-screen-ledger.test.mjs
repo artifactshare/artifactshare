@@ -1613,59 +1613,15 @@ test('the created-secret capture submits the real token form and waits for its r
   )
 })
 
-test('the Members warning capture submits the removal and waits for the committed dialog', () => {
+test('the Members screen has no committed-removal warning capture', () => {
+  // Production reaches that warning only when the recipient becomes
+  // ineligible mid-submission, so no capture fakes the removal response.
   const members = ledgerScreens.find((screen) => screen.id === 'settings')
-  const { setup } = members.states.find(({ id }) => id === 'result-warning')
-  assert.deepEqual(setup.actionResponse, {
-    route: '/settings',
-    method: 'POST',
-    intent: 'remove-member',
-    status: 409,
-    data: {
-      ok: false,
-      code: 'removed-transfer-failed',
-      intent: 'remove-member',
-      removalCommitted: true,
-    },
-  })
-  assert.equal(
-    setup.interactions.at(-1).selector,
-    '[role="alertdialog"] [data-slot="alert-dialog-action"]',
-  )
-  // Only a committed removal drops the destructive confirmation; an
-  // uncommitted failure keeps it, so the readiness must require its absence.
-  assert.ok(
-    setup.postInteractionReady.visibleWith.some(
-      (selector) =>
-        selector.includes(':not(:has([data-slot="alert-dialog-action"]))') &&
-        selector.includes('removed-transfer-failed'),
-    ),
-  )
-})
-
-test('the Members transfer capture closes the committed warning before waiting for the row', () => {
-  const members = ledgerScreens.find((screen) => screen.id === 'settings')
-  const warning = members.states.find(({ id }) => id === 'result-warning')
-  const { setup } = members.states.find(
-    ({ id }) => id === 'result-warning-transfer',
-  )
-  assert.deepEqual(setup.actionResponse, warning.setup.actionResponse)
-  const confirm = setup.interactions.at(-2)
-  assert.equal(confirm.selector, warning.setup.interactions.at(-1).selector)
-  // Close only after the committed warning replaced the confirmation.
-  assert.equal(
-    confirm.readySelector,
-    warning.setup.postInteractionReady.visibleWith[0],
-  )
-  assert.equal(
-    setup.interactions.at(-1).selector,
-    '[role="alertdialog"] [data-slot="alert-dialog-cancel"]',
-  )
-  // The modal backdrop blurs the row, so readiness requires no open dialog.
-  assert.match(
-    setup.postInteractionReady.selector,
-    /^body:not\(:has\(\[role="alertdialog"\]\)\) #removed-members .*button\[data-transfer-removed-files\]:enabled$/,
-  )
+  const ids = members.states.map(({ id }) => id)
+  for (const retired of ['result-warning', 'result-warning-transfer'])
+    assert.ok(!ids.includes(retired), retired)
+  for (const { setup } of members.states)
+    assert.notEqual(setup.actionResponse?.intent, 'remove-member')
 })
 
 test('the Settings 403 capture is a Team member opening the admin-only Bots page', () => {

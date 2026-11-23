@@ -47,7 +47,6 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 // developer's own dev server does not have.
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-general/root-error',
-  'settings-tokens/created-secret',
   'settings-billing/subscribed',
   'settings-billing/purchase',
   'settings-billing/past-due',
@@ -517,70 +516,47 @@ export async function seedDevScreenState(
     return { containerId: null, containerKind: 'inbox' }
   }
   if (scenario === 'settings/result-warning') {
-    // Casey stays active as the removal dialog's target. A separate removed
-    // member keeps one file, so the removed-members section offers a transfer.
-    for (const member of [
+    const memberId = `${workspaceId}-removed-member`
+    await upsertScenarioMember(
+      db,
+      workspaceId,
+      userId,
+      memberId,
       {
-        id: `${workspaceId}-removed-member`,
-        fileId: `${workspaceId}-transfer-file`,
-        fileName: 'Review notes.html',
-        profile: {
-          name: 'Casey Morgan',
-          email: `casey-${workspaceId}@example.test`,
-          image: null,
-        },
-        status: 'active' as const,
+        name: 'Casey Morgan',
+        email: `casey-${workspaceId}@example.test`,
+        image: null,
       },
-      {
-        id: `${workspaceId}-transfer-member`,
-        fileId: `${workspaceId}-removed-transfer-file`,
-        fileName: 'Handoff checklist.html',
-        profile: {
-          name: 'Jordan Lee',
-          email: `jordan-${workspaceId}@example.test`,
-          image: null,
-        },
-        status: 'removed' as const,
-      },
-    ]) {
-      await upsertScenarioMember(
-        db,
-        workspaceId,
-        userId,
-        member.id,
-        member.profile,
-        member.status,
-        now,
-        'member',
-        true,
+      'active',
+      now,
+      'member',
+      true,
+    )
+    const containerId = await getOrCreateInboxContainerId(
+      db,
+      workspaceId,
+      memberId,
+      now,
+    )
+    await db
+      .insertInto('shareables')
+      .values({
+        id: devShareableId(`${workspaceId}-transfer-file`),
+        workspace_id: workspaceId,
+        owner_user_id: memberId,
+        container_id: containerId,
+        name: 'Review notes.html',
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) =>
+        oc
+          .column('id')
+          .doUpdateSet({ owner_user_id: memberId, container_id: containerId }),
       )
-      const containerId = await getOrCreateInboxContainerId(
-        db,
-        workspaceId,
-        member.id,
-        now,
-      )
-      await db
-        .insertInto('shareables')
-        .values({
-          id: devShareableId(member.fileId),
-          workspace_id: workspaceId,
-          owner_user_id: member.id,
-          container_id: containerId,
-          name: member.fileName,
-          artifact_kind: 'html_page',
-          visibility: 'private',
-          created_at: now,
-          updated_at: now,
-        })
-        .onConflict((oc) =>
-          oc.column('id').doUpdateSet({
-            owner_user_id: member.id,
-            container_id: containerId,
-          }),
-        )
-        .execute()
-    }
+      .execute()
     return { containerId: null, containerKind: 'inbox' }
   }
   if (scenario === 'settings-bots/long-email') {
@@ -2913,6 +2889,9 @@ export async function seedDevScreenState(
   }
 
   if (scenario === 'settings-tokens/created-secret') {
+    // Each capture creates a token through the real form, so the reseed drops
+    // every token of the scenario user and restores only the seeded row.
+    await db.deleteFrom('api_tokens').where('user_id', '=', userId).execute()
     await db
       .insertInto('api_tokens')
       .values({

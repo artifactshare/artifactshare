@@ -1199,11 +1199,13 @@ test.each([
   'missing-transfer',
 ] as const)('Japanese Members submission reaches %s', async (id) => {
   const warning = id === 'result-warning' || id === 'missing-transfer'
-  const setup = membersScreen.states.find(
-    (state) => state.id === (warning ? 'result-warning' : id),
-  )?.setup
-  const ready = setup?.postInteractionReady
-  if (!ready) throw new Error('Missing Members result readiness')
+  // The committed-removal warning has no capture state: production reaches it
+  // only when the recipient becomes ineligible mid-submission.
+  const ready = warning
+    ? null
+    : membersScreen.states.find((state) => state.id === id)?.setup
+        ?.postInteractionReady
+  if (!warning && !ready) throw new Error('Missing Members result readiness')
   language.locale = 'ja'
   let removed = false
   const target = {
@@ -1299,24 +1301,30 @@ test.each([
         exact: true,
       })
       .click()
-    if (id === 'missing-transfer') {
+    if (warning) {
+      const status = page
+        .elementLocator(document.body)
+        .getByRole('alertdialog')
+        .getByRole('status')
       await expect
-        .element(
-          page
-            .elementLocator(document.body)
-            .getByRole('alertdialog')
-            .getByRole('status'),
-        )
+        .element(status)
         .toHaveAttribute('data-settings-status', 'removed-transfer-failed')
+      await expect
+        .element(status)
+        .toHaveTextContent(
+          bindI18n('ja').t('team.status.removedTransferFailed'),
+        )
+      // The removed member's Transfer files control is enabled only while
+      // they still own a file.
+      const transfer = '#transfer-removed-assets-' + target.id
       await vi.waitFor(() =>
         expect(
-          container.querySelector('[data-transfer-removed-files]:disabled'),
+          container.querySelector(
+            transfer + (id === 'missing-transfer' ? ':disabled' : ':enabled'),
+          ),
         ).not.toBeNull(),
       )
-      await expect(
-        commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-      ).rejects.toThrow('ready condition was not met: ' + ready.description)
-    } else await commands.waitForScreenReady(ready)
+    } else if (ready) await commands.waitForScreenReady(ready)
     if (id === 'result-success') {
       const input = page.getByRole('searchbox')
       await input.fill('Pending search')
