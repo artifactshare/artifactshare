@@ -948,14 +948,11 @@ export async function runCaptureJobs({
   }
 }
 
-// Billing states whose seed syncs a contract from the local capture's fake
-// Stripe (`scripts/capture-stripe.mjs`). Only `screens:capture:local` runs
-// that fake, so `screens:capture` leaves them out of its job list.
-const LOCAL_ONLY_CAPTURE_STATES = [
-  'settings-billing/subscribed',
-  'settings-billing/past-due',
-  'settings-billing/continuing-near-limit',
-]
+// Billing states need the local capture's fake Stripe
+// (`scripts/capture-stripe.mjs`): its values configure billing, and contract
+// states sync their contract from it. Only `screens:capture:local` runs that
+// fake, so `screens:capture` leaves every billing state out of its job list.
+const LOCAL_ONLY_CAPTURE_SCREEN = 'settings-billing'
 
 /**
  * The screens and jobs of a run. Without the local capture (`local` false)
@@ -966,15 +963,9 @@ export function planCaptureJobs(requested, { local }) {
   const leftOut = []
   const selected = requested.map((screen) => {
     if (local) return screen
-    const states = []
-    for (const state of screen.states) {
-      const id = `${screen.id}/${state.id}`
-      if (LOCAL_ONLY_CAPTURE_STATES.includes(id)) leftOut.push(id)
-      else states.push(state)
-    }
-    return states.length === screen.states.length
-      ? screen
-      : { ...screen, states }
+    if (screen.id !== LOCAL_ONLY_CAPTURE_SCREEN) return screen
+    for (const state of screen.states) leftOut.push(`${screen.id}/${state.id}`)
+    return { ...screen, states: [] }
   })
   const jobs = []
   for (const screen of selected)

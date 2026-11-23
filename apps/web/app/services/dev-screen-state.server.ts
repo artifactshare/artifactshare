@@ -383,7 +383,7 @@ export async function ensureDevScreenState(
   const workspaceId = scenarioWorkspaceId(plan, scenario)
   const existing = await db
     .selectFrom('workspaces')
-    .select(['id', 'stripe_subscription_id'])
+    .select('id')
     .where('id', '=', workspaceId)
     .executeTakeFirst()
   if (!existing) {

@@ -1384,13 +1384,14 @@ function subscriptionStatusLabel(
   return t('billing.subscription.other')
 }
 
-// A Team workspace without an active subscription gets no purchase controls
-// and no presentation of its own.
+// Checkout refuses a workspace already on a paid plan, so a paid plan without
+// an active subscription gets no purchase controls and no presentation of its
+// own.
 function billingPresentation(
   data: Pick<BillingView, 'plan' | 'hasSubscription'>,
 ) {
   if (data.hasSubscription) return 'subscribed'
-  return data.plan === 'team' ? 'team-plan' : 'purchase'
+  return data.plan === 'free' ? 'purchase' : 'paid-plan'
 }
 
 function BillingActions({
@@ -1406,7 +1407,7 @@ function BillingActions({
   const presentation = billingPresentation(loaderData)
   if (presentation === 'subscribed')
     return <SubscribedActions contract={loaderData.contract} />
-  if (presentation === 'team-plan') return null
+  if (presentation === 'paid-plan') return null
   if (awaitingCheckoutReflection) return <CheckoutPendingNotice />
   return (
     <CheckoutActions

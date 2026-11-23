@@ -203,13 +203,12 @@ Each run:
    fails the run instead. It waits until they are gone, stops the fake Stripe,
    then removes its runtime directory.
 
-The `settings-billing` subscribed, past-due and continuing-near-limit states
-are local-only: their seeds store the contract by running the production
-subscription sync against that fake. `screens:capture:local` captures them.
-`screens:capture` (against a developer's own `pnpm dev`) leaves them out of its
-job list before it seeds anything, from a fixed list in
-`scripts/screen-capture.mjs`, and prints one line naming them and saying they
-need `screens:capture:local`. Only `scripts/local-capture.mjs` keeps them: it
+Every `settings-billing` state is local-only: the fake Stripe values configure
+billing, and the contract states store their contract by running the
+production subscription sync against that fake. `screens:capture:local`
+captures them. `screens:capture` (against a developer's own `pnpm dev`) leaves
+every billing state out of its job list before it seeds anything, and prints
+one line naming them and saying they need `screens:capture:local`. Only `scripts/local-capture.mjs` keeps them: it
 passes `--local-fake-stripe` to `scripts/run-screen-capture.mjs`, which
 `screens:capture` runs without that argument. No environment variable selects
 the mode.

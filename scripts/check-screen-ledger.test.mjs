@@ -94,12 +94,10 @@ test('billing captures default to the purchase seed and keep the purchase varian
   }
 })
 
-test('screens:capture plans no billing contract state and names them in one line; the local mode argument plans them', (t) => {
-  const contractStates = [
-    'settings-billing/subscribed',
-    'settings-billing/past-due',
-    'settings-billing/continuing-near-limit',
-  ]
+test('screens:capture plans no billing state and names them in one line; the local mode argument plans them', (t) => {
+  const contractStates = ledgerScreens
+    .find((screen) => screen.id === 'settings-billing')
+    .states.map((state) => `settings-billing/${state.id}`)
   const screenIds = ['settings-billing', 'settings-general']
   const argv = screenIds.flatMap((id) => ['--screen', id])
   // Every capture of a state: each locale, both viewports and both themes.
