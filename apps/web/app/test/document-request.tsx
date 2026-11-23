@@ -4,6 +4,7 @@ import {
   Outlet,
   RouterContextProvider,
   type ActionFunction,
+  type LoaderFunction,
   type ServerBuild,
 } from 'react-router'
 import { TooltipProvider } from '~/components/ui/tooltip'
@@ -20,11 +21,18 @@ export function documentRequestHandler({
   Page,
   action,
   outletContext,
+  layout,
 }: {
   path: string
   Page: ComponentType
   action: ActionFunction
-  outletContext: unknown
+  outletContext?: unknown
+  /**
+   * A real layout route above the page, such as the Settings shell. Its
+   * loader runs for the returned document and it provides the page's outlet
+   * context in place of `outletContext`.
+   */
+  layout?: { loader: LoaderFunction; Component: ComponentType }
 }) {
   function Root() {
     return (
@@ -37,6 +45,7 @@ export function documentRequestHandler({
       </html>
     )
   }
+  const pageParent = layout ? 'layout' : 'root'
   const manifestRoute = {
     hasAction: false,
     hasLoader: false,
@@ -57,10 +66,19 @@ export function documentRequestHandler({
       version: 'document-request',
       routes: {
         root: { ...manifestRoute, id: 'root', path: '', module: '/root.js' },
+        ...(layout && {
+          layout: {
+            ...manifestRoute,
+            id: 'layout',
+            parentId: 'root',
+            module: '/layout.js',
+            hasLoader: true,
+          },
+        }),
         page: {
           ...manifestRoute,
           id: 'page',
-          parentId: 'root',
+          parentId: pageParent,
           path,
           module: '/page.js',
           hasAction: true,
@@ -76,9 +94,16 @@ export function documentRequestHandler({
     routeDiscovery: { mode: 'initial', manifestPath: '/__manifest' },
     routes: {
       root: { id: 'root', path: '', module: { default: Root } },
+      ...(layout && {
+        layout: {
+          id: 'layout',
+          parentId: 'root',
+          module: { default: layout.Component, loader: layout.loader },
+        },
+      }),
       page: {
         id: 'page',
-        parentId: 'root',
+        parentId: pageParent,
         path,
         module: { default: Page, action },
       },

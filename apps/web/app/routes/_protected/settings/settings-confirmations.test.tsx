@@ -26,6 +26,7 @@ import * as integrations from './_content/integrations'
 import * as external from './_content/external-access'
 import { ErrorBoundary } from './_content/_layout'
 import { SettingsOutlet } from './+components/settings-outlet'
+import { settingsAdminGate } from './+lib/settings-admin.server'
 import type { SettingsLoaderData } from './_layout'
 
 const { mutate, requireUser, getSessionUser } = vi.hoisted(() => ({
@@ -200,8 +201,6 @@ function screenFor(type: keyof typeof pages, intent: string) {
       return (
         <members.default
           loaderData={{
-            currentUserIsAdmin: true,
-            currentUserRole: 'owner',
             filters: { query: '', role: 'all', activity: 'all', page: 1 },
             membersPage: {
               page: 1,
@@ -271,7 +270,6 @@ function screenFor(type: keyof typeof pages, intent: string) {
       return (
         <billing.default
           loaderData={{
-            plan: 'team',
             canManage: true,
             billingConfigured: true,
             hasSubscription: true,
@@ -279,8 +277,6 @@ function screenFor(type: keyof typeof pages, intent: string) {
             defaultCurrency: 'usd',
             initialPlan: 'team',
             initialInterval: 'monthly',
-            storageUsedBytes: 0,
-            storageQuotaBytes: 100000,
             activeProjectCount: 1,
             projectLimit: null,
             entryContext: 'default',
@@ -380,6 +376,8 @@ async function mount(
       case 'tokens':
         return tokens.action({ ...common, pattern: '/settings/tokens' })
       case 'bots':
+        // The admin gate already let this owner through.
+        common.context.set(settingsAdminGate, 'allowed')
         return bots.action({ ...common, pattern: '/settings/bots' })
       case 'external':
         return external.action({

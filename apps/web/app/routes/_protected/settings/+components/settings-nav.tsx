@@ -15,6 +15,10 @@ import { useState, type ReactNode } from 'react'
 import { Link, matchPath, useLocation } from 'react-router'
 import { useT } from '~/hooks/use-t'
 import type { TKey } from '~/i18n/messages'
+import {
+  settingsAdminPageAccess,
+  type SettingsAdminPage,
+} from '~/lib/settings-access'
 import { Button } from '~/components/ui/button'
 import {
   Sheet,
@@ -31,8 +35,7 @@ const GROUPS: {
     to: string
     label: TKey
     icon: typeof IconUsers
-    adminOnly?: boolean
-    teamOnly?: boolean
+    adminPage?: SettingsAdminPage
   }[]
 }[] = [
   {
@@ -58,7 +61,7 @@ const GROUPS: {
         to: '/settings/bots',
         label: 'team.bots',
         icon: IconRobot,
-        adminOnly: true,
+        adminPage: 'bots',
       },
       {
         to: '/settings/external-access',
@@ -79,14 +82,13 @@ const GROUPS: {
         to: '/settings/activity',
         label: 'team.activity',
         icon: IconActivity,
-        adminOnly: true,
+        adminPage: 'activity',
       },
       {
         to: '/settings/inventory',
         label: 'team.inventory',
         icon: IconBoxMultiple,
-        adminOnly: true,
-        teamOnly: true,
+        adminPage: 'inventory',
       },
     ],
   },
@@ -124,9 +126,12 @@ export function SettingsNavigation({
   const groups = GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) =>
-        (!item.adminOnly || currentUserIsAdmin) &&
-        (!item.teamOnly || workspaceKind === 'team'),
+      ({ adminPage }) =>
+        !adminPage ||
+        settingsAdminPageAccess(adminPage, {
+          isAdmin: currentUserIsAdmin,
+          team: workspaceKind === 'team',
+        }) === 'allowed',
     ),
   })).filter((group) => group.items.length)
   const matchesItem = (item: { to: string }) =>

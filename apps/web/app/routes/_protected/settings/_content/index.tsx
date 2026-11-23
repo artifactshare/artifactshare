@@ -73,9 +73,11 @@ import {
 } from '~/lib/team-management'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
+import { settingsActiveAdmin } from '../+lib/settings-request.server'
 import {
   grantWorkspaceAdmin,
-  loadMembersPageData,
+  loadRemovedWorkspaceMembers,
+  loadWorkspaceMembersPage,
   parseMembersPageFilters,
   removeWorkspaceMember,
   restoreWorkspaceMember,
@@ -237,8 +239,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const user = requireUser(context)
   const filters = parseMembersPageFilters(new URL(request.url).searchParams)
   const db = createDb()
-  const data = await loadMembersPageData(db, user, filters)
-  return { ...data, filters }
+  // The role shown on the page comes from the Settings shell. Removed members
+  // are still authorized here, on the request's own active membership.
+  const [membersPage, admin] = await Promise.all([
+    loadWorkspaceMembersPage(db, user.workspaceId, filters),
+    settingsActiveAdmin(context, request),
+  ])
+  const removedMembers = admin
+    ? await loadRemovedWorkspaceMembers(db, user.workspaceId)
+    : []
+  return { membersPage, removedMembers, filters }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -370,7 +380,7 @@ export default function TeamMembersPage({
 }: Pick<Route.ComponentProps, 'loaderData'>) {
   const shell = useOutletContext<SettingsLayoutContext>()
   const isUpgrade = shell.kind === 'upgrade'
-  const canManage = loaderData.currentUserIsAdmin
+  const canManage = shell.currentUserIsAdmin
 
   const [target, setTarget] = useState<MemberTarget | null>(null)
   const fetcher = useFetcher<typeof action>()
@@ -416,7 +426,7 @@ export default function TeamMembersPage({
           filters={loaderData.filters}
           currentUser={shell.user}
           canManage={canManage}
-          currentUserRole={loaderData.currentUserRole}
+          currentUserRole={shell.currentUserRole}
         />
 
         {canManage ? (

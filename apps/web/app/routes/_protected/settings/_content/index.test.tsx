@@ -259,8 +259,6 @@ function renderPage({
   const loaderData = {
     membersPage: { members, total: members.length, page: 1 },
     removedMembers: [],
-    currentUserRole,
-    currentUserIsAdmin: currentUserRole !== 'member',
     filters: { query: '', role: 'all', activity: 'all', page: 1 },
   } satisfies Parameters<typeof TeamMembersPage>[0]['loaderData']
   return renderToStaticMarkup(

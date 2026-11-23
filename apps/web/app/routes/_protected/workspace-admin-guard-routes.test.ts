@@ -5,6 +5,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
 import { loader as recipients } from './settings/recipients'
 import { loader as members } from './settings/_content/index'
+import { loadSettingsShell } from './settings/+lib/settings-request.server'
 import {
   action as rename,
   loader as general,
@@ -47,9 +48,12 @@ test('ownerless settings read persisted roles and require an active admin to sea
         .orderBy('user_id')
       const before = await rows.execute()
       const url = new URL('https://example.test/settings')
+      // Each request gets its own context, as the server provides.
+      const request = new RouterContextProvider()
+      request.set(userContext, context.get(userContext))
       const args = {
         request: new Request(url),
-        context,
+        context: request,
         url,
         params: {},
         pattern: '/settings' as const,
@@ -58,8 +62,10 @@ test('ownerless settings read persisted roles and require an active admin to sea
         owner: null,
       })
       expect(await members(args)).toMatchObject({
-        currentUserRole: role,
         membersPage: { total: 2 },
+      })
+      expect(await loadSettingsShell(request)).toMatchObject({
+        currentUserRole: role,
       })
       const result = await recipients({
         ...args,

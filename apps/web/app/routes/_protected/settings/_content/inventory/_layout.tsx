@@ -1,11 +1,12 @@
-import { Outlet } from 'react-router'
-import type { Route } from './+types/_layout'
+import { Outlet, useOutletContext } from 'react-router'
+import type { SettingsLayoutContext } from '../../_layout'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
 import { TabNav, TabNavLink } from '~/components/app/tab-nav'
 import { useT } from '~/hooks/use-t'
 export default function InventoryLayout() {
   const { t } = useT()
+  const shell = useOutletContext<SettingsLayoutContext>()
   return (
     <SettingsPage>
       <SettingsSection title={t('team.inventory.title')}>
@@ -20,7 +21,7 @@ export default function InventoryLayout() {
             label={t('team.inventory.artifacts')}
           />
         </TabNav>
-        <Outlet />
+        <Outlet context={shell} />
       </SettingsSection>
     </SettingsPage>
   )

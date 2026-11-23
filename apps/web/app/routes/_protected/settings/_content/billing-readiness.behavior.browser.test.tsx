@@ -48,15 +48,12 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
     for (const billingConfigured of [true, false]) {
       const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
         canManage: true,
-        plan: 'team',
         stripeSubscriptionStatus: id === 'past-due' ? 'past_due' : 'active',
         hasSubscription: true,
         billingConfigured,
         defaultCurrency: 'usd',
         initialPlan: 'team',
         initialInterval: 'monthly',
-        storageUsedBytes: 100_000_000_000,
-        storageQuotaBytes: 120_000_000_000,
         activeProjectCount: 1,
         projectLimit: null,
         entryContext: 'default',
@@ -88,7 +85,18 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
       const router = createMemoryRouter([
         {
           path: '/',
-          element: <Outlet context={{ currentUserIsAdmin: true }} />,
+          element: (
+            <Outlet
+              context={{
+                currentUserIsAdmin: true,
+                workspace: {
+                  plan: 'team',
+                  storageUsedBytes: 100_000_000_000,
+                  storageQuotaBytes: 120_000_000_000,
+                },
+              }}
+            />
+          ),
           children: [
             { index: true, element: <BillingPage loaderData={data} /> },
           ],
@@ -167,15 +175,12 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
     const quota = PLAN_STORAGE_QUOTA_BYTES.free
     const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
       canManage: true,
-      plan: 'free',
       stripeSubscriptionStatus: 'none',
       hasSubscription: false,
       billingConfigured: true,
       defaultCurrency: 'jpy',
       initialPlan: 'plus',
       initialInterval: 'monthly',
-      storageUsedBytes: id === 'near-limit' ? quota * 0.95 : 0,
-      storageQuotaBytes: quota,
       activeProjectCount: 0,
       projectLimit: 5,
       entryContext: 'default',
@@ -204,7 +209,7 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
                       name: 'Reports',
                       hd: null,
                       plan: 'free',
-                      storageUsedBytes: 0,
+                      storageUsedBytes: id === 'near-limit' ? quota * 0.95 : 0,
                       storageQuotaBytes: quota,
                     },
                     currentUserIsAdmin: true,

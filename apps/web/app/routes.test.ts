@@ -155,41 +155,55 @@ describe('route discovery', () => {
   })
 })
 
-test('settings page URLs share a content boundary and resource URLs belong to the shell', () => {
+describe('settings route ancestry', () => {
   const routes = discoverRoutes(false).map(toRouteObject)
   const settings = 'routes/_protected/settings'
-  for (const page of [
-    'index',
-    'activity',
-    'analytics',
-    'billing',
-    'bots',
-    'general',
-    'integrations',
-    'external-access',
-    'tokens',
-    'inventory/index',
-    'inventory/projects',
-    'inventory/artifacts',
-    'billing-preview',
-    'cli-sessions',
-    'usage',
-    'recipients',
-  ]) {
-    const resource = [
-      'billing-preview',
-      'cli-sessions',
-      'usage',
-      'recipients',
-    ].includes(page)
+  const matchedIds = (url: string) =>
+    matchRoutes(routes, url)?.map((match) => match.route.id)
+
+  test.each([
+    ['index', false],
+    ['analytics', false],
+    ['billing', false],
+    ['general', false],
+    ['integrations', false],
+    ['external-access', false],
+    ['tokens', false],
+    ['bots', true],
+    ['activity', true],
+    ['inventory/index', true],
+    ['inventory/projects', true],
+    ['inventory/artifacts', true],
+  ])('page %s shares the content boundary (admin gate: %s)', (page, gated) => {
     const matches = matchRoutes(
       routes,
       '/settings/' + page.replace(/index$/, ''),
     )
     const ids = matches?.map((match) => match.route.id)
+    expect(ids).toContain('routes/_protected/_layout')
     expect(ids).toContain(settings + '/_layout')
-    expect(ids?.includes(settings + '/_content/_layout')).toBe(!resource)
-    expect(ids?.at(-1)).toBe(settings + (resource ? '/' : '/_content/') + page)
+    expect(ids).toContain(settings + '/_content/_layout')
+    expect(ids?.includes(settings + '/_content/_admin')).toBe(gated)
+    expect(ids?.at(-1)).toBe(settings + '/_content/' + page)
     expect(Boolean(matches?.at(-1)?.route.index)).toBe(page.endsWith('index'))
-  }
+  })
+
+  test.each(['cli-sessions', 'usage'])(
+    'document redirect %s stays under document authentication and the shell',
+    (page) => {
+      const ids = matchedIds('/settings/' + page)
+      expect(ids).toEqual([
+        'routes/_protected/_layout',
+        settings + '/_layout',
+        settings + '/' + page,
+      ])
+    },
+  )
+
+  test.each(['recipients', 'billing-preview'])(
+    'confirmation resource %s keeps its URL outside document authentication and the shell',
+    (page) => {
+      expect(matchedIds('/settings/' + page)).toEqual([settings + '/' + page])
+    },
+  )
 })

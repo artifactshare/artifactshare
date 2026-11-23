@@ -14,7 +14,7 @@ import {
   stopWorkspaceBot,
 } from '~/services/bot-members.server'
 import { createDb } from '~/services/db.server'
-import { loadSettingsShell } from '~/services/team-management.server'
+import { requireSettingsAdminPage } from '../+lib/settings-admin.server'
 import { SettingsPage } from '~/components/form/settings-page'
 import { BotSection } from '../+components/bot-section'
 import type { Route } from './+types/bots'
@@ -384,12 +384,9 @@ export const screen = {
 // stop/reissue keep working for existing bots regardless of the flag.
 
 export async function loader({ context }: Route.LoaderArgs) {
+  requireSettingsAdminPage(context)
   const user = requireUser(context)
   const db = createDb()
-  const shell = await loadSettingsShell(db, user)
-  if (!shell.currentUserIsAdmin) {
-    throw new Response('Forbidden', { status: 403 })
-  }
   const [bots, botCreationEnabled] = await Promise.all([
     listWorkspaceBots(db, user.workspaceId),
     isBotMembersEnabled(user.workspaceId),
@@ -436,6 +433,7 @@ export async function clientAction({
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
+  requireSettingsAdminPage(context)
   if (request.method !== 'POST')
     return data(
       { ok: false, code: 'method-not-allowed', intent: '' },

@@ -1,27 +1,27 @@
+import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
-const admin = vi.hoisted(() => vi.fn())
-vi.mock('~/middleware/context', () => ({
-  requireUser: () => ({ workspaceId: 'ws1' }),
-}))
-vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
-vi.mock('~/services/access.server', () => ({
-  isTeamWorkspaceAdmin: admin,
-  requireInventoryAccess: async () => undefined,
-}))
+import { settingsAdminGate } from '../../+lib/settings-admin.server'
+vi.mock('cloudflare:workers', () => ({ env: {} }))
 import { loader } from './index'
 describe('inventory index loader', () => {
-  test('redirects to projects', async () => {
-    admin.mockResolvedValue(true)
-    await expect(
+  test('redirects an admitted admin to projects', () => {
+    const context = new RouterContextProvider()
+    context.set(settingsAdminGate, 'allowed')
+    const url = new URL('https://x/settings/inventory')
+    let thrown: unknown
+    try {
       loader({
-        context: {},
-        request: new Request('https://x/settings/inventory'),
-      } as never),
-    ).rejects.toSatisfy(
-      (response: unknown) =>
-        response instanceof Response &&
-        response.status === 302 &&
-        response.headers.get('Location') === '/settings/inventory/projects',
-    )
+        context,
+        request: new Request(url),
+        params: {},
+        url,
+        pattern: '/settings/inventory',
+      })
+    } catch (error) {
+      thrown = error
+    }
+    if (!(thrown instanceof Response)) throw new Error('expected a redirect')
+    expect(thrown.status).toBe(302)
+    expect(thrown.headers.get('Location')).toBe('/settings/inventory/projects')
   })
 })

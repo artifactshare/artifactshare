@@ -5,8 +5,10 @@ import {
   allowsStorageOverage,
   storageQuotaForPlan,
 } from '~/lib/billing-plan.server'
-import { requireUser } from '~/middleware/context'
-import { loadCurrentMonthOverageProjection } from '~/services/billing-usage.server'
+import {
+  loadCurrentMonthOverageProjection,
+  type OverageProjection,
+} from '~/services/billing-usage.server'
 import {
   createStripeClient,
   isBillingConfigured,
@@ -15,6 +17,7 @@ import {
 } from '~/services/billing.server'
 import { countWorkspaceContributors } from '~/services/team-management.server'
 import { createDb } from '~/services/db.server'
+import type { SettingsWorkspaceSnapshot } from '../+lib/settings-request.server'
 
 export type OverageProjectionView = {
   gb: number
@@ -29,26 +32,40 @@ export type UsageLoaderData = {
   contributorCount: number | null
 }
 
+/**
+ * This month's overage projection, computed at most once however many billing
+ * views ask for it. A failed projection reads as none.
+ */
+export function sharedOverageProjection(
+  workspaceId: string,
+  now: Date,
+): () => Promise<OverageProjection | null> {
+  let projection: Promise<OverageProjection | null> | undefined
+  return () => {
+    projection ??= loadCurrentMonthOverageProjection(
+      createDb(),
+      workspaceId,
+      now,
+    ).catch((error) => {
+      logErrorDiagnostic('billing.projection', error)
+      return null
+    })
+    return projection
+  }
+}
+
 export async function loadUsage({
-  context,
+  workspace,
+  projection: readProjection,
   contract: knownContract,
 }: {
-  context: Readonly<import('react-router').RouterContextProvider>
+  workspace: Pick<
+    SettingsWorkspaceSnapshot,
+    'id' | 'plan' | 'stripe_subscription_status' | 'stripe_subscription_id'
+  >
+  projection: () => Promise<OverageProjection | null>
   contract?: SubscriptionContract | null
 }): Promise<UsageLoaderData> {
-  const user = requireUser(context)
-  const db = createDb()
-  const workspace = await db
-    .selectFrom('workspaces')
-    .select([
-      'id',
-      'plan',
-      'stripe_subscription_status',
-      'stripe_subscription_id',
-    ])
-    .where('id', '=', user.workspaceId)
-    .executeTakeFirstOrThrow()
-
   const showOverageProjection = allowsStorageOverage(
     workspace.plan,
     workspace.stripe_subscription_status,
@@ -57,7 +74,7 @@ export async function loadUsage({
 
   const contributorCount =
     workspace.plan === 'team'
-      ? await countWorkspaceContributors(db, workspace.id)
+      ? await countWorkspaceContributors(createDb(), workspace.id)
       : null
 
   if (!showOverageProjection) {
@@ -70,12 +87,7 @@ export async function loadUsage({
   }
 
   const [projection, contract] = await Promise.all([
-    loadCurrentMonthOverageProjection(db, workspace.id, new Date()).catch(
-      (error) => {
-        logErrorDiagnostic('billing.usage.projection', error)
-        return null
-      },
-    ),
+    readProjection(),
     knownContract !== undefined
       ? Promise.resolve(knownContract)
       : workspace.stripe_subscription_id && isBillingConfigured(env)

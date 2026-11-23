@@ -1,6 +1,11 @@
 import { env } from 'cloudflare:workers'
 import type { Route } from './+types/billing-preview'
 import { isInterruptedRequest } from '~/lib/settings-confirmation'
+import {
+  readConfirmationResource,
+  type SessionExpired,
+} from '~/lib/session-expired'
+import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import {
@@ -10,6 +15,10 @@ import {
   type PlanChangePreview,
 } from '~/services/billing.server'
 import { requireWorkspaceBillingOwner } from '~/services/team-management.server'
+
+// Only the plan change confirmation fetches this, so an expired session is a
+// 401 the confirmation handles, not a redirect to the sign-in page.
+export const middleware = [requireUserApiMiddleware]
 
 export async function loader({
   request,
@@ -61,12 +70,13 @@ export async function loader({
 
 // The plan change confirmation loads this estimate with a fetcher. A request
 // that never reached the app is an estimate that could not be read, not an
-// error that replaces the open confirmation.
+// error that replaces the open confirmation. An expired session is answered
+// to the confirmation, which sends the user to sign in.
 export async function loadEstimate(
   serverLoader: () => Promise<PlanChangePreview>,
-): Promise<PlanChangePreview> {
+): Promise<PlanChangePreview | SessionExpired> {
   try {
-    return await serverLoader()
+    return await readConfirmationResource(serverLoader)
   } catch (error) {
     if (isInterruptedRequest(error)) return { kind: 'external-failed' }
     throw error

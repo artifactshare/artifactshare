@@ -1,40 +1,25 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { RouterContextProvider } from 'react-router'
+import { test, expect, vi } from 'vitest'
+import { settingsAdminGate } from '../+lib/settings-admin.server'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 const services = vi.hoisted(() => ({
-  loadSettingsShell: vi.fn(),
-  listWorkspaceBots: vi.fn(),
   isBotMembersEnabled: vi.fn(),
   updateWorkspaceBotDestinations: vi.fn(),
 }))
 
-const db = vi.hoisted(() => ({
-  selectFrom: vi.fn(() => ({
-    select: vi.fn(() => ({
-      where: vi.fn(() => ({
-        where: vi.fn(() => ({
-          where: vi.fn(() => ({
-            orderBy: vi.fn(() => ({ execute: vi.fn(() => []) })),
-          })),
-        })),
-      })),
-    })),
-  })),
-}))
+const db = vi.hoisted(() => ({}))
 
 vi.mock('~/services/db.server', () => ({ createDb: () => db }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'user-1', workspaceId: 'workspace-1' }),
 }))
-vi.mock('~/services/team-management.server', () => ({
-  loadSettingsShell: services.loadSettingsShell,
-}))
 vi.mock('~/lib/bot-members-flag.server', () => ({
   isBotMembersEnabled: services.isBotMembersEnabled,
 }))
 vi.mock('~/services/bot-members.server', () => ({
-  listWorkspaceBots: services.listWorkspaceBots,
+  listWorkspaceBots: vi.fn(),
   cancelWorkspaceBot: vi.fn(),
   createWorkspaceBot: vi.fn(),
   reissueWorkspaceBotCredential: vi.fn(),
@@ -45,33 +30,15 @@ vi.mock('~/services/bot-destinations.server', () => ({
   updateWorkspaceBotDestinations: services.updateWorkspaceBotDestinations,
 }))
 
-import { action, loader } from './bots'
+import { action } from './bots'
 
-describe('/settings/bots loader', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  test('does not expose bot inventory to a non-admin direct request', async () => {
-    services.loadSettingsShell.mockResolvedValue({ currentUserIsAdmin: false })
-
-    await expect(loader({ context: new Map() } as never)).rejects.toMatchObject(
-      { status: 403 },
-    )
-    expect(services.listWorkspaceBots).not.toHaveBeenCalled()
-  })
-
-  test('loads bot inventory for an admin', async () => {
-    services.loadSettingsShell.mockResolvedValue({ currentUserIsAdmin: true })
-    services.listWorkspaceBots.mockResolvedValue([{ id: 'bot-1' }])
-    services.isBotMembersEnabled.mockResolvedValue(true)
-
-    await expect(
-      loader({ context: new Map() } as never),
-    ).resolves.toMatchObject({
-      bots: [{ id: 'bot-1' }],
-      botCreationEnabled: true,
-    })
-  })
-})
+// Who may reach the bots page is the admin gate's decision, covered with the
+// real route topology in settings-admin-gate.test.ts; these requests passed it.
+function admittedContext() {
+  const context = new RouterContextProvider()
+  context.set(settingsAdminGate, 'allowed')
+  return context
+}
 
 test.each(['ok', 'forbidden', 'bot-conflict', 'bot-stopped'] as const)(
   'destination action is available with creation off and preserves %s result',
@@ -85,13 +52,17 @@ test.each(['ok', 'forbidden', 'bot-conflict', 'bot-stopped'] as const)(
       projectIds: ['a', 'b'],
       revision: 'latest',
     }
+    const url = new URL('https://example.com/settings/bots')
     const response = await action({
-      request: new Request('https://example.com/settings/bots', {
+      request: new Request(url, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-      context: new Map(),
-    } as never)
+      context: admittedContext(),
+      params: {},
+      url,
+      pattern: '/settings/bots',
+    })
     expect(response.data).toEqual({
       ok: kind === 'ok',
       code: kind,

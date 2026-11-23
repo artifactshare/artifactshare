@@ -1,6 +1,7 @@
+import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
+import { settingsAdminGate } from '../../+lib/settings-admin.server'
 const mocks = vi.hoisted(() => ({
-  admin: vi.fn(),
   artifacts: vi.fn(),
   projects: vi.fn(),
 }))
@@ -8,10 +9,6 @@ vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ workspaceId: 'ws1' }),
 }))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
-vi.mock('~/services/access.server', () => ({
-  isTeamWorkspaceAdmin: mocks.admin,
-  requireInventoryAccess: async () => undefined,
-}))
 vi.mock('~/services/team-management.server', () => ({
   loadWorkspaceInventoryArtifactsPage: mocks.artifacts,
   loadWorkspaceInventoryProjectsPage: mocks.projects,
@@ -24,10 +21,11 @@ vi.mock('~/services/team-management.server', () => ({
 import { loader } from './artifacts'
 describe('inventory artifacts loader', () => {
   test('loads artifacts only', async () => {
-    mocks.admin.mockResolvedValue(true)
     mocks.artifacts.mockResolvedValue({ artifacts: [], total: 0, page: 1 })
+    const context = new RouterContextProvider()
+    context.set(settingsAdminGate, 'allowed')
     await loader({
-      context: {},
+      context,
       request: new Request(
         'https://x/settings/inventory/artifacts?visibility=link&sort=size',
       ),

@@ -34,17 +34,12 @@ vi.mock('~/services/db.server', () => ({
 
 const requireUserMock = vi.hoisted(() => vi.fn())
 const createCheckoutSessionMock = vi.hoisted(() => vi.fn())
-const externalPostingEnabledMock = vi.hoisted(() => vi.fn(() => true))
 const loadSubscriptionContractMock = vi.hoisted(() =>
   vi.fn<typeof billing.loadSubscriptionContract>(() => Promise.resolve(null)),
 )
 
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
-}))
-
-vi.mock('~/lib/project-external-posting.server', () => ({
-  isExternalPostingEnabledForWorkspace: externalPostingEnabledMock,
 }))
 
 vi.mock('~/services/billing.server', async (importOriginal) => {
@@ -58,6 +53,7 @@ vi.mock('~/services/billing.server', async (importOriginal) => {
 })
 
 import { action, loader, shouldShowBillingContext } from './billing'
+import { loadSettingsShell } from '../+lib/settings-request.server'
 
 describe('/settings/billing loader', () => {
   let db: Kysely<DB>
@@ -68,7 +64,6 @@ describe('/settings/billing loader', () => {
     dbState.db = db
     await seedBase(db)
     createCheckoutSessionMock.mockReset()
-    externalPostingEnabledMock.mockClear()
   })
 
   afterEach(async () => {
@@ -185,15 +180,12 @@ describe('/settings/billing loader', () => {
       overageProjection: { gb: 0, currency: 'usd', amount: 0 },
       contract,
       canManage: true,
-      plan: 'plus',
       stripeSubscriptionStatus: 'active',
       hasSubscription: true,
       billingConfigured: true,
       defaultCurrency: 'usd',
       initialPlan: 'team',
       initialInterval: 'monthly',
-      storageUsedBytes: 0,
-      storageQuotaBytes: 10 * 1024 * 1024 * 1024,
       activeProjectCount: 0,
       projectLimit: 20,
       entryContext: 'default',
@@ -217,37 +209,27 @@ describe('/settings/billing loader', () => {
         cancelAtPeriodEnd: false,
       })
       const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-      vi.spyOn(
-        billingUsage,
-        'loadCurrentMonthOverageProjection',
-      ).mockRejectedValue(new Error('projection unavailable'))
+      const projection = vi
+        .spyOn(billingUsage, 'loadCurrentMonthOverageProjection')
+        .mockRejectedValue(new Error('projection unavailable'))
 
       const result = await loader({
         context: {},
         request: new Request('https://example.test/settings/billing'),
       } as never)
 
+      // Usage and, for the owner, the monthly estimate share one projection.
+      expect(projection).toHaveBeenCalledTimes(1)
       const operations = log.mock.calls.map(([diagnostic]) => diagnostic)
       expect(operations).toEqual([
-        ...(userId === 'u-a'
-          ? [
-              {
-                operation: 'billing.projection',
-                cause: 'Error',
-                frames: expect.any(Array),
-              },
-            ]
-          : []),
         {
-          operation: 'billing.usage.projection',
+          operation: 'billing.projection',
           cause: 'Error',
           frames: expect.any(Array),
         },
       ])
       expect(result).toMatchObject({
-        plan: 'plus',
         canManage: userId === 'u-a',
-        storageUsedBytes: 0,
         showOverageProjection: true,
         overageProjection: null,
         monthlyEstimate: null,
@@ -272,7 +254,6 @@ describe('/settings/billing loader', () => {
   test('free loader returns the free quotas and disabled external posting policy', async () => {
     await seedAdmin(db, 'u-a', 'ws-a')
     requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
-    externalPostingEnabledMock.mockResolvedValueOnce(false)
 
     const result = await loader({
       context: {},
@@ -280,14 +261,12 @@ describe('/settings/billing loader', () => {
     } as never)
 
     expect(result).toMatchObject({
-      plan: 'free',
-      storageQuotaBytes: 100 * 1024 * 1024,
       projectLimit: 5,
       externalPostingEnabled: false,
     })
   })
 
-  test('loader preserves a viewer workspace zero-byte storage quota', async () => {
+  test('the shell billing shows preserves a zero-byte storage quota', async () => {
     await db
       .updateTable('workspaces')
       .set({ storage_quota_bytes: 0 })
@@ -295,12 +274,9 @@ describe('/settings/billing loader', () => {
       .execute()
     requireUserMock.mockReturnValue(sessionUser('u-c', 'ws-a'))
 
-    const result = await loader({
-      context: {},
-      request: new Request('https://example.test/settings/billing'),
-    } as never)
+    const shell = await loadSettingsShell(new RouterContextProvider())
 
-    expect(result.storageQuotaBytes).toBe(0)
+    expect(shell.workspace.storageQuotaBytes).toBe(0)
   })
 
   test('non-owner loader returns read-only billing data without owner contact', async () => {
@@ -320,15 +296,12 @@ describe('/settings/billing loader', () => {
       overageProjection: { gb: 0, currency: null, amount: null },
       contract: null,
       canManage: false,
-      plan: 'team',
       stripeSubscriptionStatus: 'active',
       hasSubscription: true,
       billingConfigured: true,
       defaultCurrency: 'usd',
       initialPlan: 'team',
       initialInterval: 'monthly',
-      storageUsedBytes: 0,
-      storageQuotaBytes: 100 * 1024 * 1024 * 1024,
       activeProjectCount: 0,
       projectLimit: null,
       entryContext: 'default',
@@ -870,6 +843,7 @@ async function updateWorkspacePlan(
             : 100 * 1024 * 1024,
       stripe_subscription_status: status,
       stripe_subscription_id: subscriptionId,
+      external_posting_enabled: plan === 'free' ? 0 : 1,
     })
     .where('id', '=', workspaceId)
     .execute()

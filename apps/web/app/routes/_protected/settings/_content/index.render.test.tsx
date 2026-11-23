@@ -31,15 +31,22 @@ function renderMembers(
 ) {
   const router = createMemoryRouter([
     {
-      element: <Outlet context={{ kind: 'team', user: { id: 'current' } }} />,
+      element: (
+        <Outlet
+          context={{
+            kind: 'team',
+            user: { id: 'current' },
+            currentUserRole: role,
+            currentUserIsAdmin: role !== 'member',
+          }}
+        />
+      ),
       children: [
         {
           path: '/',
           element: (
             <MembersPage
               loaderData={{
-                currentUserRole: role,
-                currentUserIsAdmin: role !== 'member',
                 removedMembers,
                 filters,
                 membersPage: { members: [], total: 0, page: 1 },
