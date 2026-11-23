@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { RouterContextProvider } from 'react-router'
 import { userContext } from '~/middleware/context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
+import { seedSession, seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import {
   createD1MockFromSqliteRef,
   createMigratedInMemoryDb,
@@ -777,6 +777,54 @@ describe('CLI device authorization intent', () => {
         project_selector: 'Agent output',
       }),
     ).toBeNull()
+  })
+
+  test('a pending claim move keeps the destination project unavailable to the bearer session', async () => {
+    seedUser(sqlite, 'mover')
+    seedSession(sqlite, 'mover', 'pending-mover')
+    sqlite.exec(`
+      INSERT INTO workspaces (id, name, created_at, self_upload_enabled, storage_quota_bytes, link_expiry_max_days)
+      VALUES ('personal', 'mover@example.com''s workspace', '2025', 0, 0, NULL);
+      UPDATE users SET workspace_id = 'personal' WHERE id = 'mover';
+      INSERT INTO workspace_domain_claims (domain, workspace_id, source, created_at, updated_at)
+      VALUES ('example.com','ws1','google_hd','2025','2025');
+    `)
+    await storeDeviceAuthorizationIntent('device-1', {
+      preset: 'agent',
+      deviceName: 'Codex',
+      projectSelector: 'project-1',
+    })
+    expect(
+      await loadAgentApprovalContext('ABCD1234', 'u1', 'ws1', 'u1@example.com'),
+    ).toMatchObject({
+      fixedProject: { id: 'project-1' },
+      fixedProjectError: false,
+    })
+    sqlite.exec("UPDATE deviceCode SET userId = 'mover' WHERE id = 'dc1'")
+    const auth =
+      await vi.importActual<typeof import('./auth.server')>('./auth.server')
+    const request = new Request('https://example.test/device', {
+      headers: { Authorization: 'Bearer pending-mover' },
+    })
+    const memberships = sqlite.prepare(
+      'SELECT * FROM workspace_members ORDER BY workspace_id, user_id',
+    )
+    const before = memberships.all()
+    const session = await auth.getSessionUserFromBearer(request)
+    if (!session) throw new Error('Expected a signed-in device user')
+    expect(session.workspaceId).toBe('personal')
+    expect(
+      await loadAgentApprovalContext(
+        'ABCD1234',
+        session.id,
+        session.workspaceId,
+        session.email,
+      ),
+    ).toMatchObject({
+      fixedProject: null,
+      fixedProjectError: true,
+    })
+    expect(memberships.all()).toEqual(before)
   })
 
   test('resolves a fixed project by name and treats an existing invalid id as terminal', async () => {

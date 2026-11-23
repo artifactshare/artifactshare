@@ -16,7 +16,6 @@ import { isVisibility } from '~/lib/shareable-types'
 import { parsePageParam } from '~/lib/pagination'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
-import { isSqliteConstraintError } from '~/lib/d1-errors.server'
 import {
   MEMBERS_PAGE_SIZE,
   AUDIT_EVENTS_PAGE_SIZE,
@@ -296,9 +295,8 @@ export async function loadMembersPageData(
   user: { id: string; workspaceId: string },
   filters: MembersPageFilters,
 ): Promise<MembersPageData> {
-  const adminId = await ensureWorkspaceAdmin(db, user.workspaceId, nowIso())
   const [membersPage, currentMembership] = await Promise.all([
-    loadWorkspaceMembersPage(db, user.workspaceId, adminId ?? '', filters),
+    loadWorkspaceMembersPage(db, user.workspaceId, filters),
     db
       .selectFrom('workspace_members')
       .select('role')
@@ -326,17 +324,15 @@ export async function loadWorkspaceOwner(
   db: Kysely<DB>,
   workspaceId: string,
 ): Promise<TeamMember | null> {
-  const ownerId = await ensureWorkspaceAdmin(db, workspaceId, nowIso())
-  if (!ownerId) return null
-  return db
+  const owner = await db
     .selectFrom('workspace_members')
     .innerJoin('users', 'users.id', 'workspace_members.user_id')
     .select(['users.id', 'users.email', 'users.name', 'users.image'])
     .where('workspace_members.workspace_id', '=', workspaceId)
-    .where('workspace_members.user_id', '=', ownerId)
     .where('workspace_members.role', '=', 'owner')
     .where('workspace_members.status', '=', 'active')
-    .executeTakeFirstOrThrow()
+    .executeTakeFirst()
+  return owner ?? null
 }
 
 // SQLite の lower() は ASCII のみ折り畳む。非 ASCII の大文字小文字は一致しない。
@@ -386,7 +382,6 @@ function memberFilterConditions(
 export async function loadWorkspaceMembersPage(
   db: Kysely<DB>,
   workspaceId: string,
-  adminUserId: string,
   filters: MembersPageFilters,
 ): Promise<MembersPageResult> {
   const base = db
@@ -434,7 +429,7 @@ export async function loadWorkspaceMembersPage(
       firstContributedAt: row.first_contributed_at,
       lastContributedAt: row.last_contributed_at,
       pendingUploads: row.pending_uploads,
-      isAdmin: row.id === adminUserId,
+      isAdmin: row.role === 'owner',
       role: row.role as WorkspaceMemberRole,
     })),
     total,
@@ -1484,16 +1479,25 @@ export async function removeWorkspaceMember(
 export async function ensureActiveWorkspaceMembership(
   db: Kysely<DB>,
   userId: string,
-  workspaceId: string,
+  workspaceId: string | null,
   now: string,
-  options: { reactivateRemoved?: boolean } = {},
+  options: {
+    reactivateRemoved?: boolean
+    personalWorkspaceOwner?: boolean
+  } = {},
 ): Promise<void> {
   const query = db
     .insertInto('workspace_members')
     .values({
-      workspace_id: workspaceId,
+      workspace_id:
+        workspaceId ??
+        db
+          .selectFrom('users')
+          .select('workspace_id')
+          .where('id', '=', userId)
+          .where('kind', '=', 'human'),
       user_id: userId,
-      role: 'member',
+      role: options.personalWorkspaceOwner ? 'owner' : 'member',
       status: 'active',
       created_at: now,
       updated_at: now,
@@ -1511,7 +1515,8 @@ export async function ensureActiveWorkspaceMembership(
           })
         : oc.columns(['workspace_id', 'user_id']).doNothing(),
     )
-  await query.execute()
+  if (options.personalWorkspaceOwner) await runD1Batch(db, query)
+  else await query.execute()
 }
 
 export async function ensureWorkspaceAdmin(
@@ -1519,103 +1524,73 @@ export async function ensureWorkspaceAdmin(
   workspaceId: string,
   now: string,
 ): Promise<string | null> {
-  const existing = await db
-    .selectFrom('workspace_members')
-    .select(['user_id', 'role'])
-    .where('workspace_id', '=', workspaceId)
-    .where('role', 'in', ['owner', 'admin'])
-    .where('status', '=', 'active')
-    .orderBy(sql<number>`CASE WHEN role = 'owner' THEN 0 ELSE 1 END`)
-    .executeTakeFirst()
-  if (existing) {
-    if (existing.role === 'admin') {
-      try {
-        await db
-          .updateTable('workspace_members')
-          .set({ role: 'owner', updated_at: now })
-          .where('workspace_id', '=', workspaceId)
-          .where('user_id', '=', existing.user_id)
-          .where('role', '=', 'admin')
-          .where('status', '=', 'active')
-          .execute()
-      } catch (err) {
-        if (!isSqliteConstraintError(err)) throw err
-        const concurrentOwner = await db
-          .selectFrom('workspace_members')
-          .select('user_id')
-          .where('workspace_id', '=', workspaceId)
-          .where('role', '=', 'owner')
-          .where('status', '=', 'active')
-          .executeTakeFirst()
-        if (concurrentOwner) return concurrentOwner.user_id
-        throw err
-      }
-    }
-    return existing.user_id
-  }
-
-  const fallbackAdmin = await db
-    .selectFrom('users')
-    .leftJoin('workspace_members', (join) =>
-      join
-        .onRef('workspace_members.user_id', '=', 'users.id')
-        .onRef('workspace_members.workspace_id', '=', 'users.workspace_id'),
-    )
-    .select('users.id')
-    .where('users.workspace_id', '=', workspaceId)
-    // Never bootstrap a bot into ownership: a workspace whose only remaining
-    // user rows are bots simply has no owner (callers tolerate null).
-    .where('users.kind', '=', 'human')
-    .where((eb) =>
-      eb.or([
-        eb('workspace_members.status', 'is', null),
-        eb('workspace_members.status', '=', 'active'),
-      ]),
-    )
-    .orderBy(
-      sql<number>`CASE WHEN workspace_members.first_contributed_at IS NULL THEN 1 ELSE 0 END`,
-      'asc',
-    )
-    .orderBy('workspace_members.first_contributed_at', 'asc')
-    .orderBy('users.created_at', 'asc')
-    .orderBy('users.id', 'asc')
-    .executeTakeFirst()
-  if (!fallbackAdmin) return null
-
-  const updated = await db
-    .updateTable('workspace_members')
-    .set({ role: 'owner', updated_at: now })
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', fallbackAdmin.id)
-    .where('status', '=', 'active')
-    .executeTakeFirst()
-  if (Number(updated.numUpdatedRows) === 0) {
-    try {
-      await db
-        .insertInto('workspace_members')
-        .values({
-          workspace_id: workspaceId,
-          user_id: fallbackAdmin.id,
-          role: 'owner',
-          status: 'active',
-          created_at: now,
-          updated_at: now,
-        })
-        .execute()
-    } catch (err) {
-      if (!isSqliteConstraintError(err)) throw err
-      // Concurrent bootstrap may hit workspace_members_single_owner; re-read below.
-    }
-  }
-
-  const created = await db
+  const owner = db
     .selectFrom('workspace_members')
     .select('user_id')
     .where('workspace_id', '=', workspaceId)
     .where('role', '=', 'owner')
     .where('status', '=', 'active')
-    .executeTakeFirstOrThrow()
-  return created.user_id
+  const existing = await owner.executeTakeFirst()
+  if (existing) return existing.user_id
+
+  // Migration 0133 uses the same owner selection but preserves source timestamps.
+  const candidate = db
+    .selectFrom('users as u')
+    .leftJoin('workspace_members as m', (join) =>
+      join
+        .onRef('m.user_id', '=', 'u.id')
+        .on('m.workspace_id', '=', workspaceId),
+    )
+    .where('u.kind', '=', 'human')
+    .where((eb) =>
+      eb.or([
+        eb('u.workspace_id', '=', workspaceId),
+        eb('m.role', '=', 'admin'),
+      ]),
+    )
+    .where((eb) =>
+      eb.or([eb('m.status', 'is', null), eb('m.status', '=', 'active')]),
+    )
+    .where((eb) => eb.not(eb.exists(owner)))
+  const selected = candidate
+    .select((eb) => [
+      eb.val(workspaceId).as('workspace_id'),
+      'u.id as user_id',
+      eb.val('owner' as const).as('role'),
+      eb.val('active' as const).as('status'),
+      eb.val(now).as('created_at'),
+      eb.val(now).as('updated_at'),
+    ])
+    .orderBy(sql`CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END`)
+    .orderBy(sql`m.first_contributed_at ASC NULLS LAST`)
+    .orderBy('u.created_at')
+    .orderBy('u.id')
+    .limit(1)
+  const release = db
+    .updateTable('workspace_members')
+    .set({ role: 'member' })
+    .where('workspace_id', '=', workspaceId)
+    .where('role', '=', 'owner')
+    .where('status', '=', 'removed')
+    .where((eb) => eb.exists(candidate.select('u.id')))
+  const promotion = db
+    .insertInto('workspace_members')
+    .columns([
+      'workspace_id',
+      'user_id',
+      'role',
+      'status',
+      'created_at',
+      'updated_at',
+    ])
+    .expression(selected)
+    .onConflict((oc) =>
+      oc
+        .columns(['workspace_id', 'user_id'])
+        .doUpdateSet({ role: 'owner', updated_at: now }),
+    )
+  await runD1Batch(db, release, promotion)
+  return (await owner.executeTakeFirst())?.user_id ?? null
 }
 
 function eligibleAdminTarget(
@@ -1649,24 +1624,7 @@ export async function requireWorkspaceAdmin(
     .where('role', 'in', ['owner', 'admin'])
     .where('status', '=', 'active')
     .executeTakeFirst()
-  if (actorMembership) return { kind: 'ok' }
-
-  const anyAdmin = await db
-    .selectFrom('workspace_members')
-    .select('user_id')
-    .where('workspace_id', '=', actor.workspaceId)
-    .where('role', 'in', ['owner', 'admin'])
-    .where('status', '=', 'active')
-    .executeTakeFirst()
-  if (anyAdmin) return { kind: 'forbidden' }
-
-  const bootstrappedAdmin = await ensureWorkspaceAdmin(
-    db,
-    actor.workspaceId,
-    nowIso(),
-  )
-  if (bootstrappedAdmin !== actor.id) return { kind: 'forbidden' }
-  return { kind: 'ok' }
+  return { kind: actorMembership ? 'ok' : 'forbidden' }
 }
 
 export async function requireWorkspaceOwner(
@@ -1844,20 +1802,6 @@ export async function requireWorkspaceBillingOwner(
   if (owner) return { kind: 'ok' }
 
   return { kind: 'forbidden' }
-}
-
-async function requireTeamAdmin(
-  db: Kysely<DB>,
-  actor: { id: string; workspaceId: string },
-): Promise<TeamMutationResult> {
-  const workspace = await db
-    .selectFrom('workspaces')
-    .select('plan')
-    .where('id', '=', actor.workspaceId)
-    .executeTakeFirst()
-  if (workspace?.plan !== 'team') return { kind: 'not-team' }
-
-  return requireWorkspaceAdmin(db, actor)
 }
 
 async function loadUser(db: Kysely<DB>, userId: string): Promise<TeamMember> {

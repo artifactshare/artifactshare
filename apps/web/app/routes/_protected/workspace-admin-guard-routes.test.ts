@@ -1,0 +1,91 @@
+import { RouterContextProvider } from 'react-router'
+import { expect, test, vi } from 'vitest'
+import { userContext } from '~/middleware/context'
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
+import { loader as recipients } from './settings/recipients'
+import { loader as members } from './settings/_content/index'
+import {
+  action as rename,
+  loader as general,
+} from './settings/_content/general'
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+vi.mock('~/services/db.server', () => ({ createDb: () => fixture.db }))
+const fixture = createMigratedInMemoryDb()
+
+test('ownerless settings read persisted roles and require an active admin to search or rename', async () => {
+  const { db, sqlite } = fixture
+  try {
+    seedWorkspace(sqlite)
+    seedUser(sqlite, 'actor')
+    seedUser(sqlite, 'recipient')
+    sqlite.exec(`INSERT INTO workspace_members (workspace_id,user_id,role,status,created_at,updated_at)
+      SELECT workspace_id,id,'member','active',created_at,updated_at FROM users`)
+    const context = new RouterContextProvider()
+    context.set(userContext, {
+      id: 'actor',
+      email: 'actor@example.com',
+      emailVerified: true,
+      workspaceId: 'ws1',
+      kind: 'human',
+      name: null,
+      image: null,
+      locale: null,
+      hd: null,
+      msTenantId: null,
+    })
+    for (const role of ['member', 'admin'] as const) {
+      await db
+        .updateTable('workspace_members')
+        .set({ role })
+        .where('user_id', '=', 'actor')
+        .execute()
+      const rows = db
+        .selectFrom('workspace_members')
+        .selectAll()
+        .orderBy('user_id')
+      const before = await rows.execute()
+      const url = new URL('https://example.test/settings')
+      const args = {
+        request: new Request(url),
+        context,
+        url,
+        params: {},
+        pattern: '/settings' as const,
+      }
+      expect(await general({ ...args, pattern: '/settings/general' })).toEqual({
+        owner: null,
+      })
+      expect(await members(args)).toMatchObject({
+        currentUserRole: role,
+        membersPage: { total: 2 },
+      })
+      const result = await recipients({
+        ...args,
+        pattern: '/settings/recipients',
+      })
+      expect(result.recipients.map((person) => person.id)).toEqual(
+        role === 'admin' ? ['recipient'] : [],
+      )
+      const response = await rename({
+        ...args,
+        pattern: '/settings/general',
+        request: new Request(url, {
+          method: 'POST',
+          body: new URLSearchParams({
+            intent: 'update-workspace-name',
+            workspaceName: 'Renamed',
+          }),
+        }),
+      })
+      expect(response.init?.status).toBe(role === 'admin' ? 200 : 403)
+      expect(
+        await db.selectFrom('workspaces').select('name').executeTakeFirst(),
+      ).toEqual({ name: role === 'admin' ? 'Renamed' : 'Example' })
+      expect(await rows.execute()).toEqual(before)
+    }
+  } finally {
+    await db.destroy()
+  }
+})

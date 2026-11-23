@@ -708,6 +708,12 @@ async function moveUserToWorkspaceIfSafe(
     targetMembershipGuardQuery,
     sourceMembershipDelete,
     emptySourceWorkspaceDelete,
+    // A later failure repairing the target cannot undo this domain join.
+    db
+      .updateTable('pending_signup_analytics')
+      .set({ workspace_created: 0 })
+      .where('user_id', '=', input.userId)
+      .where('workspace_created', '=', 1),
   )
   await ensureWorkspaceAdmin(db, input.targetWorkspaceId, now)
   return input.targetWorkspaceId

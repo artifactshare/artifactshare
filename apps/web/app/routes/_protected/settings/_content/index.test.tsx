@@ -368,6 +368,15 @@ describe('/settings rendered member management', () => {
     expect(html).toContain(adminLabel)
   })
 
+  test('an admin in an ownerless workspace keeps the Admin badge', () => {
+    const html = renderPage({
+      currentUserRole: 'admin',
+      members: [member('admin', 'admin')],
+    })
+    expect(html).toContain('>Admin<')
+    expect(html).not.toContain('>Owner<')
+  })
+
   test('owner gets role controls for members and admins, but not self', () => {
     const html = renderPage({
       currentUserRole: 'owner',
