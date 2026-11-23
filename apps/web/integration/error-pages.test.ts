@@ -23,10 +23,12 @@ test('production document errors render localized root and Settings content', as
       ]) {
         const path = join(project, 'app', module)
         const source = await readFile(path, 'utf8')
+        // Read the request from the loader's arguments, so the fault does not
+        // depend on which parameters the loader destructures.
         const injected = source.replace(
           /(export async function loader\([^\n]+\) \{)/,
           '$1\n' +
-            `if (request.headers.get('x-test-error') === '${fault}') {const error=new Error('private-message-${fault}'); error.stack='private-stack-${fault}';throw error}`,
+            `if (arguments[0].request.headers.get('x-test-error') === '${fault}') {const error=new Error('private-message-${fault}'); error.stack='private-stack-${fault}';throw error}`,
         )
         expect(injected).not.toBe(source)
         await writeFile(path, injected)
