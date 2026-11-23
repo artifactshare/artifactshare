@@ -31,65 +31,98 @@ export function SettingsOutlet({ shell }: { shell: SettingsLoaderData }) {
   return <SettingsEntry key={entryKey} shell={shell} />
 }
 
-function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
-  const location = useLocation()
-  const params = new URLSearchParams(location.search)
+const INTEGRATION_RETURNS = [
+  'slack-team-in-use',
+  'slack-team-mismatch',
+  'not-found',
+  'forbidden',
+]
+
+/** The notice a return from Stripe Checkout or a Slack install asks for. */
+function externalReturn({
+  pathname,
+  search,
+}: {
+  pathname: string
+  search: string
+}) {
+  const params = new URLSearchParams(search)
   const code = params.get('status')
-  let external: string | null = null
-  if (
-    location.pathname === '/settings/billing' &&
-    (code === 'checkout-success' || code === 'checkout-cancelled')
+  if (pathname === '/settings/billing')
+    return code === 'checkout-success' || code === 'checkout-cancelled'
+      ? code
+      : null
+  if (pathname !== '/settings/integrations') return null
+  if (code && INTEGRATION_RETURNS.includes(code)) return code
+  return params.get('connected') === 'slack' ? 'slack-connected' : null
+}
+
+/** The URL of the return entry without the parameters it consumed. */
+function cleanedSearch({
+  pathname,
+  search,
+}: {
+  pathname: string
+  search: string
+}) {
+  const kept = new URLSearchParams(search)
+  kept.delete('status')
+  if (pathname === '/settings/integrations') kept.delete('connected')
+  const query = kept.toString()
+  return query ? `?${query}` : ''
+}
+
+type ReturnNotice = {
+  code: string
+  pathname: string
+  search: string
+  entry: string | null
+}
+
+/** Whether this location is the entry the notice's cleanup replace made. */
+function cleanupLanded(
+  notice: ReturnNotice,
+  location: { pathname: string; search: string },
+  navigationType: string,
+) {
+  return (
+    notice.entry === null &&
+    navigationType === 'REPLACE' &&
+    location.pathname === notice.pathname &&
+    location.search === notice.search
   )
-    external = code
-  if (location.pathname === '/settings/integrations') {
-    if (
-      code &&
-      [
-        'slack-team-in-use',
-        'slack-team-mismatch',
-        'not-found',
-        'forbidden',
-      ].includes(code)
-    )
-      external = code
-    else if (params.get('connected') === 'slack') external = 'slack-connected'
-  }
-  // The notice belongs to the return entry. Cleaning its URL takes two steps:
-  // the history entry is rewritten at once, so Back, Forward or a reload never
-  // read the parameter again, and the router replaces its own location, with
-  // no loader revalidation, so later submissions do not carry it. The notice
-  // follows the entry that replace produces and is dropped on any other
-  // navigation.
+}
+
+/**
+ * The notice belongs to the return entry. Cleaning its URL takes two steps:
+ * the history entry is rewritten at once, so Back, Forward or a reload never
+ * read the parameter again, and the router replaces its own location, with
+ * no loader revalidation, so later submissions do not carry it. The notice
+ * follows the entry that replace produces and is dropped on any other
+ * navigation.
+ *
+ * While Stripe has not reported the new plan, Checkout stays replaced by the
+ * pending notice on this page, including its other in-app views, so a second
+ * purchase cannot start. Back, Forward and a reload start over.
+ */
+function useReturnNotice() {
+  const location = useLocation()
   const navigate = useNavigate()
   const navigationType = useNavigationType()
-  const [notice, setNotice] = useState<{
-    code: string
-    pathname: string
-    search: string
-    entry: string | null
-  } | null>(null)
-  // While Stripe has not reported the new plan, Checkout stays replaced by the
-  // pending notice on this page, including its other in-app views, so a second
-  // purchase cannot start. Back, Forward and a reload start over.
+  const external = externalReturn(location)
+  const [notice, setNotice] = useState<ReturnNotice | null>(null)
   const [checkoutReturned, setCheckoutReturned] = useState(false)
   useEffect(() => {
     if (!external) {
       setNotice((previous) => {
         if (!previous || previous.entry === location.key) return previous
-        const cleanupLanded =
-          previous.entry === null &&
-          navigationType === 'REPLACE' &&
-          location.pathname === previous.pathname &&
-          location.search === previous.search
-        return cleanupLanded ? { ...previous, entry: location.key } : null
+        return cleanupLanded(previous, location, navigationType)
+          ? { ...previous, entry: location.key }
+          : null
       })
       return
     }
-    const kept = new URLSearchParams(location.search)
-    kept.delete('status')
-    if (location.pathname === '/settings/integrations') kept.delete('connected')
-    const query = kept.toString()
-    const search = query ? `?${query}` : ''
+    const search = cleanedSearch(location)
     window.history.replaceState(
       window.history.state,
       '',
@@ -112,14 +145,16 @@ function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
       },
     )
   }, [external, location, navigationType, navigate])
-  const onNoticeEntry =
+  const shown =
     notice !== null &&
     (notice.entry === location.key ||
-      (notice.entry === null &&
-        navigationType === 'REPLACE' &&
-        location.pathname === notice.pathname &&
-        location.search === notice.search))
-  const result = external ?? (onNoticeEntry ? notice.code : null)
+      cleanupLanded(notice, location, navigationType))
+  const result = external ?? (shown ? notice.code : null)
+  return { result, checkoutReturned }
+}
+
+function SettingsEntry({ shell }: { shell: SettingsLoaderData }) {
+  const { result, checkoutReturned } = useReturnNotice()
   return (
     <>
       {result && <StatusBanner status={result} />}

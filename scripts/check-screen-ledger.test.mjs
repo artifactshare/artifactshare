@@ -1339,7 +1339,7 @@ test('Settings captures select only the intended route results', () => {
     settings: [],
     'settings-general': [],
     'settings-billing': ['checkout-success', 'checkout-cancelled'],
-    'settings-integrations': [],
+    'settings-integrations': ['slack-team-in-use'],
     'settings-external-access': [],
     'settings-tokens': [],
     'settings-analytics': [],
