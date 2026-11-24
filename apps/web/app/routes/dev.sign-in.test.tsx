@@ -13,7 +13,13 @@ vi.mock('~/services/auth.server', () => ({
   authHandlerWithHangDetection: authHandlerMock,
 }))
 
-import { action, loader } from './dev.sign-in'
+import { renderToStaticMarkup } from 'react-dom/server'
+import {
+  createMemoryRouter,
+  RouterProvider,
+  UNSAFE_withComponentProps,
+} from 'react-router'
+import DevSignIn, { action, loader } from './dev.sign-in'
 
 beforeEach(() => {
   isViteDevMock.mockReset()
@@ -104,14 +110,61 @@ describe('/dev/sign-in loader', () => {
     expect(unknown.scenario).toBeNull()
   })
 
+  test('a retired Settings error deep link selects No state and signs in without a scenario', async () => {
+    const render = async (scenario: string) => {
+      const loaderData = await loader({
+        request: new Request(
+          `https://artifactshare.test/dev/sign-in?scenario=${encodeURIComponent(scenario)}`,
+        ),
+      } as never)
+      const router = createMemoryRouter(
+        [
+          {
+            id: 'dev-sign-in',
+            path: '/',
+            Component: UNSAFE_withComponentProps(DevSignIn),
+          },
+        ],
+        { hydrationData: { loaderData: { 'dev-sign-in': loaderData } } },
+      )
+      try {
+        const html = renderToStaticMarkup(<RouterProvider router={router} />)
+        return { scenario: loaderData.scenario, html }
+      } finally {
+        router.dispose()
+      }
+    }
+    const noStateSelected = /class="[^"]*font-semibold[^"]*"[^>]*>No state</
+
+    for (const retired of [
+      'settings-general/forbidden',
+      'settings-general/not-found',
+      'settings-general/unexpected-error',
+    ]) {
+      const { scenario, html } = await render(retired)
+      expect(scenario).toBeNull()
+      expect(html).toMatch(noStateSelected)
+      expect(html).not.toContain('name="scenario"')
+    }
+
+    const supported = await render('home/content-rich')
+    expect(supported.scenario).toBe('home/content-rich')
+    expect(supported.html).not.toMatch(noStateSelected)
+    expect(supported.html).toContain(
+      'name="scenario" value="home/content-rich"',
+    )
+  })
+
   test('does not list scenarios that require a dev screen state header', async () => {
     const result = await loader({
       request: new Request('https://artifactshare.test/dev/sign-in'),
     } as never)
 
     expect(result.scenarios).toContain('settings/result-warning')
+    // The created-secret state reads no header: its secret comes from the
+    // real token form, so a developer can open it from the picker.
+    expect(result.scenarios).toContain('settings-tokens/created-secret')
     for (const scenario of [
-      'settings-tokens/created-secret',
       'settings-billing/subscribed',
       'settings-billing/near-limit',
       'settings-billing/continuing-near-limit',

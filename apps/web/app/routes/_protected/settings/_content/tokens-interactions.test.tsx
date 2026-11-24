@@ -230,6 +230,12 @@ test('create then revoke replaces the success notice and keeps the created crede
     await vi.waitFor(() => expect(notices()).toHaveLength(1))
     const createdNotice = notices()[0]
     expect(container.textContent).toContain('example-token-value')
+    // The secret is marked so capture diagnostics never copy it.
+    const secret = container.querySelector('code[data-gap-audit-redact]')
+    expect(secret?.textContent).toBe('example-token-value')
+    // The secret wraps instead of scrolling past a narrow viewport's edge.
+    expect(secret?.className).toContain('whitespace-pre-wrap')
+    expect(secret?.closest('pre')?.className).not.toContain('overflow-x-auto')
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>(

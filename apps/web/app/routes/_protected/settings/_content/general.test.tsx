@@ -7,16 +7,18 @@ import {
 } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
-const services = vi.hoisted(() => ({ updateWorkspaceName: vi.fn() }))
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+
+const services = vi.hoisted(() => ({
+  updateWorkspaceName: vi.fn(),
+  loadWorkspaceOwner: vi.fn(),
+}))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'user', workspaceId: 'workspace' }),
 }))
-vi.mock('~/services/dev-screen-state.server', () => ({
-  isDevScreenStateRequest: () => false,
-}))
 vi.mock('~/services/team-management.server', () => services)
-import { action, default as GeneralPage } from './general'
+import { action, loader, default as GeneralPage } from './general'
 
 function postForm(fields: Record<string, string>) {
   return new Request('https://artifactshare.com/settings/general', {
@@ -61,6 +63,37 @@ function renderPage(currentUserIsAdmin: boolean, hasOwner = true) {
     router.dispose()
   }
 }
+
+test('reads the workspace owner even with a former capture header', async () => {
+  const owner = {
+    id: 'owner',
+    name: 'Owner',
+    email: 'owner@example.com',
+    image: null,
+  }
+  services.loadWorkspaceOwner.mockResolvedValue(owner)
+  expect(import.meta.env.DEV).toBe(true)
+  for (const scenario of [
+    undefined,
+    'settings-general/forbidden',
+    'settings-general/not-found',
+    'settings-general/unexpected-error',
+  ]) {
+    const result = await loader({
+      request: new Request('https://artifactshare.com/settings/general', {
+        headers: scenario
+          ? { 'X-ArtifactShare-Dev-Screen-State': scenario }
+          : {},
+      }),
+      context: new RouterContextProvider(),
+      params: {},
+      url: new URL('https://artifactshare.com/settings/general'),
+      pattern: '/settings/general',
+    })
+    expect(result).toEqual({ owner })
+  }
+  expect(services.loadWorkspaceOwner).toHaveBeenCalledWith({}, 'workspace')
+})
 
 describe('/settings/general action', () => {
   test.each(['ok', 'forbidden', 'invalid'] as const)(

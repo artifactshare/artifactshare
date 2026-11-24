@@ -444,13 +444,34 @@ describe('ensureDevSignInUser', () => {
       )
     ).userId
 
-    expect(
-      await db
+    const tokens = () =>
+      db
         .selectFrom('api_tokens')
         .select(['name', 'revoked_at'])
         .where('user_id', '=', userId)
-        .execute(),
-    ).toEqual([{ name: 'CLI deploy', revoked_at: null }])
+        .execute()
+    expect(await tokens()).toEqual([{ name: 'CLI deploy', revoked_at: null }])
+
+    // A capture creates a token through the form; the next seed leaves only
+    // the seeded row, so every capture shows the same list.
+    await db
+      .insertInto('api_tokens')
+      .values({
+        id: 'capture-created-token',
+        user_id: userId,
+        name: 'Capture token',
+        token_hash: 'capture-created-token-hash',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_used_at: null,
+        revoked_at: null,
+      })
+      .execute()
+    await ensureDevSignInUser(
+      db,
+      'team-owner',
+      'settings-tokens/created-secret',
+    )
+    expect(await tokens()).toEqual([{ name: 'CLI deploy', revoked_at: null }])
   })
 
   test('isolates the owner associated with a member scenario', async () => {

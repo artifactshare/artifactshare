@@ -46,11 +46,7 @@ const screenScenarioAllowlist = new Set(SCREEN_SCENARIO_IDS)
 // states instead need the local capture's fake Stripe configuration, which a
 // developer's own dev server does not have.
 export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
-  'settings-general/forbidden',
-  'settings-general/not-found',
-  'settings-general/unexpected-error',
   'settings-general/root-error',
-  'settings-tokens/created-secret',
   'settings-billing/subscribed',
   'settings-billing/purchase',
   'settings-billing/past-due',
@@ -437,17 +433,6 @@ export async function ensureDevScreenState(
   )
     await setNearLimitUsage(db, workspaceId)
   return { workspaceId }
-}
-
-export function simulateRemovedAssetTransferFailure(
-  request: Request,
-  workspaceId: string,
-  memberId: string,
-) {
-  return (
-    isDevScreenStateRequest(request, 'settings/result-warning') &&
-    memberId === `${workspaceId}-removed-member`
-  )
 }
 
 async function upsertScenarioMember(
@@ -2904,6 +2889,9 @@ export async function seedDevScreenState(
   }
 
   if (scenario === 'settings-tokens/created-secret') {
+    // Each capture creates a token through the real form, so the reseed drops
+    // every token of the scenario user and restores only the seeded row.
+    await db.deleteFrom('api_tokens').where('user_id', '=', userId).execute()
     await db
       .insertInto('api_tokens')
       .values({

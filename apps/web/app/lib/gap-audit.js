@@ -109,13 +109,22 @@ export function auditGaps({
     }
     return result
   }
+  // Findings are written to the manifest and the console, so text inside a
+  // [data-gap-audit-redact] element (a one-time secret) never leaves the page.
+  const describedText = (element) => {
+    if (element.closest('[data-gap-audit-redact]')) return '[redacted]'
+    const copy = element.cloneNode(true)
+    for (const secret of copy.querySelectorAll('[data-gap-audit-redact]'))
+      secret.textContent = '[redacted]'
+    return (copy.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+  }
   const describe = (element) => ({
     tag: element.tagName.toLowerCase(),
     class:
       typeof element.className === 'string'
         ? element.className.split(/\s+/).filter(Boolean).slice(0, 2).join(' ')
         : '',
-    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    text: describedText(element),
   })
   const findings = []
   const walk = (parent) => {
@@ -261,10 +270,12 @@ export function auditGaps({
   const describeInteractive = (element) => ({
     tag: element.tagName.toLowerCase(),
     role: element.getAttribute('role') || undefined,
-    text: (element.getAttribute('aria-label') || element.textContent || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80),
+    text:
+      element
+        .getAttribute('aria-label')
+        ?.replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) || describedText(element),
   })
   for (let i = 0; i < interactiveElements.length; i++)
     for (let j = i + 1; j < interactiveElements.length; j++) {

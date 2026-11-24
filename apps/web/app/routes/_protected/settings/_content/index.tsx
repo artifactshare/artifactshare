@@ -22,7 +22,6 @@ import {
   runConfirmedMutation,
 } from '~/lib/settings-confirmation'
 import { StatusBanner } from '../+components/settings-banner'
-import { simulateRemovedAssetTransferFailure } from '~/services/dev-screen-state.server'
 import { TeamActions } from '../+components/team-actions'
 import {
   MemberConfirmation,
@@ -158,42 +157,6 @@ export const screen = {
       },
     },
     {
-      id: 'result-warning',
-      description: 'Removed member with a file available for transfer',
-      setup: {
-        scenario: 'settings/result-warning',
-        reseedBeforeCapture: true,
-        ready: {
-          selector: 'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
-          description: 'Active member actions are ready',
-        },
-        interactions: [
-          {
-            action: 'click',
-            selector:
-              'tr:has-text("Casey Morgan") button[aria-haspopup="menu"]',
-          },
-          { action: 'click', selector: '[data-member-action="remove-member"]' },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] [role="radio"][id$="-self"]',
-          },
-          {
-            action: 'click',
-            selector: '[role="alertdialog"] [data-slot="alert-dialog-action"]',
-          },
-        ],
-        postInteractionReady: {
-          selector:
-            '#removed-members tr:has([data-owned-file-count="1"]:visible) button[id$="-removed-member"][data-transfer-removed-files]:enabled',
-          visibleWith: [
-            '[role="alertdialog"] [role="status"][data-settings-status="removed-transfer-failed"]',
-          ],
-          description: 'Removed member with a file available for transfer',
-        },
-      },
-    },
-    {
       id: 'result-error',
       description: 'Invalid input alert',
       setup: {
@@ -291,18 +254,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         if (result.kind === 'ok') {
           const recipientUserId = stringValue(form.get('recipientUserId'))
           if (recipientUserId && recipientUserId !== NO_ASSET_TRANSFER) {
-            const transferResult = simulateRemovedAssetTransferFailure(
-              request,
-              user.workspaceId,
+            const transferResult = await transferRemovedMemberAssets(
+              db,
+              user,
               userId,
+              recipientUserId,
             )
-              ? { kind: 'invalid' }
-              : await transferRemovedMemberAssets(
-                  db,
-                  user,
-                  userId,
-                  recipientUserId,
-                )
             if (transferResult.kind !== 'ok') {
               return actionData(
                 {

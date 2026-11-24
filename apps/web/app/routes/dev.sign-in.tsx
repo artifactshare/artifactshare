@@ -87,7 +87,9 @@ export async function action({ request }: Route.ActionArgs) {
   return redirect(safeNext, { headers: redirectHeaders })
 }
 
-export default function DevSignIn({ loaderData }: Route.ComponentProps) {
+export default function DevSignIn({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { next, scenario, scenarios } = loaderData
 
   return (

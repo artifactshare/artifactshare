@@ -32,7 +32,6 @@ import {
   devScreenUserEmail,
   ensureDevScreenState,
   isDevScreenStateRequest,
-  simulateRemovedAssetTransferFailure,
   isScreenScenario,
   seedDevScreenArtifactBodies,
   seedDevScreenState,
@@ -235,32 +234,6 @@ describe('dev screen state requests', () => {
     expect(
       isDevScreenStateRequest(request, 'settings-tokens/created-secret'),
     ).toBe(false)
-  })
-
-  test('only the seeded member in the warning capture experiences the transfer failure', () => {
-    const url = 'https://example.com/settings'
-    const request = new Request(url, {
-      headers: {
-        'X-ArtifactShare-Dev-Screen-State': 'settings/result-warning',
-      },
-    })
-    expect(
-      simulateRemovedAssetTransferFailure(
-        request,
-        'team',
-        'team-removed-member',
-      ),
-    ).toBe(true)
-    expect(
-      simulateRemovedAssetTransferFailure(
-        new Request(url),
-        'team',
-        'team-removed-member',
-      ),
-    ).toBe(false)
-    expect(simulateRemovedAssetTransferFailure(request, 'team', 'other')).toBe(
-      false,
-    )
   })
 
   test('creates scenario workspaces with the product expiry starting policy', async () => {

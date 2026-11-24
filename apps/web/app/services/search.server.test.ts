@@ -2263,12 +2263,15 @@ test('returning to a screen search reuses its log and daily count, rechecks acce
   // Open receipts are checked against the real clock, so the search uses it too.
   const clock = () => new Date()
   const later = () => new Date(Date.now() + 31 * 60_000)
-  const daily = async (actor: string) =>
+  // The count of the UTC day the search runs in: `later` can fall on the next
+  // day when the test runs shortly before midnight UTC.
+  const daily = async (actor: string, at: () => Date = clock) =>
     (
       await fixture.db
         .selectFrom('search_actor_daily_usage')
         .select('requests')
         .where('actor_id', '=', actor)
+        .where('day', '=', at().toISOString().slice(0, 10))
         .executeTakeFirst()
     )?.requests ?? 0
   const first = await search(
@@ -2348,7 +2351,7 @@ test('returning to a screen search reuses its log and daily count, rechecks acce
     ['viewer', input, 'mcp', clock],
     ['viewer', input, 'screen', later],
   ] as const) {
-    const before = await daily(actor)
+    const before = await daily(actor, at)
     const logs = (await readSearchLogs(fixture.db, actor)).length
     const result = await search(
       fixture.db,
@@ -2360,7 +2363,7 @@ test('returning to a screen search reuses its log and daily count, rechecks acce
     )
     if ('error' in result) throw new Error('fallback failed')
     expect(result.searchLogId).not.toBe(first.searchLogId)
-    expect(await daily(actor)).toBe(before + 1)
+    expect(await daily(actor, at)).toBe(before + 1)
     expect((await readSearchLogs(fixture.db, actor)).length).toBe(logs + 1)
     if (source !== 'screen') expect(result).not.toHaveProperty('resume')
   }

@@ -27,6 +27,10 @@ export function CreatedTokenPanel({
           failed: t('team.tokens.copyFailed'),
         }}
         copyButtonVariant="default"
+        // The one-time value must be readable in full at the narrowest
+        // viewport, not hidden past a horizontal scroll edge.
+        wrap
+        secret
       />
     </div>
   )
