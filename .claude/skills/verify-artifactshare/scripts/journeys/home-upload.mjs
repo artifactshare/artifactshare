@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Journey: a signed-in user chooses `Add a file` on Home, picks an HTML file in
 // the file chooser, lands on the new file's viewer with its content rendered in
-// the sandbox frame, and finds the file on Home.
+// the sandbox frame, and finds the file on Home. Then the same with
+// `Upload site folder` and a folder whose heading is written by its own
+// assets/app.js, so the frame proves the folder's other files load too.
 //
 //   node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]
 //
@@ -14,6 +16,7 @@ const FEATURE = 'home-upload'
 const runIndex = process.argv.indexOf('--run')
 const run = openRun(runIndex > 0 ? process.argv[runIndex + 1] : undefined)
 const marker = `Verify upload ${Date.now()}`
+const siteMarker = `Verify site ${Date.now()}`
 const steps = []
 const step = (name, detail) => {
   steps.push({ name, ...detail })
@@ -26,6 +29,17 @@ const file = join(workDir, 'upload.html')
 writeFileSync(
   file,
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${marker}</title></head><body><main><h1>${marker}</h1><p>Uploaded by the verify-artifactshare journey.</p></main></body></html>`,
+)
+
+const siteDir = join(workDir, 'site')
+mkdirSync(join(siteDir, 'assets'), { recursive: true })
+writeFileSync(
+  join(siteDir, 'index.html'),
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${siteMarker}</title></head><body><main id="root"></main><script src="assets/app.js"></script></body></html>`,
+)
+writeFileSync(
+  join(siteDir, 'assets/app.js'),
+  `const h = document.createElement('h1'); h.textContent = ${JSON.stringify(`${siteMarker} from assets`)}; document.getElementById('root').append(h)\n`,
 )
 
 const { browser, page } = await signIn(run, { persona: 'Free owner', next: '/' })
@@ -59,6 +73,22 @@ try {
   await page.getByRole('link', { name: marker }).first().waitFor()
   await capture(run, FEATURE, '03-home', page)
   step('Home lists the uploaded file')
+
+  await page.getByRole('button', { name: 'Add a file' }).click()
+  await dialog.waitFor()
+  const folderChooser = page.waitForEvent('filechooser')
+  await dialog.getByRole('button', { name: 'Upload site folder' }).click()
+  await (await folderChooser).setFiles(siteDir)
+  await page.waitForURL(/\/a\/[^/]+$/u, { timeout: 30_000 })
+  const siteUrl = page.url()
+  await page
+    .frameLocator('iframe')
+    .first()
+    .getByRole('heading', { name: `${siteMarker} from assets` })
+    .waitFor({ timeout: 30_000 })
+  await page.getByRole('button', { name: `Edit title: ${siteMarker}` }).waitFor()
+  await capture(run, FEATURE, '04-site-viewer', page)
+  step('folder upload opens the site with its assets loaded', { url: siteUrl })
 } finally {
   await browser.close()
   writeFileSync(

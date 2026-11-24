@@ -45,10 +45,10 @@ export function evidenceDir(run, feature) {
 }
 
 /**
- * Launch Chromium and sign in through the `/dev/sign-in` persona buttons, the
- * local stand-in for Google sign-in. Returns { browser, context, page }.
+ * Launch Chromium with a fresh context (no cookies), for a signed-out
+ * visitor. Returns { browser, context, page }.
  */
-export async function signIn(run, { persona = 'Free owner', next = '/' } = {}) {
+export async function launchBrowser() {
   const { chromium } = require('playwright')
   const browser = await chromium.launch({ headless: !process.env.HEADED })
   const context = await browser.newContext({
@@ -57,7 +57,15 @@ export async function signIn(run, { persona = 'Free owner', next = '/' } = {}) {
     reducedMotion: 'reduce',
     viewport: { width: 1280, height: 860 },
   })
-  const page = await context.newPage()
+  return { browser, context, page: await context.newPage() }
+}
+
+/**
+ * Launch Chromium and sign in through the `/dev/sign-in` persona buttons, the
+ * local stand-in for Google sign-in. Returns { browser, context, page }.
+ */
+export async function signIn(run, { persona = 'Free owner', next = '/' } = {}) {
+  const { browser, context, page } = await launchBrowser()
   page.on('pageerror', (error) => console.error(`pageerror: ${error.message}`))
   await page.goto(
     `${run.appOrigin}/dev/sign-in?next=${encodeURIComponent(next)}`,
