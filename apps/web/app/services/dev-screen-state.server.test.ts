@@ -3794,135 +3794,147 @@ describe('Settings seeds write through production services', () => {
     }
   })
 
-  test('bots recover from cancel and reissue', async () => {
-    const { db } = createMigratedInMemoryDb()
-    const scenario = 'settings/with-bots'
-    try {
-      const { workspaceId, userId } = await signIn(db, scenario)
-      const actor = { id: userId, workspaceId }
-      const summary = async () =>
-        (await listWorkspaceBots(db, workspaceId, clock)).map((bot) => ({
-          name: bot.name,
-          stopped: bot.botStoppedAt !== null,
-          live: bot.credentialLive,
-          cancelable: bot.cancelable,
-          destinations: bot.approvedProjects?.map((project) => [
-            project.name,
-            project.unavailable,
-          ]),
-        }))
-      const healthy = await summary()
-      const initial = await listWorkspaceBots(db, workspaceId, clock)
-      const idOf = (name: string) =>
-        initial.find((bot) => bot.name === name)!.id
+  test.each(['settings/with-bots', 'settings-bots/long-email'] as const)(
+    '%s bots recover from cancel and reissue',
+    async (scenario) => {
+      const { db } = createMigratedInMemoryDb()
+      try {
+        const { workspaceId, userId } = await signIn(db, scenario)
+        const actor = { id: userId, workspaceId }
+        const summary = async () =>
+          (await listWorkspaceBots(db, workspaceId, clock)).map((bot) => ({
+            name: bot.name,
+            stopped: bot.botStoppedAt !== null,
+            live: bot.credentialLive,
+            cancelable: bot.cancelable,
+            destinations: bot.approvedProjects?.map((project) => [
+              project.name,
+              project.unavailable,
+            ]),
+          }))
+        const healthy = await summary()
+        const initial = await listWorkspaceBots(db, workspaceId, clock)
+        const idOf = (name: string) =>
+          initial.find((bot) => bot.name === name)!.id
 
-      expect(
-        await cancelWorkspaceBot(db, actor, idOf('Setup failed bot')),
-      ).toEqual({ kind: 'ok' })
-      for (const name of ['Nightly report bot', 'Metrics sync bot'])
         expect(
-          await reissueWorkspaceBotCredential(db, actor, idOf(name)),
-        ).toMatchObject({ kind: 'ok' })
-      expect(await summary()).not.toEqual(healthy)
-      // The reissued bot's address also holds grants on projects that are
-      // not its destinations: one here and one in another workspace.
-      const { email: botEmail } = await db
-        .selectFrom('users')
-        .select('email')
-        .where('id', '=', idOf('Nightly report bot'))
-        .executeTakeFirstOrThrow()
-      const other = await ensureDevScreenState(db, scenario, clock, 'plus')
-      await addScenarioOwner(
-        db,
-        other.workspaceId,
-        `${other.workspaceId}-user`,
-        clock,
-      )
-      const neighborIds: string[] = []
-      for (const [ws, owner] of [
-        [workspaceId, userId],
-        [other.workspaceId, `${other.workspaceId}-user`],
-      ]) {
-        const project = await createProjectContainer(db, ws, owner, {
-          name: 'Neighbor project',
-          description: null,
-          baseVisibility: 'private',
-        })
-        if (project.kind !== 'ok') throw new Error(project.kind)
-        neighborIds.push(project.id)
-        await db
-          .insertInto('project_share_defaults')
-          .values({
-            id: `grant-${project.id}`,
-            project_container_id: project.id,
-            email: botEmail,
-            role: 'contributor',
-            display_name: null,
-            created_by_id: owner,
-            created_at: clock,
-            updated_at: clock,
+          await cancelWorkspaceBot(db, actor, idOf('Setup failed bot')),
+        ).toEqual({ kind: 'ok' })
+        for (const name of ['Nightly report bot', 'Metrics sync bot'])
+          expect(
+            await reissueWorkspaceBotCredential(db, actor, idOf(name)),
+          ).toMatchObject({ kind: 'ok' })
+        expect(await summary()).not.toEqual(healthy)
+        // The reissued bot's address also holds grants on projects that are
+        // not its destinations: one here and one in another workspace.
+        const { email: botEmail } = await db
+          .selectFrom('users')
+          .select('email')
+          .where('id', '=', idOf('Nightly report bot'))
+          .executeTakeFirstOrThrow()
+        const other = await ensureDevScreenState(db, scenario, clock, 'plus')
+        await addScenarioOwner(
+          db,
+          other.workspaceId,
+          `${other.workspaceId}-user`,
+          clock,
+        )
+        const neighborIds: string[] = []
+        for (const [ws, owner] of [
+          [workspaceId, userId],
+          [other.workspaceId, `${other.workspaceId}-user`],
+        ]) {
+          const project = await createProjectContainer(db, ws, owner, {
+            name: 'Neighbor project',
+            description: null,
+            baseVisibility: 'private',
           })
-          .execute()
+          if (project.kind !== 'ok') throw new Error(project.kind)
+          neighborIds.push(project.id)
+          await db
+            .insertInto('project_share_defaults')
+            .values({
+              id: `grant-${project.id}`,
+              project_container_id: project.id,
+              email: botEmail,
+              role: 'contributor',
+              display_name: null,
+              created_by_id: owner,
+              created_at: clock,
+              updated_at: clock,
+            })
+            .execute()
+        }
+        const grants = () =>
+          db
+            .selectFrom('project_share_defaults')
+            .select('project_container_id')
+            .where('project_container_id', 'in', neighborIds)
+            .orderBy('project_container_id')
+            .execute()
+        const grantsBefore = await grants()
+        expect(grantsBefore).toHaveLength(2)
+        // The owner also adds the granted neighbor here as a destination; the
+        // product keeps its existing grant.
+        const nightlyBot = (
+          await listWorkspaceBots(db, workspaceId, clock)
+        ).find((bot) => bot.name === 'Nightly report bot')!
+        const { updated_at: revision } = await db
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', nightlyBot.id)
+          .executeTakeFirstOrThrow()
+        expect(
+          await updateWorkspaceBotDestinations(db, actor, {
+            botUserId: nightlyBot.id,
+            projectId: nightlyBot.projectId!,
+            projectIds: [
+              ...nightlyBot.approvedProjects!.map((project) => project.id),
+              neighborIds[0],
+            ],
+            revision,
+          }),
+        ).toEqual({ kind: 'ok' })
+        expect(
+          (await listWorkspaceBots(db, workspaceId, clock))
+            .find((bot) => bot.id === nightlyBot.id)!
+            .approvedProjects?.map((project) => project.id),
+        ).toContain(neighborIds[0])
+        expect(await grants()).toEqual(grantsBefore)
+
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+        expect(await summary()).toEqual(healthy)
+        // The reissued bot was rebuilt, and the neighbors' grants stayed.
+        expect(
+          (await listWorkspaceBots(db, workspaceId, clock)).find(
+            (bot) => bot.name === 'Nightly report bot',
+          )!.id,
+        ).not.toBe(idOf('Nightly report bot'))
+        // The rebuilt bot keeps the state's address cue: the long address only
+        // in long-email, a generated one otherwise.
+        const rebuiltEmail = (
+          await listWorkspaceBots(db, workspaceId, clock)
+        ).find((bot) => bot.name === 'Nightly report bot')!.email
+        expect(
+          rebuiltEmail.startsWith(
+            'nightly-report-automation-with-a-long-destination-address-',
+          ),
+        ).toBe(scenario === 'settings-bots/long-email')
+        expect(await grants()).toEqual(grantsBefore)
+        expect(
+          await db
+            .selectFrom('audit_events')
+            .select('id')
+            .where('workspace_id', '=', workspaceId)
+            .where('action', '=', 'bot.cancel')
+            .execute(),
+        ).toEqual([])
+      } finally {
+        await db.destroy()
       }
-      const grants = () =>
-        db
-          .selectFrom('project_share_defaults')
-          .select('project_container_id')
-          .where('project_container_id', 'in', neighborIds)
-          .orderBy('project_container_id')
-          .execute()
-      const grantsBefore = await grants()
-      expect(grantsBefore).toHaveLength(2)
-      // The owner also adds the granted neighbor here as a destination; the
-      // product keeps its existing grant.
-      const nightlyBot = (await listWorkspaceBots(db, workspaceId, clock)).find(
-        (bot) => bot.name === 'Nightly report bot',
-      )!
-      const { updated_at: revision } = await db
-        .selectFrom('users')
-        .select('updated_at')
-        .where('id', '=', nightlyBot.id)
-        .executeTakeFirstOrThrow()
-      expect(
-        await updateWorkspaceBotDestinations(db, actor, {
-          botUserId: nightlyBot.id,
-          projectId: nightlyBot.projectId!,
-          projectIds: [
-            ...nightlyBot.approvedProjects!.map((project) => project.id),
-            neighborIds[0],
-          ],
-          revision,
-        }),
-      ).toEqual({ kind: 'ok' })
-      expect(
-        (await listWorkspaceBots(db, workspaceId, clock))
-          .find((bot) => bot.id === nightlyBot.id)!
-          .approvedProjects?.map((project) => project.id),
-      ).toContain(neighborIds[0])
-      expect(await grants()).toEqual(grantsBefore)
-
-      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
-
-      expect(await summary()).toEqual(healthy)
-      // The reissued bot was rebuilt, and the neighbors' grants stayed.
-      expect(
-        (await listWorkspaceBots(db, workspaceId, clock)).find(
-          (bot) => bot.name === 'Nightly report bot',
-        )!.id,
-      ).not.toBe(idOf('Nightly report bot'))
-      expect(await grants()).toEqual(grantsBefore)
-      expect(
-        await db
-          .selectFrom('audit_events')
-          .select('id')
-          .where('workspace_id', '=', workspaceId)
-          .where('action', '=', 'bot.cancel')
-          .execute(),
-      ).toEqual([])
-    } finally {
-      await db.destroy()
-    }
-  })
+    },
+  )
 
   test.each([
     ['settings/with-bots', 'published'],
