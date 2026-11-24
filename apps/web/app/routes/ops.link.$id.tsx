@@ -171,7 +171,7 @@ export default function LinkOpsPage() {
               name="reason"
               maxLength={maxReason}
               rows={3}
-              className="mt-1 w-full rounded border p-2"
+              className="border-input mt-1 w-full rounded border p-2"
             />
           </label>
           <button type="submit" className="rounded border px-3 py-1">

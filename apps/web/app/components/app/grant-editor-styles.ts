@@ -3,7 +3,7 @@ export const grantsSectionClassName =
 export const grantsInputRowClassName =
   'flex flex-wrap gap-[var(--spacing-2)] items-stretch sm:flex-nowrap'
 export const grantsInputClassName =
-  'font-[inherit] text-sm flex-1 h-8 px-[var(--spacing-2)] border border-border rounded-[var(--r-sm)] bg-card text-foreground min-w-0 box-border placeholder:text-faint focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none'
+  'font-[inherit] text-sm flex-1 h-8 px-[var(--spacing-2)] border border-input rounded-[var(--r-sm)] bg-card text-foreground min-w-0 box-border placeholder:text-faint focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none'
 export const grantsLimitClassName = 'text-xs m-0 px-[var(--spacing-1)]'
 export const grantsHeaderClassName =
   'flex justify-between items-baseline px-[var(--spacing-1)]'
