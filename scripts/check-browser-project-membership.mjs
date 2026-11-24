@@ -18,7 +18,7 @@ for (const project of ['firefox', 'webkit']) {
     { cwd, encoding: 'utf8' },
   )
   for (const suite of [
-    '_content/billing-readiness',
+    '_content/billing-states',
     '_content/bots',
     ...(project === 'firefox' ? ['cli-sessions'] : []),
   ]) {

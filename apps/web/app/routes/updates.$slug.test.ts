@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import UpdatesSlugRoute, {
   loader,
   meta,
-  screen,
 } from './_public/($locale)/updates.$slug'
 
 const { getLatestVisibleNoticeMock, getVisibleUpdateBySlugMock } = vi.hoisted(
@@ -99,13 +98,6 @@ describe('/updates/:slug loaders', () => {
 })
 
 describe('locale-aware updates detail metadata', () => {
-  test('preserves the existing English and Japanese detail URL shapes', () => {
-    expect(screen.route).toEqual({
-      en: '/updates/{seed:update}',
-      ja: '/ja/updates/{seed:update}',
-    })
-  })
-
   test.each([
     {
       locale: 'en' as const,

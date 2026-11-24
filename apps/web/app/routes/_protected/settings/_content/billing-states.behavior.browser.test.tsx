@@ -7,19 +7,12 @@ import {
   RouterProvider,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { page, server } from 'vitest/browser'
-import type { ScreenReady } from '~/types/screen'
+import { page } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
 import SettingsLayout from '../_layout'
 import { TooltipProvider } from '~/components/ui/tooltip'
-import BillingPage, { screen, action as billingAction } from './billing'
-
-declare module 'vitest/browser' {
-  interface BrowserCommands {
-    waitForScreenReady: (ready: ScreenReady) => Promise<void>
-  }
-}
+import BillingPage, { action as billingAction } from './billing'
 
 vi.mock('~/services/billing.server', () => ({
   isBillingConfigured: () => false,
@@ -39,12 +32,51 @@ vi.mock('~/services/team-management.server', () => ({
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/billing-usage.server', () => ({}))
 
+// Waits until every selector matches an element the user can see.
+async function expectVisible(...selectors: string[]) {
+  for (const selector of selectors)
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll<HTMLElement>(selector)].some((element) =>
+          element.checkVisibility({ visibilityProperty: true }),
+        ),
+      ).toBe(true),
+    )
+}
+
+const plans = ['[data-plan="team"]', '[data-plan="plus"]']
+const outcomes = {
+  'result-success': {
+    query: '?status=checkout-success',
+    visible: [
+      '[data-billing-checkout-pending]',
+      '[role="status"][data-settings-status="checkout-success"]',
+    ],
+  },
+  'result-warning': {
+    query: '?status=checkout-cancelled',
+    visible: [
+      ...plans,
+      '[role="status"][data-settings-status="checkout-cancelled"]',
+    ],
+  },
+  'result-error': {
+    query: '',
+    visible: [
+      ...plans,
+      '[data-plan="plus"] form [role="alert"][data-settings-status="billing-unavailable"]',
+    ],
+  },
+  'near-limit': {
+    query: '',
+    visible: [...plans, '[role="alert"] [data-billing-upgrade-guidance]'],
+  },
+}
+
 test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
-  '%s capture requires contract controls without the billing-unavailable notice',
+  '%s shows its contract controls and billing availability',
   async (id) => {
-    const ready = screen.states.find((state) => state.id === id)?.setup.ready
-    if (!ready) throw new Error('Missing billing readiness selector for ' + id)
-    const { selector } = ready
+    const selector = 'form:has(input[value="portal"]) button:enabled'
     for (const billingConfigured of [true, false]) {
       const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
         canManage: true,
@@ -106,11 +138,17 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
       const root = createRoot(container)
       try {
         await act(async () => root.render(<RouterProvider router={router} />))
-        expect(document.querySelector(selector) !== null).toBe(
-          billingConfigured,
-        )
         if (billingConfigured) {
-          await server.commands.waitForScreenReady(ready)
+          const cues = [
+            '[data-billing-contract-details]',
+            '[data-billing-change="plan"]',
+            '[data-billing-change="interval"]',
+          ]
+          if (id === 'past-due')
+            cues.push('[data-billing-past-due][role="alert"]')
+          if (id === 'continuing-near-limit')
+            cues.push('#billing-estimate-overage')
+          await expectVisible(selector, ...cues)
           const card = document
             .querySelector(selector)
             ?.closest('[data-slot="card"]')
@@ -118,43 +156,20 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
             '[data-slot="card-description"]',
           )
           if (!details || !card) throw new Error('Missing contract details')
-          const controls = card.querySelectorAll<HTMLElement>(
-            '[data-slot="card-content"] button',
-          )
-          expect(controls).toHaveLength(2)
-          const cues = [details, ...controls]
-          if (id !== 'subscribed') {
-            const cue = container.querySelector<HTMLElement>(
-              id === 'past-due'
-                ? '[data-billing-past-due]'
-                : '#billing-estimate-overage',
-            )
-            if (!cue) throw new Error('Missing billing cue for ' + id)
-            cues.push(cue)
-          }
-          for (const cue of cues) {
-            cue.style.visibility = 'hidden'
-            await expect(
-              server.commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-            ).rejects.toThrow(
-              'ready condition was not met: ' + ready.description,
-            )
-            cue.style.removeProperty('visibility')
-          }
-        }
-        if (!billingConfigured) {
-          const notice = Array.from(container.querySelectorAll('p')).find(
-            (p) => p.textContent === bindI18n('en').t('billing.unavailable'),
-          )
-          if (!notice?.parentElement)
-            throw new Error('Missing unavailable notice')
-          notice.remove()
-          await server.commands.waitForScreenReady(ready)
-          container.appendChild(notice)
-          expect(document.querySelector(selector)).toBeNull()
-          await expect(
-            server.commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-          ).rejects.toThrow('ready condition was not met: ' + ready.description)
+          expect(
+            card.querySelectorAll<HTMLElement>(
+              '[data-slot="card-content"] button',
+            ),
+          ).toHaveLength(2)
+          expect(
+            container.querySelector('[data-billing-unavailable]'),
+          ).toBeNull()
+        } else {
+          expect(
+            Array.from(container.querySelectorAll('p')).some(
+              (p) => p.textContent === bindI18n('en').t('billing.unavailable'),
+            ),
+          ).toBe(true)
         }
       } finally {
         await act(async () => root.unmount())
@@ -165,13 +180,10 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
   },
 )
 
-test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
-  '%s capture is ready with Japanese billing copy',
+test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
+  '%s shows its billing outcome with Japanese billing copy',
   async (id) => {
-    const setup = screen.states.find((state) => state.id === id)?.setup
-    const ready = setup?.postInteractionReady ?? setup?.ready
-    if (!setup || !ready) throw new Error('Missing billing readiness for ' + id)
-    const query = setup.query ?? ''
+    const { query, visible } = outcomes[id]
     const quota = PLAN_STORAGE_QUOTA_BYTES.free
     const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
       canManage: true,
@@ -304,7 +316,7 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
         )
         await expect.element(plus).toBeDisabled()
         await act(async () => releases[0]({ kind: 'ok' }))
-        await server.commands.waitForScreenReady(ready)
+        await expectVisible(...visible)
         authorize.mockImplementationOnce(hold)
         await plus.click()
         await vi.waitFor(() => expect(releases).toHaveLength(3))
@@ -316,18 +328,16 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
         ).toBeNull()
         await act(async () => releases[2]({ kind: 'ok' }))
       }
-      await server.commands.waitForScreenReady(ready)
+      await expectVisible(...visible)
+      expect(container.querySelector('[data-billing-unavailable]')).toBeNull()
+      if (id === 'result-success')
+        expect(container.querySelector('[data-plan]')).toBeNull()
       if (query)
         expect(router.state.location).toMatchObject({
           search: '?view=details',
           hash: '#usage',
           state: { from: 'plans' },
         })
-      container.appendChild(unavailable)
-      await expect(
-        server.commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-      ).rejects.toThrow('ready condition was not met: ' + ready.description)
-      unavailable.remove()
       if (id === 'result-error') {
         await act(async () => router.navigate(-1))
         expect(router.state.location.search).toBe('')
@@ -351,7 +361,7 @@ test.each(['result-success', 'result-warning', 'result-error', 'near-limit'])(
           await act(async () => {
             await router.navigate('/settings/billing?status=checkout-success')
           })
-          await server.commands.waitForScreenReady(ready)
+          await expectVisible(...visible)
           await act(async () => {
             await router.navigate('/settings/billing?view=summary')
           })

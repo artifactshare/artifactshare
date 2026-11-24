@@ -346,7 +346,7 @@ function captureStripeClient(
     !LOOPBACK_HOSTS.has(parseStripeApiOrigin(origin).host)
   )
     throw new Error(
-      `${scenario} reads its contract from the local capture's fake Stripe; run it with pnpm screens:capture:local`,
+      `${scenario} reads its contract from the local capture's fake Stripe; point STRIPE_API_ORIGIN at the loopback server in scripts/capture-stripe.mjs`,
     )
   return { billing, stripe: createStripeClient(billing) }
 }

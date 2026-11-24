@@ -7,7 +7,7 @@ import {
   updatesListMeta,
 } from '~/lib/updates-meta'
 import type { UpdateProduct } from '~/lib/updates-types'
-import UpdatesRoute, { loader, meta, screen } from './_public/($locale)/updates'
+import UpdatesRoute, { loader, meta } from './_public/($locale)/updates'
 
 const { getLatestVisibleNoticeMock, getVisibleUpdatesMock } = vi.hoisted(
   () => ({
@@ -160,13 +160,6 @@ describe('/updates list loaders', () => {
 })
 
 describe('locale-aware updates list metadata', () => {
-  test('preserves the existing English and Japanese list URLs', () => {
-    expect(screen.route).toEqual({
-      en: '/updates',
-      ja: '/ja/updates',
-    })
-  })
-
   test.each([
     {
       locale: 'en' as const,

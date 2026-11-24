@@ -407,7 +407,7 @@ shareable の公開範囲 (`Visibility`) を表す pill 形バッジ。shadcn `B
 - primitive の `className` では padding、幅、surface、typography、局所的 responsive 制約だけを書く。
 - 兄弟間隔を子の外側 margin (`mt-*` / `mb-*` 等) で作らず、親の `gap` へ寄せる。
 - `pnpm report:spacing-ownership` は `Stack` / `Inline` の適用 className と、そのほかの要素の実際の className 値を、ファイル・行・対象・class・構文区分・理由の安定順で棚卸しする。`ownership-review` は構文だけでは責務を決めず、親所有か意味的複合部品所有かを人手で判定する表示専用の候補であり、許可リストではない。
-- spacing ownership reportはsource上で余白の所有者を棚卸しする。描画後に隣接要素のゼロ間隔や接触を検出するgap auditとは役割が異なる。全登録画面のgap auditは `pnpm screens:capture -- --all --audit-gaps` で実行する。
+- spacing ownership reportはsource上で余白の所有者を棚卸しする。描画後に隣接要素のゼロ間隔や接触を検出するgap auditとは役割が異なる。gap auditは `/dev/scenarios` の各シナリオに対して `apps/web/app/routes/dev.scenarios.$scenario/scenarios.browser.test.tsx` が実行する。
 - 機械検査が deny する保証範囲は `Stack` / `Inline` の静的に解決できる display・軸・gap・alignment・justify・wrap・外側 margin、および settings route の局所的な正の block-axis margin である。dynamic-review、既存の意味的所有、reset・prose・overlay・geometry surface は report-only とし、現状件数を baseline として許可しない。表示専用の所有方針と判断理由は `scripts/spacing-ownership-policy.mjs` を正本とする。
 - 代表状態と props 一覧は `catalog.ts` と `/dev/gallery` を参照する。
 

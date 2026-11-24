@@ -32,8 +32,7 @@ import {
   projectPlacementCandidates,
 } from './app/test/project-placement-browser-command'
 import { resolve } from 'node:path'
-import { defineBrowserCommand, playwright } from '@vitest/browser-playwright'
-import type { ScreenReady } from './app/types/screen'
+import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
 import BrowserDurationSequencer from './app/test/browser-shard-sequencer'
@@ -86,15 +85,6 @@ export default defineConfig({
       enabled: true,
       provider: playwright({ contextOptions: { locale: 'en-US' } }),
       commands: {
-        waitForScreenReady: defineBrowserCommand(
-          async ({ frame }, ready: ScreenReady) => {
-            // Load the CLI and its ledger only for tests exercising capture readiness.
-            const { waitForReady } = await import(
-              new URL('../../scripts/screen-capture.mjs', import.meta.url).href
-            )
-            await waitForReady(await frame(), ready)
-          },
-        ),
         settingsContrastCapture,
         settingsContrastReport,
         settingsRouteTree,
@@ -144,7 +134,7 @@ export default defineConfig({
             },
           }),
           include: [
-            'app/routes/_protected/settings/_content/billing-readiness.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/billing-states.behavior.browser.test.tsx',
             'app/routes/_protected/settings/_content/bots.behavior.browser.test.tsx',
             'app/routes/_protected/settings/cli-sessions.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
@@ -164,7 +154,7 @@ export default defineConfig({
         {
           browser: 'webkit',
           include: [
-            'app/routes/_protected/settings/_content/billing-readiness.behavior.browser.test.tsx',
+            'app/routes/_protected/settings/_content/billing-states.behavior.browser.test.tsx',
             'app/routes/_protected/settings/_content/bots.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',

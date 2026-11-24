@@ -9,28 +9,7 @@ import {
   getVisibleUpdates,
   toListItem,
 } from '~/services/updates-visibility.server'
-import type { ScreenSpec } from '~/types/screen'
 import type { Route } from './+types/updates'
-
-export const screen = {
-  id: 'updates',
-  route: {
-    en: '/updates',
-    ja: '/ja/updates',
-  },
-  auth: 'anonymous',
-  loop: 'support',
-  metric: '継続的な関心と再訪を増やす',
-  role: '製品更新を一覧で知らせる',
-  primaryAction: '更新を読む',
-  states: [
-    {
-      id: 'default',
-      description: '更新一覧',
-      setup: {},
-    },
-  ],
-} satisfies ScreenSpec
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const locale = resolvePublicRouteLocale(params.locale)
