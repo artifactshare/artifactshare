@@ -2507,9 +2507,10 @@ async function seedMixedPresetsFixture(
  * - Transfer file, inventory artifact rows and the private link precursor, and
  *   their ownership, container and reset: creating an artifact needs upload
  *   storage; sharing the link still goes through the product's edit service.
- * - Synthetic CLI source sessions and the pending Publisher device code: they
- *   stand in for the auth device endpoints; the production helpers write the
- *   approval, client, profile, authorities, credential and family.
+ * - Synthetic CLI source sessions and the pending Agent and Publisher device
+ *   codes: they stand in for the auth device endpoints; the production
+ *   helpers write the approval, client, profile, authorities, credential and
+ *   family.
  * - Timestamps that show past use, expiry, order or stopped history, and the
  *   zero-state link expiry: services write at the current clock.
  * - The single long bot email: an overflow fixture beyond the generator's
