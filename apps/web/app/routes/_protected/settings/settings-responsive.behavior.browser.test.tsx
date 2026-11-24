@@ -1823,6 +1823,9 @@ test.each(['members', 'artifacts'] as const)(
                 const matchingMembers = memberRows.membersPage.members.filter(
                   (member) => member.role === role,
                 )
+                const matchingArtifacts = [
+                  { ...artifact, visibility: 'workspace' as const },
+                ].filter((row) => row.visibility === visibility)
                 return members ? (
                   <MembersPage
                     loaderData={{
@@ -1851,7 +1854,11 @@ test.each(['members', 'artifacts'] as const)(
                 ) : (
                   <ArtifactsPage
                     loaderData={{
-                      artifacts: { artifacts: [artifact], total: 1, page: 1 },
+                      artifacts: {
+                        artifacts: matchingArtifacts,
+                        total: matchingArtifacts.length,
+                        page: 1,
+                      },
                       filters: {
                         page: 1,
                         visibility:
@@ -1920,10 +1927,17 @@ test.each(['members', 'artifacts'] as const)(
           .click()
       }
       await search()
+      // Wait for the submitted page itself, not just the drafts, before going Back.
       if (members)
         await expect
           .element(page.getByText(t('team.members.noMatches'), { exact: true }))
           .toBeVisible()
+      else
+        await vi.waitFor(() =>
+          expect(container.textContent).not.toContain(
+            t('team.inventory.empty'),
+          ),
+        )
       await vi.waitFor(() => {
         expect(router.state.location.pathname).toBe(path)
         for (const { key, nextValue } of fields)
