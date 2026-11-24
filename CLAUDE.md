@@ -1,14 +1,8 @@
-# Public repository instructions
+# Artifact Share
 
-- Product-development constraints: see [`docs/reference/development-constraints.md`](docs/reference/development-constraints.md).
+Read `docs/reference/development-constraints.md` before you change product code.
 
-- Work only with files and context available in this repository, plus public web sources a review needs, such as dependency releases and advisories. Do not use production operations, secrets, customer context, private paths, or private URLs.
-- Install dependencies with `pnpm install --frozen-lockfile`. Before declaring a change complete, run the local validation selected by `docs/development-workflow.md`; the merge queue remains the source of truth for full validation. Product UI changes must keep React Doctor at zero warnings and errors.
-- Use the repository [Controlled Review skill](.agents/skills/controlled-review/SKILL.md) for orchestrated reviews, including when a personal skill with the same name is installed. The implementation gate's Claude side runs Claude Code's `/code-review` instead, as `docs/development-workflow.md` describes. The calling orchestrator owns conditions, role assignments, and finding dispositions.
-- Review implementation, user-visible behavior, tests, security boundaries, and maintainability. Keep pull-request descriptions to the implementation, its generalized visible effect, validation results, and any workflow usage included.
-- Classify and run maintainer changes with `docs/development-workflow.md`, which is the source of truth for proportional specification, review, and validation. Every pull request branch initializes its objective scope before its implementation gate, and `pr:ready` requires a completed implementation pair for the exact HEAD (and, for a UI diff, a completed critique record for that HEAD), or, once the review round cap is spent, a `PROCEED` round-cap consultation for that HEAD in place of the pair; every review must use a committed, clean worktree, and spec review records the clean checkout as reference context for a fixed Artifact Share version.
-- Follow the writing and contribution rules in `CONTRIBUTING.md`, `SECURITY.md`, and the nearest directory instructions.
-
-## UI design context
-
-Use the Impeccable skill for UI design and review. Read `apps/web/PRODUCT.md` and `apps/web/DESIGN.md` first, then follow the existing design system, component catalog, and tokens they reference. Keep local Impeccable working files out of Git.
+- Install dependencies with `pnpm install --frozen-lockfile`. Before you call a change done, run `pnpm lint`, `pnpm typecheck`, and the tests that cover the change. `pnpm validate` runs everything locally, and the merge queue runs the full validation.
+- This repository is public. Keep credentials, customer context, private documents, and private URLs out of files, branches, commits, and pull requests.
+- Production writes run only through the protected GitHub `production` Environment and its deploy workflow, never from a local shell.
+- For UI work, read `apps/web/PRODUCT.md` and `apps/web/DESIGN.md` first, and use the existing components and tokens. Product UI changes keep React Doctor at zero warnings and errors.

@@ -20,7 +20,7 @@ The npm package through version 0.9.0 remains licensed under Apache-2.0. The rep
 
 ## Local development and validation
 
-The authoritative setup and export boundary are documented in [the source-available boundary](docs/reference/source-available-boundary.md). A public checkout requires no production credentials or private services.
+A public checkout requires no production credentials or private services.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -34,11 +34,7 @@ pnpm test:runtime
 Run the commands in that order. Local configuration uses fixtures and local service bindings; it does not provide a production deployment path.
 
 For interactive development, `pnpm dev` prepares local certificates, variables,
-and D1 state before starting the application, sandbox, and image worker. See the
-[local development harness](docs/reference/local-dev-harness.md). UI review
-captures are documented in the [screen capture harness](docs/reference/screen-capture.md).
-Manual product diagnostics are documented in [AI-search eligibility](docs/reference/ai-search-eligibility.md)
-and [performance trace automation](docs/reference/performance-trace-automation.md).
+and D1 state before starting the application, sandbox, and image worker.
 
 The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
 After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.

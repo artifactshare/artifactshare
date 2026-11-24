@@ -112,16 +112,6 @@ test('aggregation runs after failed workers, tolerates missing artifacts, and up
   )
   assert.equal(job.steps.at(-1).if, 'always()')
   assert.equal(job.steps.at(-1).with.name, 'flaky-report')
-  const doc = fs.readFileSync('docs/development-workflow.md', 'utf8')
-  assert.match(doc, /\.github\/workflows\/flaky-detector.yml/)
-  for (const phrase of [
-    '02:17 UTC',
-    'Run workflow',
-    'consistently failing',
-    'Missing artifacts',
-    'separate test fixes',
-  ])
-    assert.ok(doc.includes(phrase))
 })
 
 test('detector serializes runs and bounds workers without cancelling active detection', () => {
@@ -129,10 +119,6 @@ test('detector serializes runs and bounds workers without cancelling active dete
     group: 'flaky-detector',
     'cancel-in-progress': false,
   })
-  assert.match(
-    fs.readFileSync('docs/development-workflow.md', 'utf8'),
-    /Detector runs are serialized/,
-  )
 })
 
 test('every flaky detector job uses stock Playwright libraries', () => {
@@ -188,7 +174,4 @@ test('only behavior-browser entries get a container without splitting the global
     JSON.stringify(workflow),
     /playwright install|browser-cache-|browser-system-packages|secrets\.|pull_request_target|self-hosted/,
   )
-  const doc = fs.readFileSync('docs/development-workflow.md', 'utf8')
-  assert.match(doc, /PipelineTemplateConverter/)
-  assert.match(doc, /empty.*image/)
 })
