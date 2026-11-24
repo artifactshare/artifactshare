@@ -516,7 +516,7 @@ test('required fixtures fail setup with the fixtures recovery when the build fai
 test('running the script directly prints the recovery command', () => {
   // --target is rejected before any certificate, .dev.vars, or D1 work starts,
   // and --persist-to keeps the daily apps/web/.wrangler/state out of reach if
-  // that order ever changes (docs/reference/local-dev-harness.md).
+  // that order ever changes.
   const persistTo = mkdtempSync(join(tmpdir(), 'artifactshare-dev-setup-cli-'))
   try {
     const result = spawnSync(

@@ -10,15 +10,6 @@
   "packageManager": "pnpm@12.21.0",
   "scripts": {
     "check:public-development-guard": "node scripts/public-development-guard.mjs --check",
-    "review:codex": "node scripts/codex-review.mjs",
-    "review:claude": "node scripts/claude-review.mjs",
-    "review:implementation": "node scripts/implementation-review-gate.mjs",
-    "review:cursor": "node scripts/cursor-review.mjs",
-    "review:spec": "node scripts/spec-review-gate.mjs",
-    "pr:publish": "node scripts/pr-publish.mjs",
-    "pr:ready": "node scripts/pr-ready.mjs",
-    "pr:landed": "node scripts/pr-landed.mjs",
-    "pr:queue": "node scripts/pr-queue.mjs",
     "prepare": "node scripts/public-hook-setup.mjs",
     "check:public-hook": "node scripts/public-hook-setup.mjs --check",
     "public:scan": "node scripts/public-repository-scan.mjs",
@@ -36,7 +27,6 @@
     "screens:capture:local": "node scripts/local-capture.mjs screens",
     "walkthroughs:capture:local": "node scripts/local-capture.mjs walkthroughs",
     "test:capture:local": "node scripts/local-capture.integration.mjs",
-    "critique:tasks": "node scripts/task-critique.mjs",
     "billing:regression": "node scripts/billing-regression.mjs",
     "audit:ai-search": "node scripts/audit-ai-search-eligibility.mjs",
     "measure:cli-tests": "node scripts/measure-cli-tests.mjs",
@@ -87,7 +77,6 @@
     "visual:compose": "docker compose -f compose.playwright.yml run --rm visual",
     "visual:compose:update": "docker compose -f compose.playwright.yml run --rm visual-update",
     "visual:fault-injection": "node scripts/verify-visual-fault-injection.mjs",
-    "task:scope": "node scripts/task-scope.mjs",
     "skill-eval": "node scripts/skill-eval.mjs"
   },
   "devDependencies": {
