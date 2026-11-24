@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "canonical": [
+    ".claude/settings.json",
     "apps/web/PRODUCT.md",
     "apps/web/DESIGN.md",
     "apps/web/dev.mjs",
