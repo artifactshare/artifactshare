@@ -75,7 +75,6 @@ import {
 import { findWorkspaceIdByDomainClaim } from '~/services/workspace-domain-claims.server'
 import { loadViewerRevisitContext } from '~/services/viewer-revisit.server'
 import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
-import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { Route } from './+types/index'
 
 interface ArtifactSummary {
@@ -556,17 +555,6 @@ export async function loader({
   const isOwner = ownerManagementAccess
   const isPrefetch = isPrefetchRequest(request)
   const shouldRecordView = !isPrefetch && !isHistoricalVersion
-  const preserveRevisitFixture = isDevScreenStateRequest(
-    request,
-    'viewer/revisit-context',
-  )
-  const bridgeAttributionFixture = isDevScreenStateRequest(
-    request,
-    'viewer/bridge-attribution',
-  )
-  const bridgeRequesterEmailFixture =
-    bridgeAttributionFixture &&
-    new URL(request.url).searchParams.get('bridgeRequester') === 'email'
   const canTrackView = !isPrefetch && !isHistoricalVersion
   const canViewHistory = true
   const isStaticSite = displayedVersion.artifact_kind === 'static_site'
@@ -677,16 +665,9 @@ export async function loader({
           return null
         })
       : Promise.resolve(null),
-    bridgeAttributionFixture
-      ? Promise.resolve({
-          requester_display_name: bridgeRequesterEmailFixture
-            ? null
-            : 'Aki Tanaka from the International Research Team',
-          requester_verified_email: 'aki@example.com',
-        })
-      : shareable.owner_kind === 'bot'
-        ? loadBridgeAttributionOrNull(db, displayedVersion.id)
-        : Promise.resolve(null),
+    shareable.owner_kind === 'bot'
+      ? loadBridgeAttributionOrNull(db, displayedVersion.id)
+      : Promise.resolve(null),
   ])
   // When the gate fails, the query fails, or the requester is outside the
   // audience, the serialized fields collapse to { false, 0 } so the loader
@@ -700,10 +681,8 @@ export async function loader({
   // Owner or Team workspace admin may move it. Reuse the admin flag the comment
   // access check already resolved rather than querying workspace_members again.
   const canMove = isOwner || commentAccess.isTeamWorkspaceAdmin
-  const ownerName = bridgeAttributionFixture
-    ? 'Publishing bot'
-    : shareable.owner_name
-  const ownerKind = bridgeAttributionFixture ? 'bot' : shareable.owner_kind
+  const ownerName = shareable.owner_name
+  const ownerKind = shareable.owner_kind
   const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email)
   const bridgeRequester = await bridgeRequesterPresentation(
     db,
@@ -798,12 +777,8 @@ export async function loader({
         fileName,
         hmacSecret: env.BETTER_AUTH_SECRET,
         live: env.ARTIFACT_LIVE,
-        currentPublishedAt: preserveRevisitFixture
-          ? null
-          : shareable.current_published_at,
-        currentCommentCreatedAt: preserveRevisitFixture
-          ? null
-          : latestCommentCreatedAt,
+        currentPublishedAt: shareable.current_published_at,
+        currentCommentCreatedAt: latestCommentCreatedAt,
       })
       await recencyWrite
       context.get(ctxContext).waitUntil(Promise.all(followUps))
@@ -895,12 +870,8 @@ export async function loader({
       fileName,
       hmacSecret: env.BETTER_AUTH_SECRET,
       live: env.ARTIFACT_LIVE,
-      currentPublishedAt: preserveRevisitFixture
-        ? null
-        : shareable.current_published_at,
-      currentCommentCreatedAt: preserveRevisitFixture
-        ? null
-        : latestCommentCreatedAt,
+      currentPublishedAt: shareable.current_published_at,
+      currentCommentCreatedAt: latestCommentCreatedAt,
     })
     await recencyWrite
     context.get(ctxContext).waitUntil(Promise.all(followUps))
@@ -1034,26 +1005,10 @@ async function buildLinkAnonymousResponse(
 
   const { modifiedTime, name: fileName } = displayCheck.meta
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
-  const bridgeAttributionFixture = isDevScreenStateRequest(
-    request,
-    'viewer/bridge-attribution',
-  )
-  const bridgeRequesterEmailFixture =
-    bridgeAttributionFixture &&
-    new URL(request.url).searchParams.get('bridgeRequester') === 'email'
-  const bridgeAttribution = bridgeAttributionFixture
-    ? {
-        requester_display_name: bridgeRequesterEmailFixture
-          ? null
-          : 'Aki Tanaka from the International Research Team',
-        requester_verified_email: 'aki@example.com',
-      }
-    : isReservedBotEmail(shareable.owner_email ?? '')
-      ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
-      : null
-  const ownerName = bridgeAttributionFixture
-    ? 'Publishing bot'
-    : shareable.owner_name
+  const bridgeAttribution = isReservedBotEmail(shareable.owner_email ?? '')
+    ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
+    : null
+  const ownerName = shareable.owner_name
   const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email ?? '')
   const bridgeRequester = await bridgeRequesterPresentation(
     db,
@@ -1081,11 +1036,9 @@ async function buildLinkAnonymousResponse(
     ownerIsExternal: bridgeRequester.isExternal,
     // This query path doesn't join users.kind; the reserved bot email domain
     // is equally authoritative (sign-up rejects it).
-    ownerKind:
-      bridgeAttributionFixture ||
-      isReservedBotEmail(shareable.owner_email ?? '')
-        ? ('bot' as const)
-        : ('human' as const),
+    ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
+      ? ('bot' as const)
+      : ('human' as const),
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility as Visibility,

@@ -64,7 +64,7 @@ function renderPage(currentUserIsAdmin: boolean, hasOwner = true) {
   }
 }
 
-test('reads the workspace owner even with a former capture header', async () => {
+test('reads the workspace owner', async () => {
   const owner = {
     id: 'owner',
     name: 'Owner',
@@ -72,26 +72,14 @@ test('reads the workspace owner even with a former capture header', async () => 
     image: null,
   }
   services.loadWorkspaceOwner.mockResolvedValue(owner)
-  expect(import.meta.env.DEV).toBe(true)
-  for (const scenario of [
-    undefined,
-    'settings-general/forbidden',
-    'settings-general/not-found',
-    'settings-general/unexpected-error',
-  ]) {
-    const result = await loader({
-      request: new Request('https://artifactshare.com/settings/general', {
-        headers: scenario
-          ? { 'X-ArtifactShare-Dev-Screen-State': scenario }
-          : {},
-      }),
-      context: new RouterContextProvider(),
-      params: {},
-      url: new URL('https://artifactshare.com/settings/general'),
-      pattern: '/settings/general',
-    })
-    expect(result).toEqual({ owner })
-  }
+  const result = await loader({
+    request: new Request('https://artifactshare.com/settings/general'),
+    context: new RouterContextProvider(),
+    params: {},
+    url: new URL('https://artifactshare.com/settings/general'),
+    pattern: '/settings/general',
+  })
+  expect(result).toEqual({ owner })
   expect(services.loadWorkspaceOwner).toHaveBeenCalledWith({}, 'workspace')
 })
 

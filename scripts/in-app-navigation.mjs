@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { newAppBrowserContext } from './lib/browser-analytics.mjs'
 import {
   appFetch,
+  COOKIE_NAMES,
   cookieHeader,
   cookiesFromHeaders,
 } from './lib/dev-sign-in.mjs'
@@ -29,6 +30,53 @@ async function waitForServer(server) {
     await sleep(1000)
   }
   throw new Error('Dev server did not become ready within 120 seconds')
+}
+
+// The proof needs one file in the signed-in account. Upload it through the
+// same endpoint the Home upload dialog uses, with the dev session.
+async function uploadArtifact(cookies) {
+  const form = new FormData()
+  form.append(
+    'file',
+    new File(
+      [
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Navigation check</title></head><body><main><h1>Navigation check</h1></main></body></html>',
+      ],
+      'index.html',
+      { type: 'text/html' },
+    ),
+  )
+  // Encode with the global FormData; the undici fetch below is a separate
+  // copy that does not recognize it as a multipart body.
+  const encoded = new Response(form)
+  const response = await fetchApp('/api/shareables/uploads', {
+    method: 'POST',
+    headers: {
+      Cookie: cookieHeader(cookies),
+      Origin: new URL(baseUrl).origin,
+      'Content-Type': encoded.headers.get('content-type'),
+    },
+    body: Buffer.from(await encoded.arrayBuffer()),
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok || typeof body?.id !== 'string')
+    throw new Error(
+      `Upload for the navigation check failed: HTTP ${response.status} ${JSON.stringify(body)}`,
+    )
+  return body.id
+}
+
+async function deleteArtifact({ id, cookies }) {
+  const session = cookies.find(({ name }) => COOKIE_NAMES.includes(name))
+  const token = decodeURIComponent(session?.value ?? '').split('.')[0]
+  const response = await fetchApp(
+    `/api/cli/artifacts/${encodeURIComponent(id)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  )
+  if (!response.ok)
+    throw new Error(
+      `Deleting the uploaded file failed: HTTP ${response.status}`,
+    )
 }
 
 async function waitForHydratedHome(page) {
@@ -59,6 +107,7 @@ async function main() {
   let browser = null
   let context = null
   let isolatedState = null
+  let uploaded = null
   try {
     try {
       if (!(await fetchApp('/dev/sign-in')).ok) throw new Error('not ready')
@@ -86,10 +135,7 @@ async function main() {
     const response = await fetchApp('/api/auth/dev/sign-in', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        persona: 'free-owner',
-        scenario: 'recent/content-rich',
-      }),
+      body: JSON.stringify({ persona: 'free-owner' }),
     })
     if (!response.ok)
       throw new Error(`Dev sign-in failed: HTTP ${response.status}`)
@@ -104,6 +150,8 @@ async function main() {
       throw new Error(
         `Dev sign-in session was not readable: HTTP ${sessionResponse.status}; cookies: ${cookies.map(({ name }) => name).join(', ')}`,
       )
+    const artifactId = await uploadArtifact(cookies)
+    uploaded = { id: artifactId, cookies }
     try {
       const { chromium } = require('playwright')
       browser = await chromium.launch(
@@ -139,6 +187,17 @@ async function main() {
         `Browser context could not read the dev session: HTTP ${browserSessionResponse.status()}; cookies: ${installedCookies.map(({ name }) => name).join(', ') || '(none)'}`,
       )
     }
+    // Open the uploaded file once so it is in Recently seen as well as Home.
+    const viewerPage = await context.newPage()
+    const viewerResponse = await viewerPage.goto(
+      new URL(`/a/${artifactId}`, baseUrl).toString(),
+    )
+    if (!viewerResponse?.ok())
+      throw new Error(
+        `Uploaded file did not open: HTTP ${viewerResponse?.status() ?? 'unknown'}`,
+      )
+    await viewerPage.close()
+
     // A clean CI checkout has an empty Vite dependency optimizer cache. Its
     // first browser request may trigger an optimized-dependency reload, which
     // deliberately invalidates the initial client module URLs. Prime that
@@ -175,7 +234,7 @@ async function main() {
         .waitFor()
         .catch(() => {
           throw new Error(
-            'Recently seen did not render an artifact row for the content-rich scenario',
+            'Recently seen did not render a row for the uploaded file',
           )
         })
       if (!(await page.evaluate(() => window.__inAppNavigation === true)))
@@ -221,6 +280,9 @@ async function main() {
   } finally {
     await context?.close().catch(() => {})
     await browser?.close().catch(() => {})
+    // Delete the uploaded file so repeated runs against a shared dev server
+    // do not pile files up in the persona's account.
+    if (uploaded) await deleteArtifact(uploaded)
     if (ownsServer && server?.pid) {
       try {
         process.kill(-server.pid, 'SIGTERM')

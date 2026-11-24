@@ -554,35 +554,6 @@ test('resource loaders return quota responses directly before framework error ha
   }
 })
 
-test('dev palette daily refusal returns the same quota response directly', async () => {
-  const url = new URL('https://example.com/api/search-suggestions?q=alpha')
-  const response = await suggestions({
-    url,
-    request: new Request(url, {
-      headers: {
-        'X-ArtifactShare-Dev-Screen-State': 'search/palette-daily-limit',
-      },
-    }),
-    pattern: '/api/search-suggestions',
-    params: {},
-    context,
-  })
-  expect(response.status).toBe(429)
-  expect(response.headers.get('Cache-Control')).toBe('private, no-store')
-  expect(response.headers.get('Retry-After')).toBe('43200')
-  expect(await response.json()).toMatchObject({
-    error: {
-      code: 'search_daily_limit_exceeded',
-      retry_at: '2026-11-21T00:00:00.000Z',
-      details: {
-        retry_at: '2026-11-21T00:00:00.000Z',
-        retry_after_seconds: 43200,
-      },
-    },
-  })
-  expect(rpc.search).not.toHaveBeenCalled()
-})
-
 test('resource loaders return capacity responses directly before framework error handling', async () => {
   const url = new URL('https://example.com/api/search?q=alpha')
   const args = {

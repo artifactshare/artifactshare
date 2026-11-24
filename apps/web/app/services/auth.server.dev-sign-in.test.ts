@@ -19,16 +19,10 @@ const testRefs = vi.hoisted(() => ({
   googleClientSecret: 'test-google-client-secret',
   microsoftClientId: 'test-microsoft-client-id',
   microsoftClientSecret: 'test-microsoft-client-secret',
-  captureStripeOrigin: 'http://127.0.0.1:4242',
 }))
 
-// The local capture's synthetic Stripe settings; the paid scenario test
-// answers their loopback origin in process with the fake's own replies.
-vi.mock('cloudflare:workers', async () => ({
+vi.mock('cloudflare:workers', () => ({
   env: {
-    ...(
-      await import('../../../../scripts/capture-stripe.mjs')
-    ).captureStripeVars(testRefs.captureStripeOrigin),
     DB: createD1MockFromSqliteRef(testRefs.sqliteRef),
     BETTER_AUTH_SECRET: testRefs.authSecret,
     BETTER_AUTH_URL: 'https://example.com',
@@ -47,7 +41,6 @@ vi.mock('cloudflare:workers', async () => ({
   },
 }))
 
-import { captureStripeResponse } from '../../../../scripts/capture-stripe.mjs'
 import {
   createAuth,
   DEV_SIGN_IN_ADMIN_EMAIL,
@@ -331,187 +324,10 @@ describe('ensureDevSignInUser', () => {
     expect(users).toHaveLength(2)
   })
 
-  test('isolates and idempotently seeds screen capture scenarios', async () => {
-    const homeUserId = (
-      await ensureDevSignInUser(db, 'free-owner', 'home/content-rich')
-    ).userId
-    const recentUserId = (
-      await ensureDevSignInUser(db, 'free-owner', 'recent/content-rich')
-    ).userId
-    await ensureDevSignInUser(db, 'free-owner', 'home/content-rich')
-    await ensureDevSignInUser(db, 'free-owner', 'recent/content-rich')
-
-    const scenarioUsers = await db
-      .selectFrom('users')
-      .select(['id', 'email', 'workspace_id'])
-      .where('id', 'in', [homeUserId, recentUserId])
-      .execute()
-    expect(homeUserId).not.toBe(recentUserId)
-    const homeWorkspaceId = scenarioUsers.find(
-      (user) => user.id === homeUserId,
-    )?.workspace_id
-    const recentWorkspaceId = scenarioUsers.find(
-      (user) => user.id === recentUserId,
-    )?.workspace_id
-    expect(homeWorkspaceId).toBeDefined()
-    expect(recentWorkspaceId).toBeDefined()
-    expect(homeWorkspaceId).not.toBe(recentWorkspaceId)
-    expect(scenarioUsers.every((user) => user.email.includes('+'))).toBe(true)
-    const scenarioFileCounts = await Promise.all(
-      [homeWorkspaceId, recentWorkspaceId].map(async (workspaceId) => {
-        const row = await db
-          .selectFrom('shareables')
-          .select((eb) => eb.fn.countAll<number>().as('count'))
-          .where('workspace_id', '=', workspaceId!)
-          .executeTakeFirstOrThrow()
-        return Number(row.count)
-      }),
-    )
-    expect(scenarioFileCounts).toEqual([4, 24])
-    const joinedWorkspaceId = `${recentWorkspaceId}-recent-joined-workspace`
-    const joinedFileId = `${joinedWorkspaceId}-project-file`
-    expect(
-      await db
-        .selectFrom('workspaces')
-        .select('id')
-        .where('id', '=', joinedWorkspaceId)
-        .execute(),
-    ).toEqual([{ id: joinedWorkspaceId }])
-    expect(
-      await db
-        .selectFrom('shareables')
-        .select(['id', 'workspace_id'])
-        .where('id', '=', joinedFileId)
-        .execute(),
-    ).toEqual([{ id: joinedFileId, workspace_id: joinedWorkspaceId }])
-    expect(
-      await db
-        .selectFrom('shareables')
-        .select('workspace_id')
-        .where('workspace_id', '=', homeWorkspaceId!)
-        .execute(),
-    ).toEqual([
-      { workspace_id: homeWorkspaceId },
-      { workspace_id: homeWorkspaceId },
-      { workspace_id: homeWorkspaceId },
-      { workspace_id: homeWorkspaceId },
-    ])
-    expect(
-      await db.selectFrom('workspaces').select('id').execute(),
-    ).toHaveLength(3)
-  })
-
-  test('shares project containers across personas in the same scenario workspace', async () => {
-    const owner = await ensureDevSignInUser(
-      db,
-      'team-owner',
-      'project-detail/with-files',
-    )
-    const member = await ensureDevSignInUser(
-      db,
-      'team-member',
-      'project-detail/with-files',
-    )
-
-    expect(owner.workspaceId).toBe(member.workspaceId)
-    expect(owner.containerId).toBe(member.containerId)
-    expect(
-      await db
-        .selectFrom('artifact_containers')
-        .select('id')
-        .where('workspace_id', '=', owner.workspaceId)
-        .where('kind', '=', 'project')
-        .execute(),
-    ).toHaveLength(1)
-    const projectFiles = await db
-      .selectFrom('shareables')
-      .select(['name', 'visibility'])
-      .where('container_id', '=', owner.containerId)
-      .execute()
-    expect(projectFiles).toHaveLength(3)
-    expect(new Set(projectFiles.map((file) => file.name)).size).toBe(3)
-    expect(projectFiles.every((file) => file.visibility === 'project')).toBe(
-      true,
-    )
-  })
-
-  test('seeds the created token scenario consistently', async () => {
-    const userId = (
-      await ensureDevSignInUser(
-        db,
-        'team-owner',
-        'settings-tokens/created-secret',
-      )
-    ).userId
-
-    const tokens = () =>
-      db
-        .selectFrom('api_tokens')
-        .select(['name', 'revoked_at'])
-        .where('user_id', '=', userId)
-        .execute()
-    expect(await tokens()).toEqual([{ name: 'CLI deploy', revoked_at: null }])
-
-    // A capture creates a token through the form; the next seed leaves only
-    // the seeded row, so every capture shows the same list.
-    await db
-      .insertInto('api_tokens')
-      .values({
-        id: 'capture-created-token',
-        user_id: userId,
-        name: 'Release automation',
-        token_hash: 'capture-created-token-hash',
-        created_at: '2099-01-01T00:00:00.000Z',
-        last_used_at: null,
-        revoked_at: null,
-      })
-      .execute()
-    await ensureDevSignInUser(
-      db,
-      'team-owner',
-      'settings-tokens/created-secret',
-    )
-    expect(await tokens()).toEqual([{ name: 'CLI deploy', revoked_at: null }])
-  })
-
-  test('isolates the owner associated with a member scenario', async () => {
-    const regularOwnerId = (await ensureDevSignInUser(db, 'team-owner')).userId
-    const regularOwner = await db
-      .selectFrom('users')
-      .select('workspace_id')
-      .where('id', '=', regularOwnerId)
-      .executeTakeFirstOrThrow()
-
-    await ensureDevSignInUser(db, 'team-member', 'home/content-rich')
-
-    expect(
-      await db
-        .selectFrom('users')
-        .select('workspace_id')
-        .where('id', '=', regularOwnerId)
-        .executeTakeFirstOrThrow(),
-    ).toEqual(regularOwner)
-    expect(
-      await db
-        .selectFrom('users')
-        .select('email')
-        .where(
-          'email',
-          '=',
-          'dev-team-owner+home-content-rich@artifactshare.local',
-        )
-        .executeTakeFirst(),
-    ).toBeDefined()
-  })
-
   test('keeps team membership stable when personas sign in in changing order', async () => {
-    const ownerId = (
-      await ensureDevSignInUser(db, 'team-owner', 'recent/content-rich')
-    ).userId
-    const memberId = (
-      await ensureDevSignInUser(db, 'team-member', 'recent/content-rich')
-    ).userId
-    await ensureDevSignInUser(db, 'team-owner', 'recent/content-rich')
+    const ownerId = (await ensureDevSignInUser(db, 'team-owner')).userId
+    const memberId = (await ensureDevSignInUser(db, 'team-member')).userId
+    await ensureDevSignInUser(db, 'team-owner')
 
     const users = await db
       .selectFrom('users')
@@ -532,116 +348,6 @@ describe('ensureDevSignInUser', () => {
         { user_id: memberId, role: 'member' },
       ]),
     )
-  })
-
-  test('keeps scenario artifact ownership isolated when owners sign in in changing order', async () => {
-    const freeOwnerId = (
-      await ensureDevSignInUser(db, 'free-owner', 'recent/content-rich')
-    ).userId
-    const teamOwnerId = (
-      await ensureDevSignInUser(db, 'team-owner', 'recent/content-rich')
-    ).userId
-
-    for (const userId of [freeOwnerId, teamOwnerId]) {
-      const row = await db
-        .selectFrom('shareables')
-        .select((eb) => eb.fn.countAll<number>().as('count'))
-        .where('owner_user_id', '=', userId)
-        .executeTakeFirstOrThrow()
-      expect(Number(row.count)).toBe(23)
-    }
-  })
-
-  test('keeps scenario tokens owned by each persona when sign-in order changes', async () => {
-    const memberId = (
-      await ensureDevSignInUser(
-        db,
-        'team-member',
-        'settings-tokens/created-secret',
-      )
-    ).userId
-    const ownerId = (
-      await ensureDevSignInUser(
-        db,
-        'team-owner',
-        'settings-tokens/created-secret',
-      )
-    ).userId
-
-    for (const userId of [memberId, ownerId]) {
-      expect(
-        await db
-          .selectFrom('api_tokens')
-          .select(['user_id', 'token_hash'])
-          .where('user_id', '=', userId)
-          .execute(),
-      ).toEqual([
-        {
-          user_id: userId,
-          token_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
-        },
-      ])
-    }
-  })
-
-  test('keeps billing subscriptions unique when personas sign in in changing order', async () => {
-    const requested: string[] = []
-    vi.stubGlobal(
-      'fetch',
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = new Request(input, init)
-        const url = new URL(request.url)
-        if (url.origin !== testRefs.captureStripeOrigin)
-          throw new Error(`Unexpected request: ${request.url}`)
-        requested.push(url.pathname)
-        const reply = captureStripeResponse({
-          method: request.method,
-          path: url.pathname + url.search,
-          authorization: request.headers.get('authorization'),
-          body: await request.text(),
-        })
-        return Response.json(reply.body, { status: reply.status })
-      },
-    )
-    try {
-      for (const persona of [
-        'free-owner',
-        'plus-owner',
-        'team-owner',
-      ] as const) {
-        await ensureDevSignInUser(db, persona, 'settings-billing/subscribed')
-      }
-    } finally {
-      vi.unstubAllGlobals()
-    }
-    // Each persona's subscription came through the sync service.
-    expect(requested).toHaveLength(3)
-
-    const workspaces = await db
-      .selectFrom('users')
-      .innerJoin('workspaces', 'workspaces.id', 'users.workspace_id')
-      .select([
-        'workspaces.id',
-        'workspaces.stripe_subscription_id',
-        'workspaces.stripe_subscription_status',
-      ])
-      .where(
-        'users.email',
-        'like',
-        'dev-%+settings-billing-subscribed@artifactshare.local',
-      )
-      .distinct()
-      .execute()
-    expect(workspaces).toHaveLength(3)
-    expect(
-      workspaces.every(
-        (workspace) => workspace.stripe_subscription_status === 'active',
-      ),
-    ).toBe(true)
-    expect(
-      new Set(workspaces.map((workspace) => workspace.stripe_subscription_id))
-        .size,
-    ).toBe(3)
   })
 })
 
@@ -681,7 +387,6 @@ describe('/api/auth/dev/sign-in', () => {
         ok: true,
         userId: expect.any(String),
         workspaceId: expect.any(String),
-        containerId: null,
       })
       expect(response.headers.get('set-cookie')).toMatch(
         /better-auth\.session_token=/,
@@ -723,7 +428,6 @@ describe('/api/auth/dev/sign-in', () => {
       ok: true,
       userId: expect.any(String),
       workspaceId: expect.any(String),
-      containerId: null,
     })
     expect(response.headers.get('set-cookie')).toMatch(
       /better-auth\.session_token=/,
@@ -759,21 +463,6 @@ describe('/api/auth/dev/sign-in', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ role: 'owner' }),
-      }),
-    )
-
-    expect(response.status).toBe(400)
-  })
-
-  test('rejects an unknown screen scenario', async () => {
-    const response = await createAuth().handler(
-      new Request('https://example.com/api/auth/dev/sign-in', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          persona: 'team-owner',
-          scenario: 'unknown/scenario',
-        }),
       }),
     )
 

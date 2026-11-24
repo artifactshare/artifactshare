@@ -1,4 +1,4 @@
-// Shared by screen seeding and real-browser CSP regression tests.
+// Used by the real-browser CSP regression tests.
 // HTML permits eval; use an inline-script fetch to exercise a real policy block.
 export const CSP_DIAGNOSTIC_BODIES = [
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Script diagnostic</title></head><body><main><h1>Script diagnostic</h1><p>This file attempts a connection blocked by the security policy.</p></main><script>fetch('https://example.com/csp-diagnostic').catch(() => {})</script></body></html>`,

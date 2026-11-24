@@ -57,7 +57,6 @@ vi.mock('~/lib/bot-members-flag.server', () => ({
   isBotMembersEnabled: async () => false,
 }))
 vi.mock('~/services/project-membership.server', () => ({}))
-vi.mock('~/services/dev-screen-state.server', () => ({}))
 vi.mock('~/services/billing.server', () => ({}))
 vi.mock('~/services/billing-usage.server', () => ({}))
 vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))

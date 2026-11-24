@@ -130,29 +130,19 @@ test('loads both current-user metadata lists without stored credentials', async 
   ]
   services.listApiTokens.mockResolvedValue(tokens)
   services.listCliRefreshCredentialFamilies.mockResolvedValue(cliFamilies)
-  expect(import.meta.env.DEV).toBe(true)
-  // The former capture header no longer makes the loader invent a secret.
-  const variants: HeadersInit[] = [
-    {},
-    { 'X-ArtifactShare-Dev-Screen-State': 'settings-tokens/created-secret' },
-  ]
-  for (const headers of variants) {
-    const result = await loader({
-      context: new RouterContextProvider(),
-      params: {},
-      url: new URL('https://example.test/settings/tokens'),
-      pattern: '/settings/tokens',
-      request: new Request('https://example.test/settings/tokens', {
-        headers,
-      }),
-    })
-    expect(JSON.stringify(result)).toBe(
-      JSON.stringify({ tokens, createdToken: null, cliFamilies }),
-    )
-    expect(JSON.stringify(result)).not.toMatch(
-      /token_hash|rotation_request_hash|secret/,
-    )
-  }
+  const result = await loader({
+    context: new RouterContextProvider(),
+    params: {},
+    url: new URL('https://example.test/settings/tokens'),
+    pattern: '/settings/tokens',
+    request: new Request('https://example.test/settings/tokens'),
+  })
+  expect(JSON.stringify(result)).toBe(
+    JSON.stringify({ tokens, createdToken: null, cliFamilies }),
+  )
+  expect(JSON.stringify(result)).not.toMatch(
+    /token_hash|rotation_request_hash|secret/,
+  )
   expect(services.listApiTokens).toHaveBeenCalledWith({}, 'current-user')
   expect(services.listCliRefreshCredentialFamilies).toHaveBeenCalledWith(
     {},

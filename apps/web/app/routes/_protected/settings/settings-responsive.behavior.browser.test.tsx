@@ -236,7 +236,7 @@ const longEmail =
   'nightly-report-automation-with-a-long-destination-address@bots.artifactshare.invalid'
 const memberEmails = ['active', 'removed', 'owner'].map(
   (status) =>
-    `${status}-member-with-a-long-synthetic-address-dev-screen-team-settings-long-member-addresses@example.test`,
+    `${status}-member-with-a-long-synthetic-address-for-a-wide-team-settings-long-member-addresses@example.test`,
 )
 const bot = {
   id: 'bot',
