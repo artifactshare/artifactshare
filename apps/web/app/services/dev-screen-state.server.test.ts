@@ -1,11 +1,17 @@
+import type { DatabaseSync } from 'node:sqlite'
 import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
+import scenarioIds from '../../../../scripts/screen-scenarios.json'
+import { computeTextSha256Hex } from '~/lib/sha256'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { sql } from 'kysely'
 import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
 import { BILLING_PRICES } from '~/lib/billing-prices'
-import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
+import {
+  LINK_SHARING_PLAN_DEFAULTS,
+  linkExpiryStartingColumns,
+} from '~/lib/link-sharing-policy'
 import {
   captureStripeVars,
   startCaptureStripe,
@@ -21,10 +27,41 @@ import {
   type D1BatchSqliteRef,
 } from '~/test/d1-batch-mock'
 
-vi.mock('cloudflare:workers', () => ({ env: { BUCKET: { delete: vi.fn() } } }))
+const sqliteRef = vi.hoisted(() => ({
+  current: null as DatabaseSync | null,
+}))
+vi.mock('cloudflare:workers', async () => {
+  const { createD1MockFromSqliteRef } = await import('~/test/sqlite-fixture')
+  return {
+    env: {
+      BUCKET: { delete: vi.fn() },
+      DB: createD1MockFromSqliteRef(sqliteRef),
+    },
+  }
+})
+// Lets a test choose the IDs `nanoid()` generates, as shareables tests do.
+const nanoidControl = vi.hoisted(() => ({
+  next: null as ((size?: number) => string) | null,
+}))
+vi.mock('nanoid', async () => {
+  const actual = await vi.importActual<typeof import('nanoid')>('nanoid')
+  return {
+    ...actual,
+    nanoid: (size?: number) =>
+      nanoidControl.next?.(size) ?? actual.nanoid(size),
+  }
+})
 
 import type { Kysely } from 'kysely'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
@@ -40,7 +77,28 @@ import {
   listJoinedProjectsForDropdown,
   listProjectsForIndex,
 } from './project-membership.server'
-import { listSharedProjects } from './projects.server'
+import {
+  createProjectContainer,
+  getOrCreateInboxContainerId,
+  listSharedProjects,
+} from './projects.server'
+import { editShareableSettings } from './shareables.server'
+import { createApiToken, listApiTokens } from './api-tokens.server'
+import {
+  attachAgentBootstrapAuthority,
+  attachPublisherBootstrapAuthority,
+  loadDeviceAuthorizationIntent,
+  selectAgentApprovalProject,
+  selectPublisherApprovalClient,
+  storeDeviceAuthorizationIntent,
+} from './cli-device-authority.server'
+import {
+  CLI_DEVICE_SESSION_USER_AGENT,
+  issueCliRefreshCredential,
+  listCliRefreshCredentialFamilies,
+  revokeCliRefreshCredentialFamily,
+} from './cli-refresh-credentials.server'
+import { updateWorkspaceExternalAccessPolicy } from './link-sharing.server'
 import {
   listRecentArtifactsLimited,
   listUnopenedOwnedArtifactsLimited,
@@ -49,14 +107,59 @@ import {
   unopenedOwnedPredicate,
   latestPublishedAtSelect,
 } from './home.server'
-import { loadRemovedWorkspaceMembers } from './team-management.server'
 import {
+  ensureActiveWorkspaceMembership,
+  grantWorkspaceAdmin,
+  loadRemovedWorkspaceMembers,
+  removeWorkspaceMember,
+  transferRemovedMemberAssets,
+} from './team-management.server'
+import {
+  createWorkspaceBot,
   listWorkspaceBots,
+  reissueWorkspaceBotCredential,
   stopWorkspaceBot,
   cancelWorkspaceBot,
 } from './bot-members.server'
+import { updateWorkspaceBotDestinations } from './bot-destinations.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
 import { recordViewerRecency } from './views.server'
+
+/** Dev sign-in provisions the actor and its role before a scenario seeds. */
+async function addScenarioOwner(
+  db: Kysely<DB>,
+  workspaceId: string,
+  userId: string,
+  now: string,
+) {
+  await db
+    .insertInto('users')
+    .values({
+      id: userId,
+      email: `${userId}@example.test`,
+      email_verified: 1,
+      name: 'Owner',
+      image: null,
+      locale: null,
+      workspace_id: workspaceId,
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflict((oc) => oc.column('id').doNothing())
+    .execute()
+  await db
+    .insertInto('workspace_members')
+    .values({
+      workspace_id: workspaceId,
+      user_id: userId,
+      role: 'owner',
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflict((oc) => oc.columns(['workspace_id', 'user_id']).doNothing())
+    .execute()
+}
 
 async function expectWorkspaceExpiryStarts(db: Kysely<DB>) {
   expect(
@@ -1546,28 +1649,18 @@ describe('settings with-bots dev screen state', () => {
         locale: null,
       })
       .execute()
+    await addScenarioOwner(db, workspaceId, userId, now)
     await seedDevScreenState(db, 'settings/with-bots', workspaceId, userId, now)
     const actor = { id: userId, workspaceId }
-    await db
-      .insertInto('workspace_members')
-      .values({
-        user_id: userId,
-        workspace_id: workspaceId,
-        role: 'owner',
-        status: 'active',
-        created_at: now,
-        updated_at: now,
-        removed_at: null,
-        removed_by: null,
-        first_contributed_at: null,
-        last_contributed_at: null,
-      })
-      .execute()
-    const activeId = workspaceId + '-bot-active'
+    const botNamed = async (name: string) =>
+      (await listWorkspaceBots(db, workspaceId, now)).find(
+        (row) => row.name === name,
+      )
+    const activeId = (await botNamed('Nightly report bot'))!.id
     const destinations = async () =>
-      (await listWorkspaceBots(db, workspaceId, now))
-        .find((row) => row.id === activeId)
-        ?.approvedProjects?.map((project) => project.unavailable)
+      (await botNamed('Nightly report bot'))?.approvedProjects?.map(
+        (project) => project.unavailable,
+      )
     expect(await destinations()).toEqual([false, false])
     expect(await stopWorkspaceBot(db, actor, activeId)).toEqual({ kind: 'ok' })
     expect(await destinations()).toEqual([true, true])
@@ -1575,30 +1668,28 @@ describe('settings with-bots dev screen state', () => {
 
     const bots = await listWorkspaceBots(db, workspaceId, now)
     expect(bots).toHaveLength(4)
-    const byId = new Map(bots.map((bot) => [bot.id, bot]))
-    const active = byId.get(`${workspaceId}-bot-active`)
+    const byName = new Map(bots.map((bot) => [bot.name, bot]))
+    const active = byName.get('Nightly report bot')
     expect(active).toMatchObject({
-      name: 'Nightly report bot',
       botStoppedAt: null,
       credentialLive: true,
-      projectId: `${workspaceId}-bot-project`,
       projectName: 'Nightly reports',
     })
-    const expired = byId.get(`${workspaceId}-bot-expired`)
+    const expired = byName.get('Metrics sync bot')
     expect(expired).toMatchObject({
       botStoppedAt: null,
       credentialLive: false,
     })
-    const stopped = byId.get(`${workspaceId}-bot-stopped`)
+    const stopped = byName.get('Retired handoff bot')
     expect(stopped?.botStoppedAt).not.toBeNull()
     expect(stopped?.credentialLive).toBe(false)
     expect(stopped?.projectNameSnapshot).toBe('Nightly reports')
     expect(stopped?.cancelable).toBe(false)
-    const unusedStopped = byId.get(`${workspaceId}-bot-unused-stopped`)
+    const unusedStopped = byName.get('Setup failed bot')
     expect(unusedStopped?.botStoppedAt).not.toBeNull()
     expect(unusedStopped?.cancelable).toBe(true)
     expect(await destinations()).toEqual([false, false])
-    const target = workspaceId + '-bot-unused-stopped'
+    const target = unusedStopped!.id
     expect(await cancelWorkspaceBot(db, actor, target)).toEqual({ kind: 'ok' })
     expect(
       (await listWorkspaceBots(db, workspaceId, now))
@@ -1961,9 +2052,9 @@ test.each(['with-pins', 'scheduled-pins'] as const)(
 test.each(['owner', 'readonly', 'unlimited', 'older-current'])(
   'managed retention %s scenario resets history, attribution, access and bodies',
   async (kind) => {
-    const sqliteRef: D1BatchSqliteRef = { current: null }
-    const { db, sqlite } = createD1BatchFixture({ sqlite: sqliteRef })
-    sqliteRef.current = sqlite
+    const batchSqliteRef: D1BatchSqliteRef = { current: null }
+    const { db, sqlite } = createD1BatchFixture({ sqlite: batchSqliteRef })
+    batchSqliteRef.current = sqlite
     try {
       const scenario = `viewer/retention-managed-${kind}`
       const now = '2026-09-09T00:00:00.000Z'
@@ -2224,6 +2315,7 @@ test.each(['finite', 'unlimited', 'zero'])(
   async (state) => {
     const { db } = createMigratedInMemoryDb()
     const now = '2026-09-09T00:00:00.000Z'
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse(now) })
     const scenario = `settings-external-access/${state}`
     try {
       const { workspaceId } = await ensureDevScreenState(
@@ -2245,6 +2337,7 @@ test.each(['finite', 'unlimited', 'zero'])(
           workspace_id: workspaceId,
         })
         .execute()
+      await addScenarioOwner(db, workspaceId, userId, now)
       for (let signIn = 0; signIn < 2; signIn++) {
         await ensureDevScreenState(db, scenario, now, 'team')
         await seedDevScreenState(db, scenario, workspaceId, userId, now)
@@ -2256,7 +2349,12 @@ test.each(['finite', 'unlimited', 'zero'])(
             .executeTakeFirstOrThrow(),
         ).toEqual({
           visibility: 'link',
-          link_expires_at: state === 'zero' ? now : null,
+          link_expires_at:
+            state === 'zero'
+              ? now
+              : state === 'finite'
+                ? new Date(Date.parse(now) + 60 * 86_400_000).toISOString()
+                : null,
         })
         expect(
           await db
@@ -2277,6 +2375,7 @@ test.each(['finite', 'unlimited', 'zero'])(
         })
       }
     } finally {
+      vi.useRealTimers()
       await db.destroy()
     }
   },
@@ -2286,6 +2385,7 @@ test('external access fixture recreates a deleted shareable with retained public
   const { db } = createMigratedInMemoryDb()
   const now = '2026-09-09T00:00:00.000Z'
   const scenario = 'settings-external-access/finite'
+  vi.useFakeTimers({ toFake: ['Date'], now: Date.parse(now) })
   try {
     const { workspaceId } = await ensureDevScreenState(
       db,
@@ -2306,6 +2406,7 @@ test('external access fixture recreates a deleted shareable with retained public
         workspace_id: workspaceId,
       })
       .execute()
+    await addScenarioOwner(db, workspaceId, userId, now)
     await seedDevScreenState(db, scenario, workspaceId, userId, now)
     const shareableId = devShareableId(workspaceId + '-expiry-preview')
     const publication = await db
@@ -2340,7 +2441,9 @@ test('external access fixture recreates a deleted shareable with retained public
     ).toEqual({
       id: shareableId,
       visibility: 'link',
-      link_expires_at: null,
+      link_expires_at: new Date(
+        Date.parse(now) + 60 * 86_400_000,
+      ).toISOString(),
     })
     expect(
       await db
@@ -2351,6 +2454,7 @@ test('external access fixture recreates a deleted shareable with retained public
         .executeTakeFirstOrThrow(),
     ).toEqual(publication)
   } finally {
+    vi.useRealTimers()
     await db.destroy()
   }
 })
@@ -2358,72 +2462,109 @@ test('external access fixture recreates a deleted shareable with retained public
 test('inventory captures refresh only owned rows and empty states have zero matching rows', async () => {
   const { db } = createMigratedInMemoryDb()
   const now = '2026-09-09T00:00:00.000Z'
+  const {
+    loadWorkspaceInventoryProjectsPage,
+    loadWorkspaceInventoryArtifactsPage,
+  } = await import('./team-management.server')
+  /** Each state seeds its own registered anchor, as dev sign-in does. */
+  async function anchor(scenario: string) {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: `${workspaceId}@example.test`,
+        email_verified: 1,
+        image: null,
+        locale: null,
+        name: 'Owner',
+        workspace_id: workspaceId,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    const projects = () =>
+      loadWorkspaceInventoryProjectsPage(db, workspaceId, 1)
+    const files = (page = 1) =>
+      loadWorkspaceInventoryArtifactsPage(db, workspaceId, {
+        visibility: 'all',
+        sort: 'updated',
+        page,
+      })
+    return { workspaceId, userId, projects, files }
+  }
+  const insertFile = (
+    workspaceId: string,
+    userId: string,
+    containerId: string,
+    id: string,
+    name: string,
+  ) =>
+    db
+      .insertInto('shareables')
+      .values({
+        id,
+        workspace_id: workspaceId,
+        owner_user_id: userId,
+        container_id: containerId,
+        name,
+        artifact_kind: 'html_page',
+        visibility: 'project',
+        created_at: '2026-09-08T00:00:00.000Z',
+        updated_at: '2026-09-08T00:00:00.000Z',
+      })
+      .execute()
   try {
     for (const kind of ['projects', 'artifacts']) {
       const prefix = `settings-inventory-${kind}`
-      const { workspaceId } = await ensureDevScreenState(
+
+      // The empty state owns no rows: a project and file there are left alone.
+      const empty = await anchor(`${prefix}/empty`)
+      expect((await empty.projects()).total).toBe(0)
+      expect((await empty.files()).total).toBe(0)
+      const emptyProject = await createProjectContainer(
         db,
-        `${prefix}/populated`,
-        now,
-        'team',
+        empty.workspaceId,
+        empty.userId,
+        {
+          name: 'Quarterly reports and review materials for the whole workspace',
+          description: null,
+          baseVisibility: 'workspace',
+        },
       )
-      const userId = `${workspaceId}-user`
-      await db
-        .insertInto('users')
-        .values({
-          id: userId,
-          email: `${kind}@example.test`,
-          email_verified: 1,
-          image: null,
-          locale: null,
-          name: 'Owner',
-          workspace_id: workspaceId,
-          created_at: now,
-          updated_at: now,
-        })
-        .execute()
+      if (emptyProject.kind !== 'ok') throw new Error(emptyProject.kind)
+      await insertFile(
+        empty.workspaceId,
+        empty.userId,
+        emptyProject.id,
+        `${empty.workspaceId}-file`,
+        'Quarterly report.html',
+      )
       await seedDevScreenState(
         db,
-        `${prefix}/populated`,
-        workspaceId,
-        userId,
+        `${prefix}/empty`,
+        empty.workspaceId,
+        empty.userId,
         now,
       )
-      const {
-        loadWorkspaceInventoryProjectsPage,
-        loadWorkspaceInventoryArtifactsPage,
-      } = await import('./team-management.server')
-      const projects = () =>
-        loadWorkspaceInventoryProjectsPage(db, workspaceId, 1)
-      const files = () =>
-        loadWorkspaceInventoryArtifactsPage(db, workspaceId, {
-          visibility: 'all',
-          sort: 'updated',
-          page: 1,
-        })
+      expect((await empty.projects()).total).toBe(1)
+      expect((await empty.files()).total).toBe(1)
+
+      const { workspaceId, userId, projects, files } = await anchor(
+        `${prefix}/populated`,
+      )
       expect((await projects()).projects[0]).toMatchObject({
         artifactCount: 1,
         name: 'Quarterly reports and review materials for the whole workspace',
       })
       expect((await files()).total).toBe(1)
-      await db
-        .updateTable('artifact_containers')
-        .set({ name: 'Edited capture' })
-        .where('id', '=', `${workspaceId}-inventory-project`)
-        .execute()
-      await seedDevScreenState(
-        db,
-        `${prefix}/populated`,
-        workspaceId,
-        userId,
-        now,
-      )
-      expect((await projects()).projects[0].name).toBe(
-        'Quarterly reports and review materials for the whole workspace',
-      )
-      await seedDevScreenState(db, `${prefix}/empty`, workspaceId, userId, now)
-      expect((await projects()).total).toBe(0)
-      expect((await files()).total).toBe(0)
       await db
         .insertInto('artifact_containers')
         .values({
@@ -2436,6 +2577,14 @@ test('inventory captures refresh only owned rows and empty states have zero matc
           updated_at: now,
         })
         .execute()
+      // Another state's title is no fixture of the populated state.
+      await insertFile(
+        workspaceId,
+        userId,
+        `${workspaceId}-unrelated`,
+        `${workspaceId}-other-state-title`,
+        'Quarterly report 1.html',
+      )
       await seedDevScreenState(
         db,
         `${prefix}/populated`,
@@ -2443,33 +2592,192 @@ test('inventory captures refresh only owned rows and empty states have zero matc
         userId,
         now,
       )
-      expect((await projects()).projects.map((row) => row.name)).toContain(
-        'User project',
+      expect(
+        (await projects()).projects.find((row) => row.name === 'User project'),
+      ).toMatchObject({ artifactCount: 1 })
+      // A renamed fixture project no longer has the fixture's identity: it
+      // stays with its own file, and the fixture file returns to a new one.
+      const fixtureProjectId = (await projects()).projects.find(
+        (row) =>
+          row.name ===
+          'Quarterly reports and review materials for the whole workspace',
+      )!.id
+      await db
+        .updateTable('artifact_containers')
+        .set({ name: 'Edited capture' })
+        .where('id', '=', fixtureProjectId)
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: `${workspaceId}-edited-note`,
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: fixtureProjectId,
+          name: 'Notes.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: '2026-09-08T00:00:00.000Z',
+          updated_at: '2026-09-08T00:00:00.000Z',
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        `${prefix}/populated`,
+        workspaceId,
+        userId,
+        now,
       )
+      const byName = new Map(
+        (await projects()).projects.map((row) => [row.name, row.artifactCount]),
+      )
+      expect(byName.get('Edited capture')).toBe(1)
+      expect(
+        byName.get(
+          'Quarterly reports and review materials for the whole workspace',
+        ),
+      ).toBe(1)
       if (kind === 'artifacts') {
-        let previousId: string | undefined
-        for (let attempt = 0; attempt < 2; attempt++) {
+        const paged = await anchor(`${prefix}/paginated`)
+        // The report order the captures have always shown (the earlier seed's
+        // fixture IDs, tie-broken by the listing), pinned as literal numbers.
+        const sequence = [
+          2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 13, 12, 11, 18, 17, 16, 15, 20, 19, 1,
+          27, 28, 25, 26, 40, 23, 39, 24, 21, 22, 49, 32, 50, 31, 34, 29, 33,
+          45, 30, 36, 46, 35, 47, 38, 48, 37, 41, 42, 43, 44, 51,
+        ].map((number) => `Quarterly report ${number}.html`)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt === 2) {
+            // A same-title replacement under an ID that sorts first would move
+            // the page-2 report onto page 1 if it were kept as found.
+            const title = `Quarterly report ${INVENTORY_PAGE_SIZE + 1}.html`
+            const replaced = await db
+              .selectFrom('shareables')
+              .selectAll()
+              .where('workspace_id', '=', paged.workspaceId)
+              .where('name', '=', title)
+              .executeTakeFirstOrThrow()
+            await db
+              .deleteFrom('shareables')
+              .where('id', '=', replaced.id)
+              .execute()
+            await db
+              .insertInto('shareables')
+              .values({ ...replaced, id: '0000000000' })
+              .execute()
+          }
+          if (attempt > 0)
+            await seedDevScreenState(
+              db,
+              `${prefix}/paginated`,
+              paged.workspaceId,
+              paged.userId,
+              now,
+            )
+          const [first, second] = await Promise.all([
+            paged.files(1),
+            paged.files(2),
+          ])
+          // The page boundary leaves the last numbered report alone on page 2.
+          expect(first.total).toBe(INVENTORY_PAGE_SIZE + 1)
+          expect(first.artifacts.map((artifact) => artifact.name)).toEqual(
+            sequence.slice(0, INVENTORY_PAGE_SIZE),
+          )
+          expect(second.artifacts.map((artifact) => artifact.name)).toEqual(
+            sequence.slice(INVENTORY_PAGE_SIZE),
+          )
+        }
+
+        // The fixture is the row at its fixed ID: renamed and moved by a
+        // capture, again and again, it returns to its title, project and
+        // place in the page order at that same ID.
+        const lastTitle = `Quarterly report ${INVENTORY_PAGE_SIZE + 1}.html`
+        const fixtureRows = () =>
+          db
+            .selectFrom('shareables')
+            .selectAll()
+            .where('workspace_id', '=', paged.workspaceId)
+            .where('name', '=', lastTitle)
+            .execute()
+        const [original] = await fixtureRows()
+        expect(original.id).toBe(
+          devShareableId(
+            `${paged.workspaceId}-inventory-file${INVENTORY_PAGE_SIZE}`,
+          ),
+        )
+        const { id: movedTo } = await db
+          .insertInto('artifact_containers')
+          .values({
+            id: `${paged.workspaceId}-moved-to`,
+            workspace_id: paged.workspaceId,
+            kind: 'project',
+            created_by_id: paged.userId,
+            name: 'Moved to',
+            created_at: now,
+            updated_at: now,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+        // A same-title artifact in another workspace is not this fixture.
+        await insertFile(
+          workspaceId,
+          userId,
+          `${workspaceId}-unrelated`,
+          `${workspaceId}-same-title-elsewhere`,
+          lastTitle,
+        )
+        const elsewhere = () =>
+          db
+            .selectFrom('shareables')
+            .selectAll()
+            .where('id', '=', `${workspaceId}-same-title-elsewhere`)
+            .executeTakeFirstOrThrow()
+        const elsewhereBefore = await elsewhere()
+        const pages = async () => {
+          const [first, second] = await Promise.all([
+            paged.files(1),
+            paged.files(2),
+          ])
+          return [first, second].map((page) =>
+            page.artifacts.map((artifact) => artifact.name),
+          )
+        }
+        const otherOwner = `${paged.workspaceId}-other-owner`
+        await addScenarioOwner(db, paged.workspaceId, otherOwner, now)
+        for (let rename = 1; rename <= 4; rename++) {
+          // Each capture edit renames, moves, re-owns and restricts it later.
+          const editedAt = new Date(
+            Date.parse(now) + rename * 86_400_000,
+          ).toISOString()
+          await db
+            .updateTable('shareables')
+            .set({
+              // A product rename writes the displayed title override.
+              title_override: `Renamed report ${rename}`,
+              name: `Renamed report ${rename}.html`,
+              container_id: movedTo,
+              owner_user_id: otherOwner,
+              visibility: 'private',
+              created_at: editedAt,
+              updated_at: editedAt,
+              last_accessed_at: editedAt,
+            })
+            .where('id', '=', original.id)
+            .execute()
           await seedDevScreenState(
             db,
-            prefix + '/paginated',
-            workspaceId,
-            userId,
+            `${prefix}/paginated`,
+            paged.workspaceId,
+            paged.userId,
             now,
           )
-          const page = await loadWorkspaceInventoryArtifactsPage(
-            db,
-            workspaceId,
-            { page: 2, sort: 'updated', visibility: 'all' },
-          )
-          expect(page.total).toBe(INVENTORY_PAGE_SIZE + 1)
-          expect(page.page).toBe(2)
-          expect(page.artifacts).toHaveLength(1)
-          if (previousId) expect(page.artifacts[0].id).toBe(previousId)
-          previousId = page.artifacts[0].id
+          expect(await fixtureRows()).toEqual([original])
+          expect(await pages()).toEqual([
+            sequence.slice(0, INVENTORY_PAGE_SIZE),
+            sequence.slice(INVENTORY_PAGE_SIZE),
+          ])
         }
-        expect((await projects()).projects.map((row) => row.name)).toContain(
-          'User project',
-        )
+        expect(await elsewhere()).toEqual(elsewhereBefore)
       }
       expect(
         await db
@@ -2479,6 +2787,92 @@ test('inventory captures refresh only owned rows and empty states have zero matc
           .executeTakeFirstOrThrow(),
       ).toEqual({ name: 'Owner' })
     }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test('a renamed inventory fixture returns to its fixed ID past a same-title artifact in another workspace', async () => {
+  const { db } = createMigratedInMemoryDb()
+  const now = '2026-09-09T00:00:00.000Z'
+  const scenario = 'settings-inventory-artifacts/populated'
+  try {
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await addScenarioOwner(db, workspaceId, userId, now)
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    const fixtureId = devShareableId(`${workspaceId}-inventory-file`)
+    const fixture = () =>
+      db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', fixtureId)
+        .executeTakeFirstOrThrow()
+    const original = await fixture()
+    expect(original.name).toBe('Quarterly report.html')
+    // The ID that sorts right after the fixed ID: the earlier seed's first
+    // replacement slot for a renamed fixture.
+    const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+    const chars = [...fixtureId]
+    let index = chars.length - 1
+    while (chars[index] === 'z') chars[index--] = '0'
+    chars[index] = alphabet[alphabet.indexOf(chars[index]) + 1]
+    const successorId = chars.join('')
+    // Another workspace holds a same-title artifact at that ID.
+    const neighbor = await ensureDevScreenState(
+      db,
+      'settings-inventory-artifacts/empty',
+      now,
+      'team',
+    )
+    const neighborUser = `${neighbor.workspaceId}-user`
+    await addScenarioOwner(db, neighbor.workspaceId, neighborUser, now)
+    const neighborInbox = await getOrCreateInboxContainerId(
+      db,
+      neighbor.workspaceId,
+      neighborUser,
+      now,
+    )
+    await db
+      .insertInto('shareables')
+      .values({
+        id: successorId,
+        workspace_id: neighbor.workspaceId,
+        owner_user_id: neighborUser,
+        container_id: neighborInbox,
+        name: 'Quarterly report.html',
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    const neighborRow = () =>
+      db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', successorId)
+        .executeTakeFirstOrThrow()
+    const neighborBefore = await neighborRow()
+    // A capture renames the fixture through the displayed title.
+    await db
+      .updateTable('shareables')
+      .set({
+        title_override: 'Renamed report',
+        updated_at: '2026-09-10T00:00:00.000Z',
+      })
+      .where('id', '=', fixtureId)
+      .execute()
+
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+
+    expect(await fixture()).toEqual(original)
+    expect(await neighborRow()).toEqual(neighborBefore)
   } finally {
     await db.destroy()
   }
@@ -2509,6 +2903,7 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
         updated_at: now,
       })
       .execute()
+    await addScenarioOwner(db, workspaceId, userId, now)
     for (let repetition = 0; repetition < 2; repetition++) {
       await seedDevScreenState(
         db,
@@ -2518,9 +2913,7 @@ test('responsive capture fixtures restore the long email, initial avatar and pur
         now,
       )
       const bots = await listWorkspaceBots(db, workspaceId, now)
-      expect(
-        bots.find((bot) => bot.id === `${workspaceId}-bot-active`)?.email,
-      ).toBe(
+      expect(bots.find((bot) => bot.name === 'Nightly report bot')?.email).toBe(
         `nightly-report-automation-with-a-long-destination-address-${workspaceId}@bots.artifactshare.invalid`,
       )
       await seedDevScreenState(
@@ -2630,6 +3023,7 @@ test('long-member capture restores active and removed rows without changing unre
         updated_at: now,
       })
       .execute()
+    await addScenarioOwner(db, workspaceId, userId, now)
     for (let repetition = 0; repetition < 2; repetition++) {
       await seedDevScreenState(db, scenario, workspaceId, userId, now)
       const rows = await db
@@ -2642,6 +3036,7 @@ test('long-member capture restores active and removed rows without changing unre
           'workspace_members.role',
         ])
         .where('workspace_members.workspace_id', '=', workspaceId)
+        .where('workspace_members.user_id', '!=', userId)
         .orderBy('workspace_members.status')
         .execute()
       expect(rows).toEqual(
@@ -2716,6 +3111,7 @@ test('long bot email capture can be seeded in two plan workspaces', async () => 
           updated_at: now,
         })
         .execute()
+      await addScenarioOwner(db, workspaceId, userId, now)
       await seedDevScreenState(
         db,
         'settings-bots/long-email',
@@ -2724,9 +3120,7 @@ test('long bot email capture can be seeded in two plan workspaces', async () => 
         now,
       )
       const bots = await listWorkspaceBots(db, workspaceId, now)
-      const email = bots.find(
-        (bot) => bot.id === `${workspaceId}-bot-active`,
-      )?.email
+      const email = bots.find((bot) => bot.name === 'Nightly report bot')?.email
       emails.push(email)
     }
     expect(new Set(emails).size).toBe(2)
@@ -3068,86 +3462,2830 @@ describe('paid billing capture states', () => {
   })
 })
 
-test('refreshing the transfer warning restores its removed member and owned file', async () => {
-  const { db } = createMigratedInMemoryDb()
-  const now = '2026-09-09T00:00:00.000Z'
-  const scenario = 'settings/result-warning'
-  try {
-    const { workspaceId } = await ensureDevScreenState(
-      db,
-      scenario,
-      now,
-      'team',
+describe('Settings seeds write through production services', () => {
+  const clock = '2026-09-09T00:00:00.000Z'
+  const later = (ms: number, from = clock) =>
+    new Date(Date.parse(from) + ms).toISOString()
+  const DAY = 86_400_000
+
+  async function signIn(
+    db: Kysely<DB>,
+    scenario: string,
+    plan: 'free' | 'plus' | 'team' = 'team',
+    now = clock,
+  ) {
+    const { workspaceId } = await ensureDevScreenState(db, scenario, now, plan)
+    const userId = `${workspaceId}-user`
+    await addScenarioOwner(db, workspaceId, userId, now)
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    return { workspaceId, userId }
+  }
+
+  function dumpRows(sqlite: DatabaseSync) {
+    return Object.fromEntries(
+      [
+        'workspaces',
+        'users',
+        'workspace_members',
+        'artifact_containers',
+        'project_members',
+        'shareables',
+        'link_publications',
+        'api_tokens',
+        'agent_profiles',
+        'publisher_clients',
+        'sessions',
+        'cli_refresh_credentials',
+        'cli_family_authorities',
+        'cli_session_authorities',
+        'cli_refresh_sessions',
+        'bot_destination_projects',
+        'audit_events',
+        'slack_workspaces',
+        'deviceCode',
+        'search_index_changes',
+      ].map((table) => [
+        table,
+        sqlite.prepare(`SELECT * FROM ${table} ORDER BY 1, 2`).all(),
+      ]),
     )
-    const other = await ensureDevScreenState(db, scenario, now, 'plus')
-    for (const id of [workspaceId, other.workspaceId]) {
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse(clock) })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    sqliteRef.current = null
+  })
+
+  test.each(
+    (scenarioIds as string[]).filter(
+      (scenario) =>
+        (scenario.startsWith('settings/') ||
+          scenario.startsWith('settings-')) &&
+        ![
+          'settings-billing/subscribed',
+          'settings-billing/past-due',
+          'settings-billing/continuing-near-limit',
+        ].includes(scenario),
+    ),
+  )('%s stores identical rows when seeded twice', async (scenario) => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const first = dumpRows(sqlite)
+      await ensureDevScreenState(db, scenario, clock, 'team')
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(dumpRows(sqlite)).toEqual(first)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test.each(['free', 'plus', 'team'] as const)(
+    '%s Settings anchors hold the production plan values, fresh and reseeded',
+    async (plan) => {
+      const { db } = createMigratedInMemoryDb()
+      const expected = {
+        storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES[plan],
+        link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS[plan]
+          .linkSharingEnabled
+          ? 1
+          : 0,
+      }
+      const anchor = (id: string) =>
+        db
+          .selectFrom('workspaces')
+          .select(['storage_quota_bytes', 'link_sharing_enabled'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      try {
+        const { workspaceId } = await ensureDevScreenState(
+          db,
+          'settings/with-bots',
+          clock,
+          plan,
+        )
+        expect(await anchor(workspaceId)).toEqual(expected)
+        await db
+          .updateTable('workspaces')
+          .set({
+            storage_quota_bytes: 5_000_000_000,
+            link_sharing_enabled: plan === 'team' ? 1 : 0,
+          })
+          .where('id', '=', workspaceId)
+          .execute()
+        await ensureDevScreenState(db, 'settings/with-bots', clock, plan)
+        expect(await anchor(workspaceId)).toEqual(expected)
+        const control = await ensureDevScreenState(
+          db,
+          'home/content-rich',
+          clock,
+          plan,
+        )
+        expect(await anchor(control.workspaceId)).toEqual({
+          storage_quota_bytes:
+            plan === 'free' ? 5_000_000_000 : PLAN_STORAGE_QUOTA_BYTES[plan],
+          link_sharing_enabled: 1,
+        })
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  /** Persisted fields a bot's service writes, without generated values. */
+  async function botShape(db: Kysely<DB>, workspaceId: string, botId: string) {
+    const row = await db
+      .selectFrom('users')
+      .innerJoin('workspace_members as m', 'm.user_id', 'users.id')
+      .innerJoin('agent_profiles as p', 'p.user_id', 'users.id')
+      .innerJoin('cli_family_authorities as f', 'f.user_id', 'users.id')
+      .innerJoin('cli_refresh_credentials as c', 'c.family_id', 'f.family_id')
+      .select([
+        'users.kind',
+        'users.email',
+        'users.email_verified',
+        'users.image',
+        'users.locale',
+        'users.bot_stopped_at',
+        'm.role',
+        'm.status',
+        'm.removed_by',
+        'f.preset',
+        'f.status as familyStatus',
+        'f.workspace_id as familyWorkspaceId',
+        'f.device_name',
+        'f.agent_profile_id',
+        'p.id as profileId',
+        'c.id as credentialId',
+        'c.family_id as credentialFamilyId',
+        'c.token_hash',
+        'c.revoked_at',
+        'c.device_id',
+      ])
+      .where('users.id', '=', botId)
+      .where('m.workspace_id', '=', workspaceId)
+      .executeTakeFirstOrThrow()
+    const audits = await db
+      .selectFrom('audit_events')
+      .select('action')
+      .where('workspace_id', '=', workspaceId)
+      .where('subject_id', '=', botId)
+      .orderBy('action')
+      .execute()
+    return {
+      kind: row.kind,
+      // The shape `generateBotEmail` produces, not just its reserved domain.
+      generatedAddress: /^bot-[a-z0-9]{20}@bots\.artifactshare\.invalid$/.test(
+        row.email,
+      ),
+      emailVerified: row.email_verified,
+      image: row.image,
+      locale: row.locale,
+      stopped: row.bot_stopped_at !== null,
+      role: row.role,
+      status: row.status,
+      removedBy: row.removed_by,
+      preset: row.preset,
+      familyStatus: row.familyStatus,
+      familyWorkspaceId: row.familyWorkspaceId,
+      deviceName: row.device_name,
+      profileLinked: row.agent_profile_id === row.profileId,
+      credentialIsFamily: row.credentialId === row.credentialFamilyId,
+      realHash: /^[0-9a-f]{64}$/.test(row.token_hash),
+      revoked: row.revoked_at !== null,
+      deviceId: row.device_id,
+      audits: audits.map((audit) => audit.action),
+    }
+  }
+
+  test('every bot variant matches a service-created control and keeps destination order', async () => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        'settings/with-bots',
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      // Fresh setup generates every ID in descending sort order, so the
+      // destination project created later sorts first.
+      let counter = 9_000_000
+      const generated: string[] = []
+      nanoidControl.next = (size = 21) => {
+        const id = `z${String(counter--).padStart(size - 1, '0')}`
+        generated.push(id)
+        return id
+      }
+      try {
+        await seedDevScreenState(
+          db,
+          'settings/with-bots',
+          workspaceId,
+          userId,
+          clock,
+        )
+      } finally {
+        nanoidControl.next = null
+      }
+      const destinations = await db
+        .selectFrom('artifact_containers')
+        .select(['id', 'name'])
+        .where('workspace_id', '=', workspaceId)
+        .where('name', 'in', ['Nightly reports', 'Management reports'])
+        .orderBy('id')
+        .execute()
+      // Both came from fresh creation with controlled IDs.
+      expect(destinations.every((row) => generated.includes(row.id))).toBe(true)
+      expect(destinations.map((row) => row.name)).toEqual([
+        'Management reports',
+        'Nightly reports',
+      ])
+      const bots = await listWorkspaceBots(db, workspaceId, clock)
+      const named = (name: string) => bots.find((bot) => bot.name === name)!
+      const active = named('Nightly report bot')
+      expect(
+        active.approvedProjects?.map((project) => [
+          project.name,
+          project.unavailable,
+        ]),
+      ).toEqual([
+        ['Management reports', false],
+        ['Nightly reports', false],
+      ])
+      expect(active.projectId).toBe(destinations[1].id)
+      expect(active.projectName).toBe('Nightly reports')
+      expect(bots.map((bot) => bot.approvedProjects?.length)).toEqual([
+        2, 1, 1, 1,
+      ])
+      // Both created projects have the creator membership creation writes.
+      expect(
+        await db
+          .selectFrom('project_members')
+          .select(['container_id', 'user_id'])
+          .where(
+            'container_id',
+            'in',
+            destinations.map((row) => row.id),
+          )
+          .orderBy('container_id')
+          .execute(),
+      ).toEqual(
+        destinations.map((row) => ({ container_id: row.id, user_id: userId })),
+      )
+
+      const actor = { id: userId, workspaceId }
+      const live = await createWorkspaceBot(db, actor, {
+        name: 'Control live',
+        projectId: active.projectId!,
+      })
+      const stopped = await createWorkspaceBot(db, actor, {
+        name: 'Control stopped',
+        projectId: active.projectId!,
+      })
+      if (live.kind !== 'ok' || stopped.kind !== 'ok')
+        throw new Error('control bot failed')
+      for (const control of [live, stopped])
+        expect(
+          await db
+            .selectFrom('cli_refresh_credentials')
+            .select('token_hash')
+            .where('user_id', '=', control.botUserId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ token_hash: await computeTextSha256Hex(control.token) })
+      await stopWorkspaceBot(db, actor, stopped.botUserId)
+      const liveShape = await botShape(db, workspaceId, live.botUserId)
+      const stoppedShape = await botShape(db, workspaceId, stopped.botUserId)
+      expect(stoppedShape).toMatchObject({
+        status: 'removed',
+        familyStatus: 'revoked',
+        revoked: true,
+      })
+      for (const [name, control] of [
+        ['Nightly report bot', liveShape],
+        ['Metrics sync bot', liveShape],
+        ['Retired handoff bot', stoppedShape],
+        ['Setup failed bot', stoppedShape],
+      ] as const)
+        expect(await botShape(db, workspaceId, named(name).id), name).toEqual(
+          control,
+        )
+      // Creation precedes the use and stop each row shows.
+      const times = await db
+        .selectFrom('users')
+        .innerJoin('cli_refresh_credentials as c', 'c.user_id', 'users.id')
+        .select(['users.created_at', 'users.bot_stopped_at', 'c.last_used_at'])
+        .where(
+          'users.id',
+          'in',
+          bots.map((bot) => bot.id),
+        )
+        .execute()
+      for (const row of times)
+        for (const event of [row.bot_stopped_at, row.last_used_at])
+          if (event) expect(row.created_at < event).toBe(true)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test.each(['settings/with-bots', 'settings-bots/long-email'] as const)(
+    '%s bots recover from cancel and reissue',
+    async (scenario) => {
+      const { db } = createMigratedInMemoryDb()
+      try {
+        const { workspaceId, userId } = await signIn(db, scenario)
+        const actor = { id: userId, workspaceId }
+        const summary = async () =>
+          (await listWorkspaceBots(db, workspaceId, clock)).map((bot) => ({
+            name: bot.name,
+            stopped: bot.botStoppedAt !== null,
+            live: bot.credentialLive,
+            cancelable: bot.cancelable,
+            destinations: bot.approvedProjects?.map((project) => [
+              project.name,
+              project.unavailable,
+            ]),
+          }))
+        const healthy = await summary()
+        const initial = await listWorkspaceBots(db, workspaceId, clock)
+        const idOf = (name: string) =>
+          initial.find((bot) => bot.name === name)!.id
+
+        expect(
+          await cancelWorkspaceBot(db, actor, idOf('Setup failed bot')),
+        ).toEqual({ kind: 'ok' })
+        for (const name of ['Nightly report bot', 'Metrics sync bot'])
+          expect(
+            await reissueWorkspaceBotCredential(db, actor, idOf(name)),
+          ).toMatchObject({ kind: 'ok' })
+        expect(await summary()).not.toEqual(healthy)
+        // The reissued bot's address also holds grants on projects that are
+        // not its destinations: one here and one in another workspace.
+        const { email: botEmail } = await db
+          .selectFrom('users')
+          .select('email')
+          .where('id', '=', idOf('Nightly report bot'))
+          .executeTakeFirstOrThrow()
+        const other = await ensureDevScreenState(db, scenario, clock, 'plus')
+        await addScenarioOwner(
+          db,
+          other.workspaceId,
+          `${other.workspaceId}-user`,
+          clock,
+        )
+        const neighborIds: string[] = []
+        for (const [ws, owner] of [
+          [workspaceId, userId],
+          [other.workspaceId, `${other.workspaceId}-user`],
+        ]) {
+          const project = await createProjectContainer(db, ws, owner, {
+            name: 'Neighbor project',
+            description: null,
+            baseVisibility: 'private',
+          })
+          if (project.kind !== 'ok') throw new Error(project.kind)
+          neighborIds.push(project.id)
+          await db
+            .insertInto('project_share_defaults')
+            .values({
+              id: `grant-${project.id}`,
+              project_container_id: project.id,
+              email: botEmail,
+              role: 'contributor',
+              display_name: null,
+              created_by_id: owner,
+              created_at: clock,
+              updated_at: clock,
+            })
+            .execute()
+        }
+        const grants = () =>
+          db
+            .selectFrom('project_share_defaults')
+            .select('project_container_id')
+            .where('project_container_id', 'in', neighborIds)
+            .orderBy('project_container_id')
+            .execute()
+        const grantsBefore = await grants()
+        expect(grantsBefore).toHaveLength(2)
+        // The owner also adds the granted neighbor here as a destination; the
+        // product keeps its existing grant.
+        const nightlyBot = (
+          await listWorkspaceBots(db, workspaceId, clock)
+        ).find((bot) => bot.name === 'Nightly report bot')!
+        const { updated_at: revision } = await db
+          .selectFrom('users')
+          .select('updated_at')
+          .where('id', '=', nightlyBot.id)
+          .executeTakeFirstOrThrow()
+        expect(
+          await updateWorkspaceBotDestinations(db, actor, {
+            botUserId: nightlyBot.id,
+            projectId: nightlyBot.projectId!,
+            projectIds: [
+              ...nightlyBot.approvedProjects!.map((project) => project.id),
+              neighborIds[0],
+            ],
+            revision,
+          }),
+        ).toEqual({ kind: 'ok' })
+        expect(
+          (await listWorkspaceBots(db, workspaceId, clock))
+            .find((bot) => bot.id === nightlyBot.id)!
+            .approvedProjects?.map((project) => project.id),
+        ).toContain(neighborIds[0])
+        expect(await grants()).toEqual(grantsBefore)
+
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+        expect(await summary()).toEqual(healthy)
+        // The reissued bot was rebuilt, and the neighbors' grants stayed.
+        expect(
+          (await listWorkspaceBots(db, workspaceId, clock)).find(
+            (bot) => bot.name === 'Nightly report bot',
+          )!.id,
+        ).not.toBe(idOf('Nightly report bot'))
+        // The rebuilt bot keeps the state's address cue: the long address only
+        // in long-email, a generated one otherwise.
+        const rebuiltEmail = (
+          await listWorkspaceBots(db, workspaceId, clock)
+        ).find((bot) => bot.name === 'Nightly report bot')!.email
+        expect(
+          rebuiltEmail.startsWith(
+            'nightly-report-automation-with-a-long-destination-address-',
+          ),
+        ).toBe(scenario === 'settings-bots/long-email')
+        expect(await grants()).toEqual(grantsBefore)
+        expect(
+          await db
+            .selectFrom('audit_events')
+            .select('id')
+            .where('workspace_id', '=', workspaceId)
+            .where('action', '=', 'bot.cancel')
+            .execute(),
+        ).toEqual([])
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test.each([
+    ['settings/with-bots', 'published'],
+    ['settings/with-bots', 'reissued'],
+    ['settings-bots/long-email', 'reissued'],
+    ['settings/with-bots', 'audited'],
+    ['settings/with-bots', 'legacy'],
+  ] as const)(
+    '%s refuses a %s fixture bot that has authored records, changing nothing',
+    async (scenario, kind) => {
+      const { db, sqlite } = createMigratedInMemoryDb()
+      try {
+        const { workspaceId, userId } = await signIn(db, scenario)
+        const actor = { id: userId, workspaceId }
+        const initial = await listWorkspaceBots(db, workspaceId, clock)
+        const active = initial.find((bot) => bot.name === 'Nightly report bot')!
+        let used = active.id
+        if (kind === 'legacy') {
+          // An earlier seed's row at its fixed ID still carries a fixture name.
+          used = `${workspaceId}-bot-active`
+          await db
+            .insertInto('users')
+            .values({
+              id: used,
+              email: `${used}@bots.artifactshare.invalid`,
+              email_verified: 1,
+              name: 'Nightly report bot',
+              image: null,
+              locale: null,
+              workspace_id: workspaceId,
+              kind: 'bot',
+              bot_stopped_at: clock,
+              created_at: clock,
+              updated_at: clock,
+            })
+            .execute()
+        }
+        // The bot publishes; it also holds a grant on a differently named
+        // project. Then, as a capture can, its credential is reissued.
+        const unrelated = await createProjectContainer(
+          db,
+          workspaceId,
+          userId,
+          {
+            name: 'Unrelated project',
+            description: null,
+            baseVisibility: 'private',
+          },
+        )
+        if (unrelated.kind !== 'ok') throw new Error(unrelated.kind)
+        const { email } = await db
+          .selectFrom('users')
+          .select('email')
+          .where('id', '=', used)
+          .executeTakeFirstOrThrow()
+        await db
+          .insertInto('project_share_defaults')
+          .values({
+            id: `grant-${unrelated.id}`,
+            project_container_id: unrelated.id,
+            email,
+            role: 'contributor',
+            display_name: null,
+            created_by_id: userId,
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        if (kind === 'audited') {
+          // The bot's only authored record: the rotation audit a credential
+          // refresh by the bot leaves. Like production, its subject is the
+          // bot's credential, so the bot appears only as the actor.
+          const credential = await db
+            .selectFrom('cli_refresh_credentials')
+            .select('id')
+            .where('user_id', '=', used)
+            .executeTakeFirstOrThrow()
+          expect(credential.id).not.toBe(used)
+          await db
+            .insertInto('audit_events')
+            .values({
+              id: `${workspaceId}-bot-rotation`,
+              workspace_id: workspaceId,
+              actor_user_id: used,
+              action: 'cli.refresh_credential.rotate',
+              subject_type: 'cli_refresh_credential',
+              subject_id: credential.id,
+              detail: JSON.stringify({ credential_kind: 'cli_refresh' }),
+              created_at: clock,
+            })
+            .execute()
+        } else
+          await db
+            .insertInto('shareables')
+            .values({
+              id: `${workspaceId}-bot-upload`,
+              workspace_id: workspaceId,
+              owner_user_id: used,
+              container_id: active.projectId!,
+              name: 'Bot upload.html',
+              artifact_kind: 'html_page',
+              visibility: 'project',
+              created_at: clock,
+              updated_at: clock,
+            })
+            .execute()
+        if (kind === 'reissued' || kind === 'audited') {
+          expect(
+            await reissueWorkspaceBotCredential(db, actor, used),
+          ).toMatchObject({ kind: 'ok' })
+          // A drifted destination would otherwise be repaired before any bot
+          // is looked at.
+          await db
+            .updateTable('artifact_containers')
+            .set({ description: 'Edited during a capture' })
+            .where('id', '=', active.projectId!)
+            .execute()
+        }
+        const before = {
+          ...dumpRows(sqlite),
+          grants: sqlite.prepare('SELECT * FROM project_share_defaults').all(),
+        }
+        const bots = await listWorkspaceBots(db, workspaceId, clock)
+
+        // Deleting the bot would take its artifact with it, and stopping and
+        // replacing it would add a second same-name row and strip the grant.
+        // Neither the anchor setup nor the row seed writes before refusing.
+        // SQLite's change counter also catches a write of unchanged values.
+        const refusal = `Settings seed cannot reset fixture bot Nightly report bot in ${scenario}`
+        const changes = () =>
+          sqlite.prepare('SELECT total_changes() AS n').get()
+        const changesBefore = changes()
+        await expect(
+          ensureDevScreenState(db, scenario, clock, 'team'),
+        ).rejects.toThrow(refusal)
+        expect(changes()).toEqual(changesBefore)
+        await expect(
+          seedDevScreenState(db, scenario, workspaceId, userId, clock),
+        ).rejects.toThrow(refusal)
+        expect(changes()).toEqual(changesBefore)
+        expect({
+          ...dumpRows(sqlite),
+          grants: sqlite.prepare('SELECT * FROM project_share_defaults').all(),
+        }).toEqual(before)
+        expect(await listWorkspaceBots(db, workspaceId, clock)).toEqual(bots)
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test('a primary destination edited through the product is reset by bot name', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const view = async () =>
+        (await listWorkspaceBots(db, workspaceId, clock)).map((bot) => ({
+          name: bot.name,
+          primary: bot.projectName,
+          destinations: bot.approvedProjects?.map((project) => project.name),
+        }))
+      const healthy = await view()
+      const active = (await listWorkspaceBots(db, workspaceId, clock)).find(
+        (bot) => bot.name === 'Nightly report bot',
+      )!
+      const management = active.approvedProjects!.find(
+        (project) => project.name === 'Management reports',
+      )!
+      const { updated_at } = await db
+        .selectFrom('users')
+        .select('updated_at')
+        .where('id', '=', active.id)
+        .executeTakeFirstOrThrow()
+      expect(
+        await updateWorkspaceBotDestinations(
+          db,
+          { id: userId, workspaceId },
+          {
+            botUserId: active.id,
+            projectId: management.id,
+            projectIds: active.approvedProjects!.map((project) => project.id),
+            revision: updated_at,
+          },
+        ),
+      ).toEqual({ kind: 'ok' })
+      expect(await view()).not.toEqual(healthy)
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      expect(await view()).toEqual(healthy)
+      expect(
+        await db
+          .selectFrom('users')
+          .select('id')
+          .where('workspace_id', '=', workspaceId)
+          .where('kind', '=', 'bot')
+          .execute(),
+      ).toHaveLength(4)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('a legacy destination pair is rebuilt with its creator memberships', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      const legacyIds = [
+        `${workspaceId}-bot-management`,
+        `${workspaceId}-bot-project`,
+      ]
+      for (const [index, name] of [
+        'Management reports',
+        'Nightly reports',
+      ].entries())
+        await db
+          .insertInto('artifact_containers')
+          .values({
+            id: legacyIds[index],
+            workspace_id: workspaceId,
+            kind: 'project',
+            created_by_id: userId,
+            name,
+            base_visibility: 'workspace',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      const projects = await db
+        .selectFrom('artifact_containers as project')
+        .leftJoin(
+          'project_members as member',
+          'member.container_id',
+          'project.id',
+        )
+        .select(['project.id', 'project.name', 'member.user_id'])
+        .where('project.workspace_id', '=', workspaceId)
+        .where('project.kind', '=', 'project')
+        .orderBy('project.id')
+        .execute()
+      expect(projects.map(({ name, user_id }) => [name, user_id])).toEqual([
+        ['Management reports', userId],
+        ['Nightly reports', userId],
+      ])
+      for (const project of projects)
+        expect(legacyIds).not.toContain(project.id)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('an already-ordered destination pair gains its creator memberships', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      // Named, described and ordered as the fixture, but with no members.
+      for (const [id, name, description] of [
+        [
+          'a-first-id',
+          'Management reports',
+          'Screen capture fixture: management destination',
+        ],
+        [
+          'z-second-id',
+          'Nightly reports',
+          'Screen capture fixture: destination project for bot uploads',
+        ],
+      ])
+        await db
+          .insertInto('artifact_containers')
+          .values({
+            id,
+            workspace_id: workspaceId,
+            kind: 'project',
+            created_by_id: userId,
+            name,
+            description,
+            base_visibility: 'workspace',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+      const projects = () =>
+        db
+          .selectFrom('artifact_containers')
+          .select(['id', 'name', 'description', 'base_visibility'])
+          .where('id', 'in', ['a-first-id', 'z-second-id'])
+          .orderBy('id')
+          .execute()
+      const before = await projects()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      // The pair is reused as it is, and its creator joins both projects.
+      expect(await projects()).toEqual(before)
+      expect(
+        await db
+          .selectFrom('project_members')
+          .select(['container_id', 'user_id'])
+          .where('container_id', 'in', ['a-first-id', 'z-second-id'])
+          .orderBy('container_id')
+          .execute(),
+      ).toEqual([
+        { container_id: 'a-first-id', user_id: userId },
+        { container_id: 'z-second-id', user_id: userId },
+      ])
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('a differently named project with a fixture description is left alone', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      // Neither fixture destination exists yet; this project only looks like
+      // a temporary name from an earlier setup.
+      const lookalike = await createProjectContainer(db, workspaceId, userId, {
+        name: 'Bot destination setup leftover',
+        description:
+          'Screen capture fixture: destination project for bot uploads',
+        baseVisibility: 'workspace',
+      })
+      if (lookalike.kind !== 'ok') throw new Error(lookalike.kind)
+      const row = () =>
+        db
+          .selectFrom('artifact_containers')
+          .selectAll()
+          .where('id', '=', lookalike.id)
+          .executeTakeFirstOrThrow()
+      const before = await row()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(await row()).toEqual(before)
+      const bots = await listWorkspaceBots(db, workspaceId, clock)
+      expect(bots).toHaveLength(4)
+      for (const bot of bots)
+        expect(
+          bot.approvedProjects?.map((project) => project.id),
+          bot.name ?? '',
+        ).not.toContain(lookalike.id)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('an occupied legacy destination keeps its artifact while the fixture moves on', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      const legacyId = `${workspaceId}-bot-project`
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: legacyId,
+          workspace_id: workspaceId,
+          kind: 'project',
+          created_by_id: userId,
+          name: 'Nightly reports',
+          base_visibility: 'workspace',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'legacy-neighbor',
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: legacyId,
+          name: 'Neighbor.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(
+        await db
+          .selectFrom('shareables')
+          .select('container_id')
+          .where('id', '=', 'legacy-neighbor')
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ container_id: legacyId })
+      const active = (await listWorkspaceBots(db, workspaceId, clock)).find(
+        (bot) => bot.name === 'Nightly report bot',
+      )!
+      expect(active.projectName).toBe('Nightly reports')
+      expect(active.projectId).not.toBe(legacyId)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('a case-variant destination name is reused without temporary projects', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/with-bots'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      const variant = await createProjectContainer(db, workspaceId, userId, {
+        name: 'nightly reports',
+        description: null,
+        baseVisibility: 'private',
+      })
+      if (variant.kind !== 'ok') throw new Error(variant.kind)
+      // An earlier seed's destination someone renamed is no longer a fixture.
+      const renamedLegacyId = `${workspaceId}-bot-management`
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: renamedLegacyId,
+          workspace_id: workspaceId,
+          kind: 'project',
+          created_by_id: userId,
+          name: 'Archive drop',
+          base_visibility: 'workspace',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      // An archived earlier-seed destination holds no live name; it and its
+      // file stay, and the seed does not pass it to the live-project updater.
+      const archivedLegacyId = `${workspaceId}-bot-project`
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: archivedLegacyId,
+          workspace_id: workspaceId,
+          kind: 'project',
+          created_by_id: userId,
+          name: 'Nightly reports',
+          base_visibility: 'workspace',
+          archived_at: clock,
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'archived-legacy-file',
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: archivedLegacyId,
+          name: 'Old report.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      const archivedBefore = await db
+        .selectFrom('artifact_containers')
+        .selectAll()
+        .where('id', '=', archivedLegacyId)
+        .executeTakeFirstOrThrow()
+      const projects = () =>
+        db
+          .selectFrom('artifact_containers')
+          .select(['id', 'name', 'base_visibility'])
+          .where('workspace_id', '=', workspaceId)
+          .where('kind', '=', 'project')
+          .where('archived_at', 'is', null)
+          .where('id', '!=', renamedLegacyId)
+          .orderBy('id')
+          .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(
+        await db
+          .selectFrom('artifact_containers')
+          .selectAll()
+          .where('id', '=', archivedLegacyId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual(archivedBefore)
+      expect(
+        await db
+          .selectFrom('shareables')
+          .select('container_id')
+          .where('id', '=', 'archived-legacy-file')
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ container_id: archivedLegacyId })
+      expect(
+        await db
+          .selectFrom('artifact_containers')
+          .select('name')
+          .where('id', '=', renamedLegacyId)
+          .executeTakeFirst(),
+      ).toEqual({ name: 'Archive drop' })
+      const seeded = await projects()
+      expect(
+        seeded.map((project) => [project.name, project.base_visibility]),
+      ).toEqual([
+        ['Management reports', 'workspace'],
+        ['Nightly reports', 'workspace'],
+      ])
+      expect(seeded.map((project) => project.id)).toContain(variant.id)
+      const active = (await listWorkspaceBots(db, workspaceId, clock)).find(
+        (bot) => bot.name === 'Nightly report bot',
+      )!
+      expect(active.projectName).toBe('Nightly reports')
+      expect(active.approvedProjects?.map((project) => project.name)).toEqual([
+        'Management reports',
+        'Nightly reports',
+      ])
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(await projects()).toEqual(seeded)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('both member scenarios match rows written by the member services', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const memberShape = async (workspaceId: string, memberId: string) => {
+      const row = await db
+        .selectFrom('workspace_members as m')
+        .innerJoin('users', 'users.id', 'm.user_id')
+        .select([
+          'm.role',
+          'm.status',
+          'm.removed_by',
+          'm.pending_uploads',
+          'users.kind',
+          'users.email_verified',
+          'users.workspace_id as homeWorkspaceId',
+        ])
+        .where('m.workspace_id', '=', workspaceId)
+        .where('m.user_id', '=', memberId)
+        .executeTakeFirstOrThrow()
+      const audits = await db
+        .selectFrom('audit_events')
+        .select('action')
+        .where('workspace_id', '=', workspaceId)
+        .where('subject_id', '=', memberId)
+        .orderBy('action')
+        .execute()
+      return {
+        ...row,
+        homeIsWorkspace: row.homeWorkspaceId === workspaceId,
+        homeWorkspaceId: undefined,
+        audits: audits.map((audit) => audit.action),
+      }
+    }
+    try {
+      const long = await signIn(db, 'settings/long-member-addresses')
+      const actor = { id: long.userId, workspaceId: long.workspaceId }
+      for (const id of ['control-admin', 'control-removed']) {
+        await db
+          .insertInto('users')
+          .values({
+            id,
+            email: `${id}@example.test`,
+            email_verified: 1,
+            name: id,
+            workspace_id: long.workspaceId,
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        await ensureActiveWorkspaceMembership(db, id, long.workspaceId, clock)
+      }
+      await grantWorkspaceAdmin(db, actor, 'control-admin')
+      await removeWorkspaceMember(db, actor, 'control-removed')
+      expect(
+        await memberShape(
+          long.workspaceId,
+          `${long.workspaceId}-long-member-active`,
+        ),
+      ).toEqual(await memberShape(long.workspaceId, 'control-admin'))
+      const removed = await memberShape(
+        long.workspaceId,
+        `${long.workspaceId}-long-member-removed`,
+      )
+      expect(removed).toMatchObject({
+        status: 'removed',
+        homeIsWorkspace: false,
+      })
+      expect(removed).toEqual(
+        await memberShape(long.workspaceId, 'control-removed'),
+      )
+
+      const warning = await signIn(db, 'settings/result-warning')
       await db
         .insertInto('users')
         .values({
-          id,
-          email: id + '@example.test',
+          id: 'control-member',
+          email: 'control-member@example.test',
           email_verified: 1,
-          name: 'Owner',
-          workspace_id: id,
-          created_at: now,
-          updated_at: now,
+          name: 'Control',
+          workspace_id: warning.workspaceId,
+          created_at: clock,
+          updated_at: clock,
         })
         .execute()
-      expect(await loadRemovedWorkspaceMembers(db, id)).toEqual([])
-      await seedDevScreenState(db, scenario, id, id, now)
+      await ensureActiveWorkspaceMembership(
+        db,
+        'control-member',
+        warning.workspaceId,
+        clock,
+      )
+      expect(
+        await memberShape(
+          warning.workspaceId,
+          `${warning.workspaceId}-removed-member`,
+        ),
+      ).toEqual(await memberShape(warning.workspaceId, 'control-member'))
+    } finally {
+      await db.destroy()
     }
-    const memberId = workspaceId + '-removed-member'
-    const membership = (id: string) =>
-      db
-        .selectFrom('workspace_members')
-        .innerJoin('users', 'users.id', 'workspace_members.user_id')
-        .select(['users.workspace_id', 'role', 'status'])
-        .where('user_id', '=', id + '-removed-member')
-        .executeTakeFirstOrThrow()
-    const owner = (id: string) =>
-      db
-        .selectFrom('shareables')
-        .select('owner_user_id')
-        .where('workspace_id', '=', id)
-        .executeTakeFirstOrThrow()
-    for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await membership(workspaceId)).toEqual({
-        workspace_id: workspaceId,
-        role: 'member',
-        status: 'active',
-      })
-      expect(await owner(workspaceId)).toEqual({ owner_user_id: memberId })
-      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([])
-      if (attempt === 0) {
-        for (const id of [workspaceId, other.workspaceId]) {
-          await db
-            .updateTable('workspace_members')
-            .set({ status: 'removed' })
-            .where('user_id', '=', id + '-removed-member')
-            .execute()
-          await db
-            .updateTable('shareables')
-            .set({ owner_user_id: id })
-            .where('workspace_id', '=', id)
-            .execute()
-        }
-        await db
-          .updateTable('users')
-          .set({ workspace_id: other.workspaceId })
-          .where('id', '=', memberId)
+  })
+
+  test.each(['projects', 'artifacts'])(
+    '%s inventory matches a service project and leaves moved-to projects alone',
+    async (kind) => {
+      const { db } = createMigratedInMemoryDb()
+      const scenario = `settings-inventory-${kind}/populated`
+      const projectShape = async (id: string) => {
+        const project = await db
+          .selectFrom('artifact_containers')
+          .select([
+            'kind',
+            'owner_user_id',
+            'created_by_id',
+            'base_visibility',
+            'archived_at',
+          ])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+        const members = await db
+          .selectFrom('project_members')
+          .select('user_id')
+          .where('container_id', '=', id)
           .execute()
-        await seedDevScreenState(db, scenario, workspaceId, workspaceId, now)
+        return { project, members }
       }
+      try {
+        const { workspaceId, userId } = await signIn(db, scenario)
+        const fileId = devShareableId(`${workspaceId}-inventory-file`)
+        const fixtureProject = async () =>
+          (
+            await db
+              .selectFrom('shareables')
+              .select('container_id')
+              .where('id', '=', fileId)
+              .executeTakeFirstOrThrow()
+          ).container_id
+        const originalId = await fixtureProject()
+        if (!originalId) throw new Error('fixture file has no project')
+        const control = await createProjectContainer(db, workspaceId, userId, {
+          name: 'Control project',
+          description: null,
+          baseVisibility: 'workspace',
+        })
+        if (control.kind !== 'ok') throw new Error(control.kind)
+        expect(await projectShape(originalId)).toEqual(
+          await projectShape(control.id),
+        )
+        expect((await projectShape(originalId)).members).toEqual([
+          { user_id: userId },
+        ])
+
+        // The fixture file moves into someone's project holding their file.
+        await db
+          .insertInto('shareables')
+          .values({
+            id: 'neighbor-file',
+            workspace_id: workspaceId,
+            owner_user_id: userId,
+            container_id: control.id,
+            name: 'Neighbor.html',
+            artifact_kind: 'html_page',
+            visibility: 'project',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        const neighborFile = () =>
+          db
+            .selectFrom('shareables')
+            .selectAll()
+            .where('id', '=', 'neighbor-file')
+            .executeTakeFirstOrThrow()
+        const neighborBefore = await neighborFile()
+        await db
+          .updateTable('shareables')
+          .set({ container_id: control.id })
+          .where('id', '=', fileId)
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+        expect(await fixtureProject()).toBe(originalId)
+        const unrelated = () =>
+          db
+            .selectFrom('artifact_containers')
+            .select('name')
+            .where('id', '=', control.id)
+            .executeTakeFirstOrThrow()
+        expect(await unrelated()).toEqual({ name: 'Control project' })
+        expect(await neighborFile()).toEqual(neighborBefore)
+
+        // Renamed, the original is someone's project. An earlier seed's row
+        // with the fixture name in another case, inserted without the creator
+        // membership, is the fixture's: it is reused and matches the control.
+        await db
+          .updateTable('artifact_containers')
+          .set({ name: 'Last quarter' })
+          .where('id', '=', originalId)
+          .execute()
+        const legacyId = `${workspaceId}-inventory-project`
+        await db
+          .insertInto('artifact_containers')
+          .values({
+            id: legacyId,
+            workspace_id: workspaceId,
+            kind: 'project',
+            created_by_id: userId,
+            name: 'quarterly reports and review materials for the whole workspace',
+            base_visibility: 'private',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+        expect(await fixtureProject()).toBe(legacyId)
+        expect(
+          await db
+            .selectFrom('artifact_containers')
+            .select('name')
+            .where('id', '=', legacyId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({
+          name: 'Quarterly reports and review materials for the whole workspace',
+        })
+        expect(await projectShape(legacyId)).toEqual(
+          await projectShape(control.id),
+        )
+        expect(
+          await db
+            .selectFrom('artifact_containers')
+            .select('name')
+            .where('id', '=', originalId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ name: 'Last quarter' })
+        expect(await unrelated()).toEqual({ name: 'Control project' })
+        expect(await neighborFile()).toEqual(neighborBefore)
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test('the API token matches a service token and tokens are reset by label', async () => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const { workspaceId, userId } = await signIn(
+        db,
+        'settings-tokens/created-secret',
+      )
+      const control = await createApiToken(db, userId, 'Local deployment')
+      // Every Release automation token is a capture's, whatever its use or age.
+      const captured = await createApiToken(db, userId, 'Release automation')
+      const used = await createApiToken(db, userId, 'Release automation')
+      await db
+        .updateTable('api_tokens')
+        .set({ last_used_at: clock })
+        .where('id', '=', used.id)
+        .execute()
+      const earlier = await createApiToken(db, userId, 'Release automation')
+      await db
+        .updateTable('api_tokens')
+        .set({ created_at: later(-DAY) })
+        .where('id', '=', earlier.id)
+        .execute()
+      const row = (id: string) =>
+        db
+          .selectFrom('api_tokens')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      const controlRow = await row(control.id)
+      expect(controlRow.token_hash).toBe(
+        await computeTextSha256Hex(control.token),
+      )
+      const seededId = (await listApiTokens(db, userId)).find(
+        (token) => token.name === 'CLI deploy',
+      )!.id
+      const seeded = await row(seededId)
+      expect(seeded.token_hash).toMatch(/^[0-9a-f]{64}$/)
+      expect(seeded.token_hash).not.toContain(seeded.id)
+      expect({
+        ...seeded,
+        id: '',
+        name: '',
+        token_hash: '',
+      }).toEqual({ ...controlRow, id: '', name: '', token_hash: '' })
+      // A second live baseline is a same-label copy; only one stays.
+      vi.setSystemTime(Date.parse(later(1_000)))
+      const extraBaseline = await createApiToken(db, userId, 'CLI deploy')
+
+      await seedDevScreenState(
+        db,
+        'settings-tokens/created-secret',
+        workspaceId,
+        userId,
+        clock,
+      )
+      const remaining = await listApiTokens(db, userId)
+      expect(remaining.map((token) => token.id).sort()).toEqual(
+        [seededId, control.id].sort(),
+      )
+      for (const removed of [captured, used, earlier, extraBaseline])
+        expect(remaining.map((token) => token.id)).not.toContain(removed.id)
+
+      // A live same-label row with a placeholder hash is no healthy baseline,
+      // whatever its ID: it gives way to a service-issued token.
+      await db.deleteFrom('api_tokens').where('id', '=', seededId).execute()
+      await db
+        .insertInto('api_tokens')
+        .values({
+          ...seeded,
+          id: 'placeholder-token',
+          token_hash: 'placeholder-token-hash',
+        })
+        .execute()
+      await seedDevScreenState(
+        db,
+        'settings-tokens/created-secret',
+        workspaceId,
+        userId,
+        clock,
+      )
+      const baselines = (await listApiTokens(db, userId)).filter(
+        (token) => token.name === 'CLI deploy',
+      )
+      expect(baselines.map((token) => token.id)).not.toContain(
+        'placeholder-token',
+      )
+      expect(baselines).toHaveLength(1)
+      expect((await row(baselines[0].id)).token_hash).toMatch(/^[0-9a-f]{64}$/)
+    } finally {
+      await db.destroy()
     }
-    expect(await membership(other.workspaceId)).toEqual({
-      workspace_id: other.workspaceId,
-      role: 'member',
-      status: 'removed',
-    })
-    expect(await owner(other.workspaceId)).toEqual({
-      owner_user_id: other.workspaceId,
-    })
-  } finally {
-    await db.destroy()
+  })
+
+  /** Joins every record of a CLI family, without generated values. */
+  async function cliFamilyShape(db: Kysely<DB>, familyId: string) {
+    const row = await db
+      .selectFrom('cli_family_authorities as family')
+      .innerJoin(
+        'cli_refresh_credentials as credential',
+        'credential.family_id',
+        'family.family_id',
+      )
+      .leftJoin(
+        'cli_refresh_sessions as link',
+        'link.family_id',
+        'family.family_id',
+      )
+      .leftJoin('sessions as session', 'session.id', 'link.session_id')
+      .leftJoin(
+        'cli_session_authorities as authority',
+        'authority.session_id',
+        'link.session_id',
+      )
+      .leftJoin(
+        'agent_profiles as profile',
+        'profile.id',
+        'family.agent_profile_id',
+      )
+      .leftJoin(
+        'publisher_clients as client',
+        'client.id',
+        'family.publisher_client_id',
+      )
+      .leftJoin(
+        'artifact_containers as project',
+        'project.id',
+        'family.project_id',
+      )
+      .leftJoin('users as owner', 'owner.id', 'family.user_id')
+      .select([
+        'family.preset',
+        'family.status',
+        'family.user_id as familyUser',
+        'family.workspace_id as familyWorkspace',
+        'family.project_id as familyProject',
+        'family.project_name_snapshot as snapshot',
+        'family.agent_profile_id as familyProfile',
+        'family.publisher_client_id as familyClient',
+        'credential.id as credentialId',
+        'credential.user_id as credentialUser',
+        'credential.token_hash',
+        'credential.revoked_at',
+        'link.credential_id as linkedCredential',
+        'session.user_id as sessionUser',
+        'session.user_agent',
+        'authority.kind as authorityKind',
+        'authority.family_id as authorityFamily',
+        'authority.preset as authorityPreset',
+        'authority.workspace_id as authorityWorkspace',
+        'authority.project_id as authorityProject',
+        'authority.agent_profile_id as authorityProfile',
+        'authority.publisher_client_id as authorityClient',
+        'authority.bearer_only',
+        'authority.expires_at as authorityExpires',
+        'profile.user_id as profileUser',
+        'profile.workspace_id as profileWorkspace',
+        'client.user_id as clientUser',
+        'client.workspace_id as clientWorkspace',
+        'project.name as projectName',
+        'project.kind as projectKind',
+        'project.base_visibility',
+        'project.archived_at',
+        'owner.workspace_id as ownerWorkspace',
+      ])
+      .where('family.family_id', '=', familyId)
+      .executeTakeFirstOrThrow()
+    const scoped = row.preset !== 'unrestricted'
+    return {
+      preset: row.preset,
+      status: row.status,
+      credentialIsFamily: row.credentialId === familyId,
+      credentialUserMatches: row.credentialUser === row.familyUser,
+      realHash: /^[0-9a-f]{64}$/.test(row.token_hash),
+      revoked: row.revoked_at !== null,
+      linked: row.linkedCredential === row.credentialId,
+      sessionUserMatches: row.sessionUser === row.familyUser,
+      userAgent: row.user_agent,
+      authorityKind: row.authorityKind,
+      authorityFamilyMatches: row.authorityFamily === familyId,
+      authorityPresetMatches: row.authorityPreset === row.preset,
+      authorityWorkspaceMatches: row.authorityWorkspace === row.familyWorkspace,
+      authorityProjectMatches: row.authorityProject === row.familyProject,
+      authorityProfileMatches: row.authorityProfile === row.familyProfile,
+      authorityClientMatches: row.authorityClient === row.familyClient,
+      bearerOnly: row.bearer_only,
+      authorityExpires: row.authorityExpires,
+      familyInOwnerWorkspace:
+        !scoped || row.familyWorkspace === row.ownerWorkspace,
+      profileOwned:
+        row.preset !== 'agent' ||
+        (row.profileUser === row.familyUser &&
+          row.profileWorkspace === row.familyWorkspace),
+      clientOwned:
+        row.preset !== 'publisher' ||
+        (row.clientUser === row.familyUser &&
+          row.clientWorkspace === row.familyWorkspace),
+      projectEligible:
+        row.preset !== 'agent' ||
+        (row.projectKind === 'project' &&
+          row.base_visibility === 'workspace' &&
+          row.archived_at === null &&
+          row.snapshot === row.projectName),
+    }
   }
+
+  async function addControlMember(
+    db: Kysely<DB>,
+    workspaceId: string,
+    id: string,
+  ) {
+    await db
+      .insertInto('users')
+      .values({
+        id,
+        email: `${id}@example.test`,
+        email_verified: 1,
+        name: id,
+        workspace_id: workspaceId,
+        created_at: clock,
+        updated_at: clock,
+      })
+      .execute()
+    await ensureActiveWorkspaceMembership(db, id, workspaceId, clock)
+  }
+
+  async function expectFamilyHash(
+    db: Kysely<DB>,
+    familyId: string,
+    secret: string,
+  ) {
+    expect(
+      await db
+        .selectFrom('cli_refresh_credentials')
+        .select('token_hash')
+        .where('family_id', '=', familyId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ token_hash: await computeTextSha256Hex(secret) })
+  }
+
+  async function insertCliSession(db: Kysely<DB>, id: string, userId: string) {
+    await db
+      .insertInto('sessions')
+      .values({
+        id,
+        user_id: userId,
+        token: `${id}-token`,
+        expires_at: '2099-01-01T00:00:00.000Z',
+        ip_address: null,
+        user_agent: CLI_DEVICE_SESSION_USER_AGENT,
+        created_at: clock,
+        updated_at: clock,
+      })
+      .execute()
+    return `${id}-token`
+  }
+
+  /** Runs the real approval, attachment and issuance for a scoped preset. */
+  async function issueScopedControl(
+    db: Kysely<DB>,
+    preset: 'agent' | 'publisher',
+    user: { id: string; email: string; workspaceId: string },
+    projectId: string,
+    publisherClientName = 'Control client',
+  ) {
+    const deviceCode = `control-${preset}-device`
+    const userCode = `CTRL${preset.slice(0, 4).toUpperCase()}`
+    await db
+      .insertInto('deviceCode')
+      .values({
+        id: `control-${preset}`,
+        deviceCode,
+        userCode,
+        userId: user.id,
+        expiresAt: later(600_000),
+        status: 'pending',
+        lastPolledAt: null,
+        pollingInterval: 5,
+        clientId: 'artifactshare-cli',
+        scope: null,
+        preset: null,
+        deviceName: null,
+        approvalNonce: null,
+        selectedProjectId: null,
+        requestedProjectSelector: null,
+      })
+      .execute()
+    await storeDeviceAuthorizationIntent(deviceCode, {
+      preset,
+      deviceName: preset === 'publisher' ? publisherClientName : null,
+      projectSelector: null,
+    })
+    const selected =
+      preset === 'agent'
+        ? await selectAgentApprovalProject({
+            userCode,
+            userId: user.id,
+            workspaceId: user.workspaceId,
+            email: user.email,
+            projectId,
+          })
+        : await selectPublisherApprovalClient({
+            userCode,
+            userId: user.id,
+            workspaceId: user.workspaceId,
+            choice: { mode: 'create-new' },
+          })
+    expect(selected).toBe(true)
+    const intent = await loadDeviceAuthorizationIntent(deviceCode)
+    const token = await insertCliSession(db, `control-${preset}`, user.id)
+    const attached =
+      preset === 'agent'
+        ? await attachAgentBootstrapAuthority(token, intent!)
+        : await attachPublisherBootstrapAuthority(token, intent!)
+    expect(attached).toBe(true)
+    const issued = await issueCliRefreshCredential(db, user.id, token)
+    if (!issued) throw new Error('control issuance failed')
+    const { family_id } = await db
+      .selectFrom('cli_refresh_sessions')
+      .select('family_id')
+      .where('session_id', '=', `control-${preset}`)
+      .executeTakeFirstOrThrow()
+    await expectFamilyHash(db, family_id, issued.refreshToken)
+    return family_id
+  }
+
+  test('active CLI matches a real issuance and records last use', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/active-cli'
+    try {
+      const earlierSeed = later(-3_600_000)
+      const { workspaceId, userId } = await signIn(
+        db,
+        scenario,
+        'team',
+        earlierSeed,
+      )
+      const [family] = await listCliRefreshCredentialFamilies(db, userId)
+      expect(family).toMatchObject({
+        preset: 'unrestricted',
+        deviceName: 'Artifact Share CLI on darwin arm64 (default, a1b2c3d4)',
+        createdAt: clock,
+        lastUsedAt: clock,
+      })
+      expect(
+        await db
+          .selectFrom('cli_refresh_credentials')
+          .select(['device_id', 'last_used_at'])
+          .where('family_id', '=', family.familyId)
+          .execute(),
+      ).toEqual([
+        { device_id: 'a1b2c3d4-example-device-id', last_used_at: clock },
+      ])
+      expect(
+        await db
+          .selectFrom('cli_session_authorities')
+          .select(['kind', 'family_id'])
+          .execute(),
+      ).toEqual([{ kind: 'family', family_id: family.familyId }])
+
+      await addControlMember(db, workspaceId, 'control-cli')
+      const token = await insertCliSession(db, 'control-cli', 'control-cli')
+      const issued = await issueCliRefreshCredential(
+        db,
+        'control-cli',
+        token,
+        'Control device',
+        'control-device-id',
+      )
+      if (!issued) throw new Error('control issuance failed')
+      const [controlFamily] = await listCliRefreshCredentialFamilies(
+        db,
+        'control-cli',
+      )
+      await expectFamilyHash(db, controlFamily.familyId, issued.refreshToken)
+      expect(await cliFamilyShape(db, family.familyId)).toEqual(
+        await cliFamilyShape(db, controlFamily.familyId),
+      )
+
+      // A retained credential keeps its last use on a later reseed.
+      await seedDevScreenState(db, scenario, workspaceId, userId, later(DAY))
+      expect((await listCliRefreshCredentialFamilies(db, userId))[0]).toEqual(
+        family,
+      )
+
+      await db
+        .updateTable('cli_refresh_credentials')
+        .set({ revoked_at: clock })
+        .where('family_id', '=', family.familyId)
+        .execute()
+      const laterSeed = later(3_600_000)
+      await seedDevScreenState(db, scenario, workspaceId, userId, laterSeed)
+      const [recreated] = await listCliRefreshCredentialFamilies(db, userId)
+      expect(recreated.familyId).not.toBe(family.familyId)
+      expect(recreated.lastUsedAt).toBe(laterSeed)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('mixed-preset authorities match real controls and detect a wrong binding', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    try {
+      const { workspaceId, userId } = await signIn(
+        db,
+        'settings-tokens/mixed-presets',
+      )
+      const families = await listCliRefreshCredentialFamilies(db, userId)
+      const idOf = (preset: string) =>
+        families.find((row) => row.preset === preset)!.familyId
+      await addControlMember(db, workspaceId, 'control-user')
+      const control = {
+        id: 'control-user',
+        email: 'control-user@example.test',
+        workspaceId,
+      }
+      const project = await createProjectContainer(
+        db,
+        workspaceId,
+        control.id,
+        {
+          name: 'Control reports',
+          description: null,
+          baseVisibility: 'workspace',
+        },
+      )
+      if (project.kind !== 'ok') throw new Error(project.kind)
+      for (const preset of ['agent', 'publisher'] as const) {
+        const familyId = await issueScopedControl(
+          db,
+          preset,
+          control,
+          project.id,
+        )
+        const controlShape = await cliFamilyShape(db, familyId)
+        expect(controlShape).toMatchObject({
+          linked: true,
+          authorityKind: 'family',
+          authorityClientMatches: true,
+          authorityProfileMatches: true,
+          authorityProjectMatches: true,
+          clientOwned: true,
+          profileOwned: true,
+          projectEligible: true,
+        })
+        expect(await cliFamilyShape(db, idOf(preset)), preset).toEqual(
+          controlShape,
+        )
+      }
+      const unrestrictedControl = await issueCliRefreshCredential(
+        db,
+        control.id,
+      )
+      const unrestrictedControlId = (
+        await listCliRefreshCredentialFamilies(db, control.id)
+      ).find((row) => row.preset === 'unrestricted')!.familyId
+      await expectFamilyHash(
+        db,
+        unrestrictedControlId,
+        unrestrictedControl.refreshToken,
+      )
+      expect(await cliFamilyShape(db, idOf('unrestricted'))).toEqual(
+        await cliFamilyShape(db, unrestrictedControlId),
+      )
+      expect(
+        await db
+          .selectFrom('cli_family_authorities as family')
+          .innerJoin(
+            'artifact_containers as project',
+            'project.id',
+            'family.project_id',
+          )
+          .innerJoin(
+            'cli_session_authorities as authority',
+            'authority.family_id',
+            'family.family_id',
+          )
+          .select([
+            'project.name',
+            'project.workspace_id',
+            'family.project_name_snapshot',
+            'authority.project_id as authorityProject',
+            'family.project_id as familyProject',
+          ])
+          .where('family.family_id', '=', idOf('agent'))
+          .executeTakeFirstOrThrow(),
+      ).toEqual({
+        name: 'Reports',
+        workspace_id: workspaceId,
+        project_name_snapshot: 'Reports',
+        authorityProject: expect.any(String),
+        familyProject: expect.any(String),
+      })
+
+      const otherClient = 'other-client'
+      await db
+        .insertInto('publisher_clients')
+        .values({
+          id: otherClient,
+          user_id: userId,
+          workspace_id: workspaceId,
+          name: 'Other client',
+          created_at: clock,
+        })
+        .execute()
+      await db
+        .updateTable('cli_session_authorities')
+        .set({ publisher_client_id: otherClient })
+        .where('family_id', '=', idOf('publisher'))
+        .execute()
+      expect(
+        (await cliFamilyShape(db, idOf('publisher'))).authorityClientMatches,
+      ).toBe(false)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('mixed presets keep offsets, last use and order through recreation', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/mixed-presets'
+    try {
+      const seedClock = later(-1_500)
+      const { workspaceId, userId } = await signIn(
+        db,
+        scenario,
+        'team',
+        seedClock,
+      )
+      const expected = [
+        { preset: 'unrestricted', createdAt: clock, lastUsedAt: clock },
+        {
+          preset: 'publisher',
+          createdAt: later(-1_000),
+          lastUsedAt: later(-1_000),
+        },
+        { preset: 'agent', createdAt: later(-2_000), lastUsedAt: seedClock },
+      ]
+      const list = () => listCliRefreshCredentialFamilies(db, userId)
+      const expectStoredLastUse = async (
+        rows: Awaited<ReturnType<typeof list>>,
+      ) => {
+        for (const row of rows)
+          expect(
+            await db
+              .selectFrom('cli_refresh_credentials')
+              .select('last_used_at')
+              .where('family_id', '=', row.familyId)
+              .executeTakeFirstOrThrow(),
+            row.preset,
+          ).toEqual({ last_used_at: row.lastUsedAt })
+      }
+      expect(await list()).toMatchObject(expected)
+      expect((await list())[1].publisherClientName).toBe('Employee dashboard')
+      expect(
+        await db
+          .selectFrom('cli_session_authorities')
+          .select('kind')
+          .where('kind', '=', 'bootstrap')
+          .execute(),
+      ).toEqual([])
+      expect(await db.selectFrom('deviceCode').select('id').execute()).toEqual(
+        [],
+      )
+
+      for (const [index, preset] of [
+        'unrestricted',
+        'publisher',
+        'agent',
+      ].entries()) {
+        const target = (await list()).find((row) => row.preset === preset)!
+        expect(
+          await revokeCliRefreshCredentialFamily(db, userId, target.familyId),
+        ).toBe('ok')
+        vi.setSystemTime(Date.parse(later((index + 1) * 60_000)))
+        await seedDevScreenState(db, scenario, workspaceId, userId, seedClock)
+        const rows = await list()
+        expect(rows).toMatchObject(expected)
+        await expectStoredLastUse(rows)
+        expect(rows.find((row) => row.preset === preset)?.familyId).not.toBe(
+          target.familyId,
+        )
+        // The revoked family leaves no credential or authority behind.
+        for (const table of [
+          'cli_refresh_credentials',
+          'cli_family_authorities',
+          'cli_session_authorities',
+        ] as const)
+          expect(
+            await db
+              .selectFrom(table)
+              .select('family_id')
+              .where('family_id', '=', target.familyId)
+              .execute(),
+            `${preset} ${table}`,
+          ).toEqual([])
+      }
+
+      // A later reseed leaves retained credentials; only a replacement moves.
+      const retained = await list()
+      const laterSeed = later(DAY)
+      await seedDevScreenState(db, scenario, workspaceId, userId, laterSeed)
+      expect(await list()).toEqual(retained)
+      const agent = retained.find((row) => row.preset === 'agent')!
+      expect(
+        await revokeCliRefreshCredentialFamily(db, userId, agent.familyId),
+      ).toBe('ok')
+      await seedDevScreenState(db, scenario, workspaceId, userId, laterSeed)
+      const rows = await list()
+      expect(rows.map((row) => row.lastUsedAt)).toEqual([
+        retained[0].lastUsedAt,
+        retained[1].lastUsedAt,
+        laterSeed,
+      ])
+      await expectStoredLastUse(rows)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('active CLI owns its family by label and checks the device on retain', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/active-cli'
+    const label = 'Artifact Share CLI on darwin arm64 (default, a1b2c3d4)'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const [original] = await listCliRefreshCredentialFamilies(db, userId)
+      vi.setSystemTime(Date.parse(later(60_000)))
+      const sameLabel = await insertCliSession(db, 'same-label', userId)
+      await issueCliRefreshCredential(
+        db,
+        userId,
+        sameLabel,
+        label,
+        'another-device-id',
+      )
+      const otherLabel = await insertCliSession(db, 'other-label', userId)
+      await issueCliRefreshCredential(
+        db,
+        userId,
+        otherLabel,
+        'Work laptop',
+        'work-laptop-device-id',
+      )
+      const workLaptop = (await listCliRefreshCredentialFamilies(db, userId))
+        .filter((row) => row.deviceName === 'Work laptop')
+        .map((row) => row.familyId)
+      expect(workLaptop).toHaveLength(1)
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      // The same-label copy on another device goes; the original is kept.
+      const rows = await listCliRefreshCredentialFamilies(db, userId)
+      expect(rows.filter((row) => row.deviceName === label)).toEqual([original])
+      expect(
+        rows
+          .filter((row) => row.deviceName === 'Work laptop')
+          .map((row) => row.familyId),
+      ).toEqual(workLaptop)
+
+      // The CLI signs in again on the fixture device: production supersedes
+      // the original with an unused family, which is not the capture state.
+      const again = await insertCliSession(db, 'signed-in-again', userId)
+      await issueCliRefreshCredential(
+        db,
+        userId,
+        again,
+        label,
+        'a1b2c3d4-example-device-id',
+      )
+      const reissued = (
+        await listCliRefreshCredentialFamilies(db, userId)
+      ).find((row) => row.deviceName === label)!
+      expect(reissued.lastUsedAt).toBeNull()
+      // The different device's credential and its linked session, as they
+      // stand before the reseed that issues a replacement fixture family.
+      const workLaptopRows = async () => ({
+        credentials: await db
+          .selectFrom('cli_refresh_credentials')
+          .selectAll()
+          .where('family_id', 'in', workLaptop)
+          .execute(),
+        links: await db
+          .selectFrom('cli_refresh_sessions')
+          .selectAll()
+          .where('family_id', 'in', workLaptop)
+          .execute(),
+        sessions: await db
+          .selectFrom('sessions')
+          .selectAll()
+          .where('id', '=', 'other-label')
+          .execute(),
+      })
+      const workLaptopBefore = await workLaptopRows()
+      expect(workLaptopBefore.credentials).toMatchObject([{ revoked_at: null }])
+      expect(workLaptopBefore.links).toMatchObject([
+        { session_id: 'other-label' },
+      ])
+      expect(workLaptopBefore.sessions).toHaveLength(1)
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      const fixture = (
+        await listCliRefreshCredentialFamilies(db, userId)
+      ).filter((row) => row.deviceName === label)
+      expect(fixture).toHaveLength(1)
+      expect(fixture[0].familyId).not.toBe(reissued.familyId)
+      expect(fixture[0].lastUsedAt).not.toBeNull()
+      expect(await workLaptopRows()).toEqual(workLaptopBefore)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('mixed presets replace a same-label family that is not in the fixture state', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/mixed-presets'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const list = () => listCliRefreshCredentialFamilies(db, userId)
+      const initial = await list()
+      const fixtureView = (rows: typeof initial) =>
+        rows.map(({ preset, createdAt, lastUsedAt, publisherClientName }) => ({
+          preset,
+          createdAt,
+          lastUsedAt,
+          publisherClientName,
+        }))
+      const unrestricted = initial.find((row) => row.preset === 'unrestricted')!
+      // A same-identity family issued normally, before the original is revoked.
+      vi.setSystemTime(Date.parse(later(5 * 60_000)))
+      await issueCliRefreshCredential(db, userId)
+      const fresh = (await list()).find(
+        (row) =>
+          row.preset === 'unrestricted' &&
+          row.familyId !== unrestricted.familyId,
+      )!
+      expect(fresh.lastUsedAt).toBeNull()
+      expect(
+        await revokeCliRefreshCredentialFamily(
+          db,
+          userId,
+          unrestricted.familyId,
+        ),
+      ).toBe('ok')
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      const rows = await list()
+      expect(fixtureView(rows)).toEqual(fixtureView(initial))
+      for (const familyId of [unrestricted.familyId, fresh.familyId])
+        expect(
+          await db
+            .selectFrom('cli_family_authorities')
+            .select('family_id')
+            .where('family_id', '=', familyId)
+            .execute(),
+        ).toEqual([])
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('mixed presets judge earlier-seed family IDs by identity and health', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/mixed-presets'
+    try {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        clock,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await addScenarioOwner(db, workspaceId, userId, clock)
+      // Hand-written rows at the earlier seed's IDs: one still carries the
+      // fixture's identity with a placeholder hash, one now has another label.
+      for (const [familyId, deviceName] of [
+        [`${workspaceId}-unrestricted`, null],
+        [`${workspaceId}-agent`, 'Old laptop'],
+      ] as const) {
+        await db
+          .insertInto('cli_family_authorities')
+          .values({
+            family_id: familyId,
+            user_id: userId,
+            preset: 'unrestricted',
+            workspace_id: null,
+            project_id: null,
+            project_name_snapshot: null,
+            agent_profile_id: null,
+            approved_at: clock,
+            device_name: deviceName,
+            status: 'active',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        await db
+          .insertInto('cli_refresh_credentials')
+          .values({
+            id: familyId,
+            user_id: userId,
+            token_hash: `${familyId}-hash`,
+            expires_at: later(30 * DAY),
+            created_at: clock,
+            last_used_at: clock,
+            family_id: familyId,
+            device_name: deviceName,
+          })
+          .execute()
+      }
+      // The same user's Publisher family with the fixture's client name, but
+      // approved in another workspace, is not the fixture's.
+      const other = await ensureDevScreenState(
+        db,
+        'settings-tokens/active-cli',
+        clock,
+        'team',
+      )
+      await ensureActiveWorkspaceMembership(
+        db,
+        userId,
+        other.workspaceId,
+        clock,
+      )
+      // Approval happens in the user's active workspace.
+      const switchTo = (id: string) =>
+        db
+          .updateTable('users')
+          .set({ workspace_id: id })
+          .where('id', '=', userId)
+          .execute()
+      await switchTo(other.workspaceId)
+      const otherFamilyId = await issueScopedControl(
+        db,
+        'publisher',
+        {
+          id: userId,
+          email: `${userId}@example.test`,
+          workspaceId: other.workspaceId,
+        },
+        '',
+        'Employee dashboard',
+      )
+      await switchTo(workspaceId)
+      const otherFamilyRows = async () => ({
+        credentials: await db
+          .selectFrom('cli_refresh_credentials')
+          .selectAll()
+          .where('family_id', '=', otherFamilyId)
+          .execute(),
+        family: await db
+          .selectFrom('cli_family_authorities')
+          .selectAll()
+          .where('family_id', '=', otherFamilyId)
+          .execute(),
+        session: await db
+          .selectFrom('cli_session_authorities')
+          .selectAll()
+          .where('family_id', '=', otherFamilyId)
+          .execute(),
+      })
+      const otherBefore = await otherFamilyRows()
+      expect(otherBefore.credentials).toHaveLength(1)
+      expect(otherBefore.family).toMatchObject([
+        {
+          preset: 'publisher',
+          workspace_id: other.workspaceId,
+          status: 'active',
+        },
+      ])
+      expect(otherBefore.session).toHaveLength(1)
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(await otherFamilyRows()).toEqual(otherBefore)
+      const rows = (await listCliRefreshCredentialFamilies(db, userId)).filter(
+        (row) => row.familyId !== otherFamilyId,
+      )
+      expect(
+        rows.map(({ familyId, preset, deviceName }) => ({
+          familyId,
+          preset,
+          deviceName,
+        })),
+      ).toEqual(
+        expect.arrayContaining([
+          {
+            familyId: `${workspaceId}-agent`,
+            preset: 'unrestricted',
+            deviceName: 'Old laptop',
+          },
+        ]),
+      )
+      expect(rows.map((row) => row.familyId)).not.toContain(
+        `${workspaceId}-unrestricted`,
+      )
+      expect(
+        rows
+          .filter((row) => row.familyId !== `${workspaceId}-agent`)
+          .map((row) => row.preset),
+      ).toEqual(['unrestricted', 'publisher', 'agent'])
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('mixed-preset reseeds leave unrelated CLI sessions and projects alone', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    const scenario = 'settings-tokens/mixed-presets'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const token = await insertCliSession(db, 'personal-cli', userId)
+      await issueCliRefreshCredential(db, userId, token, 'Personal laptop')
+      const personal = (
+        await listCliRefreshCredentialFamilies(db, userId)
+      ).find((row) => row.deviceName === 'Personal laptop')!
+      const fixture = (await listCliRefreshCredentialFamilies(db, userId)).find(
+        (row) => row.preset === 'unrestricted' && row.deviceName === null,
+      )!
+      await db
+        .updateTable('cli_refresh_credentials')
+        .set({ revoked_at: clock })
+        .where('family_id', '=', fixture.familyId)
+        .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      const rows = await listCliRefreshCredentialFamilies(db, userId)
+      expect(rows.find((row) => row.familyId === personal.familyId)).toEqual(
+        personal,
+      )
+      expect(
+        await db
+          .selectFrom('sessions')
+          .select('id')
+          .where('id', '=', 'personal-cli')
+          .execute(),
+      ).toEqual([{ id: 'personal-cli' }])
+      const replacement = rows.find(
+        (row) => row.preset === 'unrestricted' && row.deviceName === null,
+      )!
+      expect(replacement.familyId).not.toBe(fixture.familyId)
+      expect(replacement.createdAt).toBe(fixture.createdAt)
+
+      // A same-name Reports made through the product is the fixture's and is
+      // restored as the eligible destination; another project keeps its file.
+      const other = await ensureDevScreenState(db, scenario, clock, 'plus')
+      const otherUser = `${other.workspaceId}-user`
+      await addScenarioOwner(db, other.workspaceId, otherUser, clock)
+      const privateReports = await createProjectContainer(
+        db,
+        other.workspaceId,
+        otherUser,
+        { name: 'reports', description: null, baseVisibility: 'private' },
+      )
+      if (privateReports.kind !== 'ok') throw new Error(privateReports.kind)
+      const teamNotes = await createProjectContainer(
+        db,
+        other.workspaceId,
+        otherUser,
+        {
+          name: 'Team notes',
+          description: 'Screen capture fixture: Agent destination',
+          baseVisibility: 'private',
+        },
+      )
+      if (teamNotes.kind !== 'ok') throw new Error(teamNotes.kind)
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'team-notes-file',
+          workspace_id: other.workspaceId,
+          owner_user_id: otherUser,
+          container_id: teamNotes.id,
+          name: 'Plan.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      const neighbor = () =>
+        db
+          .selectFrom('artifact_containers')
+          .leftJoin(
+            'shareables',
+            'shareables.container_id',
+            'artifact_containers.id',
+          )
+          .select([
+            'artifact_containers.name',
+            'artifact_containers.base_visibility',
+            'shareables.id as fileId',
+          ])
+          .where('artifact_containers.id', '=', teamNotes.id)
+          .execute()
+      const neighborBefore = await neighbor()
+      await seedDevScreenState(
+        db,
+        scenario,
+        other.workspaceId,
+        otherUser,
+        clock,
+      )
+      expect(
+        await db
+          .selectFrom('artifact_containers')
+          .select(['name', 'base_visibility'])
+          .where('id', '=', privateReports.id)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ name: 'Reports', base_visibility: 'workspace' })
+      const agent = (
+        await listCliRefreshCredentialFamilies(db, otherUser)
+      ).find((row) => row.preset === 'agent')!
+      expect(
+        await db
+          .selectFrom('cli_family_authorities')
+          .select('project_id')
+          .where('family_id', '=', agent.familyId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ project_id: privateReports.id })
+      expect(await neighbor()).toEqual(neighborBefore)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test.each(['finite', 'unlimited', 'zero'])(
+    'external %s matches the edit service and republishes a legacy direct link',
+    async (state) => {
+      const { db } = createMigratedInMemoryDb()
+      const scenario = `settings-external-access/${state}`
+      const legacyAt = later(-DAY)
+      try {
+        const { workspaceId } = await ensureDevScreenState(
+          db,
+          scenario,
+          clock,
+          'team',
+        )
+        const userId = `${workspaceId}-user`
+        await addScenarioOwner(db, workspaceId, userId, clock)
+        const inbox = await getOrCreateInboxContainerId(
+          db,
+          workspaceId,
+          userId,
+          clock,
+        )
+        const shareableId = devShareableId(`${workspaceId}-expiry-preview`)
+        await db
+          .insertInto('shareables')
+          .values({
+            id: shareableId,
+            workspace_id: workspaceId,
+            owner_user_id: userId,
+            container_id: inbox,
+            name: 'Shared report.html',
+            artifact_kind: 'html_page',
+            visibility: 'link',
+            link_expires_at: null,
+            created_at: legacyAt,
+            updated_at: legacyAt,
+          })
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+        const publication = (id: string) =>
+          db
+            .selectFrom('link_publications')
+            .select('latest_published_at')
+            .where('shareable_id', '=', id)
+            .executeTakeFirstOrThrow()
+        expect(await publication(shareableId)).toEqual({
+          latest_published_at: clock,
+        })
+
+        await db
+          .insertInto('shareables')
+          .values({
+            id: 'control-link',
+            workspace_id: workspaceId,
+            owner_user_id: userId,
+            container_id: inbox,
+            name: 'Control.html',
+            artifact_kind: 'html_page',
+            visibility: 'private',
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+        expect(
+          await editShareableSettings(
+            db,
+            {
+              id: userId,
+              email: `${userId}@example.test`,
+              workspaceId,
+              hd: null,
+            },
+            'control-link',
+            {
+              visibility: 'link',
+              linkExpiresAt: state === 'unlimited' ? null : later(60 * DAY),
+            },
+          ),
+        ).toMatchObject({ kind: 'ok' })
+        const shape = (id: string) =>
+          db
+            .selectFrom('shareables')
+            .select(['visibility', 'owner_user_id', 'container_id'])
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+        expect(await shape(shareableId)).toEqual(await shape('control-link'))
+        expect(await publication(shareableId)).toEqual(
+          await publication('control-link'),
+        )
+        const expiry = (
+          await db
+            .selectFrom('shareables')
+            .select('link_expires_at')
+            .where('id', '=', shareableId)
+            .executeTakeFirstOrThrow()
+        ).link_expires_at
+        expect(expiry).toBe(
+          state === 'zero'
+            ? clock
+            : state === 'finite'
+              ? later(60 * DAY)
+              : null,
+        )
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test.each([
+    ['settings/result-warning', 'Review notes.html'],
+    ['settings-external-access/finite', 'Shared report.html'],
+  ])(
+    '%s owns its artifact by its fixed ID and removes same-title copies',
+    async (scenario, title) => {
+      const { db } = createMigratedInMemoryDb()
+      try {
+        const { workspaceId, userId } = await signIn(db, scenario)
+        const byTitle = () =>
+          db
+            .selectFrom('shareables')
+            .select([
+              'id',
+              'owner_user_id',
+              'container_id',
+              'visibility',
+              'link_expires_at',
+              'created_at',
+              'updated_at',
+              'activity_at',
+            ])
+            .where('workspace_id', '=', workspaceId)
+            .where('name', '=', title)
+            .execute()
+        await addControlMember(db, workspaceId, `${workspaceId}-other`)
+        const otherInbox = await getOrCreateInboxContainerId(
+          db,
+          workspaceId,
+          `${workspaceId}-other`,
+          clock,
+        )
+        const [original] = await byTitle()
+        expect(original.id).toBe(
+          devShareableId(
+            `${workspaceId}-${scenario.startsWith('settings-external-access') ? 'expiry-preview' : 'transfer-file'}`,
+          ),
+        )
+        expect(otherInbox).not.toBe(original.container_id)
+        // A day after the seed, someone takes over, renames and moves the
+        // seeded artifact, and adds a same-title copy: another member's, in
+        // that member's inbox and shared by link.
+        await db
+          .updateTable('shareables')
+          .set({
+            name: 'Renamed.html',
+            owner_user_id: userId,
+            container_id: otherInbox,
+            updated_at: later(DAY),
+          })
+          .where('id', '=', original.id)
+          .execute()
+        await db
+          .insertInto('shareables')
+          .values({
+            id: 'same-title-copy',
+            workspace_id: workspaceId,
+            owner_user_id: `${workspaceId}-other`,
+            container_id: otherInbox,
+            name: title,
+            artifact_kind: 'html_page',
+            visibility: 'link',
+            link_expires_at: later(10 * DAY),
+            created_at: later(-DAY),
+            updated_at: later(-DAY),
+          })
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+        // The renamed row at the fixed ID is the fixture again; the
+        // different-ID copy is gone.
+        expect(await byTitle()).toEqual([original])
+        await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+        expect(await byTitle()).toEqual([original])
+      } finally {
+        await db.destroy()
+      }
+    },
+  )
+
+  test('the Agent bootstrap refuses an inbox, archived or restricted destination', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    sqliteRef.current = sqlite
+    try {
+      const { workspaceId, userId } = await signIn(
+        db,
+        'settings-tokens/mixed-presets',
+      )
+      const inbox = await getOrCreateInboxContainerId(
+        db,
+        workspaceId,
+        userId,
+        clock,
+      )
+      for (const [id, archivedAt, visibility] of [
+        ['archived-project', clock, 'workspace'],
+        ['restricted-project', null, 'private'],
+      ] as const)
+        await db
+          .insertInto('artifact_containers')
+          .values({
+            id,
+            workspace_id: workspaceId,
+            kind: 'project',
+            created_by_id: userId,
+            name: id,
+            base_visibility: visibility,
+            archived_at: archivedAt,
+            created_at: clock,
+            updated_at: clock,
+          })
+          .execute()
+      await db
+        .insertInto('sessions')
+        .values({
+          id: 'probe-session',
+          user_id: userId,
+          token: 'probe-token',
+          expires_at: '2099-01-01T00:00:00.000Z',
+          ip_address: null,
+          user_agent: CLI_DEVICE_SESSION_USER_AGENT,
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      for (const selectedProjectId of [
+        inbox,
+        'archived-project',
+        'restricted-project',
+      ])
+        expect(
+          await attachAgentBootstrapAuthority('probe-token', {
+            preset: 'agent',
+            deviceName: null,
+            projectSelector: null,
+            selectedProjectId,
+          }),
+          selectedProjectId,
+        ).toBe(false)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('external access publishes only its fixture link through the edit service', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings-external-access/finite'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const shareableId = devShareableId(workspaceId + '-expiry-preview')
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'neighbor-file',
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: await getOrCreateInboxContainerId(
+            db,
+            workspaceId,
+            userId,
+            clock,
+          ),
+          name: 'Neighbor.html',
+          artifact_kind: 'html_page',
+          visibility: 'link',
+          link_expires_at: later(10 * DAY),
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      const expiry = (id: string) =>
+        db
+          .selectFrom('shareables')
+          .select('link_expires_at')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      expect(await expiry(shareableId)).toEqual({
+        link_expires_at: later(60 * DAY),
+      })
+      // The capture's policy edit shortens the link; the next seed restores it.
+      expect(
+        await updateWorkspaceExternalAccessPolicy(
+          db,
+          { id: userId, workspaceId },
+          { linkExpiryMaxDays: 30 },
+        ),
+      ).toMatchObject({ kind: 'ok', shortenedLinkCount: 1 })
+      await ensureDevScreenState(db, scenario, clock, 'team')
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(await expiry(shareableId)).toEqual({
+        link_expires_at: later(60 * DAY),
+      })
+      expect(await expiry('neighbor-file')).toEqual({
+        link_expires_at: later(10 * DAY),
+      })
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('external access returns an owner-moved fixture link to the inbox', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings-external-access/finite'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const shareableId = devShareableId(workspaceId + '-expiry-preview')
+      const fixture = () =>
+        db
+          .selectFrom('shareables')
+          .select([
+            'id',
+            'owner_user_id',
+            'container_id',
+            'visibility',
+            'link_expires_at',
+          ])
+          .where('id', '=', shareableId)
+          .executeTakeFirstOrThrow()
+      const healthy = await fixture()
+      expect(healthy.container_id).toBe(
+        await getOrCreateInboxContainerId(db, workspaceId, userId, clock),
+      )
+      // The owner moves the live link into a project that has its own file.
+      const project = await createProjectContainer(db, workspaceId, userId, {
+        name: 'Owner project',
+        description: null,
+        baseVisibility: 'workspace',
+      })
+      if (project.kind !== 'ok') throw new Error(project.kind)
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 'project-file',
+          workspace_id: workspaceId,
+          owner_user_id: userId,
+          container_id: project.id,
+          name: 'Other.html',
+          artifact_kind: 'html_page',
+          visibility: 'project',
+          created_at: clock,
+          updated_at: clock,
+        })
+        .execute()
+      await db
+        .updateTable('shareables')
+        .set({ container_id: project.id })
+        .where('id', '=', shareableId)
+        .execute()
+      const projectFile = () =>
+        db
+          .selectFrom('shareables')
+          .selectAll()
+          .where('id', '=', 'project-file')
+          .executeTakeFirstOrThrow()
+      const projectFileBefore = await projectFile()
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      expect(await fixture()).toEqual(healthy)
+      expect(await projectFile()).toEqual(projectFileBefore)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('settings-external-access/finite restores its link times after an expiry edit', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings-external-access/finite'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const linkId = devShareableId(`${workspaceId}-expiry-preview`)
+      const link = () =>
+        db
+          .selectFrom('shareables')
+          .select([
+            'name',
+            'container_id',
+            'link_expires_at',
+            'updated_at',
+            'activity_at',
+          ])
+          .where('id', '=', linkId)
+          .executeTakeFirstOrThrow()
+      const original = await link()
+      expect(original.link_expires_at).toBe(later(60 * DAY))
+      const { email } = await db
+        .selectFrom('users')
+        .select('email')
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      // A day later the owner edits only the expiry through the product, to
+      // a date that still counts as shortenable.
+      vi.setSystemTime(Date.parse(later(DAY)))
+      expect(
+        await editShareableSettings(
+          db,
+          { id: userId, email, workspaceId, hd: null },
+          linkId,
+          { visibility: 'link', linkExpiresAt: later(51 * DAY) },
+        ),
+      ).toMatchObject({ kind: 'ok' })
+      expect(await link()).toEqual({
+        ...original,
+        link_expires_at: later(51 * DAY),
+        updated_at: later(DAY),
+        activity_at: later(DAY),
+      })
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      expect(await link()).toEqual(original)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('settings-activity/with-activity restores drifted fixture events at their IDs', async () => {
+    const { db, sqlite } = createMigratedInMemoryDb()
+    const scenario = 'settings-activity/with-activity'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const events = () =>
+        db
+          .selectFrom('audit_events')
+          .selectAll()
+          .where('workspace_id', '=', workspaceId)
+          .where('id', 'in', [
+            ...[1, 2, 3, 4, 5].map((n) => `${workspaceId}-event-${n}`),
+            ...['created', 'email', 'slack', 'approved'].map(
+              (step) => `${workspaceId}-access-${step}`,
+            ),
+          ])
+          .orderBy('id')
+          .execute()
+      const original = await events()
+      expect(original).toHaveLength(9)
+      // One event of each group drifts in detail, actor and time.
+      await db
+        .updateTable('audit_events')
+        .set({
+          detail: JSON.stringify({ from: 'free', to: 'plus' }),
+          created_at: later(DAY),
+          actor_user_id: null,
+        })
+        .where('id', 'in', [
+          `${workspaceId}-event-1`,
+          `${workspaceId}-access-approved`,
+        ])
+        .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(await events()).toEqual(original)
+      // Once converged, a reseed writes none of them again.
+      sqlite.exec(`
+        CREATE TEMP TABLE audit_writes (id TEXT);
+        CREATE TEMP TRIGGER audit_write_probe AFTER UPDATE ON audit_events
+        BEGIN INSERT INTO audit_writes VALUES (NEW.id); END;
+      `)
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+      expect(sqlite.prepare('SELECT id FROM audit_writes').all()).toEqual([])
+      expect(await events()).toEqual(original)
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  test('a separate removal and transfer resets to the active member and original file', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const scenario = 'settings/result-warning'
+    try {
+      const { workspaceId, userId } = await signIn(db, scenario)
+      const neighbor = await signIn(db, scenario, 'plus')
+      const neighborRows = () =>
+        db
+          .selectFrom('shareables')
+          .selectAll()
+          .where('workspace_id', '=', neighbor.workspaceId)
+          .execute()
+      const neighborBefore = await neighborRows()
+      const memberId = `${workspaceId}-removed-member`
+      const fileId = devShareableId(`${workspaceId}-transfer-file`)
+      const file = () =>
+        db
+          .selectFrom('shareables')
+          .select([
+            'owner_user_id',
+            'container_id',
+            'created_at',
+            'updated_at',
+            'activity_at',
+          ])
+          .where('id', '=', fileId)
+          .executeTakeFirstOrThrow()
+      const original = await file()
+      const actor = { id: userId, workspaceId }
+      // The interactions run a day after the seed clock.
+      vi.setSystemTime(Date.parse(later(DAY)))
+      expect(await removeWorkspaceMember(db, actor, memberId)).toEqual({
+        kind: 'ok',
+      })
+      expect(
+        await transferRemovedMemberAssets(db, actor, memberId, userId),
+      ).toEqual({ kind: 'ok' })
+      expect(await file()).toMatchObject({
+        owner_user_id: userId,
+        updated_at: later(DAY),
+        activity_at: later(DAY),
+      })
+      expect(
+        (await loadRemovedWorkspaceMembers(db, workspaceId)).map((m) => m.id),
+      ).toEqual([memberId])
+
+      await seedDevScreenState(db, scenario, workspaceId, userId, clock)
+
+      expect(await file()).toEqual(original)
+      expect(await loadRemovedWorkspaceMembers(db, workspaceId)).toEqual([])
+      expect(
+        await db
+          .selectFrom('users')
+          .select('workspace_id')
+          .where('id', '=', memberId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ workspace_id: workspaceId })
+      expect(await neighborRows()).toEqual(neighborBefore)
+    } finally {
+      await db.destroy()
+    }
+  })
 })

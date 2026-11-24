@@ -209,7 +209,7 @@ export const screen = {
             action: 'click',
             selector: '[role="alertdialog"] button:text-is("Cancel creation")',
             readySelector:
-              'body:not(:has([role="alertdialog"],tr[id$="-bot-unused-stopped"])):has(tr[id$="-bot-active"] [data-available="true"] + [data-available="true"]) [data-bot-result="cancel"]:not(:empty)',
+              'body:not(:has([role="alertdialog"],[data-testid="bot-row"]:has-text("Setup failed bot"))):has([data-testid="bot-row"]:has-text("Nightly report bot") [data-available="true"] + [data-available="true"]) [data-bot-result="cancel"]:not(:empty)',
           },
         ],
       },

@@ -459,9 +459,9 @@ describe('ensureDevSignInUser', () => {
       .values({
         id: 'capture-created-token',
         user_id: userId,
-        name: 'Capture token',
+        name: 'Release automation',
         token_hash: 'capture-created-token-hash',
-        created_at: '2026-01-01T00:00:00.000Z',
+        created_at: '2099-01-01T00:00:00.000Z',
         last_used_at: null,
         revoked_at: null,
       })
@@ -576,7 +576,10 @@ describe('ensureDevSignInUser', () => {
           .where('user_id', '=', userId)
           .execute(),
       ).toEqual([
-        { user_id: userId, token_hash: expect.stringContaining(userId) },
+        {
+          user_id: userId,
+          token_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        },
       ])
     }
   })
