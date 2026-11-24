@@ -55,10 +55,11 @@ Two harnesses, both through `scripts/harness.mjs`:
 - **CLI**: `runCli(run, feature, name, args, { token, cwd })` runs `packages/cli/dist/index.js` with `ARTIFACTSHARE_BASE_URL=<run app origin>`, `--insecure-localhost`, a throwaway `HOME` and `ARTIFACTSHARE_CONFIG_HOME` under the run, and the native token store disabled. It never reads the developer's saved production credentials. Get the token the way a user does: `createApiToken(page, run, name)` creates it in Settings › AI tools and CLI and reads the value shown once.
   - **Never run the CLI without `ARTIFACTSHARE_BASE_URL`.** Its default is production. Before any write, check that `whoami --json` reports an `@artifactshare.local` email.
 
-Shipped journey (proven end to end):
+Shipped journeys (proven end to end):
 
 ```sh
 node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]
+node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]
 ```
 
 Write new journeys as `scripts/journeys/<feature>.mjs` that import `harness.mjs`, following that file. The feature map in `features/` lists the handles for each feature.
@@ -95,6 +96,7 @@ Check that the ports are free afterwards: `lsof -nP -iTCP:<app port>,<sandbox po
 | `scripts/stack.mjs` | `node .claude/skills/verify-artifactshare/scripts/stack.mjs up\|doctor\|down [--run <id>]` |
 | `scripts/harness.mjs` | `import { openRun, signIn, capture, createApiToken, runCli, evidenceDir } from '../harness.mjs'` |
 | `scripts/journeys/cli-share-view.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]` |
+| `scripts/journeys/home-upload.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]` |
 
 ## Feature map
 

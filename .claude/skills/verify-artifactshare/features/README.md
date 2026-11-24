@@ -35,7 +35,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 ## Features
 
 - [Share with the CLI and view](./cli-share.md) covers token creation, `share`, `update`, the sandboxed viewer, and Home listing. A shipped journey proves it.
-- [Upload from Home](./home-upload.md) covers the `Add a file` dialog for a single file and a site folder.
+- [Upload from Home](./home-upload.md) covers the `Add a file` dialog for a single file and a site folder. A shipped journey proves the single-file path.
 - [Comments](./comments.md) covers the viewer Comments panel, inline comments on selected text, and the `comments` CLI.
 - [Who can view](./sharing.md) covers the visibility dialog, adding specific people, link sharing, and `edit --visibility`.
 - [Projects](./projects.md) covers creating a project and sharing into it from the UI and the CLI.
