@@ -88,6 +88,26 @@ try {
   if (list.exitCode !== 0 || !list.stdout.includes(marker))
     throw new Error(`artifacts list does not show the file: ${list.stdout}`)
   step('CLI artifacts list shows the file (second view of the stored row)')
+
+  const updated = `${marker} v2`
+  const file2 = join(workDir, 'report-v2.html')
+  writeFileSync(
+    file2,
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${marker}</title></head><body><main><h1>${updated}</h1></main></body></html>`,
+  )
+  const update = runCli(run, FEATURE, '07-update', ['update', url, file2, '--json'], {
+    token,
+  })
+  if (update.exitCode !== 0) throw new Error(`update failed: ${update.stdout}${update.stderr}`)
+  await page.goto(url)
+  await page
+    .frameLocator('iframe')
+    .first()
+    .getByRole('heading', { name: updated })
+    .waitFor({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Version status: v2' }).waitFor()
+  await capture(run, FEATURE, '08-viewer-v2', page)
+  step('CLI update adds v2 at the same URL')
 } finally {
   await browser.close()
   writeFileSync(

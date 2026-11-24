@@ -30,7 +30,7 @@ Preconditions:
 - **Share.** `runCli(..., ['share', file, '--visibility', 'private', '--json'], { token })` exits `0`. `data.artifact.url` starts with the run's `appOrigin`, and `data.result.created` is `true`.
 - **View.** `page.goto(url)`, then `page.frameLocator('iframe').first().getByRole('heading', { name: marker })` becomes visible. The top bar shows `Private · Change who can view` and `Version status: v1`.
 - **Home.** `page.goto(run.appOrigin)`. A link named with the marker title appears under `Recently seen` and in the `My files` rail.
-- [unobserved] **Update.** `runCli(..., ['update', url, changedFile, '--json'], { token })` exits `0`. Reload the viewer: the frame shows the changed heading and the version button reads `Version status: v2`.
+- **Update.** `runCli(..., ['update', url, changedFile, '--json'], { token })` exits `0`. Reload the viewer. The frame shows the changed heading, and the version button reads `Version status: v2`.
 - **Second view.** `runCli(..., ['artifacts', 'list', '--json'], { token })` stdout includes the marker title.
 
 ## Gotchas

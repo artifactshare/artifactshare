@@ -52,6 +52,7 @@ Two harnesses, both through `scripts/harness.mjs`:
   - Locate by role and accessible name, as the feature files list them, e.g. `page.getByRole('button', { name: 'Add a file' })` or `getByRole('button', { name: 'Private · Change who can view' })`.
   - Artifact content lives in an iframe from `a-…usercontent.localhost:<sandbox port>`, so use `page.frameLocator('iframe').first()` to assert on it.
   - The signed-in top bar shows a button named after the persona email (`dev-<persona>@artifactshare.local`). `signIn` waits for it.
+  - `launchBrowser()` opens a context with no cookies, for a signed-out visitor.
 - **CLI**: `runCli(run, feature, name, args, { token, cwd })` runs `packages/cli/dist/index.js` with `ARTIFACTSHARE_BASE_URL=<run app origin>`, `--insecure-localhost`, a throwaway `HOME` and `ARTIFACTSHARE_CONFIG_HOME` under the run, and the native token store disabled. It never reads the developer's saved production credentials. Get the token the way a user does: `createApiToken(page, run, name)` creates it in Settings › AI tools and CLI and reads the value shown once.
   - **Never run the CLI without `ARTIFACTSHARE_BASE_URL`.** Its default is production. Before any write, check that `whoami --json` reports an `@artifactshare.local` email.
 
@@ -60,7 +61,12 @@ Shipped journeys (proven end to end):
 ```sh
 node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]
 node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]
+node .claude/skills/verify-artifactshare/scripts/journeys/comments.mjs [--run <id>]
+node .claude/skills/verify-artifactshare/scripts/journeys/sharing.mjs [--run <id>]
+node .claude/skills/verify-artifactshare/scripts/journeys/projects.mjs [--run <id>]
 ```
+
+Each journey uses unique names, so they can run one after another on the same stack.
 
 Write new journeys as `scripts/journeys/<feature>.mjs` that import `harness.mjs`, following that file. The feature map in `features/` lists the handles for each feature.
 
@@ -94,9 +100,12 @@ Check that the ports are free afterwards: `lsof -nP -iTCP:<app port>,<sandbox po
 | Script | Invocation |
 | --- | --- |
 | `scripts/stack.mjs` | `node .claude/skills/verify-artifactshare/scripts/stack.mjs up\|doctor\|down [--run <id>]` |
-| `scripts/harness.mjs` | `import { openRun, signIn, capture, createApiToken, runCli, evidenceDir } from '../harness.mjs'` |
+| `scripts/harness.mjs` | `import { openRun, signIn, launchBrowser, capture, createApiToken, runCli, evidenceDir } from '../harness.mjs'` |
 | `scripts/journeys/cli-share-view.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]` |
 | `scripts/journeys/home-upload.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]` |
+| `scripts/journeys/comments.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/comments.mjs [--run <id>]` |
+| `scripts/journeys/sharing.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/sharing.mjs [--run <id>]` |
+| `scripts/journeys/projects.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/projects.mjs [--run <id>]` |
 
 ## Feature map
 

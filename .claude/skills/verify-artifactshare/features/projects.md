@@ -1,10 +1,11 @@
 # Projects
 
-Users create a project in their workspace as a shared destination for files from the same workstream, then share files into it from the UI or the CLI. Project members see those files.
+Users create a project in their workspace as a shared destination for files from the same workstream, then share files into it from the UI or the CLI. The project's file list shows those files.
 
 ## Sub-features
 
 - `project-create` creates a project from the Projects page.
+- `project-create-cli` creates a project with `artifactshare projects create`.
 - `project-share-cli` shares a file into a project with `--project <name>` or `--project-id <id>`.
 - `project-files` lists the project's files at `/projects/<id>/files`.
 
@@ -18,15 +19,16 @@ Users create a project in their workspace as a shared destination for files from
 
 Preconditions:
 
-- Signed in as a persona whose plan allows projects. The empty state on `/projects` reads `Projects are created in the Artifact Share Local Dev Free workspace, not in a personal folder.`
+- `stack.mjs doctor` is all `ok`. The journey signs in as `Free owner` and creates its own token.
 
-- [unobserved] **Create in UI.** On `/projects`, click `getByRole('button', { name: 'Create' })`. Under the heading `Create a project`, enter a marker name and submit. The project page opens, and the project appears on `/projects`.
-- [unobserved] **Create via CLI.** `runCli(..., ['projects', 'create', marker, '--json'], { token })` exits `0`, and `projects list --json` includes it.
-- [unobserved] **Share into it.** `runCli(..., ['share', file, '--project', marker, '--json'], { token })` exits `0`, and `data.destination.type` is a project.
-- [unobserved] **Second view.** Open `/projects/<id>/files`. The shared file's link is listed. Capture it.
+- **Whole journey.** Run `node .claude/skills/verify-artifactshare/scripts/journeys/projects.mjs`. It prints one `ok` line per step and ends with `PASS projects`. The evidence is in `evidence/projects/`.
+- **Create in UI.** On `/projects` (heading `Projects`, level 1), click `Create` (exact). A dialog named `Create project` shows a `Name` textbox, `Add a description`, a `Who can view` radio group (`Everyone in this workspace`, checked by default, or `Project members only`), and `Cancel` / `Create`. Fill `Name` and click `Create`. The browser moves to `/projects/<id>`, whose level-1 heading is the project name.
+- **Share into it.** `runCli(..., ['share', file, '--project', name, '--json'], { token })` exits `0`. `data.destination.type` is `project` with the `project_id`, and `data.share.visibility` is `project`.
+- **Project files.** Open `/projects/<id>/files`. A link named with the file title is listed.
+- **Create via CLI.** `runCli(..., ['projects', 'create', name, '--json'], { token })` exits `0`. `projects list --json` includes both projects, and `/projects` lists a link named with the CLI project.
 
 ## Gotchas
 
-- Free-plan project limits may block a second project. If `Create` is refused, record the message and retry with `Plus owner` or `Team owner` before calling it a bug.
+- A Free persona can create at least two projects. If `Create` is refused on a busy run, record the message and retry with `Plus owner` or `Team owner` before calling it a bug.
 - A project share defaults to `project` visibility. Pass `--visibility` explicitly when asserting on audience.
-- Not yet proven end to end in this map.
+- `/projects/archived` also matches `/projects/<id>`, so exclude it when waiting for the new project's URL.

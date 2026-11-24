@@ -18,7 +18,7 @@ This directory is the maintained source for verifying Artifact Share's user-faci
 
 ## Observed and unobserved steps
 
-A driving bullet without a tag was observed on a live run: the handles and the end state it names were seen. A bullet tagged `[unobserved]` names handles seen live, but its end state is what the product should do, not yet confirmed. The first run that drives it confirms or corrects the bullet and removes the tag.
+Every driving bullet in this map was observed on a live run: the handles and end states it names were seen. When you add a step you have not run yet, tag it `[unobserved]` and state the expected end state. The first run that drives it confirms or corrects the bullet and removes the tag.
 
 ## Proof and skip reporting
 
@@ -34,8 +34,10 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 ## Features
 
-- [Share with the CLI and view](./cli-share.md) covers token creation, `share`, `update`, the sandboxed viewer, and Home listing. A shipped journey proves it.
-- [Upload from Home](./home-upload.md) covers the `Add a file` dialog for a single file and a site folder. A shipped journey proves the single-file path.
-- [Comments](./comments.md) covers the viewer Comments panel, inline comments on selected text, and the `comments` CLI.
-- [Who can view](./sharing.md) covers the visibility dialog, adding specific people, link sharing, and `edit --visibility`.
-- [Projects](./projects.md) covers creating a project and sharing into it from the UI and the CLI.
+Each feature has a shipped journey in `scripts/journeys/` that proves it end to end.
+
+- [Share with the CLI and view](./cli-share.md) covers token creation, `share`, `update`, the sandboxed viewer, and Home listing.
+- [Upload from Home](./home-upload.md) covers the `Add a file` dialog for a single file and a site folder.
+- [Comments](./comments.md) covers the viewer Comments panel, inline comments on selected text, replies, resolving, and the `comments` CLI.
+- [Who can view](./sharing.md) covers the visibility dialog, adding specific people, refusal pages, link sharing, and `edit --visibility`.
+- [Projects](./projects.md) covers creating a project from the UI and the CLI, sharing into it, and its file list.
