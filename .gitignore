@@ -37,3 +37,6 @@ apps/web/.app-css-base-*/
 
 # Local Impeccable previews, reports, and runtime state.
 .impeccable/
+
+# Verification runs from .claude/skills/verify-artifactshare (state, logs, evidence).
+.verify-artifactshare/
