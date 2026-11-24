@@ -208,7 +208,7 @@ export function CommentMessageItem({
         <form className="grid gap-2" onSubmit={submit}>
           <Textarea
             ref={editRef}
-            className="text-foreground min-h-comment-textarea border-divider bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
+            className="text-foreground min-h-comment-textarea bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
             value={editDraft}
             maxLength={MAX_COMMENT_BODY_LENGTH}
             aria-label={t('comments.editLabel')}

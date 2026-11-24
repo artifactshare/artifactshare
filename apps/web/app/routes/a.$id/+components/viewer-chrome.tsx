@@ -115,7 +115,7 @@ const nameClassName =
 const editableNameClassName =
   'h-auto min-h-0 justify-start rounded-[var(--r-sm)] p-0 px-1 py-px -m-px text-left text-sm leading-(--lh-snug) font-medium whitespace-normal text-inherit hover:bg-accent focus-visible:border-transparent [&_svg]:hidden'
 const titleInputClassName =
-  'h-7 w-[var(--width-viewer-title-input)] min-w-title-input-min rounded-[var(--r-sm)] border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 max-phone:w-full max-phone:min-w-0'
+  'h-7 w-[var(--width-viewer-title-input)] min-w-title-input-min rounded-[var(--r-sm)] border border-input bg-background px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 max-phone:w-full max-phone:min-w-0'
 const metaClassName =
   'inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground max-phone:max-w-full max-phone:gap-1'
 const projectClassName =
@@ -909,7 +909,7 @@ function SuspendedLinkBanner({
             maxLength={1000}
             rows={2}
             onChange={(event) => setMessage(event.target.value)}
-            className="bg-background w-full rounded border p-2"
+            className="bg-background border-input w-full rounded border p-2"
           />
           <Button
             type="button"

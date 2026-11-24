@@ -12,10 +12,8 @@ import { IconChevronDown } from '@tabler/icons-react'
 
 const visibilitySelectTriggerClassName = cn(
   'flex w-full cursor-pointer items-center gap-[var(--spacing-2)]',
-  'border-border bg-card rounded-[var(--r-md)] border',
+  'border-input disabled:border-border bg-card rounded-[var(--r-md)] border',
   'text-foreground px-[var(--spacing-3)] py-[var(--spacing-2)] text-left font-[inherit] text-sm',
-  'hover:border-border-strong',
-  'data-[state=open]:border-border-strong',
   'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none',
 )
 

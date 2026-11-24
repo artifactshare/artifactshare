@@ -39,7 +39,7 @@ export function RoleSelect({
   const roleLabel = useRoleLabel()
   return (
     <select
-      className="focus-visible:border-ring focus-visible:ring-ring/50 border-border bg-card text-foreground h-8 shrink-0 rounded-[var(--r-sm)] border px-[var(--spacing-1_5)] font-[inherit] text-sm focus-visible:ring-3 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      className="focus-visible:border-ring focus-visible:ring-ring/50 border-input disabled:border-border bg-card text-foreground h-8 shrink-0 rounded-[var(--r-sm)] border px-[var(--spacing-1_5)] font-[inherit] text-sm focus-visible:ring-3 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={t('projectShareDefaults.role.ariaLabel')}
       value={value}
       disabled={disabled}

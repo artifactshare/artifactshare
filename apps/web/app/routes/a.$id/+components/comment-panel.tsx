@@ -542,7 +542,7 @@ function NewThreadComposer({
         </div>
       ) : null}
       <Textarea
-        className="text-foreground min-h-comment-textarea border-divider bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
+        className="text-foreground min-h-comment-textarea bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
         value={body}
         maxLength={MAX_COMMENT_BODY_LENGTH}
         aria-label={t('comments.newLabel')}

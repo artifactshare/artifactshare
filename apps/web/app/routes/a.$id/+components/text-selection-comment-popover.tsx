@@ -98,7 +98,7 @@ export function TextSelectionCommentPopover({
         <CommentQuote text={anchor.quotedText} />
         <textarea
           ref={textareaRef}
-          className="text-foreground min-h-comment-textarea-sm border-divider bg-card w-full resize-y rounded-[var(--r-lg)] border p-2.5 text-sm"
+          className="text-foreground min-h-comment-textarea-sm border-input bg-card w-full resize-y rounded-[var(--r-lg)] border p-2.5 text-sm"
           value={body}
           maxLength={MAX_COMMENT_BODY_LENGTH}
           aria-label={t('comments.newLabel')}
