@@ -86,9 +86,6 @@ vi.mock('~/services/workspace-domain-claims.server', () => ({
 vi.mock('~/services/viewer-revisit.server', () => ({
   loadViewerRevisitContext: () => Promise.resolve(null),
 }))
-vi.mock('~/services/dev-screen-state.server', () => ({
-  isDevScreenStateRequest: () => false,
-}))
 
 function query(first: unknown, rows: unknown[] = []) {
   const chain: Record<string, unknown> = {

@@ -10,14 +10,12 @@ import { Button } from '~/components/ui/button'
  */
 export function DevSignInOption({
   next,
-  scenario,
   persona,
   icon,
   name,
   note,
 }: {
   next: string
-  scenario?: string
   persona: 'free-owner' | 'plus-owner' | 'team-owner' | 'team-member'
   icon: ReactNode
   name: string
@@ -26,9 +24,6 @@ export function DevSignInOption({
   return (
     <Form method="post" action="/dev/sign-in">
       <input type="hidden" name="next" value={next} />
-      {scenario ? (
-        <input type="hidden" name="scenario" value={scenario} />
-      ) : null}
       <input type="hidden" name="persona" value={persona} />
       <Button
         type="submit"

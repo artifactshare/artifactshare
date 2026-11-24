@@ -1,5 +1,3 @@
-import { workspaceSearchIndex } from './search-index/names'
-import { searchVisibilitySources } from './search-visibility.server'
 /*
  * better-auth wiring — Cloudflare Workers + D1. The auth instance is built once
  * per isolate (see `createAuth` at the bottom): the `cloudflare:workers` env and
@@ -79,13 +77,6 @@ import {
   moveUserToWorkspaceForOAuth,
 } from './workspace-domain-claims.server'
 import { CLI_DEVICE_SESSION_USER_AGENT } from './cli-refresh-credentials.server'
-import {
-  devScreenUserEmail,
-  ensureDevScreenState,
-  isScreenScenario,
-  seedDevScreenArtifactBodies,
-  seedDevScreenState,
-} from './dev-screen-state.server'
 
 const GOOGLE_SIGNIN_SCOPES = ['openid', 'email', 'profile']
 const BEARER_SCHEME = 'bearer '
@@ -1783,13 +1774,7 @@ export const DEV_SIGN_IN_MEMBER_EMAIL = DEV_SIGN_IN_CONFIG['team-member'].email
 export async function ensureDevSignInUser(
   db: Kysely<DB>,
   persona: DevSignInPersona,
-  scenario?: string,
-): Promise<{
-  userId: string
-  workspaceId: string
-  containerId: string | null
-  containerKind: 'inbox' | 'project' | null
-}> {
+): Promise<{ userId: string; workspaceId: string }> {
   if (!import.meta.env.DEV) {
     throw new Error('Dev sign-in is only available in Vite dev')
   }
@@ -1800,22 +1785,14 @@ export async function ensureDevSignInUser(
     config.plan === 'team'
       ? DEV_SIGN_IN_CONFIG['team-owner'].email
       : config.email
-  const workspaceId = scenario
-    ? (await ensureDevScreenState(db, scenario, now, config.plan)).workspaceId
-    : await ensureDevSignInWorkspace(
-        db,
-        config.plan,
-        config.workspace,
-        workspaceOwnerEmail,
-        now,
-      )
-  const userId = await ensureDevSignInUserRow(
+  const workspaceId = await ensureDevSignInWorkspace(
     db,
-    persona,
-    workspaceId,
+    config.plan,
+    config.workspace,
+    workspaceOwnerEmail,
     now,
-    scenario,
   )
+  const userId = await ensureDevSignInUserRow(db, persona, workspaceId, now)
   await ensureDevSignInWorkspaceRole(db, workspaceId, userId, config.role, now)
   if (config.role === 'member') {
     const owner = DEV_SIGN_IN_CONFIG['team-owner']
@@ -1824,7 +1801,6 @@ export async function ensureDevSignInUser(
       'team-owner',
       workspaceId,
       now,
-      scenario,
     )
     await ensureDevSignInWorkspaceRole(
       db,
@@ -1834,50 +1810,7 @@ export async function ensureDevSignInUser(
       now,
     )
   }
-  const seed = scenario
-    ? await seedDevScreenState(db, scenario, workspaceId, userId, now)
-    : { containerId: null, containerKind: null }
-  if (scenario) {
-    await seedDevScreenArtifactBodies(
-      (env as { BUCKET?: R2Bucket }).BUCKET,
-      scenario,
-      workspaceId,
-      userId,
-    )
-  }
-  if (scenario?.startsWith('search/')) {
-    // Captures search every workspace the viewer can see, as the product does.
-    // Each index must have applied its pending changes; otherwise the product
-    // marks results incomplete and the captured states lose their own UI.
-    const sources = await searchVisibilitySources(db, userId, {}, now)
-    let found = false
-    for (let attempt = 1; ; attempt++) {
-      const pages = await Promise.all(
-        sources.map(async ({ workspaceId: workspace, visibility }) => {
-          const index = workspaceSearchIndex(
-            env.WORKSPACE_SEARCH_INDEX,
-            workspace,
-          )
-          await index.sync(workspace)
-          return index.search({ query: 'Quarterly', visibility })
-        }),
-      )
-      found ||= pages.some((page) => !('error' in page) && page.items.length)
-      if (
-        found &&
-        pages.every((page) => !('error' in page) && !page.incomplete)
-      )
-        break
-      if (attempt === 20) throw new Error('Search scenario index is not ready')
-      await new Promise((resolve) => setTimeout(resolve, 250))
-    }
-  }
-  return {
-    userId,
-    workspaceId,
-    containerId: seed.containerId,
-    containerKind: seed.containerKind,
-  }
+  return { userId, workspaceId }
 }
 
 async function ensureDevSignInWorkspace(
@@ -1927,13 +1860,10 @@ async function ensureDevSignInUserRow(
   persona: DevSignInPersona,
   workspaceId: string,
   now: string,
-  scenario?: string,
 ): Promise<string> {
   const config = DEV_SIGN_IN_CONFIG[persona]
-  const email = (
-    scenario ? devScreenUserEmail(persona, scenario) : config.email
-  ).toLowerCase()
-  const name = scenario ? `${config.name} · ${scenario}` : config.name
+  const email = config.email.toLowerCase()
+  const name = config.name
   const existing = await db
     .selectFrom('users')
     .select(['id', 'workspace_id'])
@@ -2052,20 +1982,10 @@ function devSignInPlugin(db: Kysely<DB>): BetterAuthPlugin {
           'team-owner',
           'team-member',
         ]),
-        scenario: z.string().optional(),
       }),
     },
     async (ctx) => {
-      if (ctx.body.scenario && !isScreenScenario(ctx.body.scenario)) {
-        throw new APIError('BAD_REQUEST', {
-          message: 'Unknown screen scenario',
-        })
-      }
-      const signIn = await ensureDevSignInUser(
-        db,
-        ctx.body.persona,
-        ctx.body.scenario,
-      )
+      const signIn = await ensureDevSignInUser(db, ctx.body.persona)
       const user = await ctx.context.internalAdapter.findUserById(signIn.userId)
       if (!user) {
         throw new APIError('INTERNAL_SERVER_ERROR', {

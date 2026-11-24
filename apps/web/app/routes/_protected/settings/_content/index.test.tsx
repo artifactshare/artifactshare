@@ -308,44 +308,34 @@ describe('/settings role actions', () => {
       expect(response.init?.status).toBe(kind === 'ok' ? 200 : 409)
     },
   )
-  test('the former warning header cannot suppress a successful transfer', async () => {
-    expect(import.meta.env.DEV).toBe(true)
-    const variants: Record<string, string>[] = [
+  test('transfers the removed member assets after a successful removal', async () => {
+    services.removeWorkspaceMember.mockResolvedValueOnce({ kind: 'ok' })
+    services.transferRemovedMemberAssets.mockClear()
+    services.transferRemovedMemberAssets.mockResolvedValueOnce({ kind: 'ok' })
+    const request = postForm({
+      intent: 'remove-member',
+      userId: 'workspace-removed-member',
+      recipientUserId: 'owner',
+    })
+    const response = await action({
+      request,
+      context: new RouterContextProvider(),
+      params: {},
+      url: new URL(request.url),
+      pattern: '/settings',
+    })
+    expect(services.transferRemovedMemberAssets).toHaveBeenCalledWith(
       {},
-      { 'X-ArtifactShare-Dev-Screen-State': 'settings/result-warning' },
-    ]
-    for (const headers of variants) {
-      services.removeWorkspaceMember.mockResolvedValueOnce({ kind: 'ok' })
-      services.transferRemovedMemberAssets.mockClear()
-      services.transferRemovedMemberAssets.mockResolvedValueOnce({ kind: 'ok' })
-      const form = postForm({
-        intent: 'remove-member',
-        userId: 'workspace-removed-member',
-        recipientUserId: 'owner',
-      })
-      const request = new Request(form, {
-        headers: { ...Object.fromEntries(form.headers), ...headers },
-      })
-      const response = await action({
-        request,
-        context: new RouterContextProvider(),
-        params: {},
-        url: new URL(request.url),
-        pattern: '/settings',
-      })
-      expect(services.transferRemovedMemberAssets).toHaveBeenCalledWith(
-        {},
-        { id: 'owner', workspaceId: 'workspace' },
-        'workspace-removed-member',
-        'owner',
-      )
-      expect(response.data).toEqual({
-        ok: true,
-        code: 'removed',
-        intent: 'remove-member',
-      })
-      expect(response.init?.status).toBe(200)
-    }
+      { id: 'owner', workspaceId: 'workspace' },
+      'workspace-removed-member',
+      'owner',
+    )
+    expect(response.data).toEqual({
+      ok: true,
+      code: 'removed',
+      intent: 'remove-member',
+    })
+    expect(response.init?.status).toBe(200)
   })
   test('returns an invalid result for missing owner input', async () => {
     const request = postForm({ intent: 'grant-admin' })

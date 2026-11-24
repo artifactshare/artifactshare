@@ -1,17 +1,11 @@
-import { Link, redirect } from 'react-router'
+import { redirect } from 'react-router'
 import type { Route } from './+types/dev.sign-in'
 import { AuthCard, AuthFormStack } from '~/components/app/auth-card'
 import { DevSignInOption } from '~/components/app/dev-sign-in-option'
-import { Stack } from '~/components/layout/stack'
 import { isViteDev } from '~/lib/is-vite-dev'
 import { safeInternalNext } from '~/lib/safe-next'
 import { authHandlerWithHangDetection } from '~/services/auth.server'
-import {
-  HEADER_DEPENDENT_SCREEN_SCENARIOS,
-  isScreenScenario,
-} from '~/services/dev-screen-state.server'
 import { IconShield, IconUser } from '@tabler/icons-react'
-import scenarioIds from '../../../../scripts/screen-scenarios.json'
 
 const DEFAULT_NEXT = '/settings/tokens'
 
@@ -35,14 +29,7 @@ function copyHeader(from: Headers, to: Headers, name: string): void {
 export function loader({ request }: Route.LoaderArgs) {
   if (!isViteDev()) throw new Response(null, { status: 404 })
   const url = new URL(request.url)
-  const scenario = url.searchParams.get('scenario')
-  return {
-    next: safeDevSignInTarget(url.searchParams.get('next')),
-    scenario: isScreenScenario(scenario) ? scenario : null,
-    scenarios: scenarioIds.filter(
-      (id) => !HEADER_DEPENDENT_SCREEN_SCENARIOS.includes(id),
-    ),
-  }
+  return { next: safeDevSignInTarget(url.searchParams.get('next')) }
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -59,8 +46,6 @@ export async function action({ request }: Route.ActionArgs) {
     throw new Response('Bad request', { status: 400 })
   }
   const safeNext = safeDevSignInTarget(form.get('next'))
-  const scenarioValue = form.get('scenario')?.toString()
-  const scenario = isScreenScenario(scenarioValue) ? scenarioValue : undefined
   const headers = new Headers()
   copyHeader(request.headers, headers, 'user-agent')
   copyHeader(request.headers, headers, 'sec-fetch-site')
@@ -74,7 +59,7 @@ export async function action({ request }: Route.ActionArgs) {
     new Request(new URL('/api/auth/dev/sign-in', request.url), {
       method: 'POST',
       headers,
-      body: JSON.stringify({ persona, ...(scenario ? { scenario } : {}) }),
+      body: JSON.stringify({ persona }),
     }),
   )
 
@@ -90,7 +75,7 @@ export async function action({ request }: Route.ActionArgs) {
 export default function DevSignIn({
   loaderData,
 }: Pick<Route.ComponentProps, 'loaderData'>) {
-  const { next, scenario, scenarios } = loaderData
+  const { next } = loaderData
 
   return (
     <AuthCard
@@ -98,39 +83,8 @@ export default function DevSignIn({
       sub="Fixed dev users for this workspace. Unavailable outside Vite dev."
     >
       <AuthFormStack aria-label="Dev users">
-        <Stack gap="2" className="text-left">
-          <p className="text-foreground m-0 text-sm font-semibold">
-            Representative state
-          </p>
-          <Stack gap="1" className="text-xs">
-            <Link
-              to={`/dev/sign-in?next=${encodeURIComponent(next)}`}
-              className={
-                scenario === null
-                  ? 'text-foreground font-semibold'
-                  : 'text-muted-foreground'
-              }
-            >
-              No state
-            </Link>
-            {scenarios.map((id) => (
-              <Link
-                key={id}
-                to={`/dev/sign-in?scenario=${encodeURIComponent(id)}&next=${encodeURIComponent(next)}`}
-                className={
-                  scenario === id
-                    ? 'text-foreground font-semibold'
-                    : 'text-muted-foreground'
-                }
-              >
-                {id}
-              </Link>
-            ))}
-          </Stack>
-        </Stack>
         <DevSignInOption
           next={next}
-          scenario={scenario ?? undefined}
           persona="free-owner"
           icon={<IconShield className="size-4.5" />}
           name="Free owner"
@@ -138,7 +92,6 @@ export default function DevSignIn({
         />
         <DevSignInOption
           next={next}
-          scenario={scenario ?? undefined}
           persona="plus-owner"
           icon={<IconUser className="size-4.5" />}
           name="Plus owner"
@@ -146,7 +99,6 @@ export default function DevSignIn({
         />
         <DevSignInOption
           next={next}
-          scenario={scenario ?? undefined}
           persona="team-owner"
           icon={<IconShield className="size-4.5" />}
           name="Team owner"
@@ -154,7 +106,6 @@ export default function DevSignIn({
         />
         <DevSignInOption
           next={next}
-          scenario={scenario ?? undefined}
           persona="team-member"
           icon={<IconUser className="size-4.5" />}
           name="Team member"

@@ -49,8 +49,6 @@ describe('/dev/sign-in loader', () => {
 
     expect(result).toEqual({
       next: '/settings/tokens',
-      scenario: null,
-      scenarios: expect.arrayContaining(['home/content-rich']),
     })
   })
 
@@ -65,8 +63,6 @@ describe('/dev/sign-in loader', () => {
 
     expect(result).toEqual({
       next: '/projects/p1',
-      scenario: null,
-      scenarios: expect.any(Array),
     })
   })
 
@@ -76,6 +72,35 @@ describe('/dev/sign-in loader', () => {
     } as never)
 
     expect(result.next).toBe('/')
+  })
+
+  test('renders one sign-in form per dev persona', async () => {
+    const loaderData = await loader({
+      request: new Request('https://artifactshare.test/dev/sign-in?next=%2F'),
+    } as never)
+    const router = createMemoryRouter(
+      [
+        {
+          id: 'dev-sign-in',
+          path: '/',
+          Component: UNSAFE_withComponentProps(DevSignIn),
+        },
+      ],
+      { hydrationData: { loaderData: { 'dev-sign-in': loaderData } } },
+    )
+    try {
+      const html = renderToStaticMarkup(<RouterProvider router={router} />)
+      for (const persona of [
+        'free-owner',
+        'plus-owner',
+        'team-owner',
+        'team-member',
+      ])
+        expect(html).toContain(`name="persona" value="${persona}"`)
+      expect(html).not.toContain('name="scenario"')
+    } finally {
+      router.dispose()
+    }
   })
 
   test('sanitizes an unsafe next path to AI tools and CLI', async () => {
@@ -89,102 +114,7 @@ describe('/dev/sign-in loader', () => {
 
     expect(result).toEqual({
       next: '/settings/tokens',
-      scenario: null,
-      scenarios: expect.any(Array),
     })
-  })
-
-  test('returns an allowlisted scenario and clears unknown scenarios', async () => {
-    const selected = await loader({
-      request: new Request(
-        'https://artifactshare.test/dev/sign-in?scenario=home%2Fcontent-rich',
-      ),
-    } as never)
-    expect(selected.scenario).toBe('home/content-rich')
-
-    const unknown = await loader({
-      request: new Request(
-        'https://artifactshare.test/dev/sign-in?scenario=unknown',
-      ),
-    } as never)
-    expect(unknown.scenario).toBeNull()
-  })
-
-  test('a retired Settings error deep link selects No state and signs in without a scenario', async () => {
-    const render = async (scenario: string) => {
-      const loaderData = await loader({
-        request: new Request(
-          `https://artifactshare.test/dev/sign-in?scenario=${encodeURIComponent(scenario)}`,
-        ),
-      } as never)
-      const router = createMemoryRouter(
-        [
-          {
-            id: 'dev-sign-in',
-            path: '/',
-            Component: UNSAFE_withComponentProps(DevSignIn),
-          },
-        ],
-        { hydrationData: { loaderData: { 'dev-sign-in': loaderData } } },
-      )
-      try {
-        const html = renderToStaticMarkup(<RouterProvider router={router} />)
-        return { scenario: loaderData.scenario, html }
-      } finally {
-        router.dispose()
-      }
-    }
-    const noStateSelected = /class="[^"]*font-semibold[^"]*"[^>]*>No state</
-
-    for (const retired of [
-      'settings-general/forbidden',
-      'settings-general/not-found',
-      'settings-general/unexpected-error',
-    ]) {
-      const { scenario, html } = await render(retired)
-      expect(scenario).toBeNull()
-      expect(html).toMatch(noStateSelected)
-      expect(html).not.toContain('name="scenario"')
-    }
-
-    const supported = await render('home/content-rich')
-    expect(supported.scenario).toBe('home/content-rich')
-    expect(supported.html).not.toMatch(noStateSelected)
-    expect(supported.html).toContain(
-      'name="scenario" value="home/content-rich"',
-    )
-  })
-
-  test('does not list scenarios that require a dev screen state header', async () => {
-    const result = await loader({
-      request: new Request('https://artifactshare.test/dev/sign-in'),
-    } as never)
-
-    expect(result.scenarios).toContain('settings/result-warning')
-    // The created-secret state reads no header: its secret comes from the
-    // real token form, so a developer can open it from the picker.
-    expect(result.scenarios).toContain('settings-tokens/created-secret')
-    for (const scenario of [
-      'settings-billing/subscribed',
-      'settings-billing/near-limit',
-      'settings-billing/continuing-near-limit',
-      'settings-billing/purchase',
-      'settings-billing/past-due',
-      'viewer/bridge-attribution',
-    ])
-      expect(result.scenarios).not.toContain(scenario)
-  })
-
-  test('no longer lists the retired Team-without-subscription billing states', async () => {
-    const result = await loader({
-      request: new Request('https://artifactshare.test/dev/sign-in'),
-    } as never)
-
-    expect(result.scenarios).toContain('settings/result-warning')
-    expect(result.scenarios).not.toContain('settings-billing/team-unsubscribed')
-    expect(result.scenarios).not.toContain(
-      'settings-billing/team-unsubscribed-high-usage',
-    )
   })
 })
 
@@ -217,45 +147,6 @@ describe('/dev/sign-in action', () => {
       ).resolves.toEqual({ persona })
     },
   )
-
-  test('passes an allowlisted scenario to the auth endpoint', async () => {
-    authHandlerMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true })),
-    )
-    await action({
-      request: new Request('https://artifactshare.test/dev/sign-in', {
-        method: 'POST',
-        body: new URLSearchParams({
-          persona: 'free-owner',
-          scenario: 'home/content-rich',
-        }),
-      }),
-    } as never)
-    await expect(
-      (authHandlerMock.mock.calls[0][0] as Request).json(),
-    ).resolves.toEqual({
-      persona: 'free-owner',
-      scenario: 'home/content-rich',
-    })
-  })
-
-  test('ignores an unknown scenario', async () => {
-    authHandlerMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true })),
-    )
-    await action({
-      request: new Request('https://artifactshare.test/dev/sign-in', {
-        method: 'POST',
-        body: new URLSearchParams({
-          persona: 'free-owner',
-          scenario: 'unknown',
-        }),
-      }),
-    } as never)
-    await expect(
-      (authHandlerMock.mock.calls[0][0] as Request).json(),
-    ).resolves.toEqual({ persona: 'free-owner' })
-  })
 
   test('returns 404 outside Vite dev', async () => {
     isViteDevMock.mockReturnValueOnce(false)

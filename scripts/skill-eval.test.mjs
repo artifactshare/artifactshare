@@ -265,7 +265,7 @@ test('planner accepts exactly the dev personas and rejects invalid input before 
     /Invalid or missing argument.*--persona/u,
   )
 })
-test('sign-in sends the selected persona without a screen scenario', async () => {
+test('sign-in sends the selected persona', async () => {
   for (const persona of [
     'free-owner',
     'plus-owner',

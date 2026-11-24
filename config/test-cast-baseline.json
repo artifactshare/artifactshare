@@ -42,7 +42,6 @@
   "apps/web/app/services/auth.server.upgrade.test.ts": 1,
   "apps/web/app/services/billing.server.test.ts": 16,
   "apps/web/app/services/comments.server.test.ts": 1,
-  "apps/web/app/services/dev-screen-state.server.test.ts": 8,
   "apps/web/app/services/events.server.test.ts": 2,
   "apps/web/app/services/link-abuse-judgment/providers.test.ts": 3,
   "apps/web/app/services/link-abuse-signals.server.test.ts": 1,

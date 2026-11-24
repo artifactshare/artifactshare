@@ -52,7 +52,6 @@ import {
   readUpdatesNotice,
   updatesNoticePresentation,
 } from '~/lib/updates-notice.server'
-import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import { countReceivedAccessRequests } from '~/services/access-requests.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 export { shouldRevalidate } from '~/lib/root-locale'
@@ -82,11 +81,6 @@ export const links: Route.LinksFunction = () => [
 export const middleware = [sandboxBlockReportMiddleware, sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
-  if (
-    new URL(request.url).pathname === '/settings/general' &&
-    isDevScreenStateRequest(request, 'settings-general/root-error')
-  )
-    throw new Error('Root screen fixture')
   const linkDomainState = context.get(linkDomainContext)
   const linkDomain = linkDomainState !== null
   // Keep direct internal viewer navigation canonical on link hosts.
@@ -99,17 +93,12 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
   const appTheme = getAppTheme(request)
   const notice = user ? await getLatestVisibleNotice() : undefined
   const noticeState = readUpdatesNotice(request)
-  const updatesNotice = isDevScreenStateRequest(
-    request,
-    'home/updates-menu-open',
-  )
-    ? { slug: 'dev-screen-updates-notice', dot: true, new: true }
-    : updatesNoticePresentation(noticeState, notice?.slug)
+  const updatesNotice = updatesNoticePresentation(noticeState, notice?.slug)
   const accessRequestNotice = user
     ? {
-        count: isDevScreenStateRequest(request, 'viewer/access-requests')
-          ? 2
-          : await countReceivedAccessRequests(createDb(), user).catch(() => 0),
+        count: await countReceivedAccessRequests(createDb(), user).catch(
+          () => 0,
+        ),
       }
     : { count: 0 }
   const analyticsMeasurementId: string | null = env.GA4_MEASUREMENT_ID

@@ -13,12 +13,6 @@ import * as billingUsage from '~/services/billing-usage.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { BILLING_PRICES, PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
-import { ensureDevScreenState } from '~/services/dev-screen-state.server'
-import {
-  captureStripePeriod,
-  captureStripeVars,
-  startCaptureStripe,
-} from '../../../../../../../scripts/capture-stripe.mjs'
 import type { SessionUser } from '~/lib/user'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
@@ -93,11 +87,10 @@ describe('/settings/billing loader', () => {
   })
 
   test.each([true, false])(
-    'a capture header changes no billing output when Stripe configured=%s',
+    'a Team subscription loads its contract only when Stripe configured=%s',
     async (configured) => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-07-15T00:00:00.000Z'))
-      vi.stubEnv('DEV', true)
       await seedAdmin(db, 'u-a', 'ws-a')
       await updateWorkspacePlan(db, 'ws-a', 'team', 'active', 'sub_1')
       requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
@@ -111,27 +104,13 @@ describe('/settings/billing loader', () => {
       })
       const savedKey = env.STRIPE_SECRET_KEY
       if (!configured) env.STRIPE_SECRET_KEY = ''
-      const load = (scenario?: string) =>
-        loader({
-          context: new RouterContextProvider(),
-          request: new Request('https://example.test/settings/billing', {
-            headers: scenario
-              ? { 'X-ArtifactShare-Dev-Screen-State': scenario }
-              : {},
-          }),
-        } as never)
       try {
-        const plain = await load()
-        expect(plain.billingConfigured).toBe(configured)
-        expect(plain.contract !== null).toBe(configured)
-        for (const state of [
-          'subscribed',
-          'past-due',
-          'continuing-near-limit',
-          'purchase',
-          'near-limit',
-        ])
-          expect(await load(`settings-billing/${state}`), state).toEqual(plain)
+        const result = await loader({
+          context: new RouterContextProvider(),
+          request: new Request('https://example.test/settings/billing'),
+        } as never)
+        expect(result.billingConfigured).toBe(configured)
+        expect(result.contract !== null).toBe(configured)
       } finally {
         env.STRIPE_SECRET_KEY = savedKey
         loadSubscriptionContractMock.mockReset()
@@ -140,92 +119,101 @@ describe('/settings/billing loader', () => {
     },
   )
 
-  test.each([
-    ['purchase', true],
-    ['purchase', false],
-    ['near-limit', true],
-    ['near-limit', false],
-  ] as const)(
-    'a capture header changes nothing for the Free %s seed when Stripe configured=%s',
-    async (state, configured) => {
-      vi.stubEnv('DEV', true)
-      const workspaceId = await ownSeededWorkspace(
-        db,
-        await ensureDevScreenState(
-          db,
-          `settings-billing/${state}`,
-          '2026-06-01T00:00:00.000Z',
-          'team',
-        ),
-      )
-      requireUserMock.mockReturnValue(sessionUser('u-a', workspaceId))
+  test.each([true, false])(
+    'a Free workspace without a subscription loads no contract when Stripe configured=%s',
+    async (configured) => {
+      await seedAdmin(db, 'u-a', 'ws-a')
+      requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
       const savedKey = env.STRIPE_SECRET_KEY
       if (!configured) env.STRIPE_SECRET_KEY = ''
-      const load = (scenario?: string) =>
-        loader({
-          context: new RouterContextProvider(),
-          request: new Request('https://example.test/settings/billing', {
-            headers: scenario
-              ? { 'X-ArtifactShare-Dev-Screen-State': scenario }
-              : {},
-          }),
-        } as never)
       try {
-        const plain = await load()
-        expect(plain).toMatchObject({
+        const result = await loader({
+          context: new RouterContextProvider(),
+          request: new Request('https://example.test/settings/billing'),
+        } as never)
+        expect(result).toMatchObject({
           billingConfigured: configured,
           hasSubscription: false,
           contract: null,
         })
-        for (const header of [
-          'subscribed',
-          'past-due',
-          'continuing-near-limit',
-          'purchase',
-          'near-limit',
-        ])
-          expect(await load(`settings-billing/${header}`), header).toEqual(
-            plain,
-          )
+        expect(loadSubscriptionContractMock).not.toHaveBeenCalled()
       } finally {
         env.STRIPE_SECRET_KEY = savedKey
       }
     },
   )
 
-  test('a synced capture subscription reaches the page with its current-period charge', async () => {
+  test('a subscription that started this month reaches the page with its current-period charge', async () => {
     const actual = await vi.importActual<
       typeof import('~/services/billing.server')
     >('~/services/billing.server')
     loadSubscriptionContractMock.mockImplementation(
       actual.loadSubscriptionContract,
     )
-    const fake = await startCaptureStripe()
-    const saved = { ...env }
-    Object.assign(env, captureStripeVars(fake.origin))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-07-15T00:00:00.000Z'))
+    const periodStart = Date.UTC(2026, 6, 1) / 1000
+    const periodEnd = Date.UTC(2026, 7, 1) / 1000
+    // The real contract mapping reads this Stripe reply; fetch is replaced so
+    // no request can reach the network.
+    const stripeRequests: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init)
+        stripeRequests.push(
+          `${request.method} ${new URL(request.url).pathname}`,
+        )
+        return Response.json({
+          object: 'subscription',
+          id: 'sub_1',
+          status: 'active',
+          currency: 'usd',
+          cancel_at_period_end: false,
+          items: {
+            object: 'list',
+            has_more: false,
+            data: [
+              {
+                object: 'subscription_item',
+                id: 'si_1',
+                current_period_start: periodStart,
+                current_period_end: periodEnd,
+                price: {
+                  object: 'price',
+                  id: env.STRIPE_PRICE_TEAM_MONTHLY,
+                  currency: 'usd',
+                  unit_amount: Math.round(BILLING_PRICES.team.usd.month * 100),
+                  recurring: { interval: 'month' },
+                  currency_options: {
+                    usd: {
+                      unit_amount: Math.round(
+                        BILLING_PRICES.team.usd.month * 100,
+                      ),
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        })
+      }),
+    )
     try {
-      const workspaceId = await ownSeededWorkspace(
-        db,
-        await ensureDevScreenState(
-          db,
-          'settings-billing/subscribed',
-          '2026-06-01T00:00:00.000Z',
-          'team',
-          env,
-        ),
-      )
-      requireUserMock.mockReturnValue(sessionUser('u-a', workspaceId))
+      await seedAdmin(db, 'u-a', 'ws-a')
+      await updateWorkspacePlan(db, 'ws-a', 'team', 'active', 'sub_1')
+      requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
       const result = await loader({
         context: new RouterContextProvider(),
         request: new Request('https://example.test/settings/billing'),
       } as never)
-      const period = captureStripePeriod()
+      expect(stripeRequests).toEqual(['GET /v1/subscriptions/sub_1'])
       expect(result.contract).toEqual({
         plan: 'team',
         interval: 'monthly',
         currency: 'usd',
         amount: BILLING_PRICES.team.usd.month,
-        renewsAt: new Date(period.end * 1000).toISOString(),
+        renewsAt: new Date(periodEnd * 1000).toISOString(),
         cancelAtPeriodEnd: false,
       })
       // The period starts this month, so the estimate bills the plan.
@@ -233,30 +221,19 @@ describe('/settings/billing loader', () => {
         currency: 'usd',
         planCharge: 'billed',
         planAmount: BILLING_PRICES.team.usd.month,
-        planDate: new Date(period.start * 1000).toISOString(),
+        planDate: new Date(periodStart * 1000).toISOString(),
         overageEnabled: true,
       })
     } finally {
-      Object.assign(env, saved)
-      delete env.STRIPE_API_ORIGIN
-      delete env.STRIPE_WEBHOOK_SECRET
+      vi.unstubAllGlobals()
       loadSubscriptionContractMock.mockReset()
       loadSubscriptionContractMock.mockResolvedValue(null)
-      await fake.close()
     }
   })
 
-  test('the default capture seed loads a configured Free workspace without a subscription', async () => {
-    const workspaceId = await ownSeededWorkspace(
-      db,
-      await ensureDevScreenState(
-        db,
-        'settings-billing/purchase',
-        '2026-06-01T00:00:00.000Z',
-        'team',
-      ),
-    )
-    requireUserMock.mockReturnValue(sessionUser('u-a', workspaceId))
+  test('a configured Free workspace without a subscription offers both checkouts', async () => {
+    await seedAdmin(db, 'u-a', 'ws-a')
+    requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
     const context = new RouterContextProvider()
 
     const shell = await loadSettingsShell(context)
@@ -970,31 +947,6 @@ async function seedBase(db: Kysely<DB>) {
       },
     ])
     .execute()
-}
-
-/** Moves u-a into a capture seed's workspace as its owner. */
-async function ownSeededWorkspace(
-  db: Kysely<DB>,
-  { workspaceId }: { workspaceId: string },
-) {
-  const now = '2026-06-01T00:00:00.000Z'
-  await db
-    .updateTable('users')
-    .set({ workspace_id: workspaceId })
-    .where('id', '=', 'u-a')
-    .execute()
-  await db
-    .insertInto('workspace_members')
-    .values({
-      workspace_id: workspaceId,
-      user_id: 'u-a',
-      role: 'owner',
-      status: 'active',
-      created_at: now,
-      updated_at: now,
-    })
-    .execute()
-  return workspaceId
 }
 
 async function seedAdmin(db: Kysely<DB>, userId: string, workspaceId: string) {

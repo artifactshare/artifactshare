@@ -1919,7 +1919,7 @@ test.each([
   { index: 0, classification: 'artifact', directive: 'connect-src' },
   { index: 1, classification: 'environment', directive: 'script-src' },
 ] as const)(
-  'viewer capture seed preserves a parse-time $classification report until the parent hydrates',
+  'a diagnostic file preserves a parse-time $classification report until the parent hydrates',
   async ({ index, classification, directive }) => {
     const result = await server.commands.cspDiagnostic(
       injectReadyReporter(CSP_DIAGNOSTIC_BODIES[index]),

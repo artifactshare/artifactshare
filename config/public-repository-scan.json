@@ -258,7 +258,7 @@
     },
     {
       "category": "personal-data",
-      "path": "^apps/web/app/services/(auth\\.server(?:\\..*)?|dev-screen-state\\.server|projects-shared\\.server\\.test|workspace-domain-claims\\.server\\.test)\\.(ts|tsx)$",
+      "path": "^apps/web/app/services/(auth\\.server(?:\\..*)?|projects-shared\\.server\\.test|workspace-domain-claims\\.server\\.test)\\.(ts|tsx)$",
       "pattern": "@artifactshare\\.local|@[^ ]+\\.example|@(corp|newcorp)\\.com",
       "reason": "synthetic development and test identities"
     },

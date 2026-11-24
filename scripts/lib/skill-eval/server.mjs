@@ -23,7 +23,6 @@ export async function localRequest(
   return { response, body }
 }
 export async function signIn(baseUrl, persona, fetcher) {
-  // No screen scenario: sign-in must not reset/seed a walkthrough's existing data.
   const { response, body } = await localRequest(
     baseUrl,
     '/api/auth/dev/sign-in',
