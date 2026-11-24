@@ -213,7 +213,8 @@
   --secondary: var(--muted);
   --secondary-foreground: var(--foreground);
   --accent-foreground: var(--foreground);
-  --input: var(--border);
+  /* Enabled field boundaries keep 3:1 against background, card, popover and muted. */
+  --input: rgba(55, 53, 47, 0.57);
   --ring: var(--link);
   --radius: 6px;
   --sidebar: var(--muted);
@@ -236,6 +237,7 @@ html[data-theme='dark'] {
   --muted-foreground: rgba(231, 226, 216, 0.77);
   --faint: rgba(231, 226, 216, 0.56);
   --border: rgba(231, 226, 216, 0.13);
+  --input: rgba(231, 226, 216, 0.42);
   --border-strong: rgba(231, 226, 216, 0.24);
   --divider: rgba(231, 226, 216, 0.08);
   --accent: rgba(231, 226, 216, 0.07);
@@ -265,6 +267,7 @@ html[data-theme='dark'] {
     --muted-foreground: rgba(231, 226, 216, 0.77);
     --faint: rgba(231, 226, 216, 0.56);
     --border: rgba(231, 226, 216, 0.13);
+    --input: rgba(231, 226, 216, 0.42);
     --border-strong: rgba(231, 226, 216, 0.24);
     --divider: rgba(231, 226, 216, 0.08);
     --accent: rgba(231, 226, 216, 0.07);

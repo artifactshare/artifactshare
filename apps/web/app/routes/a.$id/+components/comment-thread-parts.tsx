@@ -231,7 +231,7 @@ export function CommentReplyComposer({
       {variant === 'inline' ? (
         <textarea
           ref={inputRef}
-          className="text-foreground min-h-comment-textarea border-divider bg-card w-full resize-y rounded-[var(--r-lg)] border p-2.5 text-sm"
+          className="text-foreground min-h-comment-textarea border-input bg-card w-full resize-y rounded-[var(--r-lg)] border p-2.5 text-sm"
           value={value}
           maxLength={MAX_COMMENT_BODY_LENGTH}
           aria-label={t('comments.replyLabel')}
@@ -241,7 +241,7 @@ export function CommentReplyComposer({
       ) : (
         <Textarea
           ref={inputRef}
-          className="text-foreground min-h-comment-textarea border-divider bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
+          className="text-foreground min-h-comment-textarea bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
           value={value}
           maxLength={MAX_COMMENT_BODY_LENGTH}
           aria-label={t('comments.replyLabel')}
