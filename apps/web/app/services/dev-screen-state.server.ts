@@ -2492,6 +2492,38 @@ async function seedMixedPresetsFixture(
   }
 }
 
+/**
+ * Settings capture states write their rows through the production services
+ * that create them in the product (bots, API tokens, members, CLI credentials,
+ * external links). The direct writes that remain, and why:
+ *
+ * - Workspace anchor and default reset, Billing reset fields before the
+ *   subscription sync, near-limit usage counters: a deterministic local anchor;
+ *   production derives the workspace from sign-up, and capture usage is
+ *   synthetic.
+ * - Synthetic human accounts and profile updates (long-owner name and address,
+ *   initial-avatar reset): accounts come from auth; membership is still a
+ *   service write.
+ * - Transfer file, inventory artifact rows and the private link precursor, and
+ *   their ownership, container and reset: creating an artifact needs upload
+ *   storage; sharing the link still goes through the product's edit service.
+ * - Synthetic CLI source sessions and the pending Publisher device code: they
+ *   stand in for the auth device endpoints; the production helpers write the
+ *   approval, client, profile, authorities, credential and family.
+ * - Timestamps that show past use, expiry, order or stopped history, and the
+ *   zero-state link expiry: services write at the current clock.
+ * - The single long bot email: an overflow fixture beyond the generator's
+ *   normal length.
+ * - Historical activity audit events: past actions without replaying
+ *   destructive or external operations.
+ * - Slack connection upsert and delete: install and revoke need live Slack.
+ * - Scoped cleanup of old or capture-changed fixture rows: capture reset is
+ *   local-only.
+ *
+ * A fixture row is recognized inside its scenario workspace by its name (or by
+ * its fixed ID when the seed writes it directly). Rows in other workspaces and
+ * rows whose name matches no fixture are left alone.
+ */
 export async function seedDevScreenState(
   db: Kysely<DB>,
   scenario: string,
