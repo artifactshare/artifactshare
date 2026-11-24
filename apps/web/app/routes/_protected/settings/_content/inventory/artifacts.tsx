@@ -15,57 +15,6 @@ import { ArtifactFilters } from './+components/artifact-filters'
 import { ArtifactsTable } from './+components/artifacts-table'
 import { Pager } from '~/components/form/pager'
 import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
-import type { ScreenSpec } from '~/types/screen'
-
-export const screen = {
-  id: 'settings-inventory-artifacts',
-  route: {
-    en: '/settings/inventory/artifacts',
-  },
-  auth: 'team-owner',
-  loop: 'support',
-  metric: '成果物の棚卸しを支える',
-  role: '成果物を棚卸しする',
-  primaryAction: '成果物を確認する',
-  states: [
-    {
-      id: 'paginated',
-      description: 'Second page of files',
-      setup: {
-        query: '?page=2',
-        scenario: 'settings-inventory-artifacts/paginated',
-        reseedBeforeCapture: true,
-        ready: {
-          selector:
-            'a[href="/settings/inventory/artifacts"]:text-is("Previous")',
-          description: 'Previous page link',
-        },
-      },
-    },
-    {
-      id: 'populated',
-      description: 'populated responsive controls and content',
-      setup: {
-        scenario: 'settings-inventory-artifacts/populated',
-        reseedBeforeCapture: true,
-      },
-    },
-    {
-      id: 'empty',
-      description: 'empty responsive controls and content',
-      setup: {
-        scenario: 'settings-inventory-artifacts/empty',
-        reseedBeforeCapture: true,
-      },
-    },
-    {
-      id: 'default',
-      description: '成果物棚卸し',
-      setup: {},
-    },
-  ],
-} satisfies ScreenSpec
-
 export async function loader({ request, context }: Route.LoaderArgs) {
   requireSettingsAdminPage(context)
   const user = requireUser(context)

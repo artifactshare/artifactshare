@@ -1637,7 +1637,7 @@ export async function refreshSandboxFrameUrl(
     executionEnv,
   )
   // The app server issues both frame URLs. In development the sandbox may run
-  // on a non-default port (`pnpm screens:capture:local`), so the renewal must
+  // on a non-default port (`DEV_SANDBOX_PORT`), so the renewal must
   // stay on the port of the server-issued entrypoint instead of a constant.
   const expectedPort =
     executionEnv.APP_ENV === 'production' ? '' : entrypointUrl.port

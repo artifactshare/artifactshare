@@ -9,7 +9,6 @@ import { linkDomainContext, userContext } from '~/middleware/context'
 import type { SessionUser } from '~/lib/user'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { t as translate } from '~/lib/i18n'
-import type { ScreenState } from '~/types/screen'
 import type { DB } from '~/types/db'
 
 const dbHolder = vi.hoisted(() => ({ db: null as unknown }))
@@ -81,7 +80,7 @@ vi.mock('~/hooks/use-t', () => ({
   }),
 }))
 vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => false }))
-import Home, { loader, meta, screen } from '../_public/($locale)/_home/index'
+import Home, { loader, meta } from '../_public/($locale)/_home/index'
 import * as viewerRoute from '../a.$id/+loader.server'
 
 const TS = '2026-06-14T00:00:00.000Z'
@@ -327,8 +326,7 @@ describe('/ home page', () => {
     },
   )
 
-  test('canonical route declares both stable home URL locales', async () => {
-    expect(screen.route).toEqual({ en: '/', ja: '/ja' })
+  test('loader resolves the English and Japanese home locales', async () => {
     const context = new Map()
     context.set(linkDomainContext, null)
     context.set(userContext, null)
@@ -344,11 +342,11 @@ describe('/ home page', () => {
     })
   })
 
-  test.each(screen.states.filter((state) => state.id.startsWith('landing-')))(
-    '$id readiness matches the real anonymous Landing render',
-    (state: ScreenState) => {
+  test.each(['', '?next=/projects/example', '?next=/a/example'])(
+    'anonymous Landing with query %j renders its heading without the signed-in hydration marker',
+    (query) => {
       layoutContext.signedIn = false
-      layoutContext.query = state.setup.query ?? ''
+      layoutContext.query = query
       try {
         const html = renderToStaticMarkup(
           <TooltipProvider>
@@ -357,15 +355,8 @@ describe('/ home page', () => {
             } as never)}
           </TooltipProvider>,
         )
-        expect(state.setup.ready?.selector).toBe('main h1')
         expect(html).toMatch(/<main[^>]*>[\s\S]*<h1[ >]/)
         expect(html).not.toContain('data-recent-hydrated')
-        expect(screen.ready.selector).toBe('[data-recent-hydrated]')
-        for (const signedInState of screen.states.filter(
-          (item) => !item.id.startsWith('landing-'),
-        )) {
-          expect((signedInState as ScreenState).setup.ready).toBeUndefined()
-        }
       } finally {
         layoutContext.signedIn = true
         layoutContext.query = ''

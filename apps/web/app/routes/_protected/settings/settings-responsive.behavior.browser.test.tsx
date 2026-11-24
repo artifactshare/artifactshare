@@ -62,14 +62,10 @@ vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'owner' }),
 }))
 import MembersPage, {
-  screen as membersScreen,
   action as membersAction,
   loader as membersLoader,
 } from './_content/index'
-import GeneralPage, {
-  screen as generalScreen,
-  action as updateGeneral,
-} from './_content/general'
+import GeneralPage, { action as updateGeneral } from './_content/general'
 import ActivityPage from './_content/activity'
 import AnalyticsPage from './_content/analytics'
 import IntegrationsPage from './_content/integrations'
@@ -1138,6 +1134,21 @@ test('consumes the Slack callback notice on the integrations route', async () =>
   )
 })
 
+// Waits for the submission's visible status: a saved status or an invalid alert.
+async function expectVisibleStatus(code: 'ok' | 'invalid') {
+  const selector =
+    code === 'ok'
+      ? '[role="status"][data-settings-status="ok"]'
+      : '[role="alert"][data-settings-status="invalid"]'
+  await vi.waitFor(() =>
+    expect(
+      document
+        .querySelector<HTMLElement>(selector)
+        ?.checkVisibility({ visibilityProperty: true }),
+    ).toBe(true),
+  )
+}
+
 test.each(['ok', 'invalid'] as const)(
   'Japanese General submission reports %s at its form',
   async (code) => {
@@ -1147,39 +1158,28 @@ test.each(['ok', 'invalid'] as const)(
         kind: name.trim() ? 'ok' : 'invalid',
       }),
     )
-    const success = generalScreen.states.find(
-      (state) => state.id === 'result-success',
-    )?.setup
-    const failure = generalScreen.states.find(
-      (state) => state.id === 'result-error',
-    )?.setup
-    const interactions = (code === 'ok' ? success : failure)?.interactions
-    const ready = success?.postInteractionReady
-    const errorReady = failure?.postInteractionReady
-    if (!interactions || !ready || !errorReady)
-      throw new Error('Missing General result setup')
     await withScreen(
       <GeneralPage loaderData={{ owner: null }} />,
       async () => {
-        // Start with an empty required field so the capture must enter its own draft.
+        // Start with an empty required field so the submission enters its own draft.
         await page.getByRole('textbox').fill('')
-        for (const interaction of interactions) {
-          const target = page.elementLocator(
-            document.querySelector(interaction.selector)!,
+        await page
+          .elementLocator(document.querySelector('#workspace-name')!)
+          .fill(code === 'ok' ? 'Example workspace' : ' ')
+        await page
+          .elementLocator(
+            document.querySelector(
+              'form:has(#workspace-name) button[type="submit"]',
+            )!,
           )
-          if (interaction.action === 'fill')
-            await target.fill(interaction.value)
-          else await target.click()
-        }
-        if (code === 'ok') await commands.waitForScreenReady(ready)
-        else {
-          await commands.waitForScreenReady(errorReady)
-          await expect(
-            commands.waitForScreenReady({ ...ready, timeoutMs: 100 }),
-          ).rejects.toThrow('ready condition was not met: ' + ready.description)
-        }
+          .click()
+        await expectVisibleStatus(code)
+        if (code === 'invalid')
+          expect(
+            document.querySelector('[data-settings-status="ok"]'),
+          ).toBeNull()
       },
-      generalScreen.route.en,
+      '/settings/general',
       true,
       (args) =>
         updateGeneral({
@@ -1199,13 +1199,8 @@ test.each([
   'missing-transfer',
 ] as const)('Japanese Members submission reaches %s', async (id) => {
   const warning = id === 'result-warning' || id === 'missing-transfer'
-  // The committed-removal warning has no capture state: production reaches it
-  // only when the recipient becomes ineligible mid-submission.
-  const ready = warning
-    ? null
-    : membersScreen.states.find((state) => state.id === id)?.setup
-        ?.postInteractionReady
-  if (!warning && !ready) throw new Error('Missing Members result readiness')
+  // Production reaches the committed-removal warning only when the recipient
+  // becomes ineligible mid-submission.
   language.locale = 'ja'
   let removed = false
   const target = {
@@ -1324,7 +1319,7 @@ test.each([
           ),
         ).not.toBeNull(),
       )
-    } else if (ready) await commands.waitForScreenReady(ready)
+    } else await expectVisibleStatus(id === 'result-error' ? 'invalid' : 'ok')
     if (id === 'result-success') {
       const input = page.getByRole('searchbox')
       await input.fill('Pending search')

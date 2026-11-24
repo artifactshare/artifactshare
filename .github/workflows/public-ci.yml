@@ -554,10 +554,6 @@ jobs:
         if: matrix.project == 'chromium' && matrix.shard == 1
         timeout-minutes: 2
         run: node --test scripts/browser-waits.integration.mjs
-      - name: Verify bottom navigation in full-page captures
-        if: matrix.project == 'chromium' && matrix.shard == 1
-        timeout-minutes: 2
-        run: node --test scripts/screen-capture.integration.mjs
       - name: Verify scenario routes and in-app navigation
         if: matrix.project == 'chromium' && matrix.shard == 1
         run: pnpm check:browser-local-state

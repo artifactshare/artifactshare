@@ -154,9 +154,9 @@ export function originalHostnamePlugin(): Plugin {
 
 /**
  * Dev-server overrides for a private local stack. `pnpm dev` sets none of
- * these and keeps port 5173 with the Worker's own variables; the local
- * capture commands (`scripts/local-capture.mjs`) set them so the app, its
- * per-ID viewers and the sandbox links all follow the ports they chose.
+ * these and keeps port 5173 with the Worker's own variables. Setting
+ * `ARTIFACTSHARE_DEV_APP_PORT` and `ARTIFACTSHARE_DEV_SANDBOX_PORT` moves the
+ * app, its per-ID viewers and the sandbox links to those ports together.
  * The values are applied after `.dev.vars`, so they win over its URL.
  */
 export function devServerTopology(

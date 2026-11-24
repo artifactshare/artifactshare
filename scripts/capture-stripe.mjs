@@ -4,9 +4,8 @@
 // else. It is not a Stripe emulator: nothing is stored, and no request can
 // create, change or charge anything.
 //
-// `scripts/local-capture.mjs` starts it, writes `captureStripeVars(origin)`
-// over the copied Stripe variables so the app can only reach this server, and
-// stops it on every exit path.
+// The caller starts it and writes `captureStripeVars(origin)` over the copied
+// Stripe variables so the app can only reach this server.
 import { createServer } from 'node:http'
 import { BILLING_PRICES } from '../apps/web/app/lib/billing-prices.ts'
 

@@ -1,7 +1,6 @@
 import { bindI18n, type Locale } from '~/lib/i18n'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
-import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 // @vitest-environment happy-dom
 
 import * as React from 'react'
@@ -9,7 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import Device, { screen, verifyStateFrom } from './device'
+import Device, { verifyStateFrom } from './device'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () =>
@@ -740,18 +739,6 @@ describe('/device', () => {
     },
   )
 
-  test.each([
-    ['publisher-invalid', '#publisher-new'],
-    ['publisher-continue', '#publisher-continue'],
-    ['publisher-long-name', '#publisher-continue'],
-  ])('capture %s explicitly opens its intended choice', (id, selector) => {
-    const state = screen.states.find((candidate) => candidate.id === id)!
-    expect(state.setup).toMatchObject({
-      interactions: [{ action: 'click', selector }],
-      ready: { selector },
-    })
-  })
-
   test('shows a fixed requested project without the editable picker', async () => {
     deviceParams = new URLSearchParams('user_code=ab12-cd34')
     deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
@@ -1193,21 +1180,6 @@ describe('/device', () => {
     expect(container.textContent).not.toContain('device.retry')
     await React.act(async () => root.unmount())
   })
-})
-
-test('publisher capture queries match the seeded team workspace codes', () => {
-  for (const state of screen.states.filter(
-    (candidate) =>
-      candidate.id.startsWith('publisher-') ||
-      candidate.id.startsWith('unrestricted'),
-  )) {
-    const setup = state.setup as { scenario: string; query: string }
-    expect(new URLSearchParams(setup.query).get('user_code')).toBe(
-      devPublisherUserCode(
-        `dev-screen-team-${setup.scenario.replaceAll('/', '-')}`,
-      ),
-    )
-  }
 })
 
 test.each([

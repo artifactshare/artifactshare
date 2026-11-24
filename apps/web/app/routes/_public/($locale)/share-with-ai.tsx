@@ -43,28 +43,6 @@ import { socialMeta } from '~/lib/social-meta'
 import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
 import type { Route } from './+types/share-with-ai'
 import { IconInfoCircle } from '@tabler/icons-react'
-import type { ScreenSpec } from '~/types/screen'
-
-export const screen = {
-  id: 'share-with-ai',
-  route: {
-    en: '/share-with-ai',
-    ja: '/ja/share-with-ai',
-  },
-  auth: 'anonymous',
-  loop: 'share',
-  metric: 'AIを介した共有利用を増やす',
-  role: 'AIとの共有方法を伝える',
-  primaryAction: '共有方法を見る',
-  states: [
-    {
-      id: 'default',
-      description: '通常の Share with AI',
-      setup: {},
-    },
-  ],
-} satisfies ScreenSpec
-
 export { SHARE_WITH_AI_EN_PATH, SHARE_WITH_AI_JA_PATH }
 
 const EN_CANONICAL = `https://${APEX_HOST}${SHARE_WITH_AI_EN_PATH}`

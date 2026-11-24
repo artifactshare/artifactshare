@@ -20,6 +20,6 @@ Preserve the application's shared header and the separate document iframe when r
 
 ## Design Work
 
-Use Impeccable for UI design and review. Inspect the existing implementation and the references above before proposing changes. Follow the repository development workflow for validation and review.
+Use Impeccable for UI design and review. Inspect the existing implementation and the references above before proposing changes.
 
 Local previews, mockups, generated critiques, and tool runtime state live in ignored `.impeccable/` directories. They are working material; adopted product decisions belong in the relevant source document.

@@ -61,8 +61,8 @@ declare namespace Cloudflare {
     // Comma-separated Flagship boolean keys or string key=mode entries used in
     // non-production when the FLAGS binding is absent (e.g. local wrangler dev).
     DEV_FLAGS?: string
-    // Development-only ports of a local stack started away from 5173/5174 by
-    // `pnpm screens:capture:local`; unset in `pnpm dev` and production.
+    // Development-only ports of a local stack started away from 5173/5174;
+    // unset in `pnpm dev` and production.
     DEV_APP_PORT?: string
     DEV_SANDBOX_PORT?: string
     FLAGS?: import('../lib/flagship-fallback.server').FlagshipFlagsBinding

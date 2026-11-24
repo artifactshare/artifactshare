@@ -69,10 +69,10 @@ export const APP_DEV_PORT = 5173
 export const BUNDLE_SANDBOX_DEV_PORT = 5174
 
 /**
- * Development-only port overrides. `pnpm dev` leaves them unset; the local
- * capture commands (`scripts/local-capture.mjs`) start a private stack on
- * other ports and pass them to both Workers. Production never reads them, so
- * a stray value there cannot change or break a production URL.
+ * Development-only port overrides. `pnpm dev` leaves them unset; a private
+ * local stack started on other ports passes them to both Workers. Production
+ * never reads them, so a stray value there cannot change or break a
+ * production URL.
  */
 export type DevTopologyEnv = {
   APP_ENV: string
@@ -84,8 +84,7 @@ export type DevTopologyEnv = {
  * Reads an explicit development port; unset or empty means "use the default".
  * Ports below 1024 are rejected: they need privileges, and a default port
  * such as 443 disappears from `https://localhost:443`, so links would silently
- * point at another stack. `scripts/local-capture.mjs` imports this function
- * to check the ports it is given before anything is built.
+ * point at another stack.
  */
 export function parseDevPort(
   name: string,

@@ -11,7 +11,7 @@ import {
   type RouteObject,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { page, userEvent, server, commands } from 'vitest/browser'
+import { page, userEvent, commands } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { bindI18n } from '~/lib/i18n'
@@ -236,12 +236,20 @@ test.each(['loader', 'action', 'preview'])(
           '[data-screen-capture-error="route-error-boundary"]',
         ),
       ).toBeNull()
-      // The live Settings boundary capture's readiness: recovery link, top bar
-      // and Settings navigation.
-      const ready = bots.screen.states.find((state) => state.id === 'forbidden')
-        ?.setup.ready
-      if (!ready) throw new Error('Missing Settings error readiness')
-      await server.commands.waitForScreenReady(ready)
+      // The recovery link, top bar and Settings navigation stay visible.
+      for (const selector of [
+        '[data-screen-capture-error="settings-error-boundary"] a[href="/settings"]',
+        '#app-topbar',
+        'main nav a[href="/settings/billing"], main button[data-slot="sheet-trigger"]',
+      ])
+        await vi.waitFor(() =>
+          expect(
+            [...container.querySelectorAll<HTMLElement>(selector)].some(
+              (element) =>
+                element.checkVisibility({ visibilityProperty: true }),
+            ),
+          ).toBe(true),
+        )
       if (fault === 'loader') {
         await expect
           .element(

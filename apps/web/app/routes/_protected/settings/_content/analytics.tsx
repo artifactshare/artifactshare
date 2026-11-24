@@ -2,17 +2,6 @@ import { useFetcher, useRouteLoaderData } from 'react-router'
 import { SettingsSection } from '~/components/form/settings-section'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
-import type { ScreenSpec } from '~/types/screen'
-export const screen = {
-  id: 'settings-analytics',
-  route: { en: '/settings/analytics' },
-  auth: 'team-owner',
-  loop: 'support',
-  metric: 'アクセス解析の選択',
-  role: 'アクセス解析を設定する',
-  primaryAction: '設定を更新する',
-  states: [{ id: 'default', description: 'アクセス解析', setup: {} }],
-} satisfies ScreenSpec
 export default function AnalyticsPage() {
   const { t } = useT()
   const fetcher = useFetcher()

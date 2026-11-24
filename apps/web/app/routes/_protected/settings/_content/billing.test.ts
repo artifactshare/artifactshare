@@ -69,7 +69,6 @@ vi.mock('~/services/billing.server', async (importOriginal) => {
 import BillingPage, {
   action,
   loader,
-  screen,
   shouldShowBillingContext,
 } from './billing'
 import { loadSettingsShell } from '../+lib/settings-request.server'
@@ -523,16 +522,13 @@ describe('/settings/billing loader', () => {
     },
   )
 
-  test.each(
-    screen.states.flatMap((state) => {
-      const setup: { scenario?: string; query?: string } = state.setup
-      return setup.scenario === 'settings-billing/purchase' &&
-        setup.query?.includes('interval=')
-        ? [[state.id, setup.query] as const]
-        : []
-    }),
-  )(
-    'purchase capture %s loads its declared interval and currency',
+  test.each([
+    ['monthly-jpy', '?interval=monthly&currency=jpy'],
+    ['monthly-usd', '?interval=monthly&currency=usd'],
+    ['yearly-jpy', '?interval=yearly&currency=jpy'],
+    ['yearly-usd', '?interval=yearly&currency=usd'],
+  ])(
+    'purchase %s loads its interval and currency from the query',
     async (id, query) => {
       await seedAdmin(db, 'u-a', 'ws-a')
       requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))

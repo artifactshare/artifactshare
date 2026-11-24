@@ -11,10 +11,7 @@ import { expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import type { WorkspaceLinkPolicy } from '~/lib/link-sharing-policy'
-import ExternalAccessPage, {
-  screen,
-  action as policyAction,
-} from './external-access'
+import ExternalAccessPage, { action as policyAction } from './external-access'
 import '~/app.css'
 
 const services = vi.hoisted(() => ({
@@ -840,23 +837,6 @@ test('product checkboxes preserve checked, unchecked, disabled and coupled expir
       name: 'No expiration',
       exact: true,
     })
-    // Exercise the actual ledger selectors: Radix assigns name to its hidden
-    // input, not to the visible button used by capture interactions.
-    const selectors = new Set(
-      screen.states.flatMap((state) =>
-        'interactions' in state.setup
-          ? (state.setup.interactions ?? [])
-              .map((step) => step.selector)
-              .filter((selector) => selector.includes('data-policy-control'))
-          : [],
-      ),
-    )
-    expect(selectors.size).toBe(3)
-    for (const selector of selectors) {
-      const target = container.querySelector(selector)
-      expect(target?.getAttribute('role')).toBe('checkbox')
-      expect(target?.checkVisibility()).toBe(true)
-    }
     await expect.element(maximum).toBeChecked()
     const form = maximum.element().closest('form')!
     const values = () => new FormData(form)

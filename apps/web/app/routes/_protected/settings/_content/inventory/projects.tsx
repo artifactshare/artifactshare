@@ -10,43 +10,6 @@ import { requireSettingsAdminPage } from '../../+lib/settings-admin.server'
 import { ProjectsTable } from './+components/projects-table'
 import { Pager } from '~/components/form/pager'
 import { parsePageParam } from '~/lib/pagination'
-import type { ScreenSpec } from '~/types/screen'
-
-export const screen = {
-  id: 'settings-inventory-projects',
-  route: {
-    en: '/settings/inventory/projects',
-  },
-  auth: 'team-owner',
-  loop: 'support',
-  metric: '運営対象の棚卸しを支える',
-  role: 'プロジェクトを棚卸しする',
-  primaryAction: 'プロジェクトを確認する',
-  states: [
-    {
-      id: 'populated',
-      description: 'populated responsive controls and content',
-      setup: {
-        scenario: 'settings-inventory-projects/populated',
-        reseedBeforeCapture: true,
-      },
-    },
-    {
-      id: 'empty',
-      description: 'empty responsive controls and content',
-      setup: {
-        scenario: 'settings-inventory-projects/empty',
-        reseedBeforeCapture: true,
-      },
-    },
-    {
-      id: 'default',
-      description: 'プロジェクト棚卸し',
-      setup: {},
-    },
-  ],
-} satisfies ScreenSpec
-
 export async function loader({ request, context }: Route.LoaderArgs) {
   requireSettingsAdminPage(context)
   const user = requireUser(context)

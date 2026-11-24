@@ -9,11 +9,7 @@ vi.mock('~/hooks/use-t', async () => {
   return { useT: () => bindI18n('ja') }
 })
 
-import BillingPage, {
-  CheckoutActions,
-  DowngradeImpact,
-  screen,
-} from './billing'
+import BillingPage, { CheckoutActions, DowngradeImpact } from './billing'
 import { BILLING_PRICES, formatPrice } from '~/lib/billing-prices'
 import type { SubscriptionContract } from '~/services/billing.server'
 
@@ -398,35 +394,13 @@ test('near-limit owner gets no billing next step when billing is unavailable', (
   expect(html).not.toContain('value="checkout"')
 })
 
-// The capture's purchase states, as the screen declares them.
-const purchaseVariants = screen.states.flatMap(
-  (
-    state,
-  ): Array<{
-    id: string
-    interval: 'monthly' | 'yearly'
-    currency: 'jpy' | 'usd'
-  }> => {
-    const setup: { scenario?: string; query?: string } = state.setup
-    const query = new URLSearchParams(setup.query)
-    const interval = query.get('interval')
-    const currency = query.get('currency')
-    return setup.scenario === 'settings-billing/purchase' &&
-      (interval === 'monthly' || interval === 'yearly') &&
-      (currency === 'jpy' || currency === 'usd')
-      ? [{ id: state.id, interval, currency }]
-      : []
-  },
+const purchaseVariants = (['monthly', 'yearly'] as const).flatMap((interval) =>
+  (['jpy', 'usd'] as const).map((currency) => ({
+    id: `${interval}-${currency}`,
+    interval,
+    currency,
+  })),
 )
-
-test('the screen declares the four purchase variants', () => {
-  expect(purchaseVariants.map((variant) => variant.id)).toEqual([
-    'monthly-jpy',
-    'monthly-usd',
-    'yearly-jpy',
-    'yearly-usd',
-  ])
-})
 
 test.each(purchaseVariants)(
   'purchase variant $id selects its interval and currency on both cards',

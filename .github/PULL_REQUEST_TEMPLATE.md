@@ -1,3 +1,7 @@
+## Why
+
+State the user-visible problem or goal this change addresses.
+
 ## Change
 
 Describe the implementation and its generalized user-visible effect.
