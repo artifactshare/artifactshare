@@ -71,6 +71,7 @@
     "scripts/measure-cli-tests.test.mjs",
     "scripts/perf-trace.mjs",
     "scripts/public-ci-contract.test.mjs",
+    "scripts/workflow-policy.test.mjs",
     "scripts/deployment-contract.test.mjs",
     "scripts/public-development-guard.mjs",
     "scripts/public-development-guard.test.mjs",

@@ -31,11 +31,9 @@ const sandbox = config('wrangler.sandbox.jsonc', 'production')
 const previewApp = config('wrangler.jsonc')
 const previewSandbox = config('wrangler.sandbox.jsonc')
 const webPackage = JSON.parse(fs.readFileSync('apps/web/package.json', 'utf8'))
-const workflowSource = fs.readFileSync(
-  '.github/workflows/deploy-production.yml',
-  'utf8',
+const workflow = YAML.parse(
+  fs.readFileSync('.github/workflows/deploy-production.yml', 'utf8'),
 )
-const workflow = YAML.parse(workflowSource)
 
 test('content deployment scripts are explicitly inside the public boundary', () => {
   const boundary = loadBoundaryManifest()
@@ -168,59 +166,14 @@ test('production deployment keeps migration and Workers in one order', () => {
   )
 })
 
-test('production workflow deploys only production inputs from main', () => {
-  assert.ok(workflow.on.workflow_dispatch)
-  assert.deepEqual(workflow.on.push, {
-    branches: ['main'],
-    paths: [
-      'apps/web/**',
-      'package.json',
-      'pnpm-lock.yaml',
-      'pnpm-workspace.yaml',
-      'packages/contract/**',
-      'packages/viewer-kit/**',
-      '.github/workflows/deploy-production.yml',
-      'scripts/verify-validated-sha.mjs',
-      'scripts/deploy-content-cutover.mjs',
-      'scripts/verify-content-cutover.mjs',
-      'scripts/verify-production-origin.mjs',
-    ],
-  })
+test('production writes require the protected environment and never a pull request', () => {
   assert.equal(workflow.on.pull_request, undefined)
-  assert.equal(workflow.on.workflow_dispatch.inputs.mode.default, 'shadow')
-  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.required, true)
-  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.type, 'string')
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.mode.options, [
-    'shadow',
-    'deploy',
-  ])
+  assert.deepEqual(workflow.on.push.branches, ['main'])
+  assert.equal(workflow.jobs.deploy.environment.name, 'production')
   assert.doesNotMatch(
     JSON.stringify(workflow.jobs.shadow),
     /secrets\.|environment/u,
   )
-  assert.match(
-    workflowSource,
-    /EXPECTED_SHA: \$\{\{ inputs\.expected_sha \}\}[\s\S]*test "\$EXPECTED_SHA" = "\$GITHUB_SHA"[\s\S]*Verify the exact merge-queue validated SHA/u,
-  )
-  assert.match(
-    workflowSource,
-    /GITHUB_TOKEN: \$\{\{ github\.token \}\}[\s\S]*verify-validated-sha\.mjs "\$\{\{ github\.sha \}\}"/u,
-  )
-  for (const jobName of ['shadow', 'deploy']) {
-    const setup = workflow.jobs[jobName].steps.find((step) =>
-      step.uses?.startsWith('pnpm/action-setup@'),
-    )
-    assert.ok(setup)
-    assert.equal(setup.with?.version, undefined)
-  }
-})
-
-test('production writes require the protected environment', () => {
-  assert.deepEqual(workflow.jobs.deploy.environment, {
-    name: 'production',
-    url: 'https://artifactshare.com',
-  })
-  assert.equal(workflow.jobs.deploy.needs, undefined)
   assert.equal(
     workflow.jobs.shadow.if,
     "github.event_name == 'workflow_dispatch' && inputs.mode == 'shadow'",
@@ -228,16 +181,6 @@ test('production writes require the protected environment', () => {
   assert.equal(
     workflow.jobs.deploy.if,
     "github.event_name == 'push' || inputs.mode == 'deploy'",
-  )
-  assert.match(
-    JSON.stringify(workflow.jobs.deploy),
-    /secrets\.CLOUDFLARE_API_TOKEN/u,
-  )
-  assert.deepEqual(
-    [...workflowSource.matchAll(/secrets\.([A-Z0-9_]+)/gu)].map(
-      (match) => match[1],
-    ),
-    ['CLOUDFLARE_API_TOKEN'],
   )
   assert.equal(workflow.concurrency['cancel-in-progress'], false)
 })
@@ -354,12 +297,6 @@ if (command === process.env.PRODUCTION_TEST_FAIL) process.exit(7)
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
   }
-})
-
-test('workflow dispatch exposes only build and deploy modes', () => {
-  const inputs = workflow.on.workflow_dispatch.inputs
-  assert.deepEqual(Object.keys(inputs).sort(), ['expected_sha', 'mode'])
-  assert.deepEqual(Object.keys(workflow.jobs).sort(), ['deploy', 'shadow'])
 })
 
 test('production deploy verifies the complete public origin with retries', () => {

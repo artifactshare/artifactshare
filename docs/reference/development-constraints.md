@@ -11,7 +11,7 @@
 
 ## 依存管理
 
-- **機械検査で強制済み**：CI の frozen install と `scripts/public-ci-contract.test.mjs` が lockfile 前提を検査します。
+- **機械検査で強制済み**：CI の frozen install と `scripts/workflow-policy.test.mjs` が lockfile 前提を検査します。
 - **人が判断する現行規則**：`pnpm-workspace.yaml` の `minimumReleaseAgeExclude` を変更する場合は、除外対象にした理由を確認します。依存変更では lockfile を再解決し、`pnpm install --frozen-lockfile` で再現性を確認します。
 - **復元しない事項**：現行実装に該当がない build system 固有の規則は復元しません。
 
