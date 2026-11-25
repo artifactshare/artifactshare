@@ -423,6 +423,9 @@ export const previewSecurity = defineBrowserCommand(
         const plain = saved()
         await shell.keyboard.press('Control+Enter')
         assert.equal((await plain).status(), 200)
+        // The shell keeps the popover until it handles the response; a pick
+        // sent before then is dropped.
+        await pop.waitFor({ state: 'hidden' })
         assert.equal((await stored()).at(-1)!.comment, 'Plain comment')
         assert.equal((await stored()).at(-1)!.rewrite, undefined)
 
@@ -460,6 +463,7 @@ export const previewSecurity = defineBrowserCommand(
         const second = saved()
         await shell.locator('#popText').press('Control+Enter')
         assert.equal((await second).status(), 200)
+        await pop.waitFor({ state: 'hidden' })
         await frame.evaluate(() => getSelection()!.removeAllRanges())
         assert.deepEqual((await stored()).at(-1)!.rewrite, {
           original: 'Select this text',
@@ -477,6 +481,7 @@ export const previewSecurity = defineBrowserCommand(
         const removal = saved()
         await shell.locator('#popAdd').click()
         assert.equal((await removal).status(), 200)
+        await pop.waitFor({ state: 'hidden' })
         assert.deepEqual((await stored()).at(-1)!.rewrite, {
           original: 'Read the guide first',
           proposed: '',
@@ -495,6 +500,7 @@ export const previewSecurity = defineBrowserCommand(
         const spaced = saved()
         await shell.locator('#popAdd').click()
         assert.equal((await spaced).status(), 200)
+        await pop.waitFor({ state: 'hidden' })
         await frame.evaluate(() => getSelection()!.removeAllRanges())
         assert.deepEqual((await stored()).at(-1)!.rewrite, {
           original: 'Select this text',
@@ -932,9 +938,18 @@ export const previewSecurity = defineBrowserCommand(
 
         // Moving on while a screen is being restored is not a failed restore.
         await otherScreen('Slide two note').click()
+        // The restore arrives by message; an Alt+click sent first can land first.
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
         await frame.locator('#next').click({ modifiers: ['Alt'] })
         await frame.waitForFunction(() => location.hash === '#/3')
         await otherScreen('Slide two note').waitFor()
+        // The frame judges a restore 300 ms after showing it; a timer set now
+        // runs after that judgment is sent.
+        await frame.evaluate(() => new Promise((done) => setTimeout(done, 300)))
+        // The shell handles frame messages in order, so a screen change it
+        // shows after this one was sent after the judgment too.
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await otherScreen('Slide three note').waitFor()
         assert.equal(
           await shell
             .locator('.thread.orphaned')
