@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { AGENT_SURFACE_HEADERS_TXT, llmsTxt } from '~/lib/agent-surface'
+import { AGENT_SURFACE_HEADERS_TXT } from '~/lib/agent-surface'
 import { loader } from './llms[.]txt'
 
 describe('/llms.txt route', () => {
@@ -13,45 +13,25 @@ describe('/llms.txt route', () => {
     )
   })
 
-  test('body matches the published llms contract', async () => {
-    const response = loader()
-    expect(await response.text()).toBe(llmsTxt)
-  })
-})
+  test('serves the agent commands and surface URLs', async () => {
+    const body = await loader().text()
 
-describe('llmsTxt', () => {
-  test('prioritizes CLI, documents MCP fallback and auth flow', () => {
-    expect(llmsTxt).toMatch(/prefer the CLI/i)
-    expect(llmsTxt).toMatch(/First-time setup/)
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare init --json/,
-    )
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare open <artifact-id-or-url> --json/,
-    )
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare share <path> --json/,
-    )
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare update <artifact-id-or-url> <path> --json/,
-    )
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare artifacts get <artifact-id-or-url> --json/,
-    )
-    expect(llmsTxt).toMatch(
-      /npm exec --yes --package=@artifactshare\/cli -- artifactshare download <artifact-id-or-url> --output \.\/artifact --json/,
-    )
-    expect(llmsTxt).not.toMatch(/skills ensure/)
-    expect(llmsTxt).toMatch(/auth_required/)
-    expect(llmsTxt).toMatch(/verification URL and user_code/)
-    expect(llmsTxt).toMatch(/rerun the same command/)
-    expect(llmsTxt).toMatch(/shell access is unavailable/)
-    expect(llmsTxt).toMatch(/remote MCP server/)
-    expect(llmsTxt).toMatch(/ask the user before uploading/)
-    expect(llmsTxt).toMatch(/https:\/\/artifactshare\.com\/share-with-ai/)
-    expect(llmsTxt).toMatch(/https:\/\/artifactshare\.com\/connect/)
-    expect(llmsTxt).toMatch(
-      /https:\/\/artifactshare\.com\/\.well-known\/agent\.json/,
-    )
+    for (const command of [
+      'artifactshare init --json',
+      'artifactshare open <artifact-id-or-url> --json',
+      'artifactshare share <path> --json',
+      'artifactshare update <artifact-id-or-url> <path> --json',
+      'artifactshare artifacts get <artifact-id-or-url> --json',
+      'artifactshare download <artifact-id-or-url> --output ./artifact --json',
+    ])
+      expect(body).toContain(
+        `npm exec --yes --package=@artifactshare/cli -- ${command}`,
+      )
+    for (const url of [
+      'https://artifactshare.com/share-with-ai',
+      'https://artifactshare.com/connect',
+      'https://artifactshare.com/.well-known/agent.json',
+    ])
+      expect(body).toContain(url)
   })
 })

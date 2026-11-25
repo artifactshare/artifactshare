@@ -11,6 +11,7 @@ vi.mock('~/hooks/use-t', async () => {
 })
 
 import ActivityPage from './activity'
+import { t } from '~/lib/i18n'
 import type { AuditEventsPageResult } from '~/lib/team-management'
 
 const TestActivityPage = ActivityPage as ComponentType<{
@@ -38,15 +39,23 @@ describe('access request activity rows', () => {
       page: 1,
     })
 
-    expect(html).toContain('閲覧リクエストを受け付け')
-    expect(html).toContain('メールを送信')
-    expect(html).toContain('閲覧リクエストを承認')
-    expect(html).toContain('申請 req_demo')
+    expect(html).toContain(
+      t('ja', 'team.activity.action.access_request.created'),
+    )
+    expect(html).toContain(
+      t('ja', 'team.activity.action.access_request.email.succeeded'),
+    )
+    expect(html).toContain(
+      t('ja', 'team.activity.action.access_request.approved'),
+    )
+    expect(html).toContain(
+      t('ja', 'team.activity.accessRequest.id', { id: 'req_demo' }),
+    )
     expect(html).toContain('Long roadmap.html')
     expect(html).toContain('Requester (requester@example.com)')
     expect(html).toContain('Owner · owner@example.com')
-    expect(html).toContain('プロジェクト単位')
-    expect(html).toContain('システム')
+    expect(html).toContain(t('ja', 'team.activity.accessRequest.scope.project'))
+    expect(html).toContain(t('ja', 'team.activity.system'))
   })
 
   test('labels an old incomplete delivery as unknown without relabeling unrelated null actors', () => {
@@ -66,8 +75,10 @@ describe('access request activity rows', () => {
       page: 1,
     })
 
-    expect(html).toContain('Slack DM送信の結果不明')
-    expect(html.match(/システム/g)).toHaveLength(3)
+    expect(html).toContain(
+      t('ja', 'team.activity.action.access_request.slack.unknown'),
+    )
+    expect(html.split(t('ja', 'team.activity.system')).length - 1).toBe(3)
     expect(html).toContain('Deleted artifact.html')
     expect(html).toContain('—')
   })
@@ -136,7 +147,9 @@ test('renders publisher assignment with its artifact, target client, actor and t
     total: 1,
     page: 1,
   })
-  expect(html).toContain('クライアントにファイルを割り当て')
+  expect(html).toContain(
+    t('ja', 'team.activity.action.artifact.publisher_adopted'),
+  )
   expect(html).toContain('Weekly dashboard · Previous reports → Reports')
   expect(html).toContain('>Owner</span>')
   expect(html).toContain('1 時間前')
@@ -183,7 +196,7 @@ test.each(['en', 'ja'] as const)(
         page: 1,
       })
       expect(html).toContain(
-        locale === 'en' ? 'Updated bot destinations' : 'bot の投稿先を更新',
+        t(locale, 'team.activity.action.bot.destinations.update'),
       )
       expect(html).toContain('Reporting bot')
       expect(html).toContain('bot-badge')

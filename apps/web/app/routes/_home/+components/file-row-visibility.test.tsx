@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { expect, test } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
+import { t } from '~/lib/i18n'
 import type { FileRowData } from './file-data'
 import { FileRow } from './file-row'
 
@@ -26,12 +27,11 @@ const file: FileRowData = {
   modifiedTime: null,
 }
 
-test.each([
-  ['en', 'Private', 'Specific'],
-  ['ja', '非公開', '個別共有'],
-] as const)(
+test.each(['en', 'ja'] as const)(
   '%s list rows render grant-aware labels and titles in both responsive chips',
-  (locale, privateLabel, specificLabel) => {
+  (locale) => {
+    const privateLabel = t(locale, 'table.visibilityOnlyMe')
+    const specificLabel = t(locale, 'table.visibilityPrivate')
     for (const hasDirectGrants of [false, true, undefined]) {
       const router = createMemoryRouter(
         [

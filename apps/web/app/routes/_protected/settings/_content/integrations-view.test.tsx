@@ -1,8 +1,9 @@
+import { Window } from 'happy-dom'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { bindI18n } from '~/lib/i18n'
+import { bindI18n, t } from '~/lib/i18n'
 import IntegrationsPage from './integrations'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -46,27 +47,26 @@ test.each(['empty', 'admin-empty', 'connected', 'reauthorization'])(
         <RouterProvider router={router} />
       </TooltipProvider>,
     )
+    // Entities in the rendered markup differ from the catalog text, so the
+    // copy is compared on the parsed text.
+    const doc = new Window().document
+    doc.body.innerHTML = html
+    const text = doc.body.textContent
     if (state === 'admin-empty') {
       expect(html).toContain('href="/integrations/slack/install"')
-      expect(html).toContain('Connect it to preview shared links')
+      expect(text).toContain(t('en', 'team.integrations.slack.empty'))
       router.dispose()
       return
     }
-    expect(html).toContain(
-      'Ask a workspace admin to connect or update the Slack connection.',
-    )
-    expect(
-      html.match(
-        /Ask a workspace admin to connect or update the Slack connection\./g,
-      ),
-    ).toHaveLength(1)
+    const guidance = t('en', 'team.integrations.slack.memberGuidance')
+    expect(text.split(guidance).length - 1).toBe(1)
     if (state === 'empty') {
-      expect(html).toContain('Slack is not connected to this workspace.')
+      expect(text).toContain(t('en', 'team.integrations.slack.memberEmpty'))
       expect(html).not.toContain('href="/integrations/slack/install"')
     }
     if (state === 'reauthorization')
-      expect(html).toContain(
-        'Slack needs authorization again. Ask a workspace admin to reauthorize the connection.',
+      expect(text).toContain(
+        t('en', 'team.integrations.slack.reauthorization.memberBody'),
       )
     expect(html).not.toContain('role="tooltip"')
     expect(html).toContain('disabled=""')

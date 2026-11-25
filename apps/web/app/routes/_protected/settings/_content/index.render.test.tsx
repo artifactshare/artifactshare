@@ -93,6 +93,7 @@ test.each(['en', 'ja'] as const)(
 
 test('only managers can transfer artifacts from a removed member', () => {
   language.locale = 'en'
+  const { t } = bindI18n(language.locale)
   for (const role of ['admin', 'member'] as const) {
     const doc = renderMembers(role, [
       {
@@ -104,7 +105,7 @@ test('only managers can transfer artifacts from a removed member', () => {
       },
     ])
     const buttons = [...doc.querySelectorAll('button')].filter(
-      (button) => button.textContent === 'Transfer files',
+      (button) => button.textContent === t('team.removedMembers.transfer'),
     )
     expect(buttons).toHaveLength(role === 'admin' ? 1 : 0)
     if (role === 'admin') expect(buttons[0].disabled).toBe(false)

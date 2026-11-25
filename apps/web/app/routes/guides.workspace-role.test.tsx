@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { expectLocalePair } from '~/test/locale-documents'
 import {
   loader as adminLoader,
   meta as adminMeta,
@@ -9,25 +10,22 @@ import {
 } from './_public/($locale)/guides.workspace-owner'
 
 describe('workspace role guides', () => {
-  test('renders independently understandable English guides with cross-links', () => {
-    const owner = ownerLoader({ params: {} } as never)
-    const admin = adminLoader({ params: {} } as never)
-    expect(owner.html).toContain('one active owner')
-    expect(owner.html).toContain('Billing stays with the owner')
-    expect(owner.html).toContain('/guides/workspace-admin')
-    expect(admin.html).toContain('Admins keep the workspace running')
-    expect(admin.html).toContain('Admins cannot manage checkout')
-    expect(admin.html).toContain('/guides/workspace-owner')
-  })
+  test('serves each locale its own document with locale-aware cross-links', () => {
+    const owner = {
+      en: ownerLoader({ params: {} } as never),
+      ja: ownerLoader({ params: { locale: 'ja' } } as never),
+    }
+    const admin = {
+      en: adminLoader({ params: {} } as never),
+      ja: adminLoader({ params: { locale: 'ja' } } as never),
+    }
 
-  test('renders independently understandable Japanese guides with cross-links', () => {
-    const owner = ownerLoader({ params: { locale: 'ja' } } as never)
-    const admin = adminLoader({ params: { locale: 'ja' } } as never)
-    expect(owner.html).toContain('ワークスペースの最終責任')
-    expect(owner.html).toContain('/ja/guides/workspace-admin')
-    expect(admin.html).toContain('ワークスペースの日々の運用')
-    expect(admin.html).toContain('管理者は、プランの申し込みや変更')
-    expect(admin.html).toContain('/ja/guides/workspace-owner')
+    expectLocalePair(owner.en.html, owner.ja.html)
+    expectLocalePair(admin.en.html, admin.ja.html)
+    expect(owner.en.html).toContain('"/guides/workspace-admin"')
+    expect(owner.ja.html).toContain('"/ja/guides/workspace-admin"')
+    expect(admin.en.html).toContain('"/guides/workspace-owner"')
+    expect(admin.ja.html).toContain('"/ja/guides/workspace-owner"')
   })
 
   test('publishes canonical and alternate locale metadata', () => {

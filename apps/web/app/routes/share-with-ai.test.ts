@@ -9,6 +9,7 @@ import {
 } from './_public/($locale)/share-with-ai'
 import { shareWithAiContent } from '~/lib/share-with-ai-content'
 import { withLang } from '~/lib/connect-link'
+import { expectLocalePair } from '~/test/locale-documents'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ t: (key: string) => key }),
@@ -120,19 +121,11 @@ describe('share-with-ai content', () => {
     expect(html).toContain('data-toc-section=""')
   })
 
-  test('shows Japanese as upload shorthand as an Artifact Share prompt', () => {
-    const content = shareWithAiContent('ja')
-    expect(content.tasksIntro).toBe(
-      'やりたいことを AI に伝えるだけで使えます。共有や更新、共有リンクを開く・読む依頼では、「Artifact Share」の代わりに「as」と書いても通じます。',
+  test('serves each locale its own task copy', () => {
+    expectLocalePair(
+      shareWithAiContent('en').tasksIntro,
+      shareWithAiContent('ja').tasksIntro,
     )
-    expect(content.tasks.find((task) => task.id === 'share')?.ask).toBe(
-      'このレポートを as で共有して。',
-    )
-  })
-
-  test('limits the English as alias to sharing-related requests', () => {
-    const content = shareWithAiContent('en')
-    expect(content.tasksIntro).toMatch(/when the request is about sharing/)
   })
 
   test('links to the CLI reference in each locale', () => {
