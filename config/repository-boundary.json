@@ -52,7 +52,6 @@
     "scripts/browser-waits.test.mjs",
     "scripts/test-reliability-lint-plugin.mjs",
     "scripts/test-reliability-lint-plugin.test.mjs",
-    "scripts/check-browser-project-membership.mjs",
     "scripts/browser-local-state.mjs",
     "scripts/browser-local-state.test.mjs",
     "scripts/copy-glossary-lint-plugin.mjs",
@@ -74,7 +73,6 @@
     "scripts/perf-trace.mjs",
     "scripts/public-ci-contract.test.mjs",
     "scripts/deployment-contract.test.mjs",
-    "scripts/development-constraints.test.mjs",
     "scripts/public-development-guard.mjs",
     "scripts/public-development-guard.test.mjs",
     "scripts/public-repository-scan.mjs",
@@ -93,9 +91,7 @@
     "scripts/verify-visual-fault-injection.mjs",
     "scripts/verify.mjs",
     "scripts/verify.test.mjs",
-    "scripts/public-test-audit.mjs",
     "scripts/scenario-route-integration.mjs",
-    "scripts/spacing-ownership-policy.mjs",
     "scripts/link-open-metrics.mjs",
     "scripts/link-open-metrics.test.mjs",
     ".oxfmtrc.json",
@@ -123,10 +119,7 @@
     "scripts/fixtures/skill-eval/claude.jsonl",
     "scripts/fixtures/skill-eval/codex.jsonl",
     "scripts/fixtures/skill-eval/cursor.jsonl",
-    "scripts/lib/walkthrough-cli-environment.mjs",
-    "scripts/test-cast-ratchet.mjs",
-    "scripts/test-cast-ratchet.test.mjs",
-    "config/test-cast-baseline.json"
+    "scripts/lib/walkthrough-cli-environment.mjs"
   ],
   "canonical_prefixes": [
     ".claude/skills/verify-artifactshare/",

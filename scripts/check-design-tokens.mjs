@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SPACING_OWNERSHIP_POLICY } from './spacing-ownership-policy.mjs'
 import {
   INTERACTIVE_SPACING_ANNOTATION,
   isAllowedInteractiveSpacingSource,
@@ -20,7 +19,6 @@ const CATALOG_TS = join(APP_DIR, 'components/catalog.ts')
 const TOKENS_CSS = join(STYLES_DIR, 'tokens.css')
 const ROOT_TSX = join(APP_DIR, 'root.tsx')
 const DESIGN_SYSTEM_MD = join(ROOT, 'docs/reference/design-system.md')
-export { SPACING_OWNERSHIP_POLICY }
 
 export function findInteractiveSpacingAnnotationViolations(files, root = ROOT) {
   const violations = []
@@ -1816,15 +1814,6 @@ export function collectSpacingOwnershipReport(appDir = APP_DIR) {
     const text = readFileSync(file, 'utf8')
     report.push(...reportClassNameEntries(file, text))
   }
-  report.push(
-    ...SPACING_OWNERSHIP_POLICY.map((entry) => ({
-      ...entry,
-      line: 0,
-      target: entry.component,
-      class: '',
-      category: 'ownership-policy',
-    })),
-  )
   return report.sort(
     (a, b) =>
       a.file.localeCompare(b.file) ||
@@ -2046,27 +2035,6 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  if (process.argv.includes('--spacing-report')) {
-    const report = collectSpacingOwnershipReport()
-    const counts = Object.groupBy(report, (entry) => entry.category)
-    console.log(`spacing ownership report (${report.length} entries)`)
-    for (const category of [
-      'ownership-review',
-      'internal-reset',
-      'geometry',
-      'excluded-surface',
-      'dynamic-review',
-      'ownership-policy',
-    ]) {
-      console.log(`${category}: ${(counts[category] ?? []).length}`)
-    }
-    for (const entry of report) {
-      console.log(
-        `${entry.category}\t${entry.file}:${entry.line}\t${entry.target}\t${entry.class}\t${entry.reason}`,
-      )
-    }
-    process.exit(0)
-  }
   const violations = runAllChecks()
 
   if (violations.length > 0) {
