@@ -83,7 +83,10 @@ function run(args: string[], preload?: string, env: NodeJS.ProcessEnv = {}) {
 const skills = (...args: string[]) => run(['skills', ...args])
 /** One CLI install serves the whole file: the tests vary the bundle beside
  * dist, never dist itself, and one path lets Node reuse the bytecode it
- * compiled for the hundreds of launches below. */
+ * compiled for the hundreds of launches below. Copying the build was a
+ * per-test hook before, which put this tree copy on the hook timeout 169
+ * times over; it runs once now, and carries its own budget because it is the
+ * only hook here that does real work. */
 beforeAll(async () => {
   overlay = await mkdtemp(join(tmpdir(), 'skill-integration-cli-'))
   compileCache = join(overlay, 'compile-cache')
@@ -98,7 +101,7 @@ beforeAll(async () => {
     join(import.meta.dirname, '../node_modules'),
     join(overlay, 'node_modules'),
   )
-})
+}, 60_000)
 afterAll(async () => {
   await rm(overlay, { recursive: true, force: true })
 })
@@ -111,7 +114,15 @@ beforeEach(async () => {
   await setBundle(initial)
 })
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true })
+  // Retry so a timed-out test, which is abandoned while its own work carries
+  // on under `root`, cannot be reported a second time as this cleanup failing
+  // with ENOTEMPTY.
+  await rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 50,
+  })
 })
 
 test('packaged folder installs all six targets and emits contract-valid folder diagnostics', async () => {

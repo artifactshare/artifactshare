@@ -38,8 +38,18 @@ const bundle = (version: number): SkillBundle => ({
   },
 })
 let root: string
+// A test that times out is abandoned while its filesystem transaction keeps
+// running, so this removal can race files appearing under `root` and fail with
+// ENOTEMPTY. Retrying keeps one timeout from being reported twice, once as the
+// test and again as the next test's cleanup.
 const cleanup = async () => {
-  if (root) await rm(root, { recursive: true, force: true })
+  if (root)
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    })
 }
 afterEach(async () => {
   vi.mocked(mkdir).mockRestore()
