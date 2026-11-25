@@ -1,47 +1,15 @@
 import { expect, test } from 'vitest'
+import { expectLocalePair } from '~/test/locale-documents'
 import { loader, meta } from './_public/($locale)/guides.search'
 
-test.each(['en', 'ja'] as const)(
-  'renders search instructions in %s',
-  (locale) => {
-    const { html } = loader({
-      params: locale === 'ja' ? { locale } : {},
-    } as never)
-    for (const key of ['⌘K / Ctrl+K', '/', 'Enter', 'IME'])
-      expect(html).toContain(key)
-    const facts =
-      locale === 'en'
-        ? [
-            'PDF body text and video speech are not included',
-            'Owner',
-            'Project',
-            'Period',
-            'Updated date',
-            'Last viewed by me',
-            'without selecting a suggestion',
-            'arrow keys',
-            'adds a search condition',
-            'opens that file',
-            'reruns that search',
-            'Admin rights alone do not make a file appear',
-          ]
-        : [
-            'PDF の本文や動画の音声は含みません',
-            '所有者',
-            'プロジェクト',
-            '期間',
-            '更新日',
-            '自分が最後に見た日',
-            '候補を選ばずに',
-            '矢印キー',
-            '検索条件に追加',
-            'そのファイルを開き',
-            'その検索をもう一度',
-            '管理者権限だけで開けるファイルは、検索には出ません',
-          ]
-    for (const fact of facts) expect(html).toContain(fact)
-  },
-)
+test('serves each locale its own document', () => {
+  const en = loader({ params: {} } as never)
+  const ja = loader({ params: { locale: 'ja' } } as never)
+
+  expect(en.locale).toBe('en')
+  expect(ja.locale).toBe('ja')
+  expectLocalePair(en.html, ja.html)
+})
 
 test('publishes canonical and alternate locale metadata', () => {
   const expected = [

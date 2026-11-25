@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
 
 import { GettingStartedPage } from '~/components/app/getting-started-page'
+import { gettingStartedCopy } from '~/lib/getting-started-content'
 import { gettingStartedMeta } from '~/lib/getting-started-meta'
 import { loader, meta as routeMeta } from './_public/($locale)/start'
 
@@ -78,8 +79,8 @@ describe('/start', () => {
       )
 
       expect(html).toContain(`href="${href.replaceAll('&', '&amp;')}"`)
-      expect(html).toContain('Set up the CLI')
-      expect(html).toContain('Connect MCP')
+      expect(html).toContain(gettingStartedCopy('en').cli.cta)
+      expect(html).toContain(gettingStartedCopy('en').mcp.cta)
       expect(html).toContain('data-slot="public-footer"')
     },
   )
@@ -93,7 +94,7 @@ describe('/start', () => {
 
     expect(html).toContain('href="/ja/connect#ai-agents"')
     expect(html).toContain('href="/ja/connect"')
-    expect(html).toContain('ファイルを共有して、共有リンクを受け取る')
+    expect(html).toContain(gettingStartedCopy('ja').heading)
   })
 
   test('loader exposes locale and sign-in state only', () => {

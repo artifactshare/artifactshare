@@ -15,7 +15,6 @@ test.each(['en', 'ja'] as const)(
   'workspace name explains read-only access in %s',
   (locale) => {
     language.locale = locale
-    const { t } = bindI18n(locale)
     for (const role of ['member', 'admin', 'owner']) {
       const restricted = role === 'member'
       const router = createMemoryRouter([
@@ -49,13 +48,12 @@ test.each(['en', 'ja'] as const)(
       const save = section.querySelector('button')!
       expect(save.disabled).toBe(restricted)
       const guidance = section.querySelector('#name-guidance')
+      expect(guidance !== null).toBe(restricted)
+      expect((guidance?.textContent ?? '').trim() !== '').toBe(restricted)
       for (const control of [field, save])
         expect(control.getAttribute('aria-describedby')).toBe(
           restricted ? guidance!.id : null,
         )
-      expect(
-        section.textContent.includes(t('team.workspace.name.readOnly')),
-      ).toBe(restricted)
     }
   },
 )

@@ -1,59 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
+import { bindI18n, t, type Locale, type TKey } from '~/lib/i18n'
 import type { FeedEventRow } from '~/services/events.server'
 
-const state = vi.hoisted(() => ({ locale: 'ja' }))
+const state = vi.hoisted(() => ({ locale: 'ja' as Locale }))
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: state.locale,
-    t: (key: string, vars: Record<string, string> = {}) => {
-      const labels: Record<string, string> =
-        state.locale === 'ja'
-          ? {
-              'home.actorPublished': `${vars.actor}さんが v${vars.version} に更新しました`,
-              'home.actorPublishedRange': `${vars.actor}さんが v${vars.start}〜v${vars.end} に更新しました`,
-              'home.publishedRange': `v${vars.start}〜v${vars.end} に更新されました`,
-              'home.actorCommented': `${vars.actor}さんがコメントしました`,
-              'home.actorCommentedCount': `${vars.actor}さんが ${vars.count} 件コメントしました`,
-              'home.actorAdded': `${vars.actor}さんが追加しました`,
-              'home.actorAddedToProjectCount': `${vars.actor}さんが${vars.project}に${vars.count}件追加しました`,
-              'home.anonymousViewsInline_one': `${vars.title} がリンク経由で${vars.count}回閲覧されました`,
-              'home.anonymousViewsInline_other': `${vars.title} がリンク経由で${vars.count}回閲覧されました`,
-              'home.actorPublishedInline': `${vars.actor}さんが ${vars.title} を v${vars.version} に更新しました`,
-              'home.actorPublishedRangeInline': `${vars.actor}さんが ${vars.title} を v${vars.start}〜v${vars.end} に更新しました`,
-              'home.publishedRangeInline': `${vars.title} が v${vars.start}〜v${vars.end} に更新されました`,
-              'home.actorCommentedInline': `${vars.actor}さんが ${vars.title} にコメントしました`,
-              'home.actorCommentedCountInline': `${vars.actor}さんが ${vars.title} に ${vars.count} 件コメントしました`,
-              'home.actorAddedInline': `${vars.actor}さんが ${vars.title} を追加しました`,
-              'home.viewedByInline_one': `${vars.title} が ${vars.count}人に閲覧されました`,
-              'home.viewedByInline_other': `${vars.title} が ${vars.count}人に閲覧されました`,
-            }
-          : {
-              'home.actorPublished': `${vars.actor} updated v${vars.version}`,
-              'home.actorPublishedRange': `${vars.actor} updated v${vars.start}–v${vars.end}`,
-              'home.publishedRange': `Updated v${vars.start}–v${vars.end}`,
-              'home.actorCommented': `${vars.actor} commented`,
-              'home.actorCommentedCount': `${vars.actor} commented ${vars.count} times`,
-              'home.viewDigest_one': `${vars.files} of your files viewed by ${vars.count} person`,
-              'home.viewDigest_other': `${vars.files} of your files viewed by ${vars.count} people`,
-              'home.viewDigestAnonymous_one': `${vars.files} files viewed anonymously`,
-              'home.viewDigestAnonymous_other': `${vars.files} files viewed anonymously (${vars.count})`,
-              'home.anonymousViewsSuffix_one': `${vars.count} anonymous`,
-              'home.anonymousViewsSuffix_other': `${vars.count} anonymous`,
-              'home.viewDigestTop': 'Top:',
-              'home.listSeparator': ', ',
-              'home.actorPublishedInline': `${vars.actor} updated ${vars.title} as v${vars.version}`,
-              'home.actorPublishedRangeInline': `${vars.actor} updated ${vars.title} from v${vars.start}–v${vars.end}`,
-              'home.publishedRangeInline': `${vars.title} updated from v${vars.start}–v${vars.end}`,
-              'home.actorCommentedInline': `${vars.actor} commented on ${vars.title}`,
-              'home.actorCommentedCountInline': `${vars.actor} commented on ${vars.title} ${vars.count} times`,
-              'home.actorAddedInline': `${vars.actor} added ${vars.title}`,
-              'home.viewedByInline_one': `${vars.title} viewed by ${vars.count} person`,
-              'home.viewedByInline_other': `${vars.title} viewed by ${vars.count} people`,
-            }
-      return labels[key] ?? key
-    },
-  }),
+  useT: () => bindI18n(state.locale),
 }))
 vi.mock('react-router', () => ({
   // data-slot 等の注入 props (Radix asChild) を落とさないよう rest を通す
@@ -98,35 +50,62 @@ const row = (overrides: Partial<FeedEventRow>): FeedEventRow => ({
   ...overrides,
 })
 
-describe('FeedItem version copy', () => {
-  test.each([
-    ['ja', 'Aliceさんが '],
-    ['en', 'Alice updated '],
-  ])('renders the single-version copy in %s', (locale, expected) => {
-    state.locale = locale
-    expect(renderToStaticMarkup(<FeedItem row={row({})} />)).toContain(expected)
+// The renderer splits a sentence at its {title} and {project} placeholders to
+// insert links, so catalog copy reaches the markup as ordered fragments.
+function expectCopy(
+  html: string,
+  key: TKey,
+  vars: Record<string, string | number> = {},
+) {
+  const copy = t(state.locale, key, {
+    title: '{title}',
+    project: '{project}',
+    ...vars,
   })
+  let at = 0
+  for (const fragment of copy.split(/\{title\}|\{project\}/)) {
+    if (fragment === '') continue
+    const found = html.indexOf(fragment, at)
+    expect(found, `${key}: ${fragment}`).toBeGreaterThanOrEqual(0)
+    at = found + fragment.length
+  }
+}
 
-  test.each([
-    ['ja', 'Aliceさんが ', 'v2〜v3 に更新されました'],
-    ['en', 'Alice updated ', 'updated from v2–v3'],
-  ])('renders named and anonymous ranges in %s', (locale, named, anonymous) => {
-    state.locale = locale
-    expect(
-      renderToStaticMarkup(
-        <FeedItem
-          row={row({ versionStart: 2, versionEnd: 3, versionAuthorCount: 1 })}
-        />,
-      ),
-    ).toContain(named)
-    expect(
-      renderToStaticMarkup(
+describe('FeedItem version copy', () => {
+  test.each(['ja', 'en'] as const)(
+    'renders the single-version copy in %s',
+    (locale) => {
+      state.locale = locale
+      expectCopy(
+        renderToStaticMarkup(<FeedItem row={row({})} />),
+        'home.actorPublishedInline',
+        { actor: 'Alice', version: 2 },
+      )
+    },
+  )
+
+  test.each(['ja', 'en'] as const)(
+    'renders named and anonymous ranges in %s',
+    (locale) => {
+      state.locale = locale
+      expectCopy(
+        renderToStaticMarkup(
+          <FeedItem
+            row={row({ versionStart: 2, versionEnd: 3, versionAuthorCount: 1 })}
+          />,
+        ),
+        'home.actorPublishedRangeInline',
+        { actor: 'Alice', start: 2, end: 3 },
+      )
+      const anonymous = renderToStaticMarkup(
         <FeedItem
           row={row({ versionStart: 2, versionEnd: 3, versionAuthorCount: 2 })}
         />,
-      ),
-    ).toContain(anonymous)
-  })
+      )
+      expectCopy(anonymous, 'home.publishedRangeInline', { start: 2, end: 3 })
+      expect(anonymous).not.toContain('Alice')
+    },
+  )
 
   test('links to the artifact', () => {
     expect(renderToStaticMarkup(<FeedItem row={row({})} />)).toContain(
@@ -134,47 +113,55 @@ describe('FeedItem version copy', () => {
     )
   })
 
-  test.each([
-    ['ja', 'Aliceさんが '],
-    ['en', 'Alice commented on '],
-  ])('renders aggregated comment copy and quote in %s', (locale, expected) => {
-    state.locale = locale
-    const html = renderToStaticMarkup(
-      <FeedItem
-        row={row({
-          type: 'comment_posted',
-          commentCount: 3,
-          commentBody: 'quoted text',
-        })}
-      />,
-    )
-    expect(html).toContain(expected)
-    expect(html).toContain('quoted text')
-  })
+  test.each(['ja', 'en'] as const)(
+    'renders aggregated comment copy and quote in %s',
+    (locale) => {
+      state.locale = locale
+      const html = renderToStaticMarkup(
+        <FeedItem
+          row={row({
+            type: 'comment_posted',
+            commentCount: 3,
+            commentBody: 'quoted text',
+          })}
+        />,
+      )
+      expectCopy(html, 'home.actorCommentedCountInline', {
+        actor: 'Alice',
+        count: 3,
+      })
+      expect(html).toContain('quoted text')
+    },
+  )
 
   test('renders individual comment copy when count is null', () => {
     state.locale = 'ja'
-    expect(
+    expectCopy(
       renderToStaticMarkup(
         <FeedItem row={row({ type: 'comment_posted', commentCount: null })} />,
       ),
-    ).toContain('Aliceさんが ')
+      'home.actorCommentedInline',
+      { actor: 'Alice' },
+    )
   })
 
   test.each([
     [
       { viewUniqueCount: 2, anonymousViewCount: 0 },
-      '3 of your files viewed by 2 people',
+      'home.viewDigest_other' as TKey,
+      { files: 3, count: 2 },
     ],
     [
       { viewUniqueCount: 0, anonymousViewCount: 1 },
-      '3 files viewed anonymously',
+      'home.viewDigestAnonymous_one' as TKey,
+      { files: 3, count: 1 },
     ],
     [
       { viewUniqueCount: 1, anonymousViewCount: 2 },
-      '3 of your files viewed by 1 person · 2 anonymous',
+      'home.viewDigest_one' as TKey,
+      { files: 3, count: 1 },
     ],
-  ])('renders digest copy and links top items', (counts, expected) => {
+  ])('renders digest copy and links top items', (counts, key, vars) => {
     state.locale = 'en'
     const html = renderToStaticMarkup(
       <FeedItem
@@ -189,7 +176,11 @@ describe('FeedItem version copy', () => {
         })}
       />,
     )
-    expect(html).toContain(expected)
+    expectCopy(html, key, vars)
+    if (counts.viewUniqueCount && counts.anonymousViewCount)
+      expectCopy(html, 'home.anonymousViewsSuffix_other', {
+        count: counts.anonymousViewCount,
+      })
     expect(html).toContain('href="/a/top-1"')
     expect(html).toContain('href="/a/top-2"')
     expect(html).toContain(
@@ -197,7 +188,9 @@ describe('FeedItem version copy', () => {
     )
     expect(html).toContain('First</a>')
     expect(html).not.toContain('First (4)</a>')
-    expect(html).toContain(' (4)</span></span><span>, <a href="/a/top-2"')
+    expect(html).toContain(
+      ` (4)</span></span><span>${t('en', 'home.listSeparator')}<a href="/a/top-2"`,
+    )
   })
 
   test('digest rows carry no place meta even with showLocation', () => {
@@ -214,7 +207,7 @@ describe('FeedItem version copy', () => {
       />,
     )
     expect(html).not.toContain('tabler-icon-home')
-    expect(html).not.toContain('tb.home')
+    expect(html).not.toContain(t('ja', 'tb.home'))
   })
 })
 
@@ -295,8 +288,10 @@ describe('FeedItem add bundle', () => {
         })}
       />,
     )
-    expect(html).toContain('Aliceさんが')
-    expect(html).toContain('3件追加しました')
+    expectCopy(html, 'home.actorAddedToProjectCount', {
+      actor: 'Alice',
+      count: 3,
+    })
     expect(html).toContain('href="/projects/proj1/files"')
     expect(html).not.toContain('href="/a/share-1"')
   })
@@ -306,7 +301,7 @@ describe('FeedItem add bundle', () => {
     const html = renderToStaticMarkup(
       <FeedItem row={row({ type: 'artifact_created', addCount: null })} />,
     )
-    expect(html).toContain('Aliceさんが ')
+    expectCopy(html, 'home.actorAddedInline', { actor: 'Alice' })
     expect(html).toContain('href="/a/share-1"')
   })
 })
@@ -333,7 +328,7 @@ describe('FeedItem location meta', () => {
       />,
     )
     expect(html).toContain('tabler-icon-home')
-    expect(html).toContain('tb.home')
+    expect(html).toContain(t('ja', 'tb.home'))
   })
 
   test("someone else's inbox rows show time only", () => {
@@ -448,7 +443,11 @@ describe('FeedItem title line wrapping', () => {
         })}
       />,
     )
-    const match = html.match(/<div class="text-muted-foreground ([^"]*)">Top:/)
+    const match = html.match(
+      new RegExp(
+        `<div class="text-muted-foreground ([^"]*)">${t('en', 'home.viewDigestTop')}`,
+      ),
+    )
     const className = match?.[1] ?? ''
     // desktop で clamp すると 3 件目が隠れるため、前置修飾ごと固定する。
     // toContain('line-clamp-2') では無条件の clamp でも通ってしまう。
@@ -470,8 +469,10 @@ describe('FeedItem title line wrapping', () => {
         })}
       />,
     )
-    expect(html).toContain(`${longActor}さんが`)
+    expectCopy(html, 'home.actorCommentedCountInline', {
+      actor: longActor,
+      count: 3,
+    })
     expect(html).toContain(longTitle)
-    expect(html).toContain('3 件コメントしました')
   })
 })

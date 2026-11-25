@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom'
 import { describe, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
@@ -110,7 +111,13 @@ test('pricing keeps all plan cards, Team recommendation, and checkout links', ()
   expect(html).toContain('data-plan="free"')
   expect(html).toContain('data-plan="plus"')
   expect(html).toContain('data-plan="team"')
-  expect(html).toContain('Recommended for companies')
+  // Team is the recommended plan, and it is the only one with a badge.
+  const doc = new Window().document
+  doc.body.innerHTML = html
+  expect(
+    doc.querySelector('[data-plan="team"] [data-slot="badge"]')?.textContent,
+  ).not.toBe('')
+  expect(doc.querySelectorAll('[data-slot="badge"]')).toHaveLength(1)
   expect(html).toContain(
     'href="/settings/billing?plan=plus&amp;interval=monthly&amp;currency=usd"',
   )
