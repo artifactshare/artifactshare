@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { parseAllDocuments, stringify } from 'yaml'
-import { analyzeDependencyOverrides } from './check-dependency-overrides.mjs'
+import {
+  OVERRIDE_REPAIR,
+  analyzeDependencyOverrides,
+} from './check-dependency-overrides.mjs'
 import {
   inspectTree,
   loadBoundaryManifest,
@@ -18,8 +21,6 @@ const contexts = [
   'vite@8.3.3(@types/node@22.0.0)',
   'vite@8.3.3(@types/node@24.0.0)',
 ]
-const action =
-  /re-test the D1 suite \(`pnpm test:d1`\) and update or remove the override/u
 
 test('repository boundary includes the dependency checker and its tests', () => {
   const paths = [
@@ -57,12 +58,17 @@ function sources({ workspace, lock }) {
     `lockfileVersion: '9.0'\npackages:\n  pnpm@12.21.0: {}\n---\n${stringify(lock)}`,
   ]
 }
-function rejects(data, diagnostic) {
+function rejects(data, expected) {
   assert.throws(
     () => analyzeDependencyOverrides(...sources(data)),
     (error) => {
-      assert.match(error.message, diagnostic)
-      assert.match(error.message, action)
+      assert.deepEqual(
+        Object.fromEntries(
+          Object.keys(expected).map((key) => [key, error[key]]),
+        ),
+        expected,
+      )
+      assert.ok(error.message.includes(OVERRIDE_REPAIR), error.message)
       return true
     },
   )
@@ -78,27 +84,34 @@ test('accepts two lock documents, both Vite contexts and unrelated rolldown', ()
 test('rejects a workspace-only selector change with unchanged lock metadata', () => {
   const data = fixture()
   data.workspace.overrides = { 'vite@8.3.4>rolldown': '1.2.14' }
-  rejects(data, /metadata.*vite@8.3.4>rolldown/u)
+  rejects(data, {
+    code: 'lock-metadata-mismatch',
+    subject: 'vite@8.3.4>rolldown',
+  })
 })
 
 test('rejects a resolved Vite upgrade with a stale selector', () => {
   const data = fixture()
   data.lock.packages = { 'vite@8.3.4': {} }
-  rejects(data, /vite@8.3.4.*vite@8.3.3>rolldown/u)
+  rejects(data, { code: 'vite-identity-mismatch', subject: 'vite@8.3.4' })
 })
 
 test('checks the second peer context for broken rolldown independently of metadata', () => {
   const data = fixture()
   data.lock.snapshots[contexts[1]].dependencies.rolldown = '1.2.15'
-  rejects(data, /node@24.0.0.*broken rolldown@1.2.15/u)
+  rejects(data, {
+    code: 'broken-rolldown',
+    subject: contexts[1],
+    version: '1.2.15',
+  })
 })
 
-for (const missing of [
-  'override',
-  'lock override',
-  'packages',
-  'snapshots',
-  'edge',
+for (const [missing, code] of [
+  ['override', 'selector-count'],
+  ['lock override', 'lock-metadata-mismatch'],
+  ['packages', 'missing-vite-records'],
+  ['snapshots', 'missing-vite-records'],
+  ['edge', 'missing-rolldown-edge'],
 ]) {
   test(`fails closed with missing ${missing}`, () => {
     const data = fixture()
@@ -108,7 +121,7 @@ for (const missing of [
     if (missing === 'snapshots') delete data.lock.snapshots
     if (missing === 'edge')
       delete data.lock.snapshots[contexts[1]].dependencies.rolldown
-    rejects(data, /pnpm-(?:workspace|lock).yaml/u)
+    rejects(data, { code })
   })
 }
 
@@ -134,7 +147,7 @@ test('executable reports policy, YAML and missing-input errors, and succeeds rea
   writeFileSync(workspacePath, workspace.replace('8.3.3', '8.3.4'))
   const mismatch = run()
   assert.equal(mismatch.status, 1)
-  assert.match(mismatch.stderr, action)
+  assert.match(mismatch.stderr, /\[lock-metadata-mismatch\]/u)
   writeFileSync(workspacePath, workspace)
   writeFileSync(
     lockPath,
@@ -142,23 +155,20 @@ test('executable reports policy, YAML and missing-input errors, and succeeds rea
   )
   const broken = run()
   assert.equal(broken.status, 1)
-  assert.match(broken.stderr, /broken rolldown@1.2.15/u)
-  assert.match(broken.stderr, action)
+  assert.match(broken.stderr, /\[broken-rolldown\]/u)
+  assert.ok(broken.stderr.includes(OVERRIDE_REPAIR), broken.stderr)
   for (const path of [workspacePath, lockPath]) {
     writeFileSync(workspacePath, workspace)
     writeFileSync(lockPath, lock)
     writeFileSync(path, '[invalid')
     const malformed = run()
     assert.equal(malformed.status, 1)
-    assert.match(
-      malformed.stderr,
-      /pnpm-(?:workspace|lock).yaml: repair invalid YAML/u,
-    )
+    assert.match(malformed.stderr, /\[invalid-yaml\]/u)
   }
   rmSync(workspacePath)
   const missing = run()
   assert.equal(missing.status, 1)
-  assert.match(missing.stderr, /pnpm-workspace.yaml: restore a readable input/u)
+  assert.match(missing.stderr, /\[unreadable-input\] pnpm-workspace.yaml/u)
 })
 
 test('real exceptions and scoped sharp override match resolved package identities', () => {

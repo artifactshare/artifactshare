@@ -106,6 +106,206 @@ test('checks directly written custom compile and prepare SQL', () => {
   assert.deepEqual(rules('database.prepare(compiled.sql)'), [])
 })
 
+test('resolves SQL held in a same-file const', () => {
+  assert.deepEqual(
+    rules(`
+      const DELETE_SESSION = 'DELETE FROM sessions WHERE token = ?'
+      env.DB.prepare(DELETE_SESSION)
+    `),
+    [],
+  )
+  assert.deepEqual(
+    rules(`
+      const TERMS = 'SELECT 1 UNION SELECT 2 UNION SELECT 3'
+      const QUERY = \`\${TERMS} UNION SELECT 4 UNION SELECT 5 UNION SELECT 6\`
+      env.DB.prepare(QUERY)
+    `),
+    ['compound-term-limit'],
+  )
+  assert.deepEqual(
+    rules(`
+      import { sql } from 'kysely'
+      const QUERY = 'SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6'
+      sql.raw(QUERY)
+    `),
+    ['compound-term-limit'],
+  )
+  assert.deepEqual(
+    rules(`
+      let query = 'DELETE FROM sessions WHERE token = ?'
+      env.DB.prepare(query)
+    `),
+    ['dynamic-raw-sql'],
+  )
+  // Two scopes reusing one name are judged apart: the analyzable one resolves
+  // and the one built at runtime is still refused.
+  assert.deepEqual(
+    rules(`
+      function first() {
+        const QUERY = 'DELETE FROM sessions WHERE token = ?'
+        env.DB.prepare(QUERY)
+      }
+      function second() {
+        const QUERY = buildQuery()
+        env.DB.prepare(QUERY)
+      }
+    `),
+    ['dynamic-raw-sql'],
+  )
+  assert.deepEqual(
+    rules(`
+      export const DELETE_SESSION = 'DELETE FROM sessions WHERE token = ?'
+      env.DB.prepare(DELETE_SESSION)
+    `),
+    [],
+  )
+})
+
+// A constant resolves wherever it is genuinely in scope, not only at module
+// level, because lifting a query into a local name is the same query.
+test('resolves a const in any scope that holds the use site', () => {
+  assert.deepEqual(
+    rules(`
+      export async function revoke(env, token) {
+        const deleteSession = 'DELETE FROM sessions WHERE token = ?'
+        await env.DB.prepare(deleteSession).bind(token).run()
+      }
+    `),
+    [],
+    'a function-local const resolves',
+  )
+  assert.deepEqual(
+    rules(`
+      function run() {
+        if (ready) {
+          const QUERY = 'DELETE FROM sessions WHERE token = ?'
+          return env.DB.prepare(QUERY)
+        }
+      }
+    `),
+    [],
+    'a const declared in an inner block resolves inside that block',
+  )
+  assert.deepEqual(
+    rules(`
+      export async function probe(env) {
+        const QUERY = 'SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6'
+        return env.DB.prepare(QUERY).all()
+      }
+    `),
+    ['compound-term-limit'],
+    'a local const still reports the limit it crosses',
+  )
+  assert.deepEqual(
+    rules(`
+      const BASE = 'SELECT 1 UNION SELECT 2 UNION SELECT 3'
+      function run() {
+        const QUERY = \`\${BASE} UNION SELECT 4 UNION SELECT 5 UNION SELECT 6\`
+        return env.DB.prepare(QUERY)
+      }
+    `),
+    ['compound-term-limit'],
+    'a local const composed from a module const resolves across the scopes',
+  )
+  assert.deepEqual(
+    rules(`
+      const QUERY = 'SELECT 1'
+      function run() {
+        const QUERY = 'SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6'
+        return env.DB.prepare(QUERY)
+      }
+    `),
+    ['compound-term-limit'],
+    'the nearest binding wins, so the inner const is what gets judged',
+  )
+})
+
+// Resolution must follow the binding, not the name: a name rebound closer to
+// the use site says nothing about the SQL that runs there, so unless that
+// nearer binding is itself an analyzable const the use site stays unresolved.
+test('does not resolve a const that the use site shadows', () => {
+  const shadowed = (declaration) =>
+    rules(`
+      const QUERY = 'DELETE FROM sessions WHERE token = ?'
+      ${declaration}
+    `)
+  assert.deepEqual(
+    shadowed('export function run(db, QUERY) { return db.prepare(QUERY) }'),
+    ['dynamic-raw-sql'],
+    'a parameter of the same name shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed('export const run = (QUERY) => env.DB.prepare(QUERY)'),
+    ['dynamic-raw-sql'],
+    'an arrow parameter shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed('export function run(db, { QUERY }) { return db.prepare(QUERY) }'),
+    ['dynamic-raw-sql'],
+    'a destructured parameter shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { const QUERY = build(); return env.DB.prepare(QUERY) }',
+    ),
+    ['dynamic-raw-sql'],
+    'an inner-block const shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { let QUERY = build(); return env.DB.prepare(QUERY) }',
+    ),
+    ['dynamic-raw-sql'],
+    'an inner let shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { if (x) { var QUERY = build() } return env.DB.prepare(QUERY) }',
+    ),
+    ['dynamic-raw-sql'],
+    'a var hoists out of its block and shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { try { go() } catch (QUERY) { return env.DB.prepare(QUERY) } }',
+    ),
+    ['dynamic-raw-sql'],
+    'a catch clause parameter shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { for (const QUERY of list) env.DB.prepare(QUERY) }',
+    ),
+    ['dynamic-raw-sql'],
+    'a for-of binding shadows the constant',
+  )
+  assert.deepEqual(
+    shadowed(
+      'function run() { function QUERY() {} return env.DB.prepare(QUERY) }',
+    ),
+    ['dynamic-raw-sql'],
+    'an inner function declaration shadows the constant',
+  )
+  assert.deepEqual(
+    rules(`
+      const QUERY = 'DELETE FROM sessions WHERE token = ?'
+      function build() { const QUERY = compose() }
+      function run() { return env.DB.prepare(QUERY) }
+    `),
+    [],
+    'a sibling scope rebinding the name leaves this use site resolvable',
+  )
+  assert.deepEqual(
+    rules(`
+      const QUERY = 'DELETE FROM sessions WHERE token = ?'
+      function QUERY() {}
+      env.DB.prepare(QUERY)
+    `),
+    ['dynamic-raw-sql'],
+    'a top-level declaration taking the name leaves the constant unresolved',
+  )
+})
+
 test('checks sql.raw and namespace imports', () => {
   assert.deepEqual(
     rules(`

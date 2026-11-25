@@ -56,6 +56,50 @@ function optional(node) {
       (node.type === 'CallExpression' && optional(node.callee)))
   )
 }
+// `await new Promise((resolve) => setTimeout(resolve, 250))` is the same
+// elapsed-time wait as Playwright's waitForTimeout. A zero delay only yields to
+// the task queue, and a timer promise handed to something else (a race arm, a
+// stubbed loader) is a value rather than a wait, so neither one counts.
+function timedSleep(node) {
+  if (node.parent?.type !== 'AwaitExpression') return false
+  if (node.callee?.type !== 'Identifier' || node.callee.name !== 'Promise')
+    return false
+  const executor = node.arguments[0]
+  if (
+    !['ArrowFunctionExpression', 'FunctionExpression'].includes(executor?.type)
+  )
+    return false
+  const body = executor.body
+  const expressions =
+    body.type === 'BlockStatement'
+      ? body.body
+          .filter((statement) => statement.type === 'ExpressionStatement')
+          .map((statement) => statement.expression)
+      : [body]
+  return expressions.some((expression) => {
+    const call = unwrap(expression)
+    if (call?.type !== 'CallExpression') return false
+    const name = member(call.callee) ?? call.callee?.name
+    if (name !== 'setTimeout') return false
+    const delay = call.arguments[1]
+    return !(delay?.type === 'Literal' && delay.value === 0)
+  })
+}
+const ELAPSED_TIME_MESSAGE =
+  'Wait for an observed condition, or document this elapsed-time contract with test-wait: elapsed-time — reason.'
+function documentedWait(node, source) {
+  let statement = node
+  while (
+    statement.parent &&
+    !['BlockStatement', 'Program'].includes(statement.parent.type)
+  )
+    statement = statement.parent
+  return source
+    .getCommentsBefore(statement)
+    .some((comment) =>
+      /test-wait: elapsed-time\s*[—:-]\s*\S.+/.test(comment.value),
+    )
+}
 export default {
   meta: { name: 'test-reliability' },
   rules: {
@@ -92,25 +136,12 @@ export default {
               })
             // Narrow to Playwright sleep calls. Timers in fixtures and fake-clock
             // tests are not automatically synchronization sleeps.
-            if (name === 'waitForTimeout') {
-              let statement = node
-              while (
-                statement.parent &&
-                !['BlockStatement', 'Program'].includes(statement.parent.type)
-              )
-                statement = statement.parent
-              const comments = source.getCommentsBefore(statement)
-              if (
-                !comments.some((comment) =>
-                  /test-wait: elapsed-time\s*[—:-]\s*\S.+/.test(comment.value),
-                )
-              )
-                context.report({
-                  node,
-                  message:
-                    'Wait for an observed condition, or document this elapsed-time contract with test-wait: elapsed-time — reason.',
-                })
-            }
+            if (name === 'waitForTimeout' && !documentedWait(node, source))
+              context.report({ node, message: ELAPSED_TIME_MESSAGE })
+          },
+          NewExpression(node) {
+            if (timedSleep(node) && !documentedWait(node, source))
+              context.report({ node, message: ELAPSED_TIME_MESSAGE })
           },
         }
       },

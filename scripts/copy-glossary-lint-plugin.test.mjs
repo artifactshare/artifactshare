@@ -133,34 +133,43 @@ test('extracts both locale blocks from supported public copy shapes', () => {
   assert.doesNotMatch(extractTypeScriptCopy(constantCopy, 'en'), /成果物/)
   assert.match(extractTypeScriptCopy(constantCopy, 'ja'), /成果物/)
 })
-test('reports locale and key, and respects exact JSON allowlists', () => {
+test('reports locale and key, and allows the approved copy wherever it is keyed', () => {
   const input = {
     deny: ['成果物'],
     json: {
-      ja: { ok: '成果物', nested: { key: '成果物' } },
-      en: { ok: '成果物' },
+      ja: { ok: '承認済みの成果物', nested: { key: '別の成果物' } },
+      en: { ok: '承認済みの成果物' },
     },
     legal: {},
-    allow: { json: { 'ja.ok': ['成果物'] } },
+    allow: { copy: { 承認済みの成果物: ['成果物'] } },
   }
   assert.deepEqual(findViolations(input), [
     { file: 'apps/web/app/i18n/ja.json', key: 'nested.key', word: '成果物' },
-    { file: 'apps/web/app/i18n/en.json', key: 'ok', word: '成果物' },
   ])
   assert.deepEqual(
-    findViolations({ ...input, allow: { json: { 'ja.ok': ['別の語'] } } })[0],
+    findViolations({
+      ...input,
+      allow: { copy: { 承認済みの成果物: ['別の語'] } },
+    })[0],
     { file: 'apps/web/app/i18n/ja.json', key: 'ok', word: '成果物' },
   )
+  assert.deepEqual(
+    findViolations({
+      ...input,
+      json: { ja: { renamed: { key: '承認済みの成果物' } } },
+    }),
+    [],
+  )
 })
-test('legal allowlists require exact file, line, and word', () => {
+test('legal copy follows its approval to another line', () => {
   const input = {
     deny: ['成果物'],
     json: {},
-    legal: { 'terms.ja.md': '成果物\n成果物\n' },
-    allow: { legal: { 'terms.ja.md': { 1: ['成果物'] } } },
+    legal: { 'terms.ja.md': '前文\n承認済みの成果物\n未承認の成果物\n' },
+    allow: { copy: { 承認済みの成果物: ['成果物'] } },
   }
   assert.deepEqual(findViolations(input), [
-    { file: 'terms.ja.md', line: 2, word: '成果物' },
+    { file: 'terms.ja.md', line: 3, word: '成果物' },
   ])
 })
 test('checks both summary keys', () => {

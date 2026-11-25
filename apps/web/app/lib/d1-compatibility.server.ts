@@ -30,6 +30,26 @@ export class ConcurrentD1Dialect extends D1Dialect {
 const MAX_COMPOUND_OPERATIONS = 4
 const MAX_BOUND_PARAMETERS = 100
 
+export type D1Limit = 'compound-terms' | 'bound-parameters'
+
+// The limit a query crossed, so callers and tests can tell the two apart
+// without reading the sentence.
+export class D1CompatibilityError extends Error {
+  readonly limit: D1Limit
+  readonly max: number
+
+  constructor(limit: D1Limit, max: number) {
+    super(
+      limit === 'compound-terms'
+        ? `D1 compatibility: a compound SELECT may contain at most ${max} terms`
+        : `D1 compatibility: a query may bind at most ${max} parameters`,
+    )
+    this.name = 'D1CompatibilityError'
+    this.limit = limit
+    this.max = max
+  }
+}
+
 function flattenedOperationCount(node: SelectQueryNode): number {
   return (node.setOperations ?? []).reduce(
     (count, operation) =>
@@ -48,9 +68,7 @@ class D1CompatibilityTransformer extends OperationNodeTransformer {
   assertCompatible(node: OperationNode, queryId?: QueryId): OperationNode {
     const transformed = this.transformNode(node, queryId)
     if (this.#boundParameterCount > MAX_BOUND_PARAMETERS) {
-      throw new Error(
-        `D1 compatibility: queries may bind at most ${MAX_BOUND_PARAMETERS} parameters`,
-      )
+      throw new D1CompatibilityError('bound-parameters', MAX_BOUND_PARAMETERS)
     }
     return transformed
   }
@@ -76,8 +94,9 @@ class D1CompatibilityTransformer extends OperationNodeTransformer {
   ): SelectQueryNode {
     const operationCount = flattenedOperationCount(node)
     if (operationCount > MAX_COMPOUND_OPERATIONS) {
-      throw new Error(
-        'D1 compatibility: compound SELECTs may contain at most five terms',
+      throw new D1CompatibilityError(
+        'compound-terms',
+        MAX_COMPOUND_OPERATIONS + 1,
       )
     }
 

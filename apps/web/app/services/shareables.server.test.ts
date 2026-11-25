@@ -2636,6 +2636,7 @@ describe('commitDialogChanges', () => {
         })
       ).kind,
     ).toBe('ok')
+    // test-wait: elapsed-time — the second change needs a later timestamp than the first.
     await new Promise((resolve) => setTimeout(resolve, 2))
     expect(
       (

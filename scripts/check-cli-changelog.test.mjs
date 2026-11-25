@@ -12,6 +12,8 @@ import {
   validateCliRelease,
 } from './check-cli-changelog.mjs'
 
+const codeAndVersion = ({ code, version }) => ({ code, version })
+
 const SAMPLE_CHANGELOG = `# Changelog
 
 ## 0.6.0 - 2026-07-11
@@ -43,9 +45,10 @@ test('validateCliChangelog passes when the current version heading exists', () =
 })
 
 test('validateCliChangelog fails when the current version heading is missing', () => {
-  const errors = validateCliChangelog('0.7.0', SAMPLE_CHANGELOG)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /missing a `## 0\.7\.0 - YYYY-MM-DD` heading/)
+  assert.deepEqual(
+    validateCliChangelog('0.7.0', SAMPLE_CHANGELOG).map(codeAndVersion),
+    [{ code: 'missing-heading', version: '0.7.0' }],
+  )
 })
 
 test('validateCliChangelog fails when the current version heading is duplicated', () => {
@@ -54,9 +57,14 @@ test('validateCliChangelog fails when the current version heading is duplicated'
 
 - Duplicate heading
 `
-  const errors = validateCliChangelog('0.6.0', content)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /2 headings for version 0\.6\.0/)
+  assert.deepEqual(
+    validateCliChangelog('0.6.0', content).map(({ code, version, count }) => ({
+      code,
+      version,
+      count,
+    })),
+    [{ code: 'duplicate-heading', version: '0.6.0', count: 2 }],
+  )
 })
 
 test('validateCliChangelog fails when the heading date is not YYYY-MM-DD', () => {
@@ -66,9 +74,9 @@ test('validateCliChangelog fails when the heading date is not YYYY-MM-DD', () =>
 
 - Bad date
 `
-  const errors = validateCliChangelog('0.6.0', content)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /does not match/)
+  assert.deepEqual(validateCliChangelog('0.6.0', content).map(codeAndVersion), [
+    { code: 'loose-heading', version: '0.6.0' },
+  ])
 })
 
 test('validateCliChangelog fails on trailing characters after the date', () => {
@@ -78,9 +86,9 @@ test('validateCliChangelog fails on trailing characters after the date', () => {
 
 - Trailing space
 `
-  const errors = validateCliChangelog('0.6.0', content)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /does not match/)
+  assert.deepEqual(validateCliChangelog('0.6.0', content).map(codeAndVersion), [
+    { code: 'loose-heading', version: '0.6.0' },
+  ])
 })
 
 test('validateCliChangelog fails on duplicate headings for non-current versions', () => {
@@ -98,9 +106,14 @@ test('validateCliChangelog fails on duplicate headings for non-current versions'
 
 - Duplicate
 `
-  const errors = validateCliChangelog('0.6.0', content)
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /2 headings for version 0\.5\.2/)
+  assert.deepEqual(
+    validateCliChangelog('0.6.0', content).map(({ code, version, count }) => ({
+      code,
+      version,
+      count,
+    })),
+    [{ code: 'duplicate-heading', version: '0.5.2', count: 2 }],
+  )
 })
 
 const VALID_RELEASE = {
@@ -130,10 +143,11 @@ test('preflight reports provenance and generated-version drift together', () => 
     },
     reference: { package_version: '1.2.2' },
   })
-  assert.equal(errors.length, 3)
-  assert.match(errors.join('\n'), /repository\.url/)
-  assert.match(errors.join('\n'), /repository\.directory/)
-  assert.match(errors.join('\n'), /reference snapshot is for 1\.2\.2/)
+  assert.deepEqual(errors.map(codeAndVersion), [
+    { code: 'repository-url', version: undefined },
+    { code: 'repository-directory', version: undefined },
+    { code: 'reference-version', version: '1.2.2' },
+  ])
 })
 
 test('preflight rejects non-release versions and missing changelog entries', () => {
@@ -141,8 +155,11 @@ test('preflight rejects non-release versions and missing changelog entries', () 
     ...VALID_RELEASE,
     packageJson: { ...VALID_RELEASE.packageJson, version: '1.2.3-next.1' },
   })
-  assert.match(errors.join('\n'), /exact x\.y\.z/)
-  assert.match(errors.join('\n'), /missing a `## 1\.2\.3-next\.1/)
+  assert.deepEqual(errors.map(codeAndVersion), [
+    { code: 'package-version', version: undefined },
+    { code: 'reference-version', version: '1.2.3' },
+    { code: 'missing-heading', version: '1.2.3-next.1' },
+  ])
 })
 
 test('checkCliChangelogAtRoot fails when package version lacks a changelog heading', () => {
@@ -156,9 +173,10 @@ test('checkCliChangelogAtRoot fails when package version lacks a changelog headi
   )
   writeFileSync(join(cliDir, 'CHANGELOG.md'), SAMPLE_CHANGELOG, 'utf8')
 
-  const errors = checkCliChangelogAtRoot(pathToFileURL(`${tempRoot}/`))
-  assert.equal(errors.length, 1)
-  assert.match(errors[0], /missing a `## 9\.9\.9 - YYYY-MM-DD` heading/)
+  assert.deepEqual(
+    checkCliChangelogAtRoot(pathToFileURL(`${tempRoot}/`)).map(codeAndVersion),
+    [{ code: 'missing-heading', version: '9.9.9' }],
+  )
 })
 
 test('can be imported without a script argv', () => {

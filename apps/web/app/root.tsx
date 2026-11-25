@@ -175,6 +175,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <script
           dangerouslySetInnerHTML={{
             __html:
+              // oxlint-disable-next-line analytics/typed-sender -- bootstraps the gtag queue that the typed sender writes to
               'window.dataLayer=window.dataLayer||[];window.gtag=function(){dataLayer.push(arguments)};',
           }}
         />

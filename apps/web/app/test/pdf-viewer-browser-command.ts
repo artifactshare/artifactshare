@@ -1456,6 +1456,7 @@ export const pdfViewerScenario = defineBrowserCommand(
             url.pathname.startsWith(PDFJS_ASSET_PREFIX)) ||
           (scenario === 'transport' && url.pathname === PDF_ORIGINAL_PATH)
         ) {
+          // test-wait: elapsed-time — the stub holds the response to act as a slow transport failure.
           if (scenario === 'transport')
             await new Promise((resolve) => setTimeout(resolve, 1500))
           response.writeHead(scenario === 'transport' ? 500 : 404).end()
