@@ -209,8 +209,13 @@ describe('visibilityDialogReducer', () => {
     expect(state.grants.pendingRemoves.size).toBe(0)
   })
 
-  test('tracks pending additions and removals for save readiness', () => {
+  test('tracks pending additions and removals for save readiness, without the owner', () => {
     const grants: GrantEntry[] = [
+      {
+        email: 'Owner@Example.com',
+        grantedAt: '2026-05-22T00:00:00.000Z',
+        user: null,
+      },
       {
         email: 'viewer@example.com',
         grantedAt: '2026-05-22T00:00:00.000Z',
@@ -314,6 +319,10 @@ describe('visibilityDialogReducer', () => {
     expect(state.linkExpiryTouched).toBe(false)
     expect(state.savedLinkVisible).toBe(true)
     expect(state.grants.pendingAdds).toHaveLength(1)
+    // The loader still reports the expiry from before the save.
+    expect(
+      hasLinkExpiryChanges(state, { date: '2026-08-19', unlimited: false }),
+    ).toBe(false)
 
     state = visibilityDialogReducer(state, {
       type: 'revalidation-succeeded',

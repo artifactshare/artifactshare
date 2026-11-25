@@ -1,6 +1,7 @@
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
+import { bindI18n } from '~/lib/i18n'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
@@ -312,6 +313,7 @@ describe('project files subpage loader', () => {
       commentCount: 0,
     })
     const ids = [...page1.files, ...page2.files].map((f) => f.id)
+    expect(ids).toHaveLength(60)
     expect(new Set(ids).size).toBe(60)
     expect(page2.nextCursor).toBeNull()
   })
@@ -384,6 +386,22 @@ vi.mock('../_home/+components/topbar', () => ({
     </header>
   ),
 }))
+
+test('the more button counts the files not yet shown', async () => {
+  const { db } = await fixture()
+  try {
+    for (let i = 0; i < 53; i++)
+      await insertShareable(db, `s${String(i).padStart(2, '0')}`)
+    const data = await loader(args())
+    const router = createMemoryRouter([
+      { path: '*', element: <ProjectFiles loaderData={data} /> },
+    ])
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    expect(html).toContain(bindI18n('en').t('project.moreFiles', { count: 3 }))
+  } finally {
+    await db.destroy()
+  }
+})
 
 test('the actual project route supplies its current id and name to header search', async () => {
   const { db } = await fixture()

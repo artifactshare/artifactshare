@@ -98,8 +98,11 @@ describe('/api/cli/doctor', () => {
     expect(checkUploadAccessMock).not.toHaveBeenCalled()
   })
 
-  test('reports bot approvals additively and preserves primary', async () => {
+  test('reports bot approvals additively and lists only projects it can still publish to', async () => {
     checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
+    isAgentPublishableDestinationMock.mockImplementation(
+      async (_db, _user, _authority, projectId) => projectId === 'a',
+    )
     getCliAuthorityMock.mockReturnValue({
       kind: 'agent',
       projectId: 'a',
@@ -117,7 +120,7 @@ describe('/api/cli/doctor', () => {
       preset: 'agent',
       project_id: 'a',
       approved_project_ids: ['a', 'b'],
-      publishable_project_ids: ['a', 'b'],
+      publishable_project_ids: ['a'],
     })
   })
 

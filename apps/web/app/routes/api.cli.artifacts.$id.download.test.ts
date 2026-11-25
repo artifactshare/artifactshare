@@ -102,6 +102,30 @@ describe('/api/cli/artifacts/:id/download', () => {
     expect(getCliDownloadManifestMock).not.toHaveBeenCalled()
   })
 
+  test('publisher download of a file whose stored source is gone answers 409, not an empty attachment', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'publisher',
+      familyId: 'family1',
+      workspaceId: 'ws1',
+      publisherClientId: 'client1',
+      publisherClientName: 'Reports',
+    })
+    getPublisherDownloadFileMock.mockResolvedValue({
+      kind: 'ok',
+      file: { content_type: 'text/html' },
+      object: { body: null, size: 13 },
+    })
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4/download',
+      ),
+    } as never)
+    expect(response.status).toBe(409)
+    expect(response.headers.get('content-disposition')).toBeNull()
+  })
+
   test.each(['sha-index', '', 'publisher-static-site'])(
     'returns a download manifest preserving sha256=%j',
     async (sha256) => {

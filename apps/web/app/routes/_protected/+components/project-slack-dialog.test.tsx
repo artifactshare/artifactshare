@@ -64,6 +64,8 @@ describe('ProjectSlackDialog', () => {
     expect(html).toContain('project.slack.active')
     expect(html).toContain('project.slack.clear')
     expect(html).toContain('Workspace')
-    expect(html).toContain('project.slack.change')
+    expect(html).toMatch(
+      /<a[^>]*href="\/projects\/proj1\/slack\/install"[^>]*>project\.slack\.change<\/a>/,
+    )
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { loader, NON_PUBLIC_DISALLOW_PATHS } from './robots[.]txt'
+import { loader } from './robots[.]txt'
 
 interface Group {
   userAgent: string
@@ -19,27 +19,23 @@ function parseGroups(body: string): Group[] {
 }
 
 describe('/robots.txt route', () => {
-  test('applies the shared non-public disallow list to both crawl groups', async () => {
-    const response = loader()
-    const body = await response.text()
-    const groups = parseGroups(body)
-    const oai = groups.find((group) => group.userAgent === 'OAI-SearchBot')
-    const generic = groups.find((group) => group.userAgent === '*')
+  test('lets search crawlers read marketing pages and keeps app surfaces out', async () => {
+    const groups = parseGroups(await loader().text())
+    const rules = [
+      'Allow: /',
+      'Disallow: /connect/slack',
+      'Disallow: /consent',
+      'Disallow: /integrations',
+      'Disallow: /projects',
+      'Disallow: /recent',
+      'Disallow: /settings',
+      'Disallow: /sign-in',
+    ]
 
-    expect(oai).toEqual({
-      userAgent: 'OAI-SearchBot',
-      rules: [
-        'Allow: /',
-        ...NON_PUBLIC_DISALLOW_PATHS.map((path) => `Disallow: ${path}`),
-      ],
-    })
-    expect(generic).toEqual({
-      userAgent: '*',
-      rules: [
-        'Allow: /',
-        ...NON_PUBLIC_DISALLOW_PATHS.map((path) => `Disallow: ${path}`),
-      ],
-    })
+    for (const userAgent of ['OAI-SearchBot', '*']) {
+      const group = groups.find((entry) => entry.userAgent === userAgent)
+      expect([...(group?.rules ?? [])].sort(), userAgent).toEqual(rules)
+    }
   })
 
   test('blocks GPTBot at the origin and has no ChatGPT-User group', async () => {

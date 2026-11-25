@@ -6,6 +6,7 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const getArtifactReadbackMock = vi.hoisted(() => vi.fn())
+const getPublisherArtifactReadbackMock = vi.hoisted(() => vi.fn())
 const deleteShareableMock = vi.hoisted(() => vi.fn())
 const authorizeAgentArtifactReadMock = vi.hoisted(() => vi.fn())
 
@@ -22,6 +23,7 @@ vi.mock('~/services/db.server', () => ({
 }))
 vi.mock('~/services/artifact-readback-service.server', () => ({
   getCliArtifactReadback: getArtifactReadbackMock,
+  getPublisherArtifactReadback: getPublisherArtifactReadbackMock,
 }))
 vi.mock('~/services/shareables.server', () => ({
   deleteShareable: deleteShareableMock,
@@ -40,6 +42,7 @@ describe('/api/cli/artifacts/:id', () => {
     getCliAuthorityMock.mockReturnValue(null)
     createDbMock.mockReset()
     getArtifactReadbackMock.mockReset()
+    getPublisherArtifactReadbackMock.mockReset()
     deleteShareableMock.mockReset()
     authorizeAgentArtifactReadMock.mockReset()
     createDbMock.mockReturnValue({
@@ -120,6 +123,29 @@ describe('/api/cli/artifacts/:id', () => {
         error: { code: 'scope-denied' },
       })
       expect(getArtifactReadbackMock).not.toHaveBeenCalled()
+    })
+  }
+  for (const include of ['versions', 'comments']) {
+    test(`publisher is refused include=${include} before any readback`, async () => {
+      getCliAuthorityMock.mockReturnValue({ kind: 'publisher' })
+      getPublisherArtifactReadbackMock.mockResolvedValue({
+        kind: 'ok',
+        data: { id: 'abc123def4' },
+      })
+      const url = new URL(
+        `https://example.test/api/cli/artifacts/abc123def4?include=${include}`,
+      )
+      const response = await loader({
+        request: new Request(url),
+        context: new Map(),
+        params: { id: 'abc123def4' },
+        url,
+      } as never)
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'scope-denied' },
+      })
+      expect(getPublisherArtifactReadbackMock).not.toHaveBeenCalled()
     })
   }
   test('read adapter forwards version selection and maps removed versions to 410', async () => {
