@@ -291,6 +291,14 @@ export function execute(command, args, options, output) {
   })
 }
 
+// Suites that launch CI scripts would read the runner's controls as their own.
+const runnerControls = ['REPETITIONS', 'SHARD', 'RESULTS_DIR']
+function suiteEnvironment(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !runnerControls.includes(name)),
+  )
+}
+
 export async function runShard({
   shard,
   repetitions,
@@ -346,7 +354,7 @@ export async function runShard({
           {
             timeoutMs,
             cwd: root,
-            env: { ...process.env, ...invocation.env },
+            env: { ...suiteEnvironment(process.env), ...invocation.env },
             stdio: ['ignore', 'pipe', 'pipe'],
           },
           output,
