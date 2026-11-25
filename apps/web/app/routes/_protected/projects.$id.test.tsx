@@ -855,8 +855,8 @@ describe('ProjectRedesignBody rendering', () => {
   // from the one on the files subpage, and only the group heading renders as an
   // h3 here. A heading on the server would not match the viewer's time zone.
   const sameDayFiles = [
-    fileRow('same-new', '2020-01-15T12:00:00Z'),
-    fileRow('same-old', '2020-01-15T08:00:00Z'),
+    fileRow('same-new', '2020-01-15T12:01:00Z'),
+    fileRow('same-old', '2020-01-15T12:00:00Z'),
   ]
   const renderSameDayOverview = () =>
     renderToStaticMarkup(
