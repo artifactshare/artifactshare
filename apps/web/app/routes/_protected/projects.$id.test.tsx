@@ -7,6 +7,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
 const dbHolder = vi.hoisted(() => ({ db: null as unknown }))
+const hydration = vi.hoisted(() => ({ value: false }))
 const userState = vi.hoisted(() => ({
   user: {
     id: 'u1',
@@ -44,6 +45,7 @@ vi.mock('react-router', async (importOriginal) => {
     useViewTransitionState: () => false,
   }
 })
+vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => hydration.value }))
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: 'ja',
@@ -182,6 +184,7 @@ function actionArgs(intent: string, shareableId: string, projectId = 'proj1') {
 }
 
 beforeEach(() => {
+  hydration.value = false
   userState.user = {
     id: 'u1',
     workspaceId: 'w1',
@@ -846,6 +849,37 @@ describe('ProjectRedesignBody rendering', () => {
       html.indexOf('Artifact older'),
     )
     expect(html).not.toContain('project.pinned')
+  })
+
+  // The overview body has its own hydration branch for the date groups, apart
+  // from the one on the files subpage, and only the group heading renders as an
+  // h3 here. A heading on the server would not match the viewer's time zone.
+  const sameDayFiles = [
+    fileRow('same-new', '2020-01-15T12:00:00Z'),
+    fileRow('same-old', '2020-01-15T08:00:00Z'),
+  ]
+  const renderSameDayOverview = () =>
+    renderToStaticMarkup(
+      createElement(ProjectRedesignBody, { ...baseProps, files: sameDayFiles }),
+    )
+  const dateHeadings = (html: string) =>
+    [...html.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map((m) => m[1])
+
+  test('before hydration the overview lists every row with no date heading', () => {
+    const html = renderSameDayOverview()
+    expect(dateHeadings(html)).toEqual([])
+    expect(html).toContain('Artifact same-new')
+    expect(html).toContain('Artifact same-old')
+  })
+
+  test('after hydration the overview heads the day group with the local date', () => {
+    hydration.value = true
+    const html = renderSameDayOverview()
+    const headings = dateHeadings(html)
+    expect(headings).toHaveLength(1)
+    expect(headings[0]).toContain('2020')
+    expect(html).toContain('Artifact same-new')
+    expect(html).toContain('Artifact same-old')
   })
 
   test('archived empty project hides the upload CTA', () => {
