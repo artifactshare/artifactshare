@@ -5,7 +5,11 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { commentFixture } from '~/test/comment-fixtures'
 import { messageCursor } from '~/lib/comment-cursor'
-import { useCommentPage, CommentPageSessionContext } from './use-comment-page'
+import {
+  useCommentPage,
+  CommentPageSessionContext,
+  MissingCommentPageSessionError,
+} from './use-comment-page'
 import { createCommentSession, type CommentSession } from './comment-session'
 import { withCommentRuntime } from './comment-runtime-browser'
 import { renderToString } from 'react-dom/server'
@@ -207,7 +211,7 @@ test('a page consumer without its display provider fails instead of starting ano
   const fetch = vi.fn()
   vi.stubGlobal('fetch', fetch)
   expect(() => renderToString(<Consumer />)).toThrow(
-    'Comment pages require a display Session',
+    MissingCommentPageSessionError,
   )
   expect(fetch).not.toHaveBeenCalled()
 })

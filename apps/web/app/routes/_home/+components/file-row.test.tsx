@@ -1,9 +1,24 @@
 import { type ComponentProps } from 'react'
+import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { MemoryRouter } from 'react-router'
 import { FileRow } from './file-row'
 import { fileTableHeadClassName } from './file-list-styles'
+
+function parse(html: string) {
+  const doc = new Window().document
+  doc.body.innerHTML = html
+  return doc.body
+}
+
+// A utility class that hides an element at a breakpoint is one token of a set,
+// so ask whether the set holds it rather than matching the whole attribute.
+function hasClass(body: ReturnType<typeof parse>, token: string) {
+  return Array.from(body.querySelectorAll('*')).some((element) =>
+    element.classList.contains(token),
+  )
+}
 
 const copyButtonProps = vi.hoisted(() => ({
   current: null as null | Record<string, unknown>,
@@ -263,15 +278,24 @@ describe('FileRow unread motion layout', () => {
           />
         </MemoryRouter>,
       )
-      const mobile = html.split('data-regression-responsive="mobile-only"')[1]
-      expect(mobile).toContain(
-        '<span class="col-span-2 min-w-0 truncate">row.newCommentsOther:2</span>',
+      const body = parse(html)
+      const mobile = body.querySelector(
+        '[data-regression-responsive="mobile-only"]',
+      )!
+      const motion = Array.from(mobile.querySelectorAll('span')).find(
+        (element) => element.textContent === 'row.newCommentsOther:2',
       )
-      expect(html).toContain(
-        homeCompact
-          ? '@max-[theme(--breakpoint-stack)]:hidden'
-          : 'min-w-0 truncate max-wide:hidden',
-      )
+      expect(motion?.classList.contains('truncate')).toBe(true)
+      // The desktop subline stands down at narrow widths so only the mobile
+      // meta row remains; compact home hides it one breakpoint earlier.
+      expect(
+        hasClass(
+          body,
+          homeCompact
+            ? '@max-[theme(--breakpoint-stack)]:hidden'
+            : 'max-wide:hidden',
+        ),
+      ).toBe(true)
     },
   )
 
@@ -286,8 +310,7 @@ describe('FileRow unread motion layout', () => {
         />
       </MemoryRouter>,
     )
-    // デスクトップ側のサブ行は max-wide:hidden を持ち、狭幅ではモバイルメタ行だけが残る
-    expect(html).toContain('min-w-0 truncate max-wide:hidden')
+    expect(hasClass(parse(html), 'max-wide:hidden')).toBe(true)
   })
 })
 

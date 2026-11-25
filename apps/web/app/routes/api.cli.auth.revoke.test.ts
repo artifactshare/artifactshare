@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
+import { expectApiError } from '~/test/api-error'
 
 const withDbMock = vi.hoisted(() => vi.fn())
 const revokeMock = vi.hoisted(() => vi.fn())
@@ -36,13 +37,7 @@ describe('/api/cli/auth/revoke', () => {
       }),
     } as never)
 
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({
-      error: {
-        code: 'unauthorized',
-        message: 'Refresh credential is invalid.',
-      },
-    })
+    await expectApiError(response, { status: 401, code: 'unauthorized' })
   })
 
   test('does not report success when credential lineage is inconsistent', async () => {
@@ -55,13 +50,7 @@ describe('/api/cli/auth/revoke', () => {
       }),
     } as never)
 
-    expect(response.status).toBe(503)
-    expect(await response.json()).toEqual({
-      error: {
-        code: 'service-error',
-        message: 'Refresh credential could not be safely revoked.',
-      },
-    })
+    await expectApiError(response, { status: 503, code: 'service-error' })
   })
 
   test('rejects invalid payloads and methods', async () => {

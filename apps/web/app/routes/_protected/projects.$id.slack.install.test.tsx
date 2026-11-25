@@ -90,8 +90,17 @@ describe('project Slack install loader', () => {
       context: new Map(),
     } as never)
     expect(response.status).toBe(302)
-    expect(response.headers.get('Location')).toContain('client_id=client-id')
-    expect(response.headers.get('Location')).toContain('state=signed-state')
+    // Slack reads the authorize request as query values, in any order.
+    const authorize = new URL(response.headers.get('Location')!)
+    expect(authorize.origin + authorize.pathname).toBe(
+      'https://slack.com/oauth/v2/authorize',
+    )
+    expect(Object.fromEntries(authorize.searchParams)).toEqual({
+      client_id: 'client-id',
+      scope: 'incoming-webhook',
+      state: 'signed-state',
+      redirect_uri: 'https://example.com/api/slack/notify/callback',
+    })
   })
 
   test('returns 404 for an unknown project', async () => {

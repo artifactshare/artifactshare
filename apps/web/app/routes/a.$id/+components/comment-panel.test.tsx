@@ -123,6 +123,23 @@ function render(positionState: PositionState) {
   return renderThreads([textThread(positionState)])
 }
 
+/**
+ * A quote the panel could not find is announced with the orphaned label, and
+ * the warning colors come with it. Read the label the person sees instead of
+ * the color token that paints it.
+ */
+function orphanedLabel(html: string): 'visible' | 'hidden' | 'absent' {
+  const host = document.createElement('div')
+  host.innerHTML = html
+  const label = Array.from(host.querySelectorAll('strong')).find(
+    (element) =>
+      element.textContent ===
+      (locale.value === 'en' ? en : ja)['comments.subjectOrphaned'],
+  )
+  if (!label) return 'absent'
+  return label.classList.contains('hidden') ? 'hidden' : 'visible'
+}
+
 function renderThreadsElement(threads: CommentThreadView[]) {
   return (
     <PanelFixture
@@ -202,16 +219,16 @@ test('a text comment keeps its list position while its check finishes', () => {
   expect(order('needs-check')).toBe(false)
 })
 
-test('checking is neutral; only a missing quote uses warning colors', () => {
+test('checking is neutral; only a missing quote is announced as orphaned', () => {
   locale.value = 'en'
-  expect(render('unchecked')).not.toContain('text-warning')
+  expect(orphanedLabel(render('unchecked'))).not.toBe('visible')
   expect(render('unchecked')).toContain(en['comments.positionChecking'])
-  expect(render('needs-check')).toContain('text-warning')
+  expect(orphanedLabel(render('needs-check'))).toBe('visible')
   const thread = textThread('unchecked')
   if (thread.subject.kind === 'text') thread.subject.checking = false
   const html = renderThreads([thread])
   expect(html).toContain('Original words')
-  expect(html).not.toContain('text-warning')
+  expect(orphanedLabel(html)).toBe('hidden')
   expect(html).not.toContain(en['comments.positionChecking'])
   expect(html).not.toContain(' data-comment-thread-hitarea=""')
 })
@@ -251,18 +268,13 @@ test('the first panel render checks an unchecked thread only when a frame is pre
   const withFrame = renderToStaticMarkup(<FirstRenderPanel framePresent />)
   expect(withFrame).toContain('Original words')
   expect(withFrame).toContain(en['comments.positionChecking'])
-  expect(withFrame).not.toContain('text-warning')
+  expect(orphanedLabel(withFrame)).not.toBe('visible')
   const withoutFrame = renderToStaticMarkup(
     <FirstRenderPanel framePresent={false} />,
   )
   expect(withoutFrame).toContain('Original words')
   expect(withoutFrame).not.toContain(en['comments.positionChecking'])
-  expect(withoutFrame).toContain(
-    renderToStaticMarkup(
-      <strong className="hidden">{en['comments.subjectOrphaned']}</strong>,
-    ),
-  )
-  expect(withoutFrame).not.toContain('text-warning')
+  expect(orphanedLabel(withoutFrame)).toBe('hidden')
 })
 
 test.each(['en', 'ja'] as const)(

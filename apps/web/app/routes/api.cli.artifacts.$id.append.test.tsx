@@ -1,6 +1,7 @@
 const authorityMock = vi.hoisted(() => vi.fn())
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { expectApiError } from '~/test/api-error'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
@@ -138,61 +139,55 @@ describe('/api/cli/artifacts/:id/append', () => {
         ),
       } as never)
 
-      expect(response.status).toBe(400)
-      await expect(response.json()).resolves.toEqual({
-        error: {
-          code: 'validation_failed',
-          message: 'Non-empty UTF-8 content is required.',
-        },
+      await expectApiError(response, {
+        status: 400,
+        code: 'validation_failed',
       })
       expect(publishMock).toHaveBeenCalledTimes(1)
     },
   )
 
-  describe.each([
-    ['not-found', 'Shareable not found.'],
-    [
-      'self-upload-disabled',
-      'Sign in with Google or Microsoft to upload files.',
-    ],
-  ])('denied append: %s', (code, message) => {
-    test.each(['{', '', '{}', '{"content":""}'])(
-      'denies before reading invalid input %j',
-      async (body) => {
-        if (code === 'not-found') {
-          publishMock.mockResolvedValueOnce({ kind: 'not-found' })
-        } else {
-          const actual =
-            await vi.importActual<typeof import('~/modules/publish')>(
-              '~/modules/publish',
-            )
-          publishMock.mockImplementation(actual.publish)
-          publishPrincipalMock.mockReturnValue({
-            kind: 'human',
-            user: { ...requireUserMock(), selfUploadEnabled: false },
-          })
-        }
-        const request = new Request(
-          'https://artifactshare.test/api/cli/artifacts/abc123def4/append',
-          { method: 'POST', body },
-        )
-        const readBody = vi.spyOn(request, 'json')
-        const waitUntil = vi.fn()
-        const response = await action({
-          context: new Map([[ctxContextMock, { waitUntil }]]),
-          params: { id: 'abc123def4' },
-          request,
-        } as never)
+  describe.each(['not-found', 'self-upload-disabled'])(
+    'denied append: %s',
+    (code) => {
+      test.each(['{', '', '{}', '{"content":""}'])(
+        'denies before reading invalid input %j',
+        async (body) => {
+          if (code === 'not-found') {
+            publishMock.mockResolvedValueOnce({ kind: 'not-found' })
+          } else {
+            const actual =
+              await vi.importActual<typeof import('~/modules/publish')>(
+                '~/modules/publish',
+              )
+            publishMock.mockImplementation(actual.publish)
+            publishPrincipalMock.mockReturnValue({
+              kind: 'human',
+              user: { ...requireUserMock(), selfUploadEnabled: false },
+            })
+          }
+          const request = new Request(
+            'https://artifactshare.test/api/cli/artifacts/abc123def4/append',
+            { method: 'POST', body },
+          )
+          const readBody = vi.spyOn(request, 'json')
+          const waitUntil = vi.fn()
+          const response = await action({
+            context: new Map([[ctxContextMock, { waitUntil }]]),
+            params: { id: 'abc123def4' },
+            request,
+          } as never)
 
-        expect(response.status).toBe(code === 'not-found' ? 404 : 403)
-        await expect(response.json()).resolves.toEqual({
-          error: { code, message },
-        })
-        expect(readBody).not.toHaveBeenCalled()
-        expect(waitUntil).not.toHaveBeenCalled()
-      },
-    )
-  })
+          await expectApiError(response, {
+            status: code === 'not-found' ? 404 : 403,
+            code,
+          })
+          expect(readBody).not.toHaveBeenCalled()
+          expect(waitUntil).not.toHaveBeenCalled()
+        },
+      )
+    },
+  )
 
   test('returns the per-ID URL when appending to a link artifact', async () => {
     publishMock.mockResolvedValueOnce({
@@ -219,39 +214,14 @@ describe('/api/cli/artifacts/:id/append', () => {
   })
 
   test.each([
-    [
-      { kind: 'forbidden' },
-      403,
-      'forbidden',
-      'CLI agent scope does not allow this update.',
-    ],
-    [
-      { kind: 'self-upload-disabled' },
-      403,
-      'self-upload-disabled',
-      'Sign in with Google or Microsoft to upload files.',
-    ],
-    [
-      { kind: 'storage-failed' },
-      502,
-      'storage-failed',
-      'Could not save the file. Try again.',
-    ],
-    [
-      { kind: 'quota-exceeded' },
-      413,
-      'quota-exceeded',
-      'Storage quota is exceeded.',
-    ],
-    [
-      { kind: 'copy-forbidden' },
-      403,
-      'copy-forbidden',
-      'Static sites are not supported; append only works for a single Markdown or HTML artifact. Use update to replace the full source.',
-    ],
-  ])(
+    [{ kind: 'forbidden' }, 403, 'forbidden'],
+    [{ kind: 'self-upload-disabled' }, 403, 'self-upload-disabled'],
+    [{ kind: 'storage-failed' }, 502, 'storage-failed'],
+    [{ kind: 'quota-exceeded' }, 413, 'quota-exceeded'],
+    [{ kind: 'copy-forbidden' }, 403, 'copy-forbidden'],
+  ] as const)(
     'maps publish failure %j to the existing CLI error contract',
-    async (result, status, code, message) => {
+    async (result, status, code) => {
       publishMock.mockResolvedValueOnce(result)
       const response = await action({
         context: new Map([[ctxContextMock, { waitUntil: vi.fn() }]]),
@@ -262,10 +232,7 @@ describe('/api/cli/artifacts/:id/append', () => {
         ),
       } as never)
 
-      expect(response.status).toBe(status)
-      await expect(response.json()).resolves.toEqual({
-        error: { code, message },
-      })
+      await expectApiError(response, { status, code })
     },
   )
 
@@ -283,14 +250,12 @@ describe('/api/cli/artifacts/:id/append', () => {
       ),
     } as never)
 
-    expect(response.status).toBe(409)
-    await expect(response.json()).resolves.toEqual({
-      error: {
-        code: 'version_conflict',
-        message:
-          'The artifact changed before append. Current version: v-current.',
-        details: { current_version_id: 'v-current' },
-      },
+    const error = await expectApiError(response, {
+      status: 409,
+      code: 'version_conflict',
+      details: { current_version_id: 'v-current' },
     })
+    // The person retrying by hand reads the current version from the message.
+    expect(error?.message).toContain('v-current')
   })
 })

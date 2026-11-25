@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test, vi } from 'vitest'
 import { RetentionEditor } from './retention-editor'
@@ -29,13 +30,17 @@ test.each([
   'renders %s setting %s without a runtime contract dependency',
   (locale, retainVersions, summary) => {
     routeData.locale = locale
-    const html = renderToStaticMarkup(
+    const doc = new Window().document
+    doc.body.innerHTML = renderToStaticMarkup(
       <RetentionEditor artifactId="s1" retainVersions={retainVersions} />,
     )
 
-    expect(html).toContain(summary)
-    expect(html).toContain('data-retention-change')
-    expect(html).toContain('aria-expanded="false"')
+    expect(doc.body.textContent).toContain(summary)
+    // The retention form starts closed behind its own disclosure control.
+    const toggle = doc.querySelector('button[aria-expanded][aria-controls]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    const form = doc.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(form?.hasAttribute('hidden')).toBe(true)
   },
 )
 

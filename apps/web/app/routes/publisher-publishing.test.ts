@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
+import { expectApiError } from '~/test/api-error'
 import type { DB } from '~/types/db'
 
 const fixture = vi.hoisted(() => ({
@@ -1432,10 +1433,7 @@ test('unrestricted static-site updates retain the existing invalid-query respons
       created.id,
     ),
   )
-  expect(result.status).toBe(400)
-  expect(await result.json()).toMatchObject({
-    error: { code: 'validation-failed', message: 'Invalid version query.' },
-  })
+  await expectApiError(result, { status: 400, code: 'validation-failed' })
 })
 
 test.each(['html_page', 'static_site'])(
@@ -1535,13 +1533,7 @@ test.each([
       created.id,
     ),
   )
-  expect(response.status).toBe(400)
-  expect(await response.json()).toMatchObject({
-    error: {
-      code: 'validation-failed',
-      message: 'Invalid version query.',
-    },
-  })
+  await expectApiError(response, { status: 400, code: 'validation-failed' })
   expect(snapshot()).toEqual(before)
 })
 

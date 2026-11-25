@@ -12,7 +12,7 @@ import type { Route } from './+types/api.shareables.$id.report'
 const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' } as const
 const MAX_NOTE_LENGTH = 500
 const reportCooldownMs = 60_000
-export const REPORT_COOLDOWN_CAPACITY = 4_096
+const REPORT_COOLDOWN_CAPACITY = 4_096
 
 export class ReportCooldownCache {
   readonly #entries = new Map<string, number>()

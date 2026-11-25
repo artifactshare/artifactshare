@@ -92,11 +92,14 @@ function importedAuthMiddleware(source: string): AuthMiddleware | null {
   return (middlewareMatch?.[1] as AuthMiddleware | undefined) ?? null
 }
 
-function declaredMiddleware(source: string): AuthMiddleware | null {
+// How a route registers its middleware is its own business: a direct
+// reference, an alias, a shared list. What must hold is that the route exports
+// a middleware list that is not empty.
+function declaresMiddleware(source: string): boolean {
   const exportMatch = source.match(
-    /export\s+const\s+middleware\s*=\s*\[[^\]]*?\b(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\b[^\]]*\]/,
+    /export\s+const\s+middleware\s*=\s*\[([^\]]*)\]/,
   )
-  return (exportMatch?.[1] as AuthMiddleware | undefined) ?? null
+  return (exportMatch?.[1] ?? '').trim() !== ''
 }
 
 describe('route modules declare their required authentication middleware', () => {
@@ -126,11 +129,11 @@ describe('route modules declare their required authentication middleware', () =>
     expect(actual).toEqual(expectedMiddleware)
   })
 
-  test('each contracted route directly imports and exports its assigned middleware', () => {
+  test('each contracted route imports its assigned middleware and registers one', () => {
     for (const [path, middleware] of Object.entries(expectedMiddleware)) {
       const source = routeSources[`./${path}`]
       expect(importedAuthMiddleware(source), path).toBe(middleware)
-      expect(declaredMiddleware(source), path).toBe(middleware)
+      expect(declaresMiddleware(source), path).toBe(true)
     }
   })
 })

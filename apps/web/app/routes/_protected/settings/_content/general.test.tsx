@@ -6,6 +6,7 @@ import {
   RouterContextProvider,
 } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
+import { serviceCallValues } from '~/test/service-call'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
@@ -80,7 +81,9 @@ test('reads the workspace owner', async () => {
     pattern: '/settings/general',
   })
   expect(result).toEqual({ owner })
-  expect(services.loadWorkspaceOwner).toHaveBeenCalledWith({}, 'workspace')
+  expect(
+    serviceCallValues(services.loadWorkspaceOwner.mock.calls[0]),
+  ).toContain('workspace')
 })
 
 describe('/settings/general action', () => {

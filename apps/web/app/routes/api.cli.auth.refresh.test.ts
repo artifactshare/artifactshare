@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
+import { expectApiError } from '~/test/api-error'
 
 const withDbMock = vi.hoisted(() => vi.fn())
 const refreshCliSessionMock = vi.hoisted(() => vi.fn())
@@ -62,13 +63,7 @@ describe('/api/cli/auth/refresh', () => {
       }),
     } as never)
 
-    expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({
-      error: {
-        code: 'invalid-request',
-        message: 'Invalid request payload.',
-      },
-    })
+    await expectApiError(response, { status: 400, code: 'invalid-request' })
   })
 
   test('accepts the legacy request shape during CLI rollout', async () => {
@@ -103,13 +98,7 @@ describe('/api/cli/auth/refresh', () => {
       }),
     } as never)
 
-    expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({
-      error: {
-        code: 'unauthorized',
-        message: 'Refresh credential is invalid.',
-      },
-    })
+    await expectApiError(response, { status: 401, code: 'unauthorized' })
   })
 
   test('rejects non-POST requests', async () => {

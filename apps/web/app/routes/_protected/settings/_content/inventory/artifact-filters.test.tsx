@@ -33,7 +33,7 @@ test.each(['en', 'ja'] as const)(
       )
       router.dispose()
       expect(doc.querySelector('button[type="submit"]')?.textContent).toBe(
-        locale === 'ja' ? '絞り込みを適用' : 'Apply filters',
+        t('team.inventory.filter.apply'),
       )
       const entries = new FormData(doc.querySelector('form')!)
       expect(entries.getAll('visibility')).toEqual([
@@ -42,12 +42,10 @@ test.each(['en', 'ja'] as const)(
       expect(entries.getAll('sort')).toEqual([filtered ? 'size' : 'updated'])
       const pairs = [
         [
-          'inventory-visibility-filter',
           t('team.inventory.filter'),
           t(filtered ? 'table.visibilityPrivate' : 'team.inventory.filter.all'),
         ],
         [
-          'inventory-sort-filter',
           t('team.inventory.sort'),
           t(
             filtered
@@ -57,15 +55,19 @@ test.each(['en', 'ja'] as const)(
         ],
       ]
 
-      for (const [id, label, value] of pairs) {
-        const field = doc.querySelector(`label[for="${id}"]`)!
-        expect(field.textContent).toBe(label)
+      // Each field is reached the way a reader reaches it: by its visible
+      // label, which must name the control that carries the selection.
+      for (const [label, value] of pairs) {
+        const field = Array.from(doc.querySelectorAll('label')).find(
+          (candidate) => candidate.textContent === label,
+        )!
+        expect(field).toBeDefined()
         expect(
           field.closest('.sr-only, .hidden, [hidden], [aria-hidden="true"]'),
         ).toBeNull()
-        expect(
-          doc.querySelector(`button[role="combobox"]#${id}`)?.textContent,
-        ).toBe(value)
+        const control = doc.getElementById(field.getAttribute('for') ?? '')
+        expect(control?.getAttribute('role')).toBe('combobox')
+        expect(control?.textContent).toBe(value)
       }
     }
   },
