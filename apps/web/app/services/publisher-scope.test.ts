@@ -23,8 +23,8 @@ import { applyMigrations } from '~/test/sqlite-fixture'
 let database: D1Database
 beforeAll(() => {
   const sqlite = new DatabaseSync(':memory:')
-  // schema.sql has no users.google_sub; the migrations this test inserts
-  // through still do.
+  // These inserts carry users.google_sub, which the migrations keep NOT NULL
+  // and schema.sql does not declare.
   applyMigrations(sqlite)
   database = d1OnSqlite(sqlite)
 })

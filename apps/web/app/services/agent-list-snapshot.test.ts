@@ -17,8 +17,8 @@ let db: Kysely<DB>
 
 beforeAll(() => {
   const sqlite = new DatabaseSync(':memory:')
-  // schema.sql has no users.google_sub; the migrations this test inserts
-  // through still do.
+  // These inserts carry users.google_sub, which the migrations keep NOT NULL
+  // and schema.sql does not declare.
   applyMigrations(sqlite)
   binding = d1OnSqlite(sqlite)
   db = new Kysely<DB>({
