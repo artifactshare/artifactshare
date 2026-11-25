@@ -178,6 +178,7 @@ test('Node reporter retains hierarchy, skips and process errors without suite ro
   for await (const line of reporter(events)) output.push(JSON.parse(line))
   assert.equal(output.length, 4)
   assert.equal(output[0].testName, 'outer > inner > leaf')
+  assert.equal(output[0].status, 'failed')
   assert.equal(output[0].error.cause.message, 'root cause')
   assert.match(output[0].error.stack, /leaf error/)
   assert.equal(output[1].status, 'skipped')
@@ -234,8 +235,11 @@ test('Node parent IDs disambiguate interleaved siblings and retain hook failures
   const rows = []
   for await (const line of reporter(events)) rows.push(JSON.parse(line))
   assert.deepEqual(
-    rows.slice(0, 2).map((row) => row.testName),
-    ['right > same', 'left > same'],
+    rows.slice(0, 2).map((row) => [row.testName, row.status]),
+    [
+      ['right > same', 'passed'],
+      ['left > same', 'passed'],
+    ],
   )
   assert.equal(rows[2].testName, '[file failure]')
   assert.equal(rows[2].error.message, 'hook failed')

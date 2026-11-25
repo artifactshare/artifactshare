@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 
 const packagePath = 'packages/npm-reserved/package.json'
@@ -31,7 +32,8 @@ assert.match(
 )
 assert.ok(!readme.includes('techtalkjp'))
 assert.equal(bin.startsWith('#!/usr/bin/env node\n'), true)
-assert.match(bin, new RegExp(supportedPackage.replace('/', '\\/'), 'u'))
-assert.match(bin, /process\.exitCode = 1/u)
+const run = spawnSync(process.execPath, [binPath], { encoding: 'utf8' })
+assert.equal(run.status, 1, run.stderr)
+assert.ok(run.stderr.includes(supportedPackage), run.stderr)
 
 console.log('Reserved npm package metadata and recovery guidance are valid.')

@@ -42,7 +42,7 @@
     "check:viewers": "pnpm --filter @artifactshare/web check:viewers",
     "check:pdf-viewer": "pnpm --filter @artifactshare/web check:pdf-viewer",
     "typecheck": "node packages/viewer-kit/scripts/build-reporter.mjs --check && node apps/web/scripts/build-viewers.mjs --check && pnpm --filter @artifactshare/viewer-kit typecheck && pnpm --filter @artifactshare/web typecheck && pnpm --filter @artifactshare/contract typecheck && pnpm --filter @artifactshare/cli typecheck && pnpm --filter @artifactshare/qm-bridge typecheck",
-    "test:scripts": "node --test scripts/*.test.mjs packages/contract/generate-surfaces.test.mjs packages/viewer-kit/scripts/*.test.mjs apps/web/scripts/*.test.mjs",
+    "test:scripts": "node --test --test-timeout=180000 scripts/*.test.mjs packages/contract/generate-surfaces.test.mjs packages/viewer-kit/scripts/*.test.mjs apps/web/scripts/*.test.mjs",
     "test": "pnpm fixtures:build && pnpm test:scripts && pnpm --filter @artifactshare/web test && pnpm --filter @artifactshare/contract test && pnpm --filter @artifactshare/cli test && pnpm --filter @artifactshare/qm-bridge test",
     "test:nonvisual": "pnpm test:unit && pnpm test:behavior-browser",
     "test:unit": "pnpm test:unit:noncli && pnpm --filter @artifactshare/cli test",

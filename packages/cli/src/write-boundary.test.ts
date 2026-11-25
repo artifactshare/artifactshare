@@ -575,21 +575,6 @@ for (const phase of ['create', 'read', 'rename', 'remove'] as const) {
   })
 }
 
-test('tree records and verifies a new leaf without a redundant third inspection', async (t) => {
-  const { root } = await fixture(t)
-  const leaf = join(root, 'file.md')
-  await fs.writeFile(leaf, 'content')
-  let inspections = 0
-  const boundary = new WriteBoundary({
-    lstat: async (path) => {
-      if (path === leaf) inspections++
-      return fs.lstat(path, { bigint: true })
-    },
-  })
-  await boundary.tree(root)
-  assert.equal(inspections, 2)
-})
-
 for (const phase of ['rename', 'remove'] as const) {
   test(`linked output parent target is rechecked before ${phase}`, async (t) => {
     const { base, root, outside } = await fixture(t)

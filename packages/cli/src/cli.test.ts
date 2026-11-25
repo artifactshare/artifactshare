@@ -64,7 +64,7 @@ test('--version works when launched via symlink (bin entrypoint)', async () => {
       timeout: 5000,
     })
     assert.equal(result.status, 0)
-    assert.ok(result.stdout.includes(pkg.version))
+    assert.equal(result.stdout.trim(), pkg.version)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
