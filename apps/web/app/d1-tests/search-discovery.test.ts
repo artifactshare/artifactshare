@@ -106,8 +106,9 @@ it('uses ID lookups with all filters and five indexed sparse sources', async () 
     .prepare(`EXPLAIN QUERY PLAN ${sparse.sql}`)
     .bind(...sparse.parameters)
     .all<{ detail: string }>()
-  // Every sparse source has to be served by an index. Listing the index names
-  // pins the plan to them; a dropped index shows up as a scan either way.
+  // No sparse source may scan a table. SQLite can fall back to another index
+  // when one of the 0126 indexes is missing, so the rows_read bounds below are
+  // what catch a dropped index.
   expect(
     plan.results
       .map((row) => row.detail)

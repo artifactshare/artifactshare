@@ -7,27 +7,24 @@ import { TooltipProvider } from '~/components/ui/tooltip'
 import { ViewerFixture } from '~/routes/dev.scenarios.$scenario/+components/viewer-fixture'
 import { AppTopbar } from './app-topbar'
 import { bindI18n } from '~/lib/i18n'
-import { requiredWait } from '~/test/browser-waits'
 import '~/app.css'
 
 const ja = bindI18n('ja')
 const receivedEmpty = ja.t('accessRequests.receivedEmpty')
 
 // Radix slides the sheet in; its position is only measurable once the
-// animation it starts on mount has finished.
+// animation it starts on mount has finished. A cancelled animation is no
+// longer running either, so settled (not fulfilled) is the condition.
 async function openedSheet() {
   const sheet = page.getByRole('dialog', {
     name: ja.t('accessRequests.title'),
   })
   await expect.element(sheet).toBeVisible()
   const element = sheet.element()
-  await requiredWait(
-    'access request sheet open animation',
-    Promise.all(
-      element
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    ),
+  await Promise.allSettled(
+    element
+      .getAnimations({ subtree: true })
+      .map((animation) => animation.finished),
   )
   return element as HTMLElement
 }
