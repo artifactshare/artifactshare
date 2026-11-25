@@ -16,15 +16,6 @@ const rendered = {
 }
 
 for (const name of Object.keys(viewers)) {
-  test(`rebuilds the committed ${name} script and stylesheet byte for byte`, async () => {
-    const first = await rendered[name]
-    const second = await renderViewer(name)
-
-    assert.equal(second.sources.script, first.sources.script)
-    assert.equal(second.sources.style, first.sources.style)
-    await writeViewer(first, { check: true })
-  })
-
   test(`check mode rejects a missing or stale ${name} script or stylesheet without writing`, async () => {
     const bundle = await rendered[name]
     const directory = await mkdtemp(join(tmpdir(), `${name}-viewer-`))

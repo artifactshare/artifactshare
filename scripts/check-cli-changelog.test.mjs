@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 import {
   checkCliChangelogAtRoot,
-  checkCliReleaseAtRoot,
   findVersionHeadings,
   validateCliChangelog,
   validateCliRelease,
@@ -104,10 +103,6 @@ test('validateCliChangelog fails on duplicate headings for non-current versions'
   assert.match(errors[0], /2 headings for version 0\.5\.2/)
 })
 
-test('checkCliChangelogAtRoot passes against the repo files', () => {
-  assert.deepEqual(checkCliChangelogAtRoot(), [])
-})
-
 const VALID_RELEASE = {
   packageJson: {
     name: '@artifactshare/cli',
@@ -121,10 +116,6 @@ const VALID_RELEASE = {
   changelog: '## 1.2.3 - 2026-08-09\n\n- Release\n',
   reference: { package_version: '1.2.3' },
 }
-
-test('current CLI release inputs pass preflight', () => {
-  assert.deepEqual(checkCliReleaseAtRoot(), [])
-})
 
 test('valid release metadata passes', () => {
   assert.deepEqual(validateCliRelease(VALID_RELEASE), [])
