@@ -7,6 +7,10 @@ const implicit: Record<string, string> = {
   menuitem: '[role="menuitem"]',
   spinbutton: 'input[type="number"], [role="spinbutton"]',
   checkbox: 'input[type="checkbox"], [role="checkbox"]',
+  radio: 'input[type="radio"], [role="radio"]',
+  link: 'a[href], [role="link"]',
+  textbox:
+    'input[type="text"], input[type="email"], input:not([type]), textarea, [role="textbox"]',
 }
 
 function accessibleName(element: Element): string {
@@ -35,13 +39,22 @@ export function shown(element: Element) {
   return !element.closest('[hidden], [aria-hidden="true"], [inert]')
 }
 
-export function byRole(root: Element | Document, role: string, name?: string) {
+/** An accessible name, exactly, or a test of one for a name the element
+ * assembles from more than one piece of copy. */
+export function byRole(
+  root: Element | Document,
+  role: string,
+  name?: string | ((name: string) => boolean),
+) {
+  const matches = (element: Element) =>
+    name === undefined ||
+    (typeof name === 'string'
+      ? accessibleName(element) === name
+      : name(accessibleName(element)))
   const selector = implicit[role] ?? `[role="${role}"]`
   return (
     Array.from(root.querySelectorAll<HTMLElement>(selector)).find(
-      (element) =>
-        shown(element) &&
-        (name === undefined || accessibleName(element) === name),
+      (element) => shown(element) && matches(element),
     ) ?? null
   )
 }
