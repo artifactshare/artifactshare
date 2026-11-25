@@ -530,4 +530,22 @@ describe('durable link publications migration', () => {
         .get(),
     ).toEqual({ count: 0 })
   })
+
+  test('reserves a link-published id for exactly 24 hours after deletion', () => {
+    const sqlite = new DatabaseSync(':memory:')
+    applyMigrations(sqlite)
+    seedWorkspace(sqlite)
+    insertShareable(sqlite, 'reused', 'link', '2026-09-08T01:00:00.000Z')
+    sqlite.exec("DELETE FROM shareables WHERE id = 'reused'")
+
+    expect(() =>
+      insertShareable(sqlite, 'reused', 'private', '2026-09-09T00:59:59.999Z'),
+    ).toThrow('UNIQUE constraint failed: shareables.id')
+    insertShareable(sqlite, 'reused', 'private', '2026-09-09T01:00:00.000Z')
+    expect(
+      sqlite
+        .prepare("SELECT created_at FROM shareables WHERE id = 'reused'")
+        .get(),
+    ).toEqual({ created_at: '2026-09-09T01:00:00.000Z' })
+  })
 })
