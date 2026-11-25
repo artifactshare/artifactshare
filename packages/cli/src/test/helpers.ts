@@ -1,23 +1,16 @@
-import {
-  execFileSync,
-  spawn,
-  spawnSync,
-  type SpawnSyncReturns,
-} from 'node:child_process'
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createServer as createHttpsServer } from 'node:https'
 export {
   collectBody,
   collectBodyBuffer,
   formField,
   withServer,
 } from './server.js'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 
 const bin = fileURLToPath(new URL('../../dist/index.js', import.meta.url))
@@ -125,64 +118,6 @@ export function runAsync(
     if (options.input !== undefined) child.stdin.end(options.input)
     else child.stdin.end()
   })
-}
-
-export async function withHttpsServer<T>(
-  handler: (request: IncomingMessage, response: ServerResponse) => void,
-  callback: (baseUrl: string) => Promise<T>,
-): Promise<T> {
-  const certificateDirectory = await mkdtemp(
-    join(tmpdir(), 'artifactshare-cli-test-certificate-'),
-  )
-  let server: ReturnType<typeof createHttpsServer> | undefined
-  try {
-    const keyPath = join(certificateDirectory, 'key.pem')
-    const certificatePath = join(certificateDirectory, 'certificate.pem')
-    execFileSync(
-      'openssl',
-      [
-        'req',
-        '-x509',
-        '-newkey',
-        'rsa:2048',
-        '-nodes',
-        '-days',
-        '1',
-        '-subj',
-        '/CN=127.0.0.1',
-        '-addext',
-        'subjectAltName=IP:127.0.0.1',
-        '-keyout',
-        keyPath,
-        '-out',
-        certificatePath,
-      ],
-      { stdio: 'ignore' },
-    )
-    const httpsServer = createHttpsServer(
-      {
-        key: await readFile(keyPath),
-        cert: await readFile(certificatePath),
-      },
-      handler,
-    )
-    server = httpsServer
-    await new Promise<void>((resolve, reject) => {
-      httpsServer.once('error', reject)
-      httpsServer.listen(0, '127.0.0.1', resolve)
-    })
-    const address = httpsServer.address()
-    assert.ok(address && typeof address === 'object')
-    return await callback(`https://127.0.0.1:${address.port}`)
-  } finally {
-    if (server?.listening) {
-      const listeningServer = server
-      await new Promise<void>((resolve, reject) => {
-        listeningServer.close((error) => (error ? reject(error) : resolve()))
-      })
-    }
-    await rm(certificateDirectory, { recursive: true, force: true })
-  }
 }
 
 export function sha256Base64Url(text: string): string {

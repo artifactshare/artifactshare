@@ -105,6 +105,31 @@ export async function signIn(run, { persona = 'Free owner', next = '/' } = {}) {
   return { browser, context, page }
 }
 
+/**
+ * The locator's box once it stops moving, rounded, with `right` and `bottom`.
+ * Panels and toasts slide in, so a box read right after `waitFor` can be a
+ * frame of the animation rather than where the user sees the element.
+ */
+export async function stableBox(locator, { tries = 40, interval = 100 } = {}) {
+  let previous
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const box = await locator.boundingBox()
+    const current = box && {
+      left: Math.round(box.x),
+      top: Math.round(box.y),
+      right: Math.round(box.x + box.width),
+      bottom: Math.round(box.y + box.height),
+      width: Math.round(box.width),
+      height: Math.round(box.height),
+    }
+    const key = current && JSON.stringify(current)
+    if (key && key === previous) return current
+    previous = key
+    await locator.page().waitForTimeout(interval)
+  }
+  throw new Error(`the element never settled: ${previous ?? 'no box'}`)
+}
+
 /** Save `<name>.png` and `<name>.aria.yml` for the page (or a locator). */
 export async function capture(run, feature, name, page, locator) {
   const dir = evidenceDir(run, feature)
@@ -164,8 +189,18 @@ function assertCliBuildCurrent() {
  * Run the built CLI against this run's app with a throwaway HOME and config
  * dir, so the developer's saved production credentials are never read.
  * Writes `<name>.cli.json` (command, exit code, stdout, stderr) as evidence.
+ *
+ * The run's certificate is the local development one, so every call passes
+ * `--insecure-localhost`. Pass `insecureLocalhost: false` to leave it out and
+ * see what a user sees without it.
  */
-export function runCli(run, feature, name, args, { token, cwd } = {}) {
+export function runCli(
+  run,
+  feature,
+  name,
+  args,
+  { token, cwd, insecureLocalhost = true } = {},
+) {
   assertCliBuildCurrent()
   const home = join(run.runDir, 'cli-home')
   mkdirSync(home, { recursive: true })
@@ -182,7 +217,7 @@ export function runCli(run, feature, name, args, { token, cwd } = {}) {
     ARTIFACTSHARE_BASE_URL: run.appOrigin,
     ...(token ? { ARTIFACTSHARE_TOKEN: token } : {}),
   })
-  const argv = [...args, '--insecure-localhost']
+  const argv = insecureLocalhost ? [...args, '--insecure-localhost'] : [...args]
   const result = spawnSync(process.execPath, [CLI, ...argv], {
     cwd: cwd ?? home,
     env,
@@ -199,9 +234,12 @@ export function runCli(run, feature, name, args, { token, cwd } = {}) {
     join(evidenceDir(run, feature), `${name}.cli.json`),
     `${JSON.stringify(record, null, 2)}\n`,
   )
+  // `--json` prints a success to stdout and a failure to stderr.
   let json
-  try {
-    json = JSON.parse(result.stdout)
-  } catch {}
+  for (const text of [result.stdout, result.stderr])
+    if (json === undefined)
+      try {
+        json = JSON.parse(text)
+      } catch {}
   return { ...record, json }
 }

@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // Journey: a user creates an API token in Settings, shares an HTML file with
 // the CLI, and opens the returned URL; the file's content renders inside the
-// sandboxed viewer frame and the file appears on Home.
+// sandboxed viewer frame and the file appears on Home. The run speaks HTTPS
+// with a development certificate, so the journey also shows what `
+// --insecure-localhost` is for: without it the CLI refuses the connection, and
+// with it the token and every uploaded file reach the app, including a
+// directory's nested asset and a Markdown version.
 //
 //   node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]
 //
@@ -15,6 +19,7 @@ import {
   openRun,
   runCli,
   signIn,
+  uiText,
 } from '../harness.mjs'
 
 const FEATURE = 'cli-share'
@@ -46,6 +51,24 @@ try {
     )
   step('CLI whoami is the dev persona', { email })
 
+  // Same command, same token, without the flag. The run serves HTTPS with the
+  // development certificate, which the CLI does not trust, so the request never
+  // reaches the app and it reports a network failure rather than an answer.
+  const refused = runCli(run, FEATURE, '03-whoami-no-flag', ['whoami', '--json'], {
+    token,
+    insecureLocalhost: false,
+  })
+  const failure = refused.json?.error
+  if (refused.exitCode === 0)
+    throw new Error(`whoami succeeded without --insecure-localhost: ${refused.stdout}`)
+  if (failure?.code !== 'network_failed')
+    throw new Error(
+      `unexpected failure without the flag: ${refused.stdout}${refused.stderr}`,
+    )
+  step('without --insecure-localhost the CLI never reaches the app', {
+    code: failure.code,
+  })
+
   const workDir = join(run.runDir, 'cli-work')
   mkdirSync(workDir, { recursive: true })
   const file = join(workDir, 'report.html')
@@ -56,7 +79,7 @@ try {
   const share = runCli(
     run,
     FEATURE,
-    '03-share',
+    '04-share',
     ['share', file, '--visibility', 'private', '--json'],
     { token, cwd: workDir },
   )
@@ -72,15 +95,22 @@ try {
   await frame
     .getByRole('heading', { name: marker })
     .waitFor({ timeout: 30_000 })
-  await capture(run, FEATURE, '04-viewer', page)
-  step('viewer renders the shared heading inside the sandbox frame')
+  // The share went up as one multipart request; its visibility travelled in the
+  // same request, so the viewer shows the file as private.
+  await page
+    .getByRole('button', {
+      name: `${uiText('en', 'table.visibilityOnlyMe')} · ${uiText('en', 'vw.changeVisibility')}`,
+    })
+    .waitFor()
+  await capture(run, FEATURE, '05-viewer', page)
+  step('viewer renders the shared heading inside the sandbox frame, kept private')
 
   await page.goto(run.appOrigin)
   await page.getByRole('link', { name: new RegExp(marker) }).first().waitFor()
-  await capture(run, FEATURE, '05-home', page)
+  await capture(run, FEATURE, '06-home', page)
   step('Home lists the shared file')
 
-  const list = runCli(run, FEATURE, '06-artifacts-list', [
+  const list = runCli(run, FEATURE, '07-artifacts-list', [
     'artifacts',
     'list',
     '--json',
@@ -95,7 +125,7 @@ try {
     file2,
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${marker}</title></head><body><main><h1>${updated}</h1></main></body></html>`,
   )
-  const update = runCli(run, FEATURE, '07-update', ['update', url, file2, '--json'], {
+  const update = runCli(run, FEATURE, '08-update', ['update', url, file2, '--json'], {
     token,
   })
   if (update.exitCode !== 0) throw new Error(`update failed: ${update.stdout}${update.stderr}`)
@@ -106,8 +136,76 @@ try {
     .getByRole('heading', { name: updated })
     .waitFor({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Version status: v2' }).waitFor()
-  await capture(run, FEATURE, '08-viewer-v2', page)
+  await capture(run, FEATURE, '09-viewer-v2', page)
   step('CLI update adds v2 at the same URL')
+
+  // A directory goes up as one multipart request, each file under its path in
+  // the directory. The stylesheet only colours the heading if it arrived as
+  // assets/style.css.
+  const siteMarker = `${marker} site`
+  const siteColor = 'rgb(16, 94, 203)'
+  const siteDir = join(workDir, 'site')
+  mkdirSync(join(siteDir, 'assets'), { recursive: true })
+  writeFileSync(
+    join(siteDir, 'index.html'),
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${siteMarker}</title><link rel="stylesheet" href="assets/style.css"></head><body><main><h1>${siteMarker}</h1></main></body></html>`,
+  )
+  writeFileSync(join(siteDir, 'assets', 'style.css'), `h1 { color: ${siteColor}; }`)
+  const siteShare = runCli(
+    run,
+    FEATURE,
+    '10-share-directory',
+    ['share', siteDir, '--visibility', 'private', '--json'],
+    { token, cwd: workDir },
+  )
+  const siteUrl = siteShare.json?.data?.artifact?.url
+  if (siteShare.exitCode !== 0 || typeof siteUrl !== 'string')
+    throw new Error(`directory share failed: ${siteShare.stdout}${siteShare.stderr}`)
+  await page.goto(siteUrl)
+  await page
+    .frameLocator('iframe')
+    .first()
+    .getByRole('heading', { name: siteMarker })
+    .waitFor({ timeout: 30_000 })
+  const sandbox = page
+    .frames()
+    .find((candidate) => candidate.url().includes('usercontent'))
+  const headingColor = await sandbox.evaluate(
+    () => getComputedStyle(document.querySelector('h1')).color,
+  )
+  if (headingColor !== siteColor)
+    throw new Error(
+      `the directory's stylesheet did not reach the viewer: heading is ${headingColor}`,
+    )
+  await capture(run, FEATURE, '11-viewer-directory', page)
+  step("a directory's nested stylesheet arrives and styles the page", {
+    url: siteUrl,
+    headingColor,
+  })
+
+  const notes = join(workDir, 'notes.md')
+  const notesHeading = `${marker} notes`
+  writeFileSync(notes, `# ${notesHeading}\n\nWritten as Markdown by the journey.\n`)
+  const shareNotes = runCli(
+    run,
+    FEATURE,
+    '12-share-markdown',
+    ['share', notes, '--visibility', 'private', '--json'],
+    { token, cwd: workDir },
+  )
+  const notesUrl = shareNotes.json?.data?.artifact?.url
+  if (shareNotes.exitCode !== 0 || typeof notesUrl !== 'string')
+    throw new Error(`markdown share failed: ${shareNotes.stdout}${shareNotes.stderr}`)
+  await page.goto(notesUrl)
+  await page
+    .frameLocator('iframe')
+    .first()
+    .getByRole('heading', { name: notesHeading })
+    .waitFor({ timeout: 30_000 })
+  await capture(run, FEATURE, '13-viewer-markdown', page)
+  step('a Markdown file arrives as Markdown and renders as a heading', {
+    url: notesUrl,
+  })
 } finally {
   await browser.close()
   writeFileSync(
