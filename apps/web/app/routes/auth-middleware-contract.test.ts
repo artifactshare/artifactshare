@@ -92,14 +92,38 @@ function importedAuthMiddleware(source: string): AuthMiddleware | null {
   return (middlewareMatch?.[1] as AuthMiddleware | undefined) ?? null
 }
 
-// How a route registers its middleware is its own business: a direct
-// reference, an alias, a shared list. What must hold is that the route exports
-// a middleware list that is not empty.
-function declaresMiddleware(source: string): boolean {
-  const exportMatch = source.match(
-    /export\s+const\s+middleware\s*=\s*\[([^\]]*)\]/,
+// One level of `const alias = someMiddleware`, so that naming a list entry
+// locally is not a contract change.
+function aliasTarget(source: string, name: string): string | null {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return null
+  const assignment = source.match(
+    new RegExp(
+      `\\bconst\\s+${name}\\s*(?::[^=\\n]+)?=\\s*([A-Za-z_$][\\w$]*)[\\s,;\\n]`,
+    ),
   )
-  return (exportMatch?.[1] ?? '').trim() !== ''
+  return assignment?.[1] ?? null
+}
+
+// Whether a route registers its middleware directly, behind other middleware
+// in the list, or through a local alias is its own business. What must hold is
+// that the list it exports leads to the middleware the contract assigns it:
+// a non-empty list is not enough, because a route can export a list that
+// authenticates nobody.
+function registersMiddleware(
+  source: string,
+  assigned: AuthMiddleware,
+): boolean {
+  const list = source.match(
+    /export\s+const\s+middleware\s*=\s*\[([^\]]*)\]/,
+  )?.[1]
+  if (list === undefined) return false
+  return list
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+    .some(
+      (entry) => entry === assigned || aliasTarget(source, entry) === assigned,
+    )
 }
 
 describe('route modules declare their required authentication middleware', () => {
@@ -112,6 +136,59 @@ describe('route modules declare their required authentication middleware', () =>
     `
 
     expect(importedAuthMiddleware(source)).toBe('requireUserApiMiddleware')
+  })
+
+  test.each([
+    {
+      case: 'registers it directly',
+      body: 'export const middleware = [requireUserApiMiddleware]',
+      registers: true,
+    },
+    {
+      case: 'registers it after another middleware',
+      body: 'export const middleware = [searchNoStoreMiddleware, requireUserApiMiddleware]',
+      registers: true,
+    },
+    {
+      case: 'registers it through a local alias',
+      body: [
+        'const authed = requireUserApiMiddleware',
+        'export const middleware = [authed]',
+      ].join('\n'),
+      registers: true,
+    },
+    {
+      case: 'registers a different auth middleware',
+      body: 'export const middleware = [requireUserMiddleware]',
+      registers: false,
+    },
+    {
+      case: 'registers a local pass-through instead',
+      body: [
+        'const saveMiddleware = (_args, next) => next()',
+        'export const middleware = [saveMiddleware]',
+      ].join('\n'),
+      registers: false,
+    },
+    {
+      case: 'exports an empty list',
+      body: 'export const middleware = []',
+      registers: false,
+    },
+    {
+      case: 'exports no list at all',
+      body: 'export const loader = () => null',
+      registers: false,
+    },
+  ])('a route that $case', ({ body, registers }) => {
+    const source = [
+      "import { requireUserApiMiddleware, requireUserMiddleware } from '~/middleware/auth'",
+      body,
+    ].join('\n')
+
+    expect(registersMiddleware(source, 'requireUserApiMiddleware')).toBe(
+      registers,
+    )
   })
 
   test('the explicit contract covers every route source with a direct auth declaration', () => {
@@ -133,7 +210,7 @@ describe('route modules declare their required authentication middleware', () =>
     for (const [path, middleware] of Object.entries(expectedMiddleware)) {
       const source = routeSources[`./${path}`]
       expect(importedAuthMiddleware(source), path).toBe(middleware)
-      expect(declaresMiddleware(source), path).toBe(true)
+      expect(registersMiddleware(source, middleware), path).toBe(true)
     }
   })
 })
