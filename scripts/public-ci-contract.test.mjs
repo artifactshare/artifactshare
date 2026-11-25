@@ -831,11 +831,11 @@ test('every container in public CI is the locked Playwright image', () => {
 })
 
 test('image-backed CI installs no browsers or system packages at run time', () => {
-  const detector = fs.readFileSync(
+  const nightly = [
     '.github/workflows/flaky-detector.yml',
-    'utf8',
-  )
-  for (const source of [workflow, detector])
+    '.github/workflows/nightly-journeys.yml',
+  ].map((file) => fs.readFileSync(file, 'utf8'))
+  for (const source of [workflow, ...nightly])
     assert.doesNotMatch(
       source,
       /playwright install|install-deps|\bapt(?:-get)?\b|browser-cache-|browser-system-packages|actions\/cache(?:\/restore|\/save)?@/,

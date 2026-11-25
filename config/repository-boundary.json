@@ -104,6 +104,7 @@
     "scripts/flaky-report.test.mjs",
     "scripts/flaky-runs.test.mjs",
     "scripts/flaky-detector-contract.test.mjs",
+    "scripts/nightly-journeys-contract.test.mjs",
     "scripts/ci/changed-browser-repetitions.mjs",
     "scripts/changed-browser-repetitions.test.mjs",
     "scripts/skill-eval.mjs",
@@ -169,7 +170,8 @@
       ".github/workflows/release-cli.yml",
       ".github/workflows/release-qm-bridge.yml",
       ".github/workflows/release-npm-reserved.yml",
-      ".github/workflows/flaky-detector.yml"
+      ".github/workflows/flaky-detector.yml",
+      ".github/workflows/nightly-journeys.yml"
     ]
   }
 }
