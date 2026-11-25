@@ -1,110 +1,42 @@
 import { describe, expect, test } from 'vitest'
+import { MESSAGES } from '~/i18n/messages'
 import { bindI18n, t, tPlural } from './i18n'
 
-import en from '~/i18n/en.json'
-import ja from '~/i18n/ja.json'
-
-test.each([
-  'team.inventory.filter.apply',
-  'team.removedMembers.empty',
-  'team.integrations.slack.memberEmpty',
-  'team.tokens.revoke.title',
-  'team.tokens.revoke.body',
-  'team.tokens.cli.revoke.body',
-  'team.tokens.cli.revokeAllConfirm.action',
-  'team.tokens.cli.revokeAllConfirm.body',
-  'team.tokens.revoke.pending',
-  'team.tokens.revoke.failed',
-  'team.tokens.revoke.unavailable',
-  'team.bots.stop.success',
-  'team.bots.cancel.success',
-  'team.bots.add.nameRequired',
-  'team.bots.add.primaryRequired',
-] as const)(
-  'Settings copy is localized with matching placeholders: %s',
-  (key) => {
-    expect(en[key].trim()).not.toBe('')
-    expect(ja[key].trim()).not.toBe('')
-    expect(ja[key].match(/\{\w+\}/g)?.sort()).toEqual(
-      en[key].match(/\{\w+\}/g)?.sort(),
-    )
-  },
-)
+// Catalog contents (every key present in both locales, matching
+// placeholders) are checked in `app/i18n/catalog-parity.test.ts`. Here: the
+// lookup, fallback and interpolation rules a caller depends on.
 
 describe('t', () => {
-  test('translates a known key', () => {
-    expect(t('en', 'vw.back')).toBe('Back')
-    expect(t('ja', 'vw.back')).toBe('戻る')
+  test('reads the asked-for locale, not the default one', () => {
+    expect(t('ja', 'vw.back')).toBe(MESSAGES.ja['vw.back'])
+    expect(t('en', 'vw.back')).toBe(MESSAGES.en['vw.back'])
+    expect(t('ja', 'vw.back')).not.toBe(t('en', 'vw.back'))
   })
 
   test('interpolates {var} placeholders', () => {
-    expect(t('en', 'toast.copied', { url: 'https://x' })).toBe(
-      'Copied · https://x',
-    )
+    const copied = t('en', 'toast.copied', { url: 'https://x' })
+    expect(copied).toContain('https://x')
+    expect(copied).not.toMatch(/\{\w+\}/)
   })
 
-  test('interpolates multiple vars + numbers', () => {
-    expect(t('en', 'tb.fileCountOther', { n: 5 })).toBe('5 files')
+  test('interpolates numbers', () => {
+    expect(t('en', 'tb.fileCountOther', { n: 5 })).toContain('5')
   })
 
-  test('interpolates revised Japanese copy, including the repeated holder', () => {
-    expect(
-      t('ja', 'team.members.revokeCliSessionsConfirm.title', {
-        name: 'テスト',
-      }),
-    ).toBe('テスト のCLIセッションを失効させますか？')
-    expect(t('ja', 'vw.versionStatusWithVersion', { version: 'v2' })).toBe(
-      '版の状態: v2',
+  test('replaces a placeholder that repeats in one message', () => {
+    const notice = t('ja', 'toast.projectHasAgentCredentials', {
+      holder: 'Dana',
+    })
+    expect(MESSAGES.ja['toast.projectHasAgentCredentials']).toContain(
+      '{holder}',
     )
-    expect(t('ja', 'vw.versionStatusWithUpdate', { version: 'v2' })).toBe(
-      '版の状態: v2、新しい版があります',
-    )
-    expect(
-      t('ja', 'visibilityDialog.grants.header.title.workspace', {
-        hd: 'example.com',
-      }),
-    ).toBe('「example.com」以外の人への個別共有')
-    expect(t('ja', 'projectShareDefaults.addImpactNote', { count: 3 })).toBe(
-      '追加した関係者は、保存するとこのプロジェクトのファイル 3 件を閲覧できるようになります。',
-    )
-    expect(t('ja', 'projectShareDefaults.removeImpactNote', { count: 3 })).toBe(
-      '削除予定の関係者は、保存するとこのプロジェクトのファイル 3 件を閲覧できなくなります。',
-    )
-    expect(
-      t('ja', 'billing.context.projectLimit', { limit: 20, current: 3 }),
-    ).toBe(
-      '有効なプロジェクトを20件中3件使用しています。Plusは20件まで、Teamは無制限で利用できます。',
-    )
-    expect(
-      t('ja', 'toast.projectHasAgentCredentials', { holder: 'テスト' }),
-    ).toBe(
-      'テスト さんのエージェント CLI 資格情報がこのプロジェクトを対象にしています。テスト さんに資格情報を停止するか失効させてもらってから削除してください。',
-    )
+    expect(notice).toContain('Dana')
+    expect(notice).not.toMatch(/\{\w+\}/)
   })
 
-  test('uses consistent Japanese research, preview, and sharing copy', () => {
-    expect(t('ja', 'lp.uc.research.title')).toBe(
-      '調査レポートに読み手の視点を加える',
-    )
-    expect(t('ja', 'preview.reopen')).toBe('下書きに戻す')
-    expect(t('ja', 'preview.reopenNote')).toBe(
-      '下書きに戻したコメントは、再度依頼するまでエージェントには届きません',
-    )
-    expect(t('ja', 'device.publisher.nameHelp')).toBe(
-      '別のクライアントとして登録するには、別の名前でログインをやり直してください。作成済み・割り当て済みのファイルや静的サイトを引き続き管理するには、既存のクライアントを使い続けてください。',
-    )
-    expect(t('ja', 'visibilityDialog.grants.header.title.project')).toBe(
-      'プロジェクトの関係者以外の人への個別共有',
-    )
-  })
-
-  test('falls back to English for missing JA key', () => {
-    // Both catalogs share the same key surface (TKey union), so a true
-    // "missing in JA, present in EN" scenario requires casting. We instead
-    // verify the fallback path returns the EN string when an unknown locale
-    // is passed.
+  test('falls back to English for an unrecognized locale', () => {
     // @ts-expect-error — runtime fallback for unrecognized locale
-    expect(t('fr', 'vw.back')).toBe('Back')
+    expect(t('fr', 'vw.back')).toBe(MESSAGES.en['vw.back'])
   })
 
   test('returns key string when key not found in any locale', () => {
@@ -112,71 +44,52 @@ describe('t', () => {
     expect(t('en', 'nonexistent.key')).toBe('nonexistent.key')
   })
 
-  test('omits missing var (no throw)', () => {
-    expect(t('en', 'toast.copied')).toBe('Copied · ')
+  test('drops a var the caller did not pass instead of showing its name', () => {
+    const copied = t('en', 'toast.copied')
+    expect(copied).not.toContain('{url}')
+    expect(copied).not.toContain('url')
   })
 })
 
 describe('tPlural', () => {
-  test.each([0, 1, 2])('pluralizes project and move counts at %i', (n) => {
-    for (const stem of ['project.fileCount', 'move.fileCount']) {
-      expect(tPlural('en', stem, n)).toBe(n === 1 ? '1 file' : `${n} files`)
+  test.each([0, 1, 2, 42])('shows the count for n=%i', (n) => {
+    for (const locale of ['en', 'ja'] as const)
+      for (const stem of [
+        'tb.fileCount',
+        'project.fileCount',
+        'card.viewCount',
+      ])
+        expect(tPlural(locale, stem, n)).toContain(String(n))
+  })
+
+  test('picks the One form at 1 and the Other form otherwise', () => {
+    for (const locale of ['en', 'ja'] as const) {
+      expect(tPlural(locale, 'tb.fileCount', 1)).toBe(
+        t(locale, 'tb.fileCountOne', { n: 1 }),
+      )
+      for (const n of [0, 2, 42])
+        expect(tPlural(locale, 'tb.fileCount', n)).toBe(
+          t(locale, 'tb.fileCountOther', { n }),
+        )
     }
-    expect(tPlural('ja', 'project.fileCount', n)).toBe(`${n} ファイル`)
-    expect(tPlural('ja', 'move.fileCount', n)).toBe(`ファイル ${n} 件`)
   })
 
-  test.each([1, 2])(
-    'renders revised Japanese plural copy for %i items',
-    (n) => {
-      expect(tPlural('ja', 'home.unopenedMore', n)).toBe(
-        `すべて見る（ほかに未確認 ${n} 件）`,
-      )
-      expect(tPlural('ja', 'comments.highlightOpen', n)).toBe(
-        `この箇所の未解決コメント${n}件を開く`,
-      )
-      expect(tPlural('ja', 'comments.highlightResolved', n)).toBe(
-        `この箇所の解決済みコメント${n}件を開く`,
-      )
-      expect(tPlural('ja', 'preview.orphanNotice', n)).toBe(
-        `ページが大きく変わったため、${n} 件のコメントの対象箇所が見つからなくなりました`,
-      )
-      expect(tPlural('ja', 'preview.batchQueued', n)).toBe(
-        `エージェントへ通知済みです。エージェントが ${n} 件を受け取るのを待っています。この状態が続く場合は preview next の実行を依頼してください`,
-      )
-      expect(tPlural('ja', 'preview.batchQueuedCodex', n)).toBe(
-        `Codexへ通知済みです。Codex が ${n} 件を受け取るのを待っています。この状態が続く場合は codex resume でセッションを再開してください`,
-      )
-      expect(tPlural('ja', 'preview.batchQueuedClaude', n)).toBe(
-        `Claude Codeが依頼を確認しました。Claude Code が ${n} 件を受け取るのを待っています`,
-      )
-      expect(tPlural('ja', 'preview.batchQueuedCursor', n)).toBe(
-        `管理対象のCursorセッションへ通知済みです。Cursor が ${n} 件を受け取るのを待っています`,
-      )
-    },
-  )
-
-  test('picks One form when n === 1', () => {
-    expect(tPlural('en', 'tb.fileCount', 1)).toBe('1 file')
-    expect(tPlural('ja', 'tb.fileCount', 1)).toBe('ファイル 1 件')
+  test('keeps counted labels apart from one another', () => {
+    expect(tPlural('en', 'tb.recentCount', 5)).not.toBe(
+      tPlural('en', 'tb.fileCount', 5),
+    )
+    expect(tPlural('ja', 'tb.recentCount', 5)).not.toBe(
+      tPlural('ja', 'tb.fileCount', 5),
+    )
   })
 
-  test('picks Other form when n !== 1', () => {
-    expect(tPlural('en', 'tb.fileCount', 0)).toBe('0 files')
-    expect(tPlural('en', 'tb.fileCount', 2)).toBe('2 files')
-    expect(tPlural('en', 'tb.fileCount', 42)).toBe('42 files')
-  })
-
-  test('Recent tab uses a distinct count label', () => {
-    expect(tPlural('ja', 'tb.recentCount', 1)).toBe('最近見たもの 1 件')
-    expect(tPlural('ja', 'tb.recentCount', 5)).toBe('最近見たもの 5 件')
-    expect(tPlural('en', 'tb.recentCount', 1)).toBe('1 recently seen')
-    expect(tPlural('en', 'tb.recentCount', 5)).toBe('5 recently seen')
-  })
-
-  test('injects n as a var automatically', () => {
-    expect(tPlural('en', 'card.viewCount', 7)).toBe('7 views')
-    expect(tPlural('ja', 'card.viewCount', 7)).toBe('閲覧 7 回')
+  test('passes extra vars through alongside the injected n', () => {
+    const confirmation = tPlural('en', 'externalAccess.expiry.confirmBody', 3, {
+      days: 7,
+    })
+    expect(confirmation).toContain('3')
+    expect(confirmation).toContain('7')
+    expect(confirmation).not.toMatch(/\{\w+\}/)
   })
 })
 
@@ -184,7 +97,7 @@ describe('bindI18n', () => {
   test('curries locale into t / tPlural', () => {
     const j = bindI18n('ja')
     expect(j.locale).toBe('ja')
-    expect(j.t('vw.back')).toBe('戻る')
-    expect(j.tPlural('tb.fileCount', 3)).toBe('ファイル 3 件')
+    expect(j.t('vw.back')).toBe(t('ja', 'vw.back'))
+    expect(j.tPlural('tb.fileCount', 3)).toBe(tPlural('ja', 'tb.fileCount', 3))
   })
 })

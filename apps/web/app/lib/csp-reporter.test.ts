@@ -308,9 +308,15 @@ describe('text highlight hit testing', () => {
 })
 
 describe('readiness handshake', () => {
-  test('keeps the repeated ready window explicit', () => {
-    expect(READY_MESSAGE_REPEAT_COUNT).toBe(20)
-    expect(READY_MESSAGE_REPEAT_INTERVAL_MS).toBe(100)
+  test('repeats the ready check over a bounded window', () => {
+    // The frame asks again until the parent answers, then stops. The exact
+    // count and interval are tuning; the window has to stay short enough that
+    // a reader is not left waiting on a frame that will never answer.
+    expect(READY_MESSAGE_REPEAT_COUNT).toBeGreaterThan(1)
+    expect(READY_MESSAGE_REPEAT_INTERVAL_MS).toBeGreaterThan(0)
+    expect(
+      READY_MESSAGE_REPEAT_COUNT * READY_MESSAGE_REPEAT_INTERVAL_MS,
+    ).toBeLessThanOrEqual(5_000)
     expect(SANDBOX_READY_CHECK_MESSAGE).toEqual({
       source: READY_CHECK_MESSAGE_SOURCE,
       kind: READY_CHECK_MESSAGE_KIND,

@@ -43,8 +43,8 @@ Browser wait、capability 判定、lint の適用範囲は [Browser test waits](
 
 ## i18n
 
-- **機械検査で強制済み**：翻訳の利用箇所で指定する key は、`apps/web/app/i18n/messages.ts` が型検査します。
-- **人が判断する現行規則**：`apps/web/app/i18n/en.json` と `apps/web/app/i18n/ja.json` の key、意味、placeholder を揃えます。日本語 UI に内部語彙や英語動詞をそのまま出さず、toast と error message に literal backtick を入れません。同じ画面内では文体を統一します。
+- **機械検査で強制済み**：翻訳の利用箇所で指定する key は、`apps/web/app/i18n/messages.ts` が型検査します。`apps/web/app/i18n/catalog-parity.test.ts` が en.json と ja.json の key の一致、key ごとの placeholder の一致、en に文がある key の ja の文の存在を検査します。`tPlural` が連結して作る `One`/`Other` の key も同じ検査に入ります。
+- **人が判断する現行規則**：`apps/web/app/i18n/en.json` と `apps/web/app/i18n/ja.json` の意味を揃えます。日本語 UI に内部語彙や英語動詞をそのまま出さず、toast と error message に literal backtick を入れません。同じ画面内では文体を統一します。
 - **復元しない事項**：現行実装に該当がない locale の運用規則は復元しません。
 
 ## Legal

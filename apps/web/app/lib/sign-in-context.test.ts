@@ -5,6 +5,14 @@ import {
   signInMethod,
 } from './sign-in-context'
 
+const parse = (url: string) => {
+  const parsed = new URL(url, 'https://artifactshare.com')
+  return {
+    pathname: parsed.pathname,
+    params: Object.fromEntries([...parsed.searchParams].sort()),
+  }
+}
+
 describe('sign-in context', () => {
   test('recognizes only the supported intent and explicit email method', () => {
     expect(signInIntent(new URLSearchParams('intent=upload'))).toBe('upload')
@@ -25,10 +33,15 @@ describe('sign-in context', () => {
 
   test('preserves upload intent and a safe internal destination', () => {
     expect(
-      buildSignInErrorCallback(
-        new URLSearchParams('intent=upload&next=%2F%3Fupload%3D1'),
+      parse(
+        buildSignInErrorCallback(
+          new URLSearchParams('intent=upload&next=%2F%3Fupload%3D1'),
+        ),
       ),
-    ).toBe('/sign-in?intent=upload&next=%2F%3Fupload%3D1')
+    ).toEqual({
+      pathname: '/sign-in',
+      params: { intent: 'upload', next: '/?upload=1' },
+    })
   })
 
   test('drops unknown intent and unsafe destinations', () => {

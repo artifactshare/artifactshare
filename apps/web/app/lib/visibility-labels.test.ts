@@ -6,87 +6,69 @@ import {
   shortVisibilityLabelKey,
 } from './visibility-labels'
 
-const FILE_LABEL_CASES = [
-  {
-    visibility: 'private',
-    key: 'table.visibilityPrivate',
-    en: 'Specific',
-    ja: '個別共有',
-  },
-  {
-    visibility: 'project',
-    key: 'table.visibilityProject',
-    en: 'Project',
-    ja: 'プロジェクト',
-  },
-  {
-    visibility: 'workspace',
-    key: 'table.visibilityWorkspace',
-    en: 'Company',
-    ja: '社内全員',
-  },
-  {
-    visibility: 'link',
-    key: 'card.visibility.link',
-    en: 'Link sharing',
-    ja: 'リンク共有',
-  },
-] as const
+// The wording of each label, and that both locales carry it, is checked once
+// in `app/i18n/catalog-parity.test.ts`. Here: which key each visibility
+// resolves to, and that a reader can tell the choices apart.
+const catalogs = [en, ja] as Record<string, string>[]
+const VISIBILITIES = ['private', 'project', 'workspace', 'link'] as const
 
-describe('short file visibility label contract', () => {
-  test.each(FILE_LABEL_CASES)(
-    '$visibility maps to the short list label in both locales',
-    ({ visibility, key, en: enLabel, ja: jaLabel }) => {
-      expect(shortVisibilityLabelKey(visibility)).toBe(key)
-      expect(en[key]).toBe(enLabel)
-      expect(ja[key]).toBe(jaLabel)
-    },
-  )
-})
-
-describe('upload visibility copy contract', () => {
+describe('short file visibility labels', () => {
   test.each([
-    ['private', 'Specific people', '個別共有'],
-    ['project', 'Project members', 'プロジェクトの関係者'],
-    ['workspace', 'Everyone in this workspace', '社内全員'],
-    ['link', 'Anyone with the link', 'リンクを知っている全員'],
-  ] as const)(
-    '%s keeps its selection label',
-    (visibility, enLabel, jaLabel) => {
-      expect(en[`upload.visibility.${visibility}`]).toBe(enLabel)
-      expect(ja[`upload.visibility.${visibility}`]).toBe(jaLabel)
-    },
+    ['private', 'table.visibilityPrivate'],
+    ['project', 'table.visibilityProject'],
+    ['workspace', 'table.visibilityWorkspace'],
+    ['link', 'card.visibility.link'],
+  ] as const)('%s keeps its own label key', (visibility, key) => {
+    expect(shortVisibilityLabelKey(visibility)).toBe(key)
+  })
+
+  test('only explicit zero-recipient evidence changes the private label', () => {
+    expect(shortVisibilityLabelKey('private', false)).toBe(
+      'table.visibilityOnlyMe',
+    )
+    for (const evidence of [true, undefined])
+      expect(shortVisibilityLabelKey('private', evidence)).toBe(
+        'table.visibilityPrivate',
+      )
+    for (const visibility of ['link', 'workspace', 'project'] as const)
+      expect(shortVisibilityLabelKey(visibility, false)).toBe(
+        shortVisibilityLabelKey(visibility),
+      )
+  })
+})
+
+test('project scope chips label the project itself, not a file', () => {
+  expect(projectScopeLabelKey('private')).toBe('project.scopeChip.private')
+  expect(projectScopeLabelKey('workspace')).toBe('project.scopeChip.workspace')
+  expect(projectScopeLabelKey('private')).not.toBe(
+    projectScopeLabelKey('workspace'),
   )
 })
 
-describe('project scope chip label contract', () => {
-  test.each([
-    ['private', 'project.scopeChip.private', 'Project', 'プロジェクト'],
-    ['workspace', 'project.scopeChip.workspace', 'Company', '社内全員'],
-  ] as const)(
-    '%s uses the project-only short label',
-    (visibility, key, enLabel, jaLabel) => {
-      expect(projectScopeLabelKey(visibility)).toBe(key)
-      expect(en[key]).toBe(enLabel)
-      expect(ja[key]).toBe(jaLabel)
+describe('every label a reader sees is translated and distinguishable', () => {
+  const keyGroups = [
+    VISIBILITIES.map((visibility) => shortVisibilityLabelKey(visibility)),
+    [
+      shortVisibilityLabelKey('private', false),
+      shortVisibilityLabelKey('private'),
+    ],
+    VISIBILITIES.map((visibility) => `upload.visibility.${visibility}`),
+    (['private', 'workspace'] as const).map(projectScopeLabelKey),
+    ['card.visibility.link', 'vw.linkSharingPaused'],
+  ]
+
+  test.each(
+    catalogs.map(
+      (catalog, index) => [index === 0 ? 'en' : 'ja', catalog] as const,
+    ),
+  )(
+    '%s translates every label and keeps each group distinct',
+    (_locale, catalog) => {
+      for (const group of keyGroups) {
+        const labels = group.map((key) => catalog[key])
+        for (const label of labels) expect(label?.trim()).toBeTruthy()
+        expect(new Set(labels).size).toBe(labels.length)
+      }
     },
   )
-})
-
-test('paused viewer chip has complete labels in both locales', () => {
-  expect(en['vw.linkSharingPaused']).toBe('Link sharing · Paused')
-  expect(ja['vw.linkSharingPaused']).toBe('リンク共有 · 一時停止中')
-})
-
-test('only explicit zero-recipient evidence changes private labels', () => {
-  expect(en[shortVisibilityLabelKey('private', false)]).toBe('Private')
-  expect(ja[shortVisibilityLabelKey('private', false)]).toBe('非公開')
-  for (const evidence of [true, undefined])
-    expect(shortVisibilityLabelKey('private', evidence)).toBe(
-      'table.visibilityPrivate',
-    )
-  for (const visibility of ['link', 'workspace', 'project'] as const)
-    expect(shortVisibilityLabelKey(visibility, false)).toBe(
-      shortVisibilityLabelKey(visibility),
-    )
 })

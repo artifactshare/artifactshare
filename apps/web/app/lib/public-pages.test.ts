@@ -2,38 +2,10 @@ import { describe, expect, test } from 'vitest'
 
 import pages from '~/public-pages.json'
 
+import { discoveredRoutes, resolveRoute } from '~/test/discovered-routes'
 import { getPublicPagePath, validatePublicPageMaster } from './public-pages'
 
 const valid = { guide: { en: '/guide', ja: '/ja/guide' } }
-const routeModules = import.meta.glob([
-  '../routes/_public/($locale)/_home/index.tsx',
-  '../routes/**/*.tsx',
-  '!../routes/**/*.test.tsx',
-])
-
-const LOCALE_ROUTE_NAMES = new Set([
-  'about',
-  'connect',
-  'share-with-ai',
-  'pricing',
-  'privacy',
-  'start',
-  'terms',
-  'tokushoho',
-])
-
-function routeModuleFor(path: string): string {
-  const localePath = path.replace(/^\/ja\//, '/').slice(1)
-  if (LOCALE_ROUTE_NAMES.has(localePath) || localePath.startsWith('guides/')) {
-    return `../routes/_public/($locale)/${localePath.replaceAll('/', '.')}.tsx`
-  }
-  if (/^\/(?:ja\/)?updates$/u.test(path)) {
-    return '../routes/_public/($locale)/updates.tsx'
-  }
-  return path === '/' || path === '/ja'
-    ? '../routes/_public/($locale)/_home/index.tsx'
-    : `../routes/${path.slice(1).replaceAll('/', '.')}.tsx`
-}
 
 describe('public page master', () => {
   test('resolves locale paths', () => {
@@ -65,13 +37,15 @@ describe('public page master', () => {
     )
   })
 
-  test('every configured path has a static route module', () => {
-    for (const paths of Object.values(pages)) {
+  test('every configured path resolves to a public route', () => {
+    const routes = discoveredRoutes()
+    // An index route reports the directory form of its URL ('/ja' → '/ja/').
+    const landedOn = (path: string) =>
+      resolveRoute(routes, path).resolved?.replace(/(.)\/$/, '$1')
+
+    for (const [id, paths] of Object.entries(pages)) {
       for (const path of Object.values(paths)) {
-        const routeModule = routeModuleFor(path)
-        expect(routeModules, `${path} must have ${routeModule}`).toHaveProperty(
-          routeModule,
-        )
+        expect(landedOn(path), `${id} ${path}`).toBe(path)
       }
     }
   })

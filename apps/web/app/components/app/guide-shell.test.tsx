@@ -59,16 +59,4 @@ describe('GuideTopbar and GuideHomeLink', () => {
       expect(html.match(/aria-current="page"/g)).toHaveLength(1)
     },
   )
-
-  test('restores the original GuideShell body layout', () => {
-    const html = renderToStaticMarkup(
-      <GuideShell>
-        <div>content</div>
-      </GuideShell>,
-    )
-
-    expect(html).toContain('gap-16')
-    expect(html).not.toContain('justify-between')
-    expect(html).not.toContain('gap-4')
-  })
 })

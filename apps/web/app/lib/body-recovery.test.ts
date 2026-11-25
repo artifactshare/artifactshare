@@ -1,32 +1,31 @@
 import { expect, test } from 'vitest'
 import { bodyRecoveryHtml } from './body-recovery'
 
-test.each([
-  [
-    false,
-    'This body is unavailable or you no longer have access.',
-    '本文を表示できないか、閲覧権限がなくなっています。',
-  ],
-  [
-    true,
-    'This opening link has expired or has already been used.',
-    'このリンクは有効期限が切れているか、すでに使用されています。',
-  ],
-] as const)(
-  'recovery expired=%s explains recovery in both languages',
-  (expired, english, japanese) => {
-    const html = bodyRecoveryHtml('/a/example?version=v1&from=body', expired)
-    expect(html).toContain(english)
-    expect(html).toContain('<section lang="ja">')
-    expect(html).toContain(japanese)
-    expect(html).toContain(
-      'ビューアーに戻って再読み込みし、本文を開き直してください。',
+const VIEWER_URL = '/a/example?version=v1&from=body'
+
+test.each([false, true] as const)(
+  'both languages point back to the viewer (expired=%s)',
+  (expired) => {
+    const parts = bodyRecoveryHtml(VIEWER_URL, expired).split(
+      '<section lang="ja">',
     )
-    expect(html).toContain(
-      '<a href="/a/example?version=v1&amp;from=body">Return to the viewer</a>',
-    )
-    expect(html).toContain(
-      '<a href="/a/example?version=v1&amp;from=body">ビューアーに戻る</a>',
-    )
+    expect(parts).toHaveLength(2)
+    for (const part of parts)
+      expect(part).toContain('<a href="/a/example?version=v1&amp;from=body">')
+    expect(parts[1]).toMatch(/[぀-ヿ一-鿿]/)
   },
 )
+
+test('an expired opening link is explained differently from a lost one', () => {
+  expect(bodyRecoveryHtml(VIEWER_URL, true)).not.toBe(
+    bodyRecoveryHtml(VIEWER_URL, false),
+  )
+})
+
+test('escapes the destination so it cannot close the attribute or inject markup', () => {
+  const html = bodyRecoveryHtml('/a/x?a=1&b=2"><script>alert(1)</script>')
+  expect(html).toContain(
+    'href="/a/x?a=1&amp;b=2&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"',
+  )
+  expect(html).not.toContain('<script>')
+})

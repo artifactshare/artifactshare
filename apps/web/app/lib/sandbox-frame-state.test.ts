@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'vitest'
-import en from '../i18n/en.json'
-import ja from '../i18n/ja.json'
 import {
   classifySandboxProbeResponse,
   shouldAcceptNavigationResult,
@@ -10,69 +8,9 @@ import {
   shouldStartLivenessProbe,
 } from './sandbox-frame-state'
 
+// The blocked and paused copy is checked as catalog data in
+// `app/i18n/catalog-parity.test.ts`; these are the state rules behind it.
 describe('sandbox frame transitions', () => {
-  test('keeps the blocked and paused copy exact', () => {
-    const expected = {
-      en: [
-        'Unable to load this file',
-        'Your current network may be blocking this file from loading.',
-        'The file hasn’t been deleted',
-        'Reload',
-        'It may open on a different network.',
-        'Using a company network?',
-        'Ask your IT administrator to allow HTTPS connections to artifactshare.com and *.artifactshare.link for the viewer, and *.artifactshareusercontent.com for isolated file content.',
-        'Display paused',
-        'The display did not finish loading, so we paused it.',
-        'The file and share link are unaffected',
-        'Continue viewing',
-        'You can resume right away.',
-        'The last attempt did not finish. Try again or reload the page.',
-        'Resuming display…',
-      ],
-      ja: [
-        '内容を読み込めていません',
-        '現在のネットワークでは、ファイルの読み込みが遮断されている可能性があります。',
-        'ファイルは削除されていません',
-        '再読み込み',
-        '別のネットワークで開くと表示できることがあります。',
-        '社内ネットワークで利用する場合',
-        'IT管理者に、次のドメインへのHTTPS通信を許可するよう依頼してください。表示画面用の artifactshare.com と *.artifactshare.link、ファイルの内容を隔離して配信する *.artifactshareusercontent.com。',
-        '表示を一時停止しています',
-        '読み込みを完了できなかったため、表示を一時停止しました。',
-        'ファイルと共有リンクに問題はありません',
-        '続きを表示',
-        'すぐに表示を再開できます。',
-        '直前の再開処理を完了できませんでした。もう一度試すか、ページを再読み込みしてください。',
-        '表示を再開しています…',
-      ],
-    }
-    const keys = [
-      'title',
-      'body',
-      'reassurance',
-      'reload',
-      'next',
-      'company',
-      'admin',
-      'title',
-      'body',
-      'reassurance',
-      'resume',
-      'next',
-      'retryFailed',
-      'resuming',
-    ]
-    const lookup = (catalog: typeof en) =>
-      keys.map((key, index) =>
-        index === 13
-          ? catalog['vw.sandboxResuming']
-          : catalog[
-              `vw.sandbox${index < 7 ? 'Blocked' : 'Paused'}.${key}` as keyof typeof catalog
-            ],
-      )
-    expect(lookup(en)).toEqual(expected.en)
-    expect(lookup(ja)).toEqual(expected.ja)
-  })
   test('liveness timer probes only when its generation is still current', () => {
     expect(shouldStartLivenessProbe(2, 2)).toBe(true)
     expect(shouldStartLivenessProbe(2, 3)).toBe(false)

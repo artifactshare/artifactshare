@@ -73,7 +73,6 @@ describe('ViewerErrorShell', () => {
     expect(html).not.toContain('aria-label="Back"')
     expect(html).not.toContain('data-regression-region=')
     expect(html.match(/<main\b/g) ?? []).toHaveLength(1)
-    expect(html).toContain('class="flex min-h-0 flex-1"')
   })
 
   test('optionally marks the topbar and main content boundaries', () => {
@@ -89,8 +88,8 @@ describe('ViewerErrorShell', () => {
     )
 
     expect(html).toContain('<div data-regression-region="header"><header')
-    expect(html).toContain(
-      '<main class="flex min-h-0 flex-1" data-regression-region="main"><div>Denied</div></main>',
+    expect(html).toMatch(
+      /<main [^>]*data-regression-region="main"><div>Denied<\/div><\/main>/,
     )
     expect(html.match(/<main\b/g) ?? []).toHaveLength(1)
   })

@@ -33,9 +33,7 @@ describe('FocusedFlowBrand', () => {
 
       expect(html).toContain('href="/"')
       expect(html).toContain(`aria-label="${homeLabel}"`)
-      expect(html).toContain('bg-[url(/favicon.svg)]')
       expect(html).toContain('>Artifact Share<')
-      expect(html).toContain('mb-4')
     },
   )
 })

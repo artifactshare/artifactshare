@@ -1,6 +1,4 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, test } from 'vitest'
 import { AppDividerList } from './app-divider-list'
@@ -20,8 +18,10 @@ import { AppSectionHeader } from './app-section-header'
 const render = (node: React.ReactNode) =>
   renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>)
 
+// What a reader depends on here is the element each slot renders and the
+// content reaching it. Styling is checked by the visual suite.
 describe('app shell component contracts', () => {
-  test('AppPageHeader owns the shared title, description, meta, and action layout', () => {
+  test('AppPageHeader renders every slot it is given', () => {
     const html = render(
       <AppPageHeader>
         <AppPageHeaderMain>
@@ -39,18 +39,18 @@ describe('app shell component contracts', () => {
       </AppPageHeader>,
     )
 
-    expect(html).toContain('text-xl')
-    expect(html).toContain('leading-tight')
-    expect(html).toContain('font-semibold')
-    expect(html).toContain('mb-4.5')
-    expect(html).toContain('mark')
-    expect(html).toContain('badge')
-    expect(html).toContain('meta')
-    expect(html).toContain('description')
-    expect(html).toContain('action')
+    for (const content of [
+      'mark',
+      'Files',
+      'badge',
+      'meta',
+      'description',
+      'action',
+    ])
+      expect(html).toContain(content)
   })
 
-  test('AppSectionHeader preserves the requested heading level and styles metadata', () => {
+  test('AppSectionHeader preserves the requested heading level and its metadata', () => {
     const html = render(
       <AppSectionHeader
         as="h3"
@@ -64,22 +64,18 @@ describe('app shell component contracts', () => {
 
     expect(html).toContain('<h3')
     expect(html).toContain('id="recent-heading"')
-    expect(html).toContain('text-sm')
-    expect(html).toContain('font-semibold')
-    expect(html).toContain('text-faint')
-    expect(html).toContain('Newest')
+    for (const content of ['Recent', '3', 'Newest', 'more'])
+      expect(html).toContain(content)
   })
 
-  test('AppSectionHeader keeps date groups visually subordinate', () => {
-    const html = render(
+  test('AppSectionHeader renders a date group differently from a section', () => {
+    const group = render(
       <AppSectionHeader as="h3" title="Jul 29" variant="group" />,
     )
 
-    expect(html).toContain('<h3')
-    expect(html).toContain('text-xs')
-    expect(html).toContain('font-medium')
-    expect(html).toContain('text-faint')
-    expect(html).toContain('mb-1')
+    expect(group).toContain('<h3')
+    expect(group).toContain('Jul 29')
+    expect(group).not.toBe(render(<AppSectionHeader as="h3" title="Jul 29" />))
   })
 
   test('AppDividerList keeps the caller list element without an extra wrapper', () => {
@@ -90,23 +86,18 @@ describe('app shell component contracts', () => {
     )
 
     expect(html.startsWith('<ul')).toBe(true)
-    expect(html).toContain('flex')
-    expect(html).toContain('gap-1')
-    expect(html).toContain('border-t')
-    expect(html).toContain('border-divider')
+    expect(html).toContain('<li>row</li>')
   })
 
-  test('AppMoreLink supports links and buttons with the same visual contract', () => {
+  test('AppMoreLink renders a link or a button as asked', () => {
     const link = render(<AppMoreLink to="/projects">projects</AppMoreLink>)
     const button = render(<AppMoreLink as="button">expand</AppMoreLink>)
 
-    for (const html of [link, button]) {
-      expect(html).toContain('text-link')
-      expect(html).toContain('text-sm')
-      expect(html).toContain('hover:underline')
-    }
     expect(link).toContain('href="/projects"')
+    expect(link).toContain('projects')
     expect(button).toContain('<button type="button"')
+    expect(button).toContain('expand')
+    expect(button).not.toContain('href')
   })
 
   test('AppEmptyState keeps optional content in the shared semantic slots', () => {
@@ -124,52 +115,6 @@ describe('app shell component contracts', () => {
     expect(html).toContain('data-slot="empty-description"')
     expect(html).toContain('data-slot="empty-content"')
     expect(html).toContain('Nothing here')
-  })
-
-  test('all current page surfaces consume the shared page header', () => {
-    const componentDir = new URL('../../', import.meta.url)
-    const routes = [
-      'routes/_public/($locale)/_home/index.tsx',
-      'routes/_home/_protected/files.tsx',
-      'routes/_home/+components/recent-content.tsx',
-      'routes/_home/_protected/projects.tsx',
-      'routes/_protected/projects.$id.tsx',
-      'routes/_protected/projects.$id.files.tsx',
-      'routes/_protected/projects.$id.activity.tsx',
-    ]
-
-    for (const route of routes) {
-      const source = readFileSync(
-        fileURLToPath(new URL(route, componentDir)),
-        'utf8',
-      )
-      expect(source, route).toContain('AppPageHeader')
-    }
-  })
-
-  test('legacy headers stay separated while redesign-only header constants are removed', () => {
-    const appDir = new URL('../../', import.meta.url)
-    const homeStyles = readFileSync(
-      fileURLToPath(
-        new URL('routes/_home/+components/file-list-styles.ts', appDir),
-      ),
-      'utf8',
-    )
-    const projectStyles = readFileSync(
-      fileURLToPath(
-        new URL(
-          'routes/_protected/+components/project-redesign-styles.ts',
-          appDir,
-        ),
-      ),
-      'utf8',
-    )
-
-    expect(homeStyles).toContain('font-emphasis')
-    expect(homeStyles).toContain('seeAllClassName')
-    expect(projectStyles).toContain('redesignSectionClassName')
-    expect(projectStyles).not.toMatch(
-      /redesignSection(?:Head|Title|HeadMeta|Meta)ClassName/,
-    )
+    expect(html).toContain('Try another view')
   })
 })

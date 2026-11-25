@@ -1,19 +1,17 @@
+// @vitest-environment happy-dom
+
 import { describe, expect, test } from 'vitest'
 import { configureDirectoryInput } from './directory-input'
 
 describe('configureDirectoryInput', () => {
-  test('sets directory picker attributes imperatively', () => {
-    const attributes = new Map<string, string>()
-    const input = {
-      setAttribute(name: string, value: string) {
-        attributes.set(name, value)
-      },
-    } as HTMLInputElement
+  test('marks a real file input as a directory picker', () => {
+    const input = document.createElement('input')
+    input.type = 'file'
 
     configureDirectoryInput(input)
 
-    expect(attributes.get('webkitdirectory')).toBe('')
-    expect(attributes.get('directory')).toBe('')
+    expect(input.hasAttribute('webkitdirectory')).toBe(true)
+    expect(input.hasAttribute('directory')).toBe(true)
   })
 
   test('accepts null during ref cleanup', () => {

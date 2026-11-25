@@ -1,5 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { createAnchorResolutionSync } from './anchor-resolution-sync'
+import {
+  ANCHOR_RETRY_DELAY_MS as RETRY,
+  createAnchorResolutionSync,
+} from './anchor-resolution-sync'
 import type { AnchorResolutionMessage } from './csp-reporter'
 
 const result = (id: string) => ({
@@ -263,7 +266,7 @@ test('different results revive an exhausted queue after a cooldown', async () =>
   sync.dispose()
 })
 
-test('failed state changes retry after 250 ms and 500 ms, without the hint throttle', async () => {
+test('failed state changes retry with a doubling delay, without the hint throttle', async () => {
   vi.useFakeTimers()
   const request = vi
     .fn<typeof fetch>()
@@ -288,11 +291,11 @@ test('failed state changes retry after 250 ms and 500 ms, without the hint throt
   })
   await vi.advanceTimersByTimeAsync(0)
   expect(request).toHaveBeenCalledTimes(2)
-  await vi.advanceTimersByTimeAsync(249)
+  await vi.advanceTimersByTimeAsync(RETRY - 1)
   expect(request).toHaveBeenCalledTimes(2)
   await vi.advanceTimersByTimeAsync(1)
   expect(request).toHaveBeenCalledTimes(3)
-  await vi.advanceTimersByTimeAsync(499)
+  await vi.advanceTimersByTimeAsync(RETRY * 2 - 1)
   expect(request).toHaveBeenCalledTimes(3)
   await vi.advanceTimersByTimeAsync(1)
   expect(request).toHaveBeenCalledTimes(4)

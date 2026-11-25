@@ -13,6 +13,11 @@ vi.mock('mermaid', () => ({
   },
 }))
 
+// A stand-in sanitizer: happy-dom cannot evaluate DOMPurify's SVG profile, so
+// the real configuration is exercised against a browser in
+// `csp-reporter.behavior.browser.test.tsx` ("sanitizes Mermaid SVG before it
+// reaches the artifact frame"). What is checked here is that the rendered SVG
+// goes through the sanitizer at all before it is inserted.
 vi.mock('dompurify', () => ({
   default: {
     sanitize: (svg: string) =>

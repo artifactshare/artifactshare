@@ -9,6 +9,10 @@ export function viewerReturnPath(path: string, hash: string) {
   return url.pathname + url.search.replace(/\*/g, '%2A')
 }
 
+/** Window a burst of fragment reports is collapsed into, and the retry rate
+ * for a denied history write. */
+export const VIEWER_HASH_WRITE_DELAY_MS = 200
+
 // Keep this literal identical in server/client builds so hydration does not
 // compare differently minified function sources. The client mount path below
 // receives the restored fragment before choosing src.
@@ -71,7 +75,8 @@ export function createViewerHashSync() {
     } catch {
       // Retain a denied write and retry at the same bounded rate, even if no
       // further report arrives. New reports replace pending; clear cancels it.
-      if (pending !== null) timer = setTimeout(flush, 200)
+      if (pending !== null)
+        timer = setTimeout(flush, VIEWER_HASH_WRITE_DELAY_MS)
     }
   }
   const sync = {
@@ -84,7 +89,7 @@ export function createViewerHashSync() {
       activeHashSync = sync
       notify()
       if (timer !== undefined) return
-      timer = setTimeout(flush, 200)
+      timer = setTimeout(flush, VIEWER_HASH_WRITE_DELAY_MS)
     },
   }
   return sync

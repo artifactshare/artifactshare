@@ -133,7 +133,7 @@
   "home.allProjects": "すべてのプロジェクト",
   "home.countSuffix": "{n} 件",
   "home.updatedAt": "{time} 更新",
-  "home.fileCountOne": "{n} 件",
+  "home.fileCountOne": "1 件",
   "home.fileCountOther": "{n} 件",
   "home.anonymousViewsInline_one": "{title} がリンク経由で{count}回閲覧されました",
   "home.anonymousViewsInline_other": "{title} がリンク経由で{count}回閲覧されました",

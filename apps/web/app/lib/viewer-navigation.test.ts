@@ -98,10 +98,11 @@ describe('external navigation interstitial', () => {
       },
       browser,
     )
-    expect(open).toHaveBeenCalledWith(
-      'https://example.com/',
-      '_blank',
-      'noopener,noreferrer',
+    const [url, windowName, features] = open.mock.calls[0] ?? []
+    expect([url, windowName]).toEqual(['https://example.com/', '_blank'])
+    // The browser reads these as an unordered set of window features.
+    expect(new Set(features?.split(',').map((token) => token.trim()))).toEqual(
+      new Set(['noopener', 'noreferrer']),
     )
   })
 })
