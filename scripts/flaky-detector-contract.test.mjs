@@ -6,171 +6,32 @@ import YAML from 'yaml'
 const workflow = YAML.parse(
   fs.readFileSync('.github/workflows/flaky-detector.yml', 'utf8'),
 )
-const ci = YAML.parse(
-  fs.readFileSync('.github/workflows/public-ci.yml', 'utf8'),
-)
-const release = YAML.parse(
-  fs.readFileSync('.github/workflows/release-qm-bridge.yml', 'utf8'),
-)
-const steps = workflow.jobs.worker.steps
 
-test('independent daily/dispatch workflow validates before installing or scheduling workers', () => {
-  assert.deepEqual(Object.keys(workflow.on).sort(), [
-    'schedule',
-    'workflow_dispatch',
-  ])
-  assert.equal(workflow.on.workflow_dispatch.inputs.repetitions.default, '20')
-  assert.deepEqual(workflow.permissions, { contents: 'read' })
-  assert.equal(workflow.jobs.worker.needs, 'plan')
-  assert.equal(
-    workflow.jobs.plan.steps.at(-1).run,
-    'node scripts/ci/flaky-runs.mjs plan',
-  )
-  assert.match(
-    workflow.jobs.plan.steps.at(-1).env.REPETITIONS,
-    /schedule.*20.*inputs.repetitions/,
-  )
-  assert.ok(
-    !workflow.jobs.plan.steps.some((step) => step.run?.includes('install')),
-  )
-  assert.equal(workflow.jobs.worker.strategy['fail-fast'], false)
-  assert.ok(workflow.jobs.worker.strategy['max-parallel'] > 0)
-  assert.equal(
-    workflow.jobs.worker.strategy.matrix,
-    '${{ fromJSON(needs.plan.outputs.matrix) }}',
-  )
-})
-
-test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () => {
-  const pins = new Set(
-    [...Object.values(ci.jobs), ...Object.values(release.jobs)]
-      .flatMap((job) => job.steps ?? [])
-      .map((step) => step.uses)
-      .filter(Boolean),
-  )
-  for (const [name, job] of Object.entries(workflow.jobs)) {
-    assert.equal(job['runs-on'], 'ubuntu-latest')
-    assert.ok(job['timeout-minutes'] > 0, name)
-    for (const step of job.steps) {
-      if (!step.uses) continue
-      assert.match(step.uses, /@[a-f0-9]{40}$/)
-      assert.ok(pins.has(step.uses))
-      if (step.uses.startsWith('actions/checkout@')) {
-        assert.equal(step.with.ref, '${{ github.sha }}')
-        assert.equal(step.with['persist-credentials'], false)
-      }
-      if (step.uses.startsWith('actions/setup-node@'))
-        assert.equal(step.with['node-version'], '24.22.3')
-    }
-  }
-  assert.ok(
-    steps.some(
-      (step) =>
-        step.uses?.startsWith('pnpm/action-setup@') && !step.with?.version,
-    ),
-  )
-  assert.ok(
-    steps.some(
-      (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
-    ),
-  )
-})
-
-test('dependency installation precedes suite execution', () => {
-  const index = (command) => steps.findIndex((step) => step.run === command)
-  const install = index('pnpm install --frozen-lockfile --ignore-scripts')
-  const run = index('node scripts/ci/flaky-runs.mjs run')
-  assert.ok(install >= 0 && run > install)
-  assert.equal(steps[install]['continue-on-error'], undefined)
-  assert.equal(steps[run]['continue-on-error'], undefined)
-  assert.equal(steps[install].if, undefined)
-  assert.ok(index('pnpm --filter @artifactshare/contract build') < run)
-  assert.ok(index('pnpm fixtures:build') < run)
-  assert.equal(steps[run].env.SHARD, '${{ toJSON(matrix) }}')
-  const upload = steps.at(-1)
-  assert.equal(upload.if, 'always()')
-  assert.equal(
-    upload.with.name,
-    'flaky-results-${{ matrix.id }}-${{ matrix.shard }}',
-  )
-})
-
-test('aggregation runs after failed workers, tolerates missing artifacts, and uploads failed verdicts', () => {
-  const job = workflow.jobs.report
-  assert.deepEqual(job.needs, ['plan', 'worker'])
-  assert.equal(job.if, "always() && needs.plan.result == 'success'")
-  const download = job.steps.find((step) =>
+test('the nightly report runs after failed workers and tolerates missing shards', () => {
+  const report = workflow.jobs.report
+  assert.deepEqual(report.needs, ['plan', 'worker'])
+  assert.equal(report.if, "always() && needs.plan.result == 'success'")
+  const download = report.steps.find((step) =>
     step.uses?.startsWith('actions/download-artifact@'),
   )
   assert.equal(download['continue-on-error'], true)
   assert.equal(download.with.pattern, 'flaky-results-*')
   assert.equal(download.with['merge-multiple'], true)
   assert.match(
-    job.steps.at(-2).run,
-    /flaky-report.mjs.*REPETITIONS.*GITHUB_SHA/,
+    report.steps.at(-2).run,
+    /flaky-report\.mjs.*REPETITIONS.*GITHUB_SHA/u,
   )
-  assert.equal(job.steps.at(-1).if, 'always()')
-  assert.equal(job.steps.at(-1).with.name, 'flaky-report')
+  assert.equal(report.steps.at(-1).if, 'always()')
+  assert.equal(
+    workflow.jobs.worker.steps.at(-1).if,
+    'always()',
+    'workers upload their results even when the suite fails',
+  )
 })
 
-test('detector serializes runs and bounds workers without cancelling active detection', () => {
+test('the detector never cancels a run in progress', () => {
   assert.deepEqual(workflow.concurrency, {
     group: 'flaky-detector',
     'cancel-in-progress': false,
   })
-})
-
-test('every flaky detector job uses stock Playwright libraries', () => {
-  assert.doesNotMatch(
-    JSON.stringify(workflow),
-    /replace-webkit-libsoup|webkit-libsoup|WEBKIT_LIBSOUP_CACHE_DIR/i,
-  )
-})
-
-test('only behavior-browser entries get a container without splitting the global cap', () => {
-  const image = YAML.parse(fs.readFileSync('compose.playwright.yml', 'utf8'), {
-    merge: true,
-  }).services.visual.image
-  assert.deepEqual(Object.keys(workflow.jobs), ['plan', 'worker', 'report'])
-  const worker = workflow.jobs.worker
-  // PipelineTemplateConverter.ConvertToJobContainer returns null for empty
-  // object.image. A top-level null expression is not supported by that converter.
-  assert.deepEqual(worker.container, {
-    image: "${{ matrix.suite == 'behavior-browser' && '" + image + "' || '' }}",
-    options: '--init --ipc=host',
-    env: { PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright' },
-  })
-  assert.deepEqual(worker.defaults, { run: { shell: 'bash' } })
-  assert.equal(worker.env, undefined)
-  assert.equal(workflow.env, undefined)
-  for (const name of ['plan', 'report']) {
-    assert.equal(workflow.jobs[name].container, undefined)
-    assert.equal(workflow.jobs[name].env, undefined)
-    assert.equal(workflow.jobs[name].defaults, undefined)
-  }
-  const home = steps.find((step) => step.run?.includes('HOME=/root'))
-  assert.equal(home.if, "matrix.suite == 'behavior-browser'")
-  assert.deepEqual(home.run.trim().split('\n'), [
-    'export HOME=/root',
-    `echo 'HOME=/root' >> "$GITHUB_ENV"`,
-    'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
-  ])
-  const checkoutIndex = steps.findIndex((step) =>
-    step.uses?.startsWith('actions/checkout@'),
-  )
-  assert.equal(steps.indexOf(home), checkoutIndex + 1)
-  assert.ok(
-    steps.indexOf(home) <
-      steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@')),
-  )
-  assert.deepEqual(
-    steps.filter((step) => /safe\.directory|HOME=/.test(step.run ?? '')),
-    [home],
-  )
-  assert.equal(worker['continue-on-error'], undefined)
-  for (const step of steps) assert.equal(step['continue-on-error'], undefined)
-  assert.doesNotMatch(
-    JSON.stringify(workflow),
-    /playwright install|browser-cache-|browser-system-packages|secrets\.|pull_request_target|self-hosted/,
-  )
 })
