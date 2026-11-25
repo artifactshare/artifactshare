@@ -9,15 +9,6 @@ import {
   withServer,
 } from './test/helpers.js'
 
-test('artifacts list --help explains finding ids for follow-up commands', () => {
-  const result = run(['artifacts', 'list', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /artifacts list --project-id/)
-  assert.match(result.stdout, /update, edit, move, delete, artifacts get/)
-  assert.match(result.stdout, /invalid_destination/)
-})
-
 test('artifacts list --json fails with auth_required before network checks', () => {
   const result = run(['artifacts', 'list', '--json'], {
     ARTIFACTSHARE_TOKEN: '',

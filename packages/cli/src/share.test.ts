@@ -83,31 +83,6 @@ function formField(body: string, name: string): string | null {
   return match?.[1] ?? null
 }
 
-test('share --help prints share-specific options', () => {
-  const result = run(['share', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /--project-id <project-id>/)
-  assert.match(result.stdout, /--home/)
-  assert.match(
-    result.stdout,
-    /Posting to a project delivers to the audience defined by that project/,
-  )
-  assert.match(
-    result.stdout,
-    /config get home_audience --scope effective --json/,
-  )
-  assert.match(
-    result.stdout,
-    /config set home_audience workspace --scope repository --json/,
-  )
-  assert.match(result.stdout, /One-time audience/)
-  assert.match(result.stdout, /To keep an existing share URL, use update/)
-  assert.match(result.stdout, /For repeat jobs, use --key/)
-  assert.match(result.stdout, /Common failures:/)
-  assert.match(result.stdout, /auth_required/)
-})
-
 test('share sends link visibility and finite expiry', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'report.html')

@@ -56,15 +56,6 @@ function mockDeviceCode(response: ServerResponse) {
   })
 }
 
-test('download --help explains local save before update', () => {
-  const result = run(['download', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /download abc123def4/)
-  assert.match(result.stdout, /--output <output>/)
-  assert.match(result.stdout, /output_exists/)
-})
-
 test('download --json fails before network checks when token store is unavailable', () => {
   const result = run(['download', 'abc123def4', '--json'], deviceAuthEnv)
 

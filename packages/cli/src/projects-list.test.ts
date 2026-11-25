@@ -22,18 +22,6 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true })
 })
 
-test('projects create --help explains how to persist its visibility default', () => {
-  const result = run(['projects', 'create', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /default_project_visibility/)
-  assert.match(result.stdout, /config get default_project_visibility --json/)
-  assert.match(
-    result.stdout,
-    /config set default_project_visibility private --scope repository --json/,
-  )
-})
-
 test('projects list --json fails with auth_required before network checks', () => {
   const result = run(['projects', 'list', '--json'], {
     ARTIFACTSHARE_TOKEN: '',

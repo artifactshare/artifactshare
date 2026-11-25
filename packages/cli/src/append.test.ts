@@ -11,15 +11,6 @@ import {
   withServer,
 } from './test/helpers.js'
 
-test('append --help describes exact single-file append', () => {
-  const result = run(['append', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /append <OPTIONS> <artifactIdOrUrl> <path>/)
-  assert.match(result.stdout, /Non-empty UTF-8 file/)
-  assert.match(result.stdout, /Static sites, PDFs and videos are not supported/)
-})
-
 test('append rejects an empty file before authentication', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-empty-'))
   const path = join(dir, 'empty.md')

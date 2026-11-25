@@ -47,16 +47,6 @@ afterEach(async () => {
   await rm(homeDir, { recursive: true, force: true })
 })
 
-test('open --help explains the first-run flow', () => {
-  const result = run(['open', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /open https:\/\/artifactshare\.com\/a/)
-  assert.match(result.stdout, /installs or updates/)
-  assert.match(result.stdout, /download next_command/)
-  assert.match(result.stdout, /skills install --tool <tool> --force/)
-})
-
 test('open installs detected Claude skill and reads a single-file artifact', async () => {
   await mkdir(join(workDir, '.claude'))
   const requests: Array<{

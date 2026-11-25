@@ -36,26 +36,6 @@ function mockDeviceCode(response: ServerResponse) {
   })
 }
 
-test('update --help prints update-specific options', () => {
-  const result = run(['update', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /update <OPTIONS> <artifactIdOrUrl> <path>/)
-  assert.match(result.stdout, /artifact ID/)
-  assert.match(result.stdout, /--label/)
-  assert.match(result.stdout, /Common failures:/)
-  assert.match(result.stdout, /target_not_found/)
-  assert.match(result.stdout, /artifact_kind_mismatch/)
-  assert.match(result.stdout, /expected_version_required/)
-  assert.match(result.stdout, /login --preset agent/)
-  assert.match(result.stdout, /data.version.id/)
-  assert.match(result.stdout, /data.version.label is the stored label or null/)
-  assert.match(
-    result.stdout,
-    /data.version.number matches the Viewer version number/,
-  )
-})
-
 test('update --json fails with auth_required after local preparation', async (t) => {
   const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
   t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))

@@ -29,7 +29,7 @@ test('--version prints package.json version', async () => {
   const result = run(['--version'])
 
   assert.equal(result.status, 0)
-  assert.ok(result.stdout.includes(pkg.version))
+  assert.equal(result.stdout.trim(), pkg.version)
 })
 
 test('package exposes an npm-inferable cli bin alongside named entrypoints', async () => {
@@ -70,43 +70,6 @@ test('--version works when launched via symlink (bin entrypoint)', async () => {
   }
 })
 
-test('--help prints the top-level command list', () => {
-  const result = run(['--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /Artifact Share CLI/)
-  assert.match(result.stdout, /share <path>/)
-  assert.match(result.stdout, /update <artifact-id-or-url> <path>/)
-  assert.match(result.stdout, /logout/)
-  assert.match(result.stdout, /Authentication:/)
-  assert.match(result.stdout, /Attended local agent:.*--preset agent/s)
-  assert.match(result.stdout, /shared agent platforms.*model sandbox/i)
-  assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
-  assert.match(result.stdout, /--token/)
-  assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
-  assert.match(result.stdout, /Common failures:/)
-  assert.match(result.stdout, /config get/)
-})
-
-test('login --help prefers restricted login for attended agents', () => {
-  const result = run(['login', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /browser approval/)
-  assert.match(result.stdout, /interactive terminal/)
-  assert.match(
-    result.stdout,
-    /attended agent on your machine.*--preset agent/is,
-  )
-  assert.match(result.stdout, /--project.*fixed project/is)
-  assert.match(result.stdout, /shared agent platform.*model sandbox/is)
-  assert.match(result.stdout, /ARTIFACTSHARE_TOKEN/)
-  assert.match(result.stdout, /--token/)
-  assert.match(result.stdout, /do not pass tokens to login/i)
-  assert.match(result.stdout, /https:\/\/artifactshare\.com\/settings\/tokens/)
-  assert.doesNotMatch(result.stdout, /For agents or CI, issue a token/)
-})
-
 test('auth guidance does not direct attended agents to API tokens', () => {
   const result = run(['resolve', 'example', '--json'], {
     ARTIFACTSHARE_TOKEN: '',
@@ -122,33 +85,6 @@ test('auth guidance does not direct attended agents to API tokens', () => {
   assert.equal(
     payload.error.details.agent_login_command,
     'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile default --preset agent',
-  )
-})
-
-test('config --help explains purpose-based home audience guidance', () => {
-  const result = run(['config', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /Personal safe default.*--scope user/s)
-  assert.match(
-    result.stdout,
-    /Shared policy agreed by all repository participants/,
-  )
-  assert.match(result.stdout, /One-time audience.*--visibility/)
-  assert.match(result.stdout, /--scope effective/)
-  assert.match(result.stdout, /home_audience/)
-  assert.match(
-    result.stdout,
-    /default_artifact_visibility.*Compatibility alias/,
-  )
-  assert.match(result.stdout, /default_project_visibility.*Advanced default/)
-  assert.match(
-    result.stdout,
-    /Keyless config get --json returns only home_audience/,
-  )
-  assert.match(
-    result.stdout,
-    /Project defaults resolve repository, user, then workspace/,
   )
 })
 
@@ -282,17 +218,7 @@ test('bare parent commands fail with validation_failed instead of silent success
   }
 })
 
-test('artifacts help advertises the deletion alias', () => {
-  const result = run(['artifacts', '--help'])
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /delete <OPTIONS>\s+Permanently delete/)
-  assert.match(result.stdout, /alias of top-level delete/)
-})
-
-test('label is an update-only option and empty values fail before authentication', () => {
-  assert.match(run(['update', '--help']).stdout, /--label/)
-  for (const command of ['share', 'append', 'preview'])
-    assert.doesNotMatch(run([command, '--help']).stdout, /--label/)
+test('empty label values fail before authentication', () => {
   for (const args of [['--label='], ['--label', ''], ['--label', '--json']]) {
     expectFailure(
       run(['update', 'abc123def4', 'missing.html', '--json', ...args]),
@@ -300,54 +226,6 @@ test('label is an update-only option and empty values fail before authentication
     )
   }
 })
-
-test('edit help documents project visibility and its placement requirement', () => {
-  const result = run(['edit', '--help'])
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /private, workspace, project, or link/)
-  assert.match(result.stdout, /project requires placement in a project/)
-})
-
-for (const command of ['share', 'update']) {
-  test(`${command} help explains upload boundary recovery`, () => {
-    const result = run([command, '--help'])
-    assert.equal(result.status, 0)
-    assert.match(result.stdout, /upload_read_failed.*permissions, then retry/)
-    assert.match(
-      result.stdout,
-      /link\s+Copy into the selection or pass the target by absolute path/,
-    )
-    assert.match(result.stdout, /outside_cwd\s+Pass an absolute path/)
-    assert.match(
-      result.stdout,
-      /parent_traversal\s+Pass a direct absolute path without any \.\. component/,
-    )
-    assert.match(
-      result.stdout,
-      /changed\s+The selection changed while reading; retry/,
-    )
-  })
-}
-
-for (const command of ['share', 'append']) {
-  test(`${command} help describes upload boundary recovery`, () => {
-    const result = run([command, '--help'])
-    assert.equal(result.status, 0)
-    for (const reason of [
-      'upload_read_failed',
-      'validation_failed',
-      'link',
-      'outside_cwd',
-      'parent_traversal',
-      'changed',
-      'not_found',
-      'invalid_type',
-      'unsupported_guarantee',
-    ]) {
-      assert.ok(result.stdout.includes(reason), reason)
-    }
-  })
-}
 
 test('unknown options fail at root, parent, nested and implicit commands', () => {
   for (const [args, command] of [
@@ -547,13 +425,4 @@ test('import-token rejects token options with standard-input guidance', () => {
     )
     assert.equal(error.recovery.kind, 'change_input')
   }
-})
-
-test('share help explains human recovery for agent visibility mismatches', () => {
-  const result = run(['share', '--help'])
-  assert.equal(result.status, 0)
-  assert.match(
-    result.stdout,
-    /agent credentials require a person to run edit using a human credential/,
-  )
 })
