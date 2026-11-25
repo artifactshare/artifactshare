@@ -70,6 +70,36 @@ describe('AnalyticsAuthTracker', () => {
     expect(gtag).toHaveBeenCalledTimes(2)
   })
 
+  test('does not resend completion after a remount away from the artifact', async () => {
+    history.replaceState(null, '', '/')
+    captureAuthAttempt({
+      method: 'google',
+      callbackURL: '/a/example',
+      shouldLoadAnalytics: true,
+    })
+    for (let mount = 0; mount < 2; mount++) {
+      await React.act(async () => {
+        root.render(null)
+      })
+      await React.act(async () => {
+        root.render(
+          <AnalyticsAuthTracker
+            authenticated
+            signup={null}
+            shouldLoadAnalytics
+          />,
+        )
+      })
+    }
+    expect(gtag.mock.calls).toStrictEqual([
+      [
+        'event',
+        'auth_completed',
+        { method: 'google', account_state: 'existing' },
+      ],
+    ])
+  })
+
   test('retries completion when analytics consent is granted later', async () => {
     captureAuthAttempt({
       method: 'email',

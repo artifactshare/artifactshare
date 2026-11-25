@@ -367,6 +367,48 @@ describe('strict normalized selectors', () => {
   })
 })
 
+describe('created selector context', () => {
+  function describeQuote(text: string, quoteStart: number) {
+    const root = document.createElement('p')
+    root.textContent = text
+    const range = document.createRange()
+    range.setStart(root.firstChild!, quoteStart)
+    range.setEnd(root.firstChild!, quoteStart + 'quote'.length)
+    return createTextAnchorEngine(root).describe(range)!
+  }
+
+  test('takes 32 characters on each side when that is unique', () => {
+    const before = '0123456789'.repeat(4)
+    const after = 'abcdefghij'.repeat(4)
+    expect(describeQuote(`${before}quote${after}`, 40)).toMatchObject({
+      quotedText: 'quote',
+      prefixText: before.slice(-32),
+      suffixText: after.slice(0, 32),
+      ambiguousAtCreation: false,
+    })
+  })
+
+  test('grows past 32 characters until the context is unique', () => {
+    const pad = '-'.repeat(40)
+    const text = `one${pad}quote${pad}two${pad}quote${pad}three`
+    expect(describeQuote(text, 43)).toMatchObject({
+      prefixText: `one${pad}`,
+      suffixText: `${pad}two${'-'.repeat(21)}`,
+      ambiguousAtCreation: false,
+    })
+  })
+
+  test('stops at 400 characters and marks a repeated context ambiguous', () => {
+    const pad = '-'.repeat(450)
+    const selector = describeQuote(`${pad}quote${pad}quote${pad}`, 450)
+    expect(selector).toMatchObject({
+      prefixText: '-'.repeat(400),
+      suffixText: '-'.repeat(400),
+      ambiguousAtCreation: true,
+    })
+  })
+})
+
 test('painted endpoints use the shared index including inserted text and normalized whitespace', () => {
   const root = document.createElement('p')
   const first = document.createTextNode('prefix selected   ')

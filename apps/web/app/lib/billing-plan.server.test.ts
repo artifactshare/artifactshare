@@ -1,21 +1,15 @@
 import { describe, expect, test } from 'vitest'
-import { BILLING_PRICES, PLAN_STORAGE_QUOTA_BYTES } from './billing-prices'
+import { BILLING_PRICES } from './billing-prices'
 import {
   allowsStorageOverage,
   isPaidPlan,
   normalizePlan,
-  PLAN_PROJECT_LIMITS,
   projectLimitForPlan,
   storageQuotaForPlan,
 } from './billing-plan.server'
 
 describe('billing-plan', () => {
-  test('billing prices keep the published plan limits and prices', () => {
-    expect(PLAN_STORAGE_QUOTA_BYTES).toEqual({
-      free: 104857600,
-      plus: 10737418240,
-      team: 107374182400,
-    })
+  test('billing prices keep the published prices', () => {
     expect(BILLING_PRICES.plus.jpy).toEqual({ month: 800, year: 8000 })
     expect(BILLING_PRICES.team.usd).toEqual({ month: 29, year: 290 })
   })
@@ -43,15 +37,15 @@ describe('billing-plan', () => {
   })
 
   test('project limits match plan tiers', () => {
-    expect(projectLimitForPlan('free')).toBe(PLAN_PROJECT_LIMITS.free)
-    expect(projectLimitForPlan('plus')).toBe(PLAN_PROJECT_LIMITS.plus)
+    expect(projectLimitForPlan('free')).toBe(5)
+    expect(projectLimitForPlan('plus')).toBe(20)
     expect(projectLimitForPlan('team')).toBeNull()
   })
 
   test('storage quotas match plan tiers', () => {
-    expect(storageQuotaForPlan('free')).toBe(PLAN_STORAGE_QUOTA_BYTES.free)
-    expect(storageQuotaForPlan('plus')).toBe(PLAN_STORAGE_QUOTA_BYTES.plus)
-    expect(storageQuotaForPlan('team')).toBe(PLAN_STORAGE_QUOTA_BYTES.team)
-    expect(storageQuotaForPlan(null)).toBe(PLAN_STORAGE_QUOTA_BYTES.free)
+    expect(storageQuotaForPlan('free')).toBe(100 * 1024 ** 2)
+    expect(storageQuotaForPlan('plus')).toBe(10 * 1024 ** 3)
+    expect(storageQuotaForPlan('team')).toBe(100 * 1024 ** 3)
+    expect(storageQuotaForPlan(null)).toBe(100 * 1024 ** 2)
   })
 })

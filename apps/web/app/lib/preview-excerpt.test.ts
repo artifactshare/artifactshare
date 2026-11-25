@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { MAX_EXCERPT_CHARS, previewExcerpt } from './preview-excerpt'
+import { previewExcerpt } from './preview-excerpt'
 
 describe('previewExcerpt markdown', () => {
   test('strips headings, links, code fences, lists, and emphasis', () => {
@@ -59,12 +59,10 @@ describe('previewExcerpt html', () => {
 })
 
 describe('previewExcerpt truncation', () => {
-  test('truncates beyond MAX_EXCERPT_CHARS with an ellipsis', () => {
-    const source = `# ${'word '.repeat(40)}`
-    const result = previewExcerpt(source, 'markdown')
-    expect(result).not.toBeNull()
-    expect(result!.length).toBeLessThanOrEqual(MAX_EXCERPT_CHARS + 1)
-    expect(result!.endsWith('…')).toBe(true)
+  test('keeps 140 characters and cuts the 141st with an ellipsis', () => {
+    const fits = 'abcdefghij'.repeat(14)
+    expect(previewExcerpt(fits, 'markdown')).toBe(fits)
+    expect(previewExcerpt(`${fits}k`, 'markdown')).toBe(`${fits}…`)
   })
 
   test('does not append ellipsis when text fits', () => {
@@ -79,20 +77,13 @@ describe('previewExcerpt source scan limit', () => {
     const huge = prefix + 'x'.repeat(100_000)
     const result = previewExcerpt(huge, 'markdown')
     expect(result).not.toBeNull()
-    expect(result!.length).toBeLessThanOrEqual(MAX_EXCERPT_CHARS + 1)
+    expect(result!.length).toBeLessThanOrEqual(141)
   })
 })
 
 describe('previewExcerpt japanese', () => {
-  test('preserves multibyte text without corrupting surrogate pairs at the cut', () => {
-    const source =
-      'これは日本語の本文です。Slackプレビュー用の抜粋テストを行います。絵文字🎉も含めて正しく切り詰められることを確認します。' +
-      'あ'.repeat(100)
-
-    const result = previewExcerpt(source, 'markdown')
-    expect(result).not.toBeNull()
-    expect(result!.endsWith('…')).toBe(true)
-    expect(result!.slice(0, -1)).not.toMatch(/[\uD800-\uDBFF]$/)
-    expect(result!.includes('これは日本語')).toBe(true)
+  test('drops a surrogate pair that the cut would split', () => {
+    const before = 'あ'.repeat(139)
+    expect(previewExcerpt(`${before}🎉いいい`, 'markdown')).toBe(`${before}…`)
   })
 })

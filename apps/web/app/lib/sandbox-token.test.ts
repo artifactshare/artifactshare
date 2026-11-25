@@ -150,19 +150,21 @@ describe('sandbox-token', () => {
     })
   })
 
-  test('uses a 60 second TTL boundary', async () => {
+  test('expires exactly 60 seconds after signing', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     const token = await signSandboxToken(VALID_PAYLOAD, SECRET)
 
-    vi.setSystemTime(new Date('2026-01-01T00:00:59Z'))
+    vi.setSystemTime(new Date('2026-01-01T00:00:59.999Z'))
     expect(await verifySandboxTokenDetailed(token, SECRET)).toMatchObject({
       ok: true,
     })
 
-    vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
+    vi.setSystemTime(new Date('2026-01-01T00:01:00Z'))
     expect(await verifySandboxTokenDetailed(token, SECRET)).toMatchObject({
       ok: false,
+      failure: 'expired',
+      expiredBySeconds: 0,
     })
 
     vi.useRealTimers()

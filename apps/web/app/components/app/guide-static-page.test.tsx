@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
+import { getPublicGuideVerifiedDate } from '~/lib/public-guide-freshness'
 import { GuideStaticPage } from './guide-static-page'
 
 vi.mock('~/hooks/use-t', () => ({
@@ -35,16 +36,41 @@ describe('GuideStaticPage', () => {
     expect(html).toContain('data-slot="public-footer" data-variant="full"')
   })
 
-  test('renders freshness immediately after a role guide heading', () => {
-    const html = renderToStaticMarkup(
-      <GuideStaticPage
-        html="<h1>Owner guide</h1><p>Body</p>"
-        locale="en"
-        path="/guides/workspace-owner"
-      />,
-    )
-    expect(html).toContain('Last verified: 2026-07-18')
-    expect(html.indexOf('</h1>')).toBeLessThan(html.indexOf('Last verified'))
-    expect(html.indexOf('Last verified')).toBeLessThan(html.indexOf('<p>Body'))
-  })
+  test.each([
+    ['/guides/workspace-owner', 'workspace-owner'],
+    ['/guides/workspace-admin', 'workspace-admin'],
+    ['/guides/link-sharing', 'link-sharing'],
+    ['/guides/search', 'search'],
+  ] as const)(
+    'renders the %s verified date immediately after its heading',
+    (path, guide) => {
+      const html = renderToStaticMarkup(
+        <GuideStaticPage
+          html="<h1>Guide</h1><p>Body</p>"
+          locale="en"
+          path={path}
+        />,
+      )
+      const verified = html.indexOf(
+        `Last verified: ${getPublicGuideVerifiedDate(guide)}`,
+      )
+      expect(verified).toBeGreaterThan(html.indexOf('</h1>'))
+      expect(verified).toBeLessThan(html.indexOf('<p>Body'))
+    },
+  )
+
+  test.each(['/privacy', '/terms', '/tokushoho'] as const)(
+    'renders %s without a verified date',
+    (path) => {
+      const html = renderToStaticMarkup(
+        <GuideStaticPage
+          html="<h1>Legal</h1><p>Body</p>"
+          locale="en"
+          path={path}
+        />,
+      )
+      expect(html).toContain('<p>Body</p>')
+      expect(html).not.toContain('Last verified')
+    },
+  )
 })
