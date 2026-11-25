@@ -1,0 +1,86 @@
+name: Nightly journeys
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 1 * * *'
+
+permissions:
+  contents: read
+
+# One journeys run at a time, and never cancel one in progress: a pending run
+# only needs the newest source, and a half-driven stack proves nothing.
+concurrency:
+  group: nightly-journeys
+  cancel-in-progress: false
+
+jobs:
+  journeys:
+    name: Verify Artifact Share journeys
+    runs-on: ubuntu-latest
+    # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --init --ipc=host
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    env:
+      # Actions overrides HOME; the dev certificate and Chromium need the
+      # root-owned home, as the browser lanes in public CI do.
+      HOME: /root
+      VERIFY_RUN: nightly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Trust browser workspace
+        # Checkout removes its temporary Git config before later steps.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.3
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # The journeys drive packages/cli/dist, and runCli refuses a stale build.
+      - run: pnpm --filter @artifactshare/cli build
+      - name: Start the local stack
+        timeout-minutes: 5
+        run: node .claude/skills/verify-artifactshare/scripts/stack.mjs up --run "$VERIFY_RUN"
+      - name: Drive every journey
+        timeout-minutes: 15
+        # One stack for all six, in order, and every journey runs even after
+        # one fails, so a red run names each feature that broke.
+        run: |
+          failed=()
+          for journey in cli-share-view home-upload comments sharing projects viewer-notices; do
+            started=$SECONDS
+            if node ".claude/skills/verify-artifactshare/scripts/journeys/$journey.mjs" --run "$VERIFY_RUN"; then
+              echo "journey $journey passed in $((SECONDS - started))s"
+            else
+              failed+=("$journey")
+              echo "journey $journey FAILED after $((SECONDS - started))s"
+            fi
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "failed journeys: ${failed[*]}"
+            exit 1
+          fi
+      - name: Stop the local stack
+        if: always()
+        run: node .claude/skills/verify-artifactshare/scripts/stack.mjs down --run "$VERIFY_RUN"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # The evidence of a run nobody has to read is not worth keeping.
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: nightly-journeys-evidence
+          path: |
+            .verify-artifactshare/runs/${{ env.VERIFY_RUN }}/evidence
+            .verify-artifactshare/runs/${{ env.VERIFY_RUN }}/logs
+          retention-days: 7
+          if-no-files-found: warn

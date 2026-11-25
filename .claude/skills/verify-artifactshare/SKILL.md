@@ -71,7 +71,7 @@ node .claude/skills/verify-artifactshare/scripts/journeys/projects.mjs [--run <i
 node .claude/skills/verify-artifactshare/scripts/journeys/viewer-notices.mjs [--run <id>]
 ```
 
-Each journey uses unique names, so they can run one after another on the same stack.
+Each journey uses unique names, so they can run one after another on the same stack. The `Nightly journeys` workflow (`.github/workflows/nightly-journeys.yml`) drives all six that way every night and on demand, and keeps the evidence of a failed run as a build artifact for 7 days.
 
 Write new journeys as `scripts/journeys/<feature>.mjs` that import `harness.mjs`, following that file. The feature map in `features/` lists the handles for each feature.
 
