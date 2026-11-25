@@ -258,7 +258,7 @@ test('collects multiple sitemap and HTML mismatches before returning', async () 
     ...fetchFromResponses(responses),
   })
 
-  assert.ok(result.mismatches.length >= 6)
+  assert.equal(result.mismatches.length, 12)
   for (const url of [
     'https://example.test/',
     'https://example.test/about',
