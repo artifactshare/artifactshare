@@ -313,7 +313,7 @@ describe.each([
       player: '動画プレーヤー',
       loading: '動画を読み込んでいます…',
       pause: '一時停止',
-      fullscreenFailed: 'この環境では全画面表示を利用できません。',
+      fullscreenFailed: 'この環境では全画面表示を使えません。',
     },
     app: {
       lang: 'en',
@@ -335,7 +335,7 @@ describe.each([
       lang: 'ja',
       player: '動画プレーヤー',
       loading: '動画を読み込んでいます…',
-      fullscreenFailed: 'この環境では全画面表示を利用できません。',
+      fullscreenFailed: 'この環境では全画面表示を使えません。',
     },
   },
 ] as const)(

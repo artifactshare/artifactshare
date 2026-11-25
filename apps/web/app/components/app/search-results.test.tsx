@@ -144,13 +144,17 @@ test.each([
 
 test.each([
   ['en', '', 'No matches for &quot;planning&quot;.'],
-  ['ja', '', '『planning』は見つかりませんでした。'],
+  ['ja', '', '『planning』に一致するファイルは見つかりませんでした。'],
   [
     'en',
     '&period=7',
     'No matches for &quot;planning&quot; with these filters.',
   ],
-  ['ja', '&period=7', 'この条件では『planning』は見つかりませんでした。'],
+  [
+    'ja',
+    '&period=7',
+    'この条件では『planning』に一致するファイルは見つかりませんでした。',
+  ],
   [
     'en',
     '&includeArchived=false&sort=newest',
@@ -201,7 +205,7 @@ test.each([
     if (filters.includes('period'))
       expect(content).toContain(
         locale === 'ja'
-          ? '>期間の絞り込みを解除(すべて含むファイルが 2件あります)</button>'
+          ? '>期間の絞り込みを解除（すべて含むファイルが 2 件あります）</button>'
           : '>Remove Period filter (2 results contain all keywords)</button>',
       )
   },
