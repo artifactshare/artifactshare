@@ -34,7 +34,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 ## Features
 
-Each feature has a shipped journey in `scripts/journeys/` that proves it end to end.
+Each feature has a shipped journey in `scripts/journeys/` that proves it end to end. The `Nightly journeys` workflow drives every one of them on one stack each night, so a feature below that stops working shows up overnight and not only on demand.
 
 - [Share with the CLI and view](./cli-share.md) covers token creation, `share`, `update`, the sandboxed viewer, and Home listing.
 - [Upload from Home](./home-upload.md) covers the `Add a file` dialog for a single file and a site folder.
