@@ -44,6 +44,29 @@ export function evidenceDir(run, feature) {
   return dir
 }
 
+const catalogs = new Map()
+
+/**
+ * The copy the app shows for `key` in `locale`, read from
+ * `apps/web/app/i18n/<locale>.json`. Use it for a value a journey asserts (a
+ * count, a state label) so rewritten wording does not fail the journey, and
+ * keep literal English for the role names a feature file lists as handles.
+ */
+export function uiText(locale, key, vars = {}) {
+  if (!catalogs.has(locale)) {
+    const path = join(ROOT, `apps/web/app/i18n/${locale}.json`)
+    catalogs.set(locale, JSON.parse(readFileSync(path, 'utf8')))
+  }
+  const raw = catalogs.get(locale)[key]
+  if (raw === undefined) throw new Error(`No ${locale} copy for ${key}`)
+  return raw.replace(/\{(\w+)\}/gu, (_, name) => String(vars[name] ?? ''))
+}
+
+/** The copy for a counted label: `<stem>One` at 1, `<stem>Other` otherwise. */
+export function countedLabel(locale, stem, n) {
+  return uiText(locale, `${stem}${n === 1 ? 'One' : 'Other'}`, { n })
+}
+
 /**
  * Launch Chromium with a fresh context (no cookies), for a signed-out
  * visitor. Returns { browser, context, page }.
@@ -100,11 +123,23 @@ export async function capture(run, feature, name, page, locator) {
  */
 export async function createApiToken(page, run, name) {
   await page.goto(`${run.appOrigin}/settings/tokens`)
-  await page.getByRole('textbox', { name: 'Name' }).fill(name)
-  await page.getByRole('button', { name: 'Create token' }).click()
+  // This page prints relative times from the server, so React can discard the
+  // server HTML and re-render right after load, and a click in that window is
+  // lost. Let the page settle, then submit again if nothing came back.
+  await page.waitForLoadState('networkidle')
   const created = page
     .getByRole('status')
     .filter({ has: page.getByRole('heading', { name: `Token created: ${name}` }) })
+  for (const attempt of [1, 2]) {
+    await page.getByRole('textbox', { name: 'Name' }).fill(name)
+    await page.getByRole('button', { name: 'Create token' }).click()
+    try {
+      await created.waitFor({ timeout: 10_000 })
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+    }
+  }
   const token = (await created.locator('code').innerText()).trim()
   if (!token.startsWith('ast_')) throw new Error(`Unexpected token text: ${token}`)
   return token

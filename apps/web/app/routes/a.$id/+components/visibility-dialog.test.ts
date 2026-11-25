@@ -125,6 +125,21 @@ describe('visibilityDialogReducer', () => {
     ).toBe(true)
   })
 
+  test('reports no expiry change until the date is touched', () => {
+    let state = createVisibilityDialogState('private', true, {
+      linkExpiryDate: '2026-08-19',
+    })
+    state = visibilityDialogReducer(state, { type: 'select', value: 'link' })
+
+    expect(
+      hasLinkExpiryChanges(state, { date: '2026-08-19', unlimited: false }),
+    ).toBe(false)
+    // The policy default moves at midnight, which is not an edit by the user.
+    expect(
+      hasLinkExpiryChanges(state, { date: '2026-08-20', unlimited: false }),
+    ).toBe(false)
+  })
+
   test('treats a restored link expiry date as unchanged', () => {
     const initial = { date: '2026-08-19', unlimited: false }
     let state = createVisibilityDialogState('link', true, {
