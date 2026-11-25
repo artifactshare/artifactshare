@@ -25,35 +25,41 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+async function openMenu(
+  onCopyUrl: () => void = () => {},
+  onAction: (action: string) => void = () => {},
+) {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(<FileRowMenu onCopyUrl={onCopyUrl} onAction={onAction} />)
+
+  const trigger = await vi.waitFor(() => {
+    const button = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="その他"]',
+    )
+    expect(button).not.toBeNull()
+    return button!
+  })
+  trigger.dispatchEvent(
+    new PointerEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      pointerType: 'mouse',
+    }),
+  )
+  return vi.waitFor(() => {
+    const found = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ]
+    expect(found).toHaveLength(5)
+    return found
+  })
+}
+
 describe('FileRowMenu browser structure', () => {
   test('opens the owner menu with short ordered labels and no wrapping', async () => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    root.render(<FileRowMenu onCopyUrl={() => {}} onAction={() => {}} />)
-
-    const trigger = await vi.waitFor(() => {
-      const button = document.querySelector<HTMLButtonElement>(
-        'button[aria-label="その他"]',
-      )
-      expect(button).not.toBeNull()
-      return button!
-    })
-    trigger.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        bubbles: true,
-        button: 0,
-        pointerType: 'mouse',
-      }),
-    )
-
-    const items = await vi.waitFor(() => {
-      const found = [
-        ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-      ]
-      expect(found).toHaveLength(5)
-      return found
-    })
+    const items = await openMenu()
     await waitForBrowserLayout()
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       'リンクをコピー',
@@ -75,5 +81,21 @@ describe('FileRowMenu browser structure', () => {
     expect(
       parseFloat(getComputedStyle(content!).minWidth),
     ).toBeGreaterThanOrEqual(150)
+  })
+
+  test.each([
+    ['リンクをコピー', 'copy-url'],
+    ['名前を変更', 'rename'],
+    ['移動', 'move'],
+    ['共有範囲', 'visibility'],
+    ['削除', 'remove'],
+  ])('selecting %s reports %s', async (label, expected) => {
+    const selected: string[] = []
+    const items = await openMenu(
+      () => selected.push('copy-url'),
+      (action) => selected.push(action),
+    )
+    items.find((item) => item.textContent?.trim() === label)!.click()
+    expect(selected).toEqual([expected])
   })
 })

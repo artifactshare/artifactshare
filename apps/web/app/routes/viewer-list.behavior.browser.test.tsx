@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
-import { waitForBrowserLayout } from '~/test/browser-layout'
+import { fits, waitForBrowserLayout } from '~/test/browser-layout'
 import { ViewerChrome } from './a.$id/+components/viewer-chrome'
 import { ViewerListPanel } from './a.$id/+components/viewer-list-panel'
 import {
@@ -113,10 +113,10 @@ const viewersResponse = {
 }
 
 // ViewerShell の閲覧者リスト部分と同じ配線 (reducer + useViewerList + 実 chrome
-// + 実パネル) を持つ harness。browser テストで検証するのは CSS 挙動 (390px
+// + 実パネル) を持つ harness。browser テストで検証するのは CSS 挙動 (狭い幅での
 // 非クリッピング / リサイズ維持) で、フル shell の配線自体は happy-dom テスト
 // (viewer-list-wiring.test.tsx) が担う。
-function Harness() {
+function Harness({ ownerName = artifact.ownerName }: { ownerName?: string }) {
   const [state, dispatch] = useReducer(
     viewerShellReducer,
     artifact.id,
@@ -142,7 +142,7 @@ function Harness() {
   return (
     <TooltipProvider>
       <ViewerChrome
-        artifact={artifact}
+        artifact={{ ...artifact, ownerName }}
         user={user}
         renderType="html"
         viewerListOpen={state.viewerListOpen}
@@ -166,6 +166,16 @@ function Harness() {
       />
     </TooltipProvider>
   )
+}
+
+function visibleWidth(element: Element) {
+  return new Promise<number>((resolve) => {
+    const observer = new IntersectionObserver(([entry]) => {
+      observer.disconnect()
+      resolve(entry!.intersectionRect.width)
+    })
+    observer.observe(element)
+  })
 }
 
 describe('viewer list browser behavior', () => {
@@ -199,10 +209,10 @@ describe('viewer list browser behavior', () => {
     vi.unstubAllGlobals()
   })
 
-  async function renderHarness() {
+  async function renderHarness(ownerName?: string) {
     root.render(
       <MemoryRouter initialEntries={['/a/s1']}>
-        <Harness />
+        <Harness ownerName={ownerName} />
       </MemoryRouter>,
     )
     await vi.waitFor(() => {
@@ -229,39 +239,27 @@ describe('viewer list browser behavior', () => {
     expect(rect.width).toBeGreaterThan(0)
   })
 
-  it('never leaves the owner separator as an orphan at a 390px viewport', async () => {
-    await page.viewport(390, 844)
-    await renderHarness()
+  it('collapses a long owner name inside the meta row with its separator at the narrowest width that shows it', async () => {
+    const ownerName = 'Owner Person With A Considerably Longer Display Name'
+    await page.viewport(520, 844)
+    await renderHarness(ownerName)
     await waitForBrowserLayout()
     const segment = container.querySelector<HTMLElement>(
       '[data-viewer-owner-segment]',
-    )
-    expect(segment).not.toBeNull()
-    const separator = segment!.querySelector<HTMLElement>(
+    )!
+    const separator = segment.querySelector<HTMLElement>(
       'span[aria-hidden="true"]',
-    )
-    expect(separator).not.toBeNull()
-    const name = Array.from(segment!.querySelectorAll('span')).find(
-      (el) => el.textContent === artifact.ownerName,
-    )
-    expect(name).toBeDefined()
-    // The separator shares the owner segment's clipping container, so it can
-    // only be visible when some owner content is visible too — it must never
-    // remain as a dangling "·" after the owner segment collapses.
-    const segmentRect = segment!.getBoundingClientRect()
-    const separatorRect = separator!.getBoundingClientRect()
-    const visibleWidth = (rect: DOMRect) =>
-      Math.max(
-        0,
-        Math.min(rect.right, segmentRect.right) -
-          Math.max(rect.left, segmentRect.left),
-      )
-    if (visibleWidth(separatorRect) > 0) {
-      const nameRect = name!.getBoundingClientRect()
-      expect(visibleWidth(nameRect)).toBeGreaterThan(0)
-    }
-    // The segment itself stays within the viewport.
-    expect(segmentRect.right).toBeLessThanOrEqual(390)
+    )!
+    const name = Array.from(segment.querySelectorAll('span')).find(
+      (el) => el.textContent === ownerName,
+    )!
+    expect(name.scrollWidth).toBeGreaterThan(name.clientWidth)
+    expect(await visibleWidth(separator)).toBeGreaterThan(0)
+    expect(await visibleWidth(name)).toBeGreaterThan(0)
+    expect(
+      fits(segment.getBoundingClientRect().width, await visibleWidth(segment)),
+    ).toBe(true)
+    expect(await visibleWidth(entryButton())).toBeGreaterThan(0)
   })
 
   it('keeps the open panel content and state across desktop and phone resizes', async () => {

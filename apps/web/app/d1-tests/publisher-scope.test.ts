@@ -40,7 +40,7 @@ test('D1 enforces publisher provenance, current ownership and revocation at the 
       "INSERT INTO workspaces (id, name, created_at) VALUES ('publisher-ws', 'Workspace', '2026-01-01')",
     ),
     database.prepare(
-      "INSERT INTO users (id, google_sub, email, workspace_id, created_at, updated_at) VALUES ('publisher-owner', 'sub-publisher-owner', 'publisher-owner@example.test', 'publisher-ws', '2026-01-01', '2026-01-01')",
+      "INSERT INTO users (id, google_sub, email, workspace_id, created_at, updated_at) VALUES ('publisher-owner', 'sub-publisher-owner', 'publisher-owner@example.test', 'publisher-ws', '2026-01-01', '2026-01-01'), ('publisher-colleague', 'sub-publisher-colleague', 'publisher-colleague@example.test', 'publisher-ws', '2026-01-01', '2026-01-01')",
     ),
     database.prepare(
       "INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('publisher-client', 'publisher-owner', 'publisher-ws', 'Reports', '2026-01-01')",
@@ -94,6 +94,18 @@ test('D1 enforces publisher provenance, current ownership and revocation at the 
         "UPDATE cli_family_authorities SET status = 'active' WHERE family_id = 'publisher-family'",
       )
       .run()
+    await database
+      .prepare(
+        "UPDATE shareables SET owner_user_id = 'publisher-colleague' WHERE id = 'abc123def4'",
+      )
+      .run()
+    expect(await write()).toEqual([])
+    await database
+      .prepare(
+        "UPDATE shareables SET owner_user_id = 'publisher-owner' WHERE id = 'abc123def4'",
+      )
+      .run()
+    expect(await write()).toEqual([{ id: 'abc123def4' }])
     await database
       .prepare(
         "UPDATE shareables SET created_by_publisher_client_id = NULL WHERE id = 'abc123def4'",

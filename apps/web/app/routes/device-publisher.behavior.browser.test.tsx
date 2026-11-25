@@ -125,6 +125,9 @@ test('first client defaults to create-new and labels the requested name', async 
 
 test('duplicate names require explicit continuation and an owned client selection', async () => {
   await render([{ id: 'client1', name: 'Employee dashboard' }])
+  await page
+    .getByRole('checkbox', { name: en['device.code_confirmation'] })
+    .click()
   await expect
     .element(
       page.getByRole('radio', {
@@ -189,10 +192,7 @@ test('duplicate names require explicit continuation and an owned client selectio
     .element(
       page.getByRole('button', { name: en['device.approve'], exact: true }),
     )
-    .toBeDisabled()
-  await page
-    .getByRole('checkbox', { name: en['device.code_confirmation'] })
-    .click()
+    .toBeEnabled()
   await page
     .getByRole('button', { name: en['device.approve'], exact: true })
     .click()
