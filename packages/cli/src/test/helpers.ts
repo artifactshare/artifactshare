@@ -9,12 +9,14 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
+export {
+  collectBody,
+  collectBodyBuffer,
+  formField,
+  withServer,
+} from './server.js'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 
@@ -36,18 +38,6 @@ export function recordCliSubprocessLaunch(): void {
   if (path) appendFileSync(path, '1\n')
 }
 
-export async function collectBody(request: IncomingMessage): Promise<string> {
-  return (await collectBodyBuffer(request)).toString('utf8')
-}
-
-export async function collectBodyBuffer(
-  request: IncomingMessage,
-): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  for await (const chunk of request) chunks.push(chunk as Buffer)
-  return Buffer.concat(chunks)
-}
-
 export type CliResult = {
   status: number | null
   signal: NodeJS.Signals | null
@@ -63,6 +53,12 @@ type JsonPayload = {
   error?: any
 }
 
+/** Every CLI subprocess loads the same `dist/index.js`, so letting Node keep
+ * its compiled bytecode saves roughly 70 ms of startup per launch across the
+ * hundreds of launches this suite makes. The cache is keyed by source content,
+ * so a rebuilt CLI is never served a stale entry. */
+const compileCache = join(tmpdir(), 'artifactshare-cli-test-compile-cache')
+
 function subprocessEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...process.env }
   delete env.CLAUDE_CONFIG_DIR
@@ -71,6 +67,7 @@ function subprocessEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     HOME: defaultHome,
     ARTIFACTSHARE_CONFIG_HOME: defaultConfigHome,
     ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    NODE_COMPILE_CACHE: compileCache,
     CI: '',
     ...overrides,
   }
@@ -128,26 +125,6 @@ export function runAsync(
     if (options.input !== undefined) child.stdin.end(options.input)
     else child.stdin.end()
   })
-}
-
-export async function withServer<T>(
-  handler: (request: IncomingMessage, response: ServerResponse) => void,
-  callback: (baseUrl: string) => Promise<T>,
-): Promise<T> {
-  const server = createServer(handler)
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address === 'object')
-  try {
-    return await callback(`http://127.0.0.1:${address.port}`)
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()))
-    })
-  }
 }
 
 export async function withHttpsServer<T>(

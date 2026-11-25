@@ -18,6 +18,7 @@ import {
   run,
   collectBody,
   collectBodyBuffer,
+  formField,
   runAsync,
   withServer,
 } from './test/helpers.js'
@@ -73,14 +74,6 @@ function expectAuthRequiredWithDevice(
     payload.error.details?.retry_hint as string,
     /rerun the same command/,
   )
-}
-
-function formField(body: string, name: string): string | null {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = body.match(
-    new RegExp(`name="${escaped}"\\r\\n\\r\\n([^\\r]*)\\r\\n`),
-  )
-  return match?.[1] ?? null
 }
 
 test('share sends link visibility and finite expiry', async () => {

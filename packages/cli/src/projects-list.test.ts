@@ -248,7 +248,7 @@ test('projects create rejects invalid visibility before network', async () => {
   })
 })
 
-test('projects create resolves repository visibility before user visibility', async () => {
+test('projects create resolves explicit, then repository, then user visibility', async () => {
   const configHome = await mkdtemp(
     join(tmpdir(), 'artifactshare-project-config-'),
   )
@@ -265,7 +265,8 @@ test('projects create resolves repository visibility before user visibility', as
 
   await withServer(
     async (request, response) => {
-      bodies.push(JSON.parse(await collectBody(request)))
+      const body = JSON.parse(await collectBody(request))
+      bodies.push(body)
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
@@ -273,29 +274,35 @@ test('projects create resolves repository visibility before user visibility', as
             id: 'prj_default',
             name: 'Client reports',
             description: null,
-            base_visibility: 'private',
+            base_visibility: body.base_visibility,
           },
         }),
       )
     },
     async (baseUrl) => {
-      const result = await runAsync(
-        [
-          'projects',
-          'create',
-          'Client reports',
-          '--base-url',
-          baseUrl,
-          '--json',
-        ],
-        {
-          ARTIFACTSHARE_TOKEN: 'test-token',
-          ARTIFACTSHARE_CONFIG_HOME: configHome,
-        },
-        { cwd: workDir },
-      )
-      const payload = expectSuccess(result, 'projects create')
-      assert.equal(payload.data.project.base_visibility, 'private')
+      for (const [explicit, expected] of [
+        [[], 'private'],
+        [['--visibility', 'workspace'], 'workspace'],
+      ] as const) {
+        const result = await runAsync(
+          [
+            'projects',
+            'create',
+            'Client reports',
+            ...explicit,
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          {
+            ARTIFACTSHARE_TOKEN: 'test-token',
+            ARTIFACTSHARE_CONFIG_HOME: configHome,
+          },
+          { cwd: workDir },
+        )
+        const payload = expectSuccess(result, 'projects create')
+        assert.equal(payload.data.project.base_visibility, expected)
+      }
     },
   )
 
@@ -304,6 +311,11 @@ test('projects create resolves repository visibility before user visibility', as
       name: 'Client reports',
       description: null,
       base_visibility: 'private',
+    },
+    {
+      name: 'Client reports',
+      description: null,
+      base_visibility: 'workspace',
     },
   ])
 })

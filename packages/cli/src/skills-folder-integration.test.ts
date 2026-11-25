@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, beforeEach, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, test } from 'vitest'
 import {
   DoctorSkillsDataSchema,
   SkillsListDataSchema,
@@ -27,7 +27,8 @@ import {
 import { loadSkillBundle } from './command-runners/skill-folder.js'
 import { expectSuccess, expectFailure } from './test/helpers.js'
 
-let root: string, work: string, home: string, overlay: string
+let root: string, work: string, home: string
+let overlay: string, compileCache: string
 const marker = (version: number) =>
   `<!-- artifactshare-skill\nversion: ${version}\nmanaged: true\n-->\n`
 const initial = {
@@ -71,6 +72,7 @@ function run(args: string[], preload?: string, env: NodeJS.ProcessEnv = {}) {
         CLAUDE_CONFIG_DIR: join(home, '.claude'),
         ARTIFACTSHARE_CONFIG_HOME: join(home, '.config'),
         ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+        NODE_COMPILE_CACHE: compileCache,
         ARTIFACTSHARE_TOKEN: '',
         CI: '',
         ...env,
@@ -79,14 +81,12 @@ function run(args: string[], preload?: string, env: NodeJS.ProcessEnv = {}) {
   )
 }
 const skills = (...args: string[]) => run(['skills', ...args])
-beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'skill-integration-'))
-  work = join(root, 'work')
-  home = join(root, 'home')
-  overlay = join(root, 'cli')
-  await mkdir(work)
-  await mkdir(home)
-  await mkdir(overlay)
+/** One CLI install serves the whole file: the tests vary the bundle beside
+ * dist, never dist itself, and one path lets Node reuse the bytecode it
+ * compiled for the hundreds of launches below. */
+beforeAll(async () => {
+  overlay = await mkdtemp(join(tmpdir(), 'skill-integration-cli-'))
+  compileCache = join(overlay, 'compile-cache')
   await cp(join(import.meta.dirname, '../dist'), join(overlay, 'dist'), {
     recursive: true,
   })
@@ -98,6 +98,16 @@ beforeEach(async () => {
     join(import.meta.dirname, '../node_modules'),
     join(overlay, 'node_modules'),
   )
+})
+afterAll(async () => {
+  await rm(overlay, { recursive: true, force: true })
+})
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), 'skill-integration-'))
+  work = join(root, 'work')
+  home = join(root, 'home')
+  await mkdir(work)
+  await mkdir(home)
   await setBundle(initial)
 })
 afterEach(async () => {

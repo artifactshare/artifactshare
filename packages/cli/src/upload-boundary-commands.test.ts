@@ -2,19 +2,18 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
-import { test, vi, beforeEach, type TestContext } from 'vitest'
-import { Response, type FormData } from 'undici'
+import { afterEach, test, vi, beforeEach, type TestContext } from 'vitest'
 import { runShare } from './command-runners/share.js'
 import { runAppend } from './command-runners/append.js'
 import { runUpdate } from './command-runners/update.js'
 import { resolveCredential } from './credentials.js'
-import { resolveProjectConfig } from './destination.js'
-import { cliFetch } from './api.js'
-import { writeFailure, writeSuccess } from './output.js'
 import {
-  prepareUploadSelection,
-  type UploadBoundaryDependencies,
-} from './upload-boundary.js'
+  collectBody,
+  formParts,
+  withServer,
+  type FormPart,
+} from './test/server.js'
+import { type UploadBoundaryDependencies } from './upload-boundary.js'
 import type { CliOptions } from './types.js'
 
 const hooks = vi.hoisted(() => ({
@@ -40,15 +39,6 @@ vi.mock('./destination.js', async (original) => ({
   resolveSharedProjectConfig: vi.fn(async () => ({ config: null })),
   resolveDefaultVisibility: vi.fn(async () => ({ value: 'workspace' })),
 }))
-vi.mock('./api.js', async (original) => ({
-  ...(await original<typeof import('./api.js')>()),
-  cliFetch: vi.fn(),
-}))
-vi.mock('./output.js', async (original) => ({
-  ...(await original<typeof import('./output.js')>()),
-  writeFailure: vi.fn(),
-  writeSuccess: vi.fn(),
-}))
 // Exercise the commands' actual retry callbacks without using any credential store.
 vi.mock('./command-runners/auto-login.js', () => ({
   handleCredentialFailure: vi.fn(
@@ -65,18 +55,73 @@ vi.mock('./command-runners/auto-login.js', () => ({
   ),
 }))
 
+/** Every request the command sent to the stub API, in order. */
+let requests: {
+  url: string
+  method: string | undefined
+  parts: FormPart[]
+  json: any
+}[] = []
+/** What the stub API answers; the default accepts one upload. */
+let reply: (
+  request: (typeof requests)[number],
+) =>
+  | Promise<{ status?: number; body: unknown }>
+  | { status?: number; body: unknown }
+let stdout: string
+let stderr: string
+const defaultReply = () => ({
+  body: {
+    id: 'abc123def4',
+    versionId: 'v1',
+    number: 2,
+    label: null,
+    shareUrl: 'http://127.0.0.1/a/abc123def4',
+    artifactKind: 'html_page',
+  },
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   hooks.dependencies = {}
+  requests = []
+  stdout = ''
+  stderr = ''
+  reply = defaultReply
   vi.mocked(resolveCredential).mockResolvedValue({
     ok: true,
     token: 'test-token',
     source: 'env',
   })
-  vi.mocked(cliFetch).mockImplementation(async () => {
-    throw new Error('unexpected request')
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stdout += String(chunk)
+    return true
+  })
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr += String(chunk)
+    return true
   })
 })
+afterEach(() => {
+  vi.restoreAllMocks()
+  process.exitCode = 0
+})
+
+/** The error payload the command printed, or undefined when it succeeded. */
+function failure():
+  | {
+      code: string
+      message: string
+      hint: string
+      details?: Record<string, unknown>
+    }
+  | undefined {
+  if (stderr === '') return undefined
+  return JSON.parse(stderr).error
+}
+function succeeded(): boolean {
+  return stdout !== '' && JSON.parse(stdout).ok === true
+}
 
 async function fixture(t: TestContext) {
   const root = await fs.realpath(
@@ -92,20 +137,46 @@ async function fixture(t: TestContext) {
   return { root, cwd, outside }
 }
 const runners = { share: runShare, append: runAppend, update: runUpdate }
-function invoke(
+async function invoke(
   command: keyof typeof runners,
   input: string,
   options: CliOptions = {},
 ) {
-  return runners[command](
-    {
-      command,
-      positionals: command === 'share' ? [input] : ['abc123def4', input],
-      options: { baseUrl: 'http://127.0.0.1', ...options },
+  await withServer(
+    async (request, response) => {
+      const body = await collectBody(request)
+      const entry = {
+        url: request.url ?? '',
+        method: request.method,
+        parts: formParts(body),
+        json: body.startsWith('{') ? JSON.parse(body) : undefined,
+      }
+      requests.push(entry)
+      const { status = 200, body: payload } = await reply(entry)
+      response.statusCode = status
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(payload))
     },
-    { json: true },
+    async (baseUrl) => {
+      await runners[command](
+        {
+          command,
+          positionals: command === 'share' ? [input] : ['abc123def4', input],
+          options: { baseUrl, ...options },
+        },
+        { json: true },
+      )
+    },
   )
 }
+
+/** The uploaded content of each request, however the command framed it. */
+const sentContents = () =>
+  requests.map((entry) =>
+    entry.json
+      ? String(entry.json.content)
+      : (entry.parts.find((part) => part.name === 'file')?.value ?? ''),
+  )
 
 for (const command of ['share', 'append', 'update'] as const) {
   for (const variant of [
@@ -168,9 +239,8 @@ for (const command of ['share', 'append', 'update'] as const) {
       )
       assert.equal(open.mock.calls.length, 0)
       assert.equal(vi.mocked(resolveCredential).mock.calls.length, 0)
-      assert.equal(vi.mocked(resolveProjectConfig).mock.calls.length, 0)
-      assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
-      const error = vi.mocked(writeFailure).mock.calls[0]![1]
+      assert.deepEqual(requests, [])
+      const error = failure()!
       assert.equal(error.code, 'validation_failed')
       assert.equal(
         error.details?.reason,
@@ -210,43 +280,22 @@ for (const command of ['share', 'append', 'update'] as const) {
           } as Awaited<ReturnType<typeof resolveCredential>>
         })
       }
-      const contents: string[] = []
-      vi.mocked(cliFetch).mockImplementation(async (_url, init) => {
-        if (typeof init?.body === 'string')
-          contents.push(JSON.parse(init.body).content)
-        else {
-          const file = (init!.body as FormData).get('file')
-          assert.ok(file && typeof file !== 'string')
-          contents.push(await file.text())
-        }
-        if (retryAt === 'response' && contents.length === 1) {
+      if (retryAt === 'response')
+        reply = async (entry) => {
+          if (requests.indexOf(entry) > 0) return defaultReply()
           await fs.rm(target)
-          return new Response(JSON.stringify({ error: 'unauthorized' }), {
-            status: 401,
-          })
+          return { status: 401, body: { error: 'unauthorized' } }
         }
-        return new Response(
-          JSON.stringify({
-            id: 'abc123def4',
-            versionId: 'v1',
-            number: 2,
-            label: null,
-            shareUrl: 'http://127.0.0.1/a/abc123def4',
-            artifactKind: 'html_page',
-          }),
-        )
-      })
       await invoke(
         command,
         'report.html',
         command === 'share' ? { home: true, key: 'report' } : {},
       )
-      assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-      assert.equal(vi.mocked(writeSuccess).mock.calls.length, 1)
-      assert.equal(vi.mocked(prepareUploadSelection).mock.calls.length, 1)
+      assert.equal(failure(), undefined)
+      assert.ok(succeeded())
       assert.equal(reads, 1)
       assert.deepEqual(
-        contents,
+        sentContents(),
         retryAt === 'response'
           ? ['<p>verified</p>', '<p>verified</p>']
           : ['<p>verified</p>'],
@@ -265,22 +314,10 @@ test('share project lookup retry reuses prepared content', async (t) => {
     }
     return { projects: [{ id: 'abc123def4', name: 'Example' }] }
   })
-  vi.mocked(cliFetch).mockImplementation(async (_url, init) => {
-    const file = (init!.body as FormData).get('file')
-    assert.ok(file && typeof file !== 'string')
-    assert.equal(await file.text(), '<p>verified</p>')
-    return new Response(
-      JSON.stringify({
-        id: 'abc123def4',
-        versionId: 'v1',
-        artifactKind: 'html_page',
-      }),
-    )
-  })
   await invoke('share', 'report.html', { project: 'Example' })
   assert.equal(lookups, 2)
-  assert.equal(vi.mocked(prepareUploadSelection).mock.calls.length, 1)
-  assert.equal(vi.mocked(writeSuccess).mock.calls.length, 1)
+  assert.deepEqual(sentContents(), ['<p>verified</p>'])
+  assert.ok(succeeded())
 })
 
 for (const command of ['share', 'append', 'update'] as const) {
@@ -335,11 +372,11 @@ for (const command of ['share', 'append', 'update'] as const) {
         t.skip('Windows refused replacement of an open file')
       }
       assert.equal(swapped, true)
-      const error = vi.mocked(writeFailure).mock.calls[0]![1]
+      const error = failure()!
       assert.equal(error.details?.reason, 'link')
       assert.equal(error.details?.path, 'report.html')
       assert.equal(reads, phase === 'after_read' ? 1 : 0)
-      assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
+      assert.deepEqual(requests, [])
       assert.equal(vi.mocked(resolveCredential).mock.calls.length, 0)
     })
   }
@@ -352,29 +389,12 @@ for (const command of ['share', 'update'] as const) {
       await fs.writeFile(path.join(cwd, 'index.md'), '# verified')
       await fs.mkdir(path.join(cwd, 'dist'))
       await fs.writeFile(path.join(cwd, 'dist', 'app.js'), 'selected script')
-      const sent: string[] = []
-      vi.mocked(cliFetch).mockImplementation(async (url, init) => {
-        const form = init!.body as FormData
-        for (const value of form.getAll('file')) {
-          assert.ok(typeof value !== 'string')
-          sent.push(value.name)
-        }
-        const query = new URL(url).searchParams
-        if (kind === 'static_site')
-          assert.equal(query.get('artifact_kind'), 'static_site')
-        if (command === 'share')
-          assert.equal(query.get('publish_key'), 'report')
-        else {
-          assert.equal(query.get('label'), 'Updated report')
-          assert.equal(query.get('expected_version'), 'v1')
-        }
-        return new Response(
-          JSON.stringify({
-            id: 'abc123def4',
-            versionId: 'v2',
-            artifactKind: kind === 'markdown' ? 'markdown_page' : kind,
-          }),
-        )
+      reply = () => ({
+        body: {
+          id: 'abc123def4',
+          versionId: 'v2',
+          artifactKind: kind === 'markdown' ? 'markdown_page' : kind,
+        },
       })
       await invoke(
         command,
@@ -383,10 +403,23 @@ for (const command of ['share', 'update'] as const) {
           ? { home: true, key: 'report' }
           : { label: 'Updated report', expectedVersion: 'v1' },
       )
-      assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-      assert.equal(vi.mocked(writeSuccess).mock.calls.length, 1)
+      assert.equal(failure(), undefined)
+      assert.ok(succeeded())
+      assert.equal(requests.length, 1)
+      const query = new URL(requests[0]!.url, 'http://127.0.0.1').searchParams
+      assert.equal(
+        query.get('artifact_kind'),
+        kind === 'static_site' ? 'static_site' : null,
+      )
+      if (command === 'share') assert.equal(query.get('publish_key'), 'report')
+      else {
+        assert.equal(query.get('label'), 'Updated report')
+        assert.equal(query.get('expected_version'), 'v1')
+      }
       assert.deepEqual(
-        sent,
+        requests[0]!.parts
+          .filter((part) => part.name === 'file')
+          .map((part) => part.filename),
         kind === 'markdown'
           ? ['index.md']
           : ['dist/app.js', 'index.md', 'report.html'],
@@ -417,11 +450,10 @@ for (const command of ['share', 'append', 'update'] as const) {
       )
       assert.equal(open.mock.calls.length, 0)
       assert.equal(vi.mocked(resolveCredential).mock.calls.length, 0)
-      assert.equal(vi.mocked(resolveProjectConfig).mock.calls.length, 0)
       assert.equal(hooks.projectLookup.mock.calls.length, 0)
-      assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
-      assert.equal(vi.mocked(writeSuccess).mock.calls.length, 0)
-      const error = vi.mocked(writeFailure).mock.calls[0]![1]
+      assert.deepEqual(requests, [])
+      assert.equal(stdout, '')
+      const error = failure()!
       assert.equal(error.code, 'validation_failed')
       assert.equal(error.details?.reason, 'link')
       assert.equal(error.details?.path, input)
@@ -456,14 +488,12 @@ for (const command of ['share', 'append', 'update'] as const) {
     await invoke(command, 'assets')
     assert.equal(inspected, true)
     assert.equal(reads, 0)
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 1)
-    const error = vi.mocked(writeFailure).mock.calls[0]![1]
+    const error = failure()!
     assert.equal(error.code, 'validation_failed')
     assert.equal(error.details?.reason, 'link')
     assert.equal(error.details?.path, 'assets')
     assert.equal(vi.mocked(resolveCredential).mock.calls.length, 0)
-    assert.equal(vi.mocked(resolveProjectConfig).mock.calls.length, 0)
     assert.equal(hooks.projectLookup.mock.calls.length, 0)
-    assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
+    assert.deepEqual(requests, [])
   })
 }

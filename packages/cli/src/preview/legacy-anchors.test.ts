@@ -11,6 +11,34 @@ import { PREVIEW_MESSAGES } from './messages.generated.js'
 import { createPreviewStore } from './store.js'
 import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 
+/** Carry the shell's own stylesheet along, so a test can read what is on
+ * screen instead of the class names behind it. */
+function adoptStyles(shell: Document): void {
+  for (const stale of document.head.querySelectorAll('style[data-shell]'))
+    stale.remove()
+  for (const style of shell.querySelectorAll('style')) {
+    const copy = style.cloneNode(true) as Element
+    copy.setAttribute('data-shell', '')
+    document.head.append(copy)
+  }
+}
+
+const onScreen = (element: Element | null) =>
+  element !== null &&
+  getComputedStyle(element as HTMLElement).display !== 'none'
+
+/** Find a control the way a person does: by the label they can read. */
+function labelled(label: string): HTMLButtonElement {
+  const matches = [
+    ...document.querySelectorAll<HTMLButtonElement>('button'),
+  ].filter((element) => element.textContent?.trim() === label)
+  expect(matches).toHaveLength(1)
+  return matches[0]!
+}
+
+const discardButton = () =>
+  labelled(PREVIEW_MESSAGES.en['preview.orphanDiscard'])
+
 test.each([false, true])(
   'startup reports a quarantined store even when initial SSE arrives first (%s)',
   async (incomingFirst) => {
@@ -43,6 +71,7 @@ test.each([false, true])(
       const script = shell.querySelector('script')!.textContent!
       shell.querySelector('script')!.remove()
       document.body.innerHTML = shell.body.innerHTML
+      adoptStyles(shell)
       const executable = document.createElement('script')
       executable.textContent = script
       document.body.appendChild(executable)
@@ -78,12 +107,9 @@ test.each([false, true])(
           PREVIEW_MESSAGES.en['preview.corruptNotice'],
         ),
       )
-      expect(
-        document.querySelector('#orphanNotice')!.classList.contains('show'),
-      ).toBe(true)
-      expect(
-        document.querySelector<HTMLElement>('#orphanDiscard')!.style.display,
-      ).toBe('none')
+      expect(onScreen(document.querySelector('#orphanNotice'))).toBe(true)
+      // A store the CLI could not read offers nothing to discard.
+      expect(onScreen(discardButton())).toBe(false)
       if (incomingFirst) {
         expect(
           document.querySelector('.thread.resolved')!.textContent,
@@ -156,6 +182,7 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     shell.querySelector('script')!.remove()
     shell.querySelector('iframe')!.removeAttribute('src')
     document.body.innerHTML = shell.body.innerHTML
+    adoptStyles(shell)
     const frame = document.querySelector('iframe')!
     const post = vi
       .spyOn(frame.contentWindow!, 'postMessage')
@@ -225,9 +252,7 @@ test('an unchanged page keeps saved legacy annotations attached without offering
       PREVIEW_MESSAGES.en['preview.positionChecking'],
     )
     expect(verdicts[0].attached).toBe(true)
-    expect(
-      document.querySelector('#orphanNotice')!.classList.contains('show'),
-    ).toBe(false)
+    expect(onScreen(document.querySelector('#orphanNotice'))).toBe(false)
     expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(0)
     const writes = fetcher.mock.calls as unknown as [
       string,
@@ -266,28 +291,22 @@ test('an unchanged page keeps saved legacy annotations attached without offering
       writes.some(([url]) => url === '/api/annotations/anchor-state'),
     ).toBe(false)
     expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(1)
-    expect(
-      document.querySelector('#orphanNotice')!.classList.contains('show'),
-    ).toBe(true)
+    expect(onScreen(document.querySelector('#orphanNotice'))).toBe(true)
     expect(document.querySelector('.thread')!.textContent).toContain(
       PREVIEW_MESSAGES.en['preview.positionNeedsCheck'],
     )
-    document.querySelector<HTMLButtonElement>('#orphanDiscard')!.click()
+    discardButton().click()
     await vi.waitFor(() =>
       expect(document.querySelector('#operationError')!.textContent).toBe(
         PREVIEW_MESSAGES.en['preview.operationFailed'],
       ),
     )
     expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(1)
-    expect(
-      document.querySelector('#orphanNotice')!.classList.contains('show'),
-    ).toBe(true)
+    expect(onScreen(document.querySelector('#orphanNotice'))).toBe(true)
     discardFailed = false
-    document.querySelector<HTMLButtonElement>('#orphanDiscard')!.click()
+    discardButton().click()
     await vi.waitFor(() =>
-      expect(
-        document.querySelector('#orphanNotice')!.classList.contains('show'),
-      ).toBe(false),
+      expect(onScreen(document.querySelector('#orphanNotice'))).toBe(false),
     )
     expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(0)
   } finally {
@@ -380,6 +399,7 @@ test.each([
       const script = shell.querySelector('script')!.textContent!
       shell.querySelector('script')!.remove()
       document.body.innerHTML = shell.body.innerHTML
+      adoptStyles(shell)
       const frame = document.querySelector('iframe')!
       let frameSource = frame.src
       vi.spyOn(frame, 'src', 'get').mockImplementation(() => frameSource)
@@ -507,9 +527,7 @@ test.each([
       focusWindow.mockClear()
       if (failure === 'success') {
         finish(Response.json({ annotation: { thread: 'saved' } }))
-        await vi.waitFor(() =>
-          expect(popover.classList.contains('show')).toBe(false),
-        )
+        await vi.waitFor(() => expect(onScreen(popover)).toBe(false))
         expect(input.readOnly).toBe(false)
         expect(input.hasAttribute('aria-busy')).toBe(false)
         expect(
@@ -629,9 +647,7 @@ test.each([
         expect(input.value).toBe('  keep this exact draft\nplease  ')
         // A comment confirmed as saved is not reported as unsaved at the end.
         events.dispatchEvent(new MessageEvent('session-ended', { data: '{}' }))
-        expect(
-          document.querySelector('#endedScreen')!.classList.contains('show'),
-        ).toBe(true)
+        expect(onScreen(document.querySelector('#endedScreen'))).toBe(true)
         expect(document.querySelector('#endedScreen')!.contains(input)).toBe(
           false,
         )
@@ -650,9 +666,7 @@ test.each([
         document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
       ).toBe(false)
       expect(document.querySelector('#operationError')!.textContent).toBe('')
-      expect(
-        document.querySelector('#popover')!.classList.contains('show'),
-      ).toBe(true)
+      expect(onScreen(document.querySelector('#popover'))).toBe(true)
       expect(input.value).toBe('  keep this exact draft\nplease  ')
       expect(document.querySelector('#popError')!.textContent).toBe(
         PREVIEW_MESSAGES[locale]['preview.annotationSaveFailed'],
@@ -669,7 +683,7 @@ test.each([
         window.innerHeight - 8,
       )
       document.querySelector<HTMLButtonElement>('#modeToggle')!.click()
-      expect(popover.classList.contains('show')).toBe(true)
+      expect(onScreen(popover)).toBe(true)
       expect(input.value).toBe('  keep this exact draft\nplease  ')
       expect(document.querySelector('#popTarget')!.textContent).toBe(
         anchor.label,
@@ -725,9 +739,7 @@ test.each([
       expect(frame.src).not.toContain('latest-revision')
       finish(Response.json({ annotation: { thread: 'saved' } }))
       await vi.waitFor(() =>
-        expect(
-          document.querySelector('#popover')!.classList.contains('show'),
-        ).toBe(false),
+        expect(onScreen(document.querySelector('#popover'))).toBe(false),
       )
       expect(writes).toEqual([
         { anchor, comment: 'keep this exact draft\nplease' },
@@ -764,7 +776,7 @@ test.each([
           },
         }),
       )
-      expect(popover.classList.contains('show')).toBe(true)
+      expect(onScreen(popover)).toBe(true)
       expect(document.querySelector('#popTarget')!.textContent).toBe('Other')
       expect(input.value).toBe('')
       const share = document.querySelector<HTMLButtonElement>('#shareBtn')!
@@ -785,10 +797,10 @@ test.each([
         }),
       )
       document.querySelector<HTMLButtonElement>('#modeToggle')!.click()
-      expect(popover.classList.contains('show')).toBe(true)
+      expect(onScreen(popover)).toBe(true)
       document.querySelector<HTMLButtonElement>('#popCancel')!.click()
       expect(frame.src).toContain('cancel-revision')
-      expect(popover.classList.contains('show')).toBe(false)
+      expect(onScreen(popover)).toBe(false)
       frame.dispatchEvent(new Event('load'))
       const toggle = document.querySelector<HTMLButtonElement>('#modeToggle')!
       if (toggle.getAttribute('aria-checked') === 'false') toggle.click()
@@ -946,6 +958,7 @@ test.each(['requested', 'resolved', 'failed'] as const)(
       const script = shell.querySelector('script')!.textContent!
       shell.querySelector('script')!.remove()
       document.body.innerHTML = shell.body.innerHTML
+      adoptStyles(shell)
       const executable = document.createElement('script')
       executable.textContent = script
       document.body.appendChild(executable)
@@ -981,9 +994,7 @@ test.each(['requested', 'resolved', 'failed'] as const)(
         expect(
           document.querySelector('.thread')!.classList.contains('resolved'),
         ).toBe(true)
-        expect(
-          document.querySelector('#batchStatus')!.classList.contains('show'),
-        ).toBe(false)
+        expect(onScreen(document.querySelector('#batchStatus'))).toBe(false)
       } else if (outcome === 'requested') {
         expect(
           document.querySelector<HTMLButtonElement>('#submitBtn')!.disabled,

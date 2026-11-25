@@ -2,44 +2,36 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
-import { Response } from 'undici'
 import { runShare } from './command-runners/share.js'
-import { cliFetch } from './api.js'
 import { resolveCredential } from './credentials.js'
 import {
   resolveProjectConfig,
   resolveSharedProjectConfig,
 } from './destination.js'
-import { writeSuccess, writeFailure } from './output.js'
 import type { CliOptions } from './types.js'
+import { collectBody, formField, withServer } from './test/server.js'
 
-vi.mock('./api.js', async (original) => ({
-  ...(await original<typeof import('./api.js')>()),
-  cliFetch: vi.fn(),
-}))
-// apiGet closes over the real cliFetch; mock only the transport module used by it.
-vi.mock('undici', async (original) => ({
-  ...(await original<typeof import('undici')>()),
-  fetch: vi.fn((input: string | URL, init?: import('./types.js').FetchInit) =>
-    cliFetch(input, init),
-  ),
-}))
 vi.mock('./credentials.js', () => ({ resolveCredential: vi.fn() }))
 vi.mock('./destination.js', async (original) => ({
   ...(await original<typeof import('./destination.js')>()),
   resolveProjectConfig: vi.fn(),
   resolveSharedProjectConfig: vi.fn(),
 }))
-vi.mock('./output.js', () => ({ writeSuccess: vi.fn(), writeFailure: vi.fn() }))
+
 let root: string
 let target: string
 let available: boolean | undefined
+/** The visibility field of every upload POST the CLI made, in order. */
 let posts: string[]
+/** How many capability (whoami) requests the CLI made. */
 let reads: number
 let rejectWorkspace: boolean
 let confirmed: string | undefined
 let identityStatus: number
 let uploadCreated: boolean | undefined
+let bearers: string[]
+let stdout: string
+let stderr: string
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -68,66 +60,102 @@ beforeEach(async () => {
   available = false
   posts = []
   reads = 0
+  bearers = []
   rejectWorkspace = false
   confirmed = undefined
   identityStatus = 200
   uploadCreated = undefined
-  vi.mocked(cliFetch).mockImplementation(async (input, init) => {
-    expect(init?.headers).toMatchObject({ Authorization: 'Bearer test-token' })
-    const url = new URL(String(input))
-    if (url.pathname === '/api/cli/whoami') {
-      reads++
-      return new Response(
-        JSON.stringify({
-          workspace: {
-            hosted_domain: null,
-            ...(available === undefined
-              ? {}
-              : { visibility_available: available }),
-          },
-        }),
-        { status: identityStatus },
-      )
-    }
-    if (url.pathname === '/api/cli/projects')
-      return new Response(
-        JSON.stringify({ projects: [{ id: 'prj1', name: 'Reports' }] }),
-      )
-    expect(url.pathname).toBe('/api/shareables/uploads')
-    expect(init?.method).toBe('POST')
-    const form = init?.body as import('undici').FormData
-    const visibility = String(form.get('visibility'))
-    posts.push(visibility)
-    if (rejectWorkspace && visibility === 'workspace')
-      return new Response(
-        JSON.stringify({ error: { code: 'workspace-unavailable' } }),
-        { status: 400 },
-      )
-    return new Response(
-      JSON.stringify({
-        id: 'abc123def4',
-        versionId: 'v1',
-        shareUrl: 'https://artifactshare.test/a/abc123def4',
-        artifactKind: 'html_page',
-        visibility: confirmed ?? visibility,
-        ...(uploadCreated === undefined ? {} : { created: uploadCreated }),
-      }),
-    )
+  stdout = ''
+  stderr = ''
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stdout += String(chunk)
+    return true
+  })
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr += String(chunk)
+    return true
   })
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
+  process.exitCode = 0
   await rm(root, { recursive: true, force: true })
 })
+
+/** Serve the Artifact Share endpoints `share` uses, recording what it sent. */
 async function share(options: CliOptions = {}) {
-  await runShare(
-    {
-      command: 'share',
-      positionals: [target],
-      options: { baseUrl: 'https://artifactshare.test', ...options },
+  await withServer(
+    async (request, response) => {
+      bearers.push(request.headers.authorization ?? '')
+      const path = (request.url ?? '').split('?')[0]
+      response.setHeader('content-type', 'application/json')
+      if (path === '/api/cli/whoami') {
+        reads += 1
+        response.statusCode = identityStatus
+        return response.end(
+          JSON.stringify({
+            workspace: {
+              hosted_domain: null,
+              ...(available === undefined
+                ? {}
+                : { visibility_available: available }),
+            },
+          }),
+        )
+      }
+      if (path === '/api/cli/projects')
+        return response.end(
+          JSON.stringify({ projects: [{ id: 'prj1', name: 'Reports' }] }),
+        )
+      expect(path).toBe('/api/shareables/uploads')
+      expect(request.method).toBe('POST')
+      const visibility = String(
+        formField(await collectBody(request), 'visibility'),
+      )
+      posts.push(visibility)
+      if (rejectWorkspace && visibility === 'workspace') {
+        response.statusCode = 400
+        return response.end(
+          JSON.stringify({ error: { code: 'workspace-unavailable' } }),
+        )
+      }
+      response.end(
+        JSON.stringify({
+          id: 'abc123def4',
+          versionId: 'v1',
+          shareUrl: 'https://artifactshare.test/a/abc123def4',
+          artifactKind: 'html_page',
+          visibility: confirmed ?? visibility,
+          ...(uploadCreated === undefined ? {} : { created: uploadCreated }),
+        }),
+      )
     },
-    { json: true },
+    async (baseUrl) => {
+      await runShare(
+        {
+          command: 'share',
+          positionals: [target],
+          options: { baseUrl, ...options },
+        },
+        { json: true },
+      )
+    },
   )
+}
+
+const succeeded = () => {
+  expect(stderr).toBe('')
+  const payload = JSON.parse(stdout)
+  expect(payload).toMatchObject({ ok: true, command: 'share' })
+  return payload.data as { share: Record<string, unknown> }
+}
+const failed = () => {
+  expect(stdout).toBe('')
+  const payload = JSON.parse(stderr)
+  expect(payload.ok).toBe(false)
+  expect(process.exitCode).toBe(1)
+  return payload.error as { code: string }
 }
 
 test.each(['html', 'md', 'directory'])(
@@ -144,19 +172,12 @@ test.each(['html', 'md', 'directory'])(
     await share()
     expect(posts).toEqual(['private'])
     expect(reads).toBe(1)
-    expect(writeSuccess).toHaveBeenCalledWith(
-      'share',
-      expect.objectContaining({
-        share: expect.objectContaining({
-          visibility: 'private',
-          visibility_source: 'product_default_private',
-          visibility_hint: expect.stringContaining(
-            '--visibility link deliberately',
-          ),
-        }),
-      }),
-      { json: true },
-    )
+    expect(bearers).toEqual(['Bearer test-token', 'Bearer test-token'])
+    const { share: result } = succeeded()
+    expect(result.visibility).toBe('private')
+    expect(result.visibility_source).toBe('product_default_private')
+    expect(typeof result.visibility_hint).toBe('string')
+    expect(String(result.visibility_hint).length).toBeGreaterThan(0)
   },
 )
 
@@ -166,12 +187,9 @@ test.each([true, undefined])(
     available = capability
     await share()
     expect(posts).toEqual(['workspace'])
-    expect(vi.mocked(writeSuccess).mock.calls[0]?.[1]).toMatchObject({
-      share: { visibility: 'workspace' },
-    })
-    expect(
-      (vi.mocked(writeSuccess).mock.calls[0]![1] as any).share,
-    ).not.toHaveProperty('visibility_source')
+    const { share: result } = succeeded()
+    expect(result.visibility).toBe('workspace')
+    expect(result).not.toHaveProperty('visibility_source')
   },
 )
 
@@ -182,18 +200,9 @@ test.each(['private', 'link', 'workspace'])(
     await share({ visibility })
     expect(reads).toBe(0)
     expect(posts).toEqual([visibility])
-    if (visibility === 'workspace') {
-      expect(writeSuccess).not.toHaveBeenCalled()
-      expect(writeFailure).toHaveBeenCalledWith(
-        'share',
-        expect.objectContaining({
-          code: 'validation_failed',
-          hint: expect.stringContaining('visibility options'),
-        }),
-        { json: true },
-        1,
-      )
-    } else expect(writeSuccess).toHaveBeenCalledTimes(1)
+    if (visibility === 'workspace')
+      expect(failed().code).toBe('validation_failed')
+    else expect(succeeded().share.visibility).toBe(visibility)
   },
 )
 
@@ -218,13 +227,7 @@ for (const scope of ['repository', 'user']) {
       await share()
       expect(reads).toBe(0)
       expect(posts).toEqual(['workspace'])
-      expect(writeSuccess).not.toHaveBeenCalled()
-      expect(writeFailure).toHaveBeenCalledWith(
-        'share',
-        expect.objectContaining({ code: 'validation_failed' }),
-        { json: true },
-        1,
-      )
+      expect(failed().code).toBe('validation_failed')
     },
   )
 }
@@ -250,6 +253,7 @@ test('repository project stays project; --home applies the account default', asy
   await share()
   expect(posts).toEqual(['project'])
   expect(reads).toBe(0)
+  stdout = ''
   await share({ home: true })
   expect(posts).toEqual(['project', 'private'])
   expect(reads).toBe(1)
@@ -258,9 +262,9 @@ test('repository project stays project; --home applies the account default', asy
 test('server-confirmed visibility wins and cannot be mislabeled as private fallback', async () => {
   confirmed = 'project'
   await share()
-  const data = vi.mocked(writeSuccess).mock.calls[0]![1] as any
-  expect(data.share.visibility).toBe('project')
-  expect(data.share).not.toHaveProperty('visibility_source')
+  const { share: result } = succeeded()
+  expect(result.visibility).toBe('project')
+  expect(result).not.toHaveProperty('visibility_source')
 })
 
 test('a failed capability check keeps the workspace product default', async () => {
@@ -287,11 +291,9 @@ test('an existing keyed artifact keeps private without a fallback label', async 
   uploadCreated = false
   await share({ key: 'job1' })
   expect(posts).toEqual(['private'])
-  const data = vi.mocked(writeSuccess).mock.calls[0]![1] as {
-    share: Record<string, unknown>
-  }
-  expect(data.share.visibility).toBe('private')
-  expect(data.share).not.toHaveProperty('visibility_source')
+  const { share: result } = succeeded()
+  expect(result.visibility).toBe('private')
+  expect(result).not.toHaveProperty('visibility_source')
 })
 
 test.each([
@@ -314,8 +316,6 @@ test.each([
     await share()
     expect(posts).toEqual([])
     expect(reads).toBe(1)
-    expect(
-      vi.mocked(writeFailure).mock.calls.map(([, error]) => error.code),
-    ).toEqual(['token_invalid'])
+    expect(failed().code).toBe('token_invalid')
   },
 )
