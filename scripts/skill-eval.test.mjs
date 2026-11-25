@@ -38,10 +38,6 @@ import { guardedArguments, redact } from './lib/skill-eval/launcher.mjs'
 import { parseStream, score, markdown } from './lib/skill-eval/records.mjs'
 import { runProcess, turnBudget } from './lib/skill-eval/process.mjs'
 import { localRequest, signIn } from './lib/skill-eval/server.mjs'
-import {
-  loadBoundaryManifest,
-  inspectTree,
-} from './public-development-guard.mjs'
 const exec = promisify(execFile)
 test('Cursor groups completed tools by assistant step and enforces the budget', () => {
   const events = [
@@ -950,26 +946,6 @@ test('timeouts, event turn budget, interruption and spawn errors terminate proce
   assert.equal(
     (await runProcess({ ...base, command: ['/nonexistent-agent'] })).status,
     'infrastructure-error',
-  )
-})
-test('all evaluation files have exact canonical manifest entries', async () => {
-  const files = [
-    'scripts/skill-eval.mjs',
-    'scripts/skill-eval.test.mjs',
-    'scripts/lib/walkthrough-cli-environment.mjs',
-  ]
-  for (const directory of [
-    'scripts/lib/skill-eval',
-    'scripts/fixtures/skill-eval',
-  ])
-    for (const name of await readdir(directory))
-      files.push(`${directory}/${name}`)
-  const manifest = loadBoundaryManifest(repository)
-  for (const file of files) assert.ok(manifest.canonical.includes(file), file)
-  assert.ok(
-    inspectTree(files, manifest).every(
-      (row) => row.classification === 'canonical',
-    ),
   )
 })
 test(

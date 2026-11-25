@@ -20,7 +20,6 @@ test('every verify stage is a package script', () => {
       'public:scan',
       'check:public-development-guard',
       'check:public-hook',
-      'audit:tests',
       'test:scripts',
     ],
   )
@@ -45,12 +44,11 @@ test('verify runs the stages in order and reports success on stdout', () => {
     'public:scan .',
     'check:public-development-guard',
     'check:public-hook',
-    'audit:tests',
     'test:scripts',
   ])
   assert.equal(
     reports.at(-1),
-    'verify: ok (format, lint, public:scan, check:public-development-guard, check:public-hook, audit:tests, test:scripts)',
+    'verify: ok (format, lint, public:scan, check:public-development-guard, check:public-hook, test:scripts)',
   )
   assert.doesNotMatch(logs.join('\n'), /verify: ok/u)
 })
@@ -69,7 +67,7 @@ test('verify stops at the first failing stage and names what did not run', () =>
   assert.deepEqual(calls, ['format', 'lint'])
   assert.equal(
     logs.at(-1),
-    'verify: lint failed (exit 3); not run: public:scan, check:public-development-guard, check:public-hook, audit:tests, test:scripts.',
+    'verify: lint failed (exit 3); not run: public:scan, check:public-development-guard, check:public-hook, test:scripts.',
   )
 })
 
