@@ -624,6 +624,7 @@ describe('startPreviewServer', () => {
 
   it('long-polls next until a submit arrives', async () => {
     const pending = post(context, '/api/agent/next', { wait: 10 })
+    // test-wait: elapsed-time — the long poll must be waiting before the annotation arrives.
     await new Promise((resolve) => setTimeout(resolve, 150))
     await post(context, '/api/annotations', {
       anchor: { kind: 'artifact' },
@@ -638,6 +639,7 @@ describe('startPreviewServer', () => {
 
   it('reserves a session for one active wait and rejects competing next calls', async () => {
     const pending = post(context, '/api/agent/next', { wait: 10 })
+    // test-wait: elapsed-time — the first call must hold the session before the competing call.
     await new Promise((resolve) => setTimeout(resolve, 100))
     const secondWait = await post(context, '/api/agent/next', { wait: 10 })
     expect(secondWait.status).toBe(409)
@@ -694,6 +696,7 @@ describe('startPreviewServer', () => {
 
   it('ends waiting next calls and shuts down on stop', async () => {
     const pending = post(context, '/api/agent/next', { wait: 10 })
+    // test-wait: elapsed-time — the next call must be waiting before stop ends it.
     await new Promise((resolve) => setTimeout(resolve, 100))
     const stop = await post(context, '/api/agent/stop', {})
     expect((await stop.json()).stopped).toBe(true)

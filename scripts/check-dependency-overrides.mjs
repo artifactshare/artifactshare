@@ -4,8 +4,20 @@ import { fileURLToPath } from 'node:url'
 import { parseAllDocuments } from 'yaml'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const repair =
+export const OVERRIDE_REPAIR =
   're-test the D1 suite (`pnpm test:d1`) and update or remove the override'
+
+// The code says which rule refused and the subject says which input it read,
+// so callers and tests do not depend on the sentence around them.
+export class DependencyOverrideError extends Error {
+  constructor(code, subject, message, detail) {
+    super(`[${code}] ${message}`)
+    this.name = 'DependencyOverrideError'
+    this.code = code
+    this.subject = subject
+    if (detail !== undefined) Object.assign(this, detail)
+  }
+}
 const selectorPattern = /^vite@(\d+\.\d+\.\d+(?:-[\w.-]+)?)>rolldown$/u
 const withoutPeers = (version) => version.split('(')[0]
 
@@ -13,7 +25,9 @@ function parseDocuments(source, filename) {
   const documents = parseAllDocuments(source)
   for (const document of documents) {
     if (document.errors.length)
-      throw new Error(
+      throw new DependencyOverrideError(
+        'invalid-yaml',
+        filename,
         `${filename}: repair invalid YAML: ${document.errors[0].message}`,
       )
   }
@@ -23,25 +37,38 @@ function parseDocuments(source, filename) {
 export function analyzeDependencyOverrides(workspaceSource, lockSource) {
   const workspaces = parseDocuments(workspaceSource, 'pnpm-workspace.yaml')
   if (workspaces.length !== 1 || !workspaces[0]?.overrides)
-    throw new Error('pnpm-workspace.yaml: restore the dependency overrides')
+    throw new DependencyOverrideError(
+      'missing-workspace-overrides',
+      'pnpm-workspace.yaml',
+      'pnpm-workspace.yaml: restore the dependency overrides',
+    )
   const workspace = workspaces[0]
   const applications = parseDocuments(lockSource, 'pnpm-lock.yaml').filter(
     (document) =>
       document?.importers?.['.'] && document?.importers?.['apps/web'],
   )
   if (applications.length !== 1)
-    throw new Error(
+    throw new DependencyOverrideError(
+      'missing-lock-document',
+      'pnpm-lock.yaml',
       'pnpm-lock.yaml: restore the application workspace document',
     )
   const lock = applications[0]
   const overrides = Object.entries(workspace.overrides).filter(([key]) =>
     selectorPattern.test(key),
   )
-  const fail = (message) => {
-    throw new Error(`${message}; ${repair}`)
+  const fail = (code, subject, message, detail) => {
+    throw new DependencyOverrideError(
+      code,
+      subject,
+      `${message}; ${OVERRIDE_REPAIR}`,
+      detail,
+    )
   }
   if (overrides.length !== 1)
     fail(
+      'selector-count',
+      'pnpm-workspace.yaml',
       'pnpm-workspace.yaml: expected one exact vite@<version>>rolldown override',
     )
   const [selector, pinned] = overrides[0]
@@ -55,6 +82,8 @@ export function analyzeDependencyOverrides(workspaceSource, lockSource) {
     lockOverrides[0][1] !== pinned
   )
     fail(
+      'lock-metadata-mismatch',
+      selector,
       `pnpm-lock.yaml: override metadata does not match ${selector}: ${pinned}`,
     )
   const packages = Object.keys(lock.packages ?? {}).filter((key) =>
@@ -64,26 +93,44 @@ export function analyzeDependencyOverrides(workspaceSource, lockSource) {
     key.startsWith('vite@'),
   )
   if (!packages.length || !snapshots.length)
-    fail(`pnpm-lock.yaml: missing Vite packages or snapshots for ${selector}`)
+    fail(
+      'missing-vite-records',
+      selector,
+      `pnpm-lock.yaml: missing Vite packages or snapshots for ${selector}`,
+    )
   for (const key of [
     ...packages,
     ...snapshots.map(([snapshotKey]) => snapshotKey),
   ]) {
     if (withoutPeers(key) !== `vite@${parent}`)
-      fail(`pnpm-lock.yaml: ${key} does not match ${selector}`)
+      fail(
+        'vite-identity-mismatch',
+        key,
+        `pnpm-lock.yaml: ${key} does not match ${selector}`,
+      )
   }
   for (const [key, snapshot] of snapshots) {
     const edge = snapshot?.dependencies?.rolldown
     if (typeof edge !== 'string' || !edge)
-      fail(`pnpm-lock.yaml: ${key} is missing its rolldown dependency edge`)
+      fail(
+        'missing-rolldown-edge',
+        key,
+        `pnpm-lock.yaml: ${key} is missing its rolldown dependency edge`,
+      )
     const version = withoutPeers(edge)
     if (version === '1.2.15')
       fail(
+        'broken-rolldown',
+        key,
         `pnpm-lock.yaml: ${key} resolves broken rolldown@${version} (${selector})`,
+        { version },
       )
     if (version !== pinned)
       fail(
+        'rolldown-version-mismatch',
+        key,
         `pnpm-lock.yaml: ${key} resolves rolldown@${version}, expected ${selector}: ${pinned}`,
+        { version },
       )
   }
   return `Dependency overrides check ok: ${selector}: ${pinned}, ${snapshots.length} Vite snapshots`
@@ -94,7 +141,9 @@ export function checkDependencyOverrides(inputRoot = root) {
     try {
       return readFileSync(resolve(inputRoot, filename), 'utf8')
     } catch (error) {
-      throw new Error(
+      throw new DependencyOverrideError(
+        'unreadable-input',
+        filename,
         `${filename}: restore a readable input file (${error.code})`,
       )
     }

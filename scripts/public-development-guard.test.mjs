@@ -43,7 +43,7 @@ test('boundary manifest classifies every export exactly once', () => {
           canonical: ['README.md', 'package.json'],
         },
       }),
-    /duplicate boundary path/,
+    { code: 'duplicate-boundary-path', subject: 'package.json' },
   )
   assert.throws(
     () =>
@@ -51,7 +51,7 @@ test('boundary manifest classifies every export exactly once', () => {
         ...manifest,
         exported: [...manifest.exported, 'secret.txt'],
       }),
-    /unclassified exported path/,
+    { code: 'unclassified-exported-path', subject: 'secret.txt' },
   )
 })
 
@@ -62,10 +62,10 @@ test('prefix exclusions remain outside the public boundary', () => {
   )
   assert.ok(excludedPaths.length > 0)
   for (const file of excludedPaths)
-    assert.throws(
-      () => inspectTree([{ path: file, mode: 'file' }], boundary),
-      /manifest outside path/,
-    )
+    assert.throws(() => inspectTree([{ path: file, mode: 'file' }], boundary), {
+      code: 'outside-manifest',
+      subject: file,
+    })
 })
 
 test('boundary manifest rejects exclusions for unknown prefixes', () => {
@@ -79,10 +79,10 @@ test('boundary manifest rejects exclusions for unknown prefixes', () => {
   const boundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'))
   boundary.canonical_prefix_exclusions['unknown/'] = ['file']
   fs.writeFileSync(boundaryPath, JSON.stringify(boundary))
-  assert.throws(
-    () => loadBoundaryManifest(repo),
-    /exclusion for unknown boundary prefix/,
-  )
+  assert.throws(() => loadBoundaryManifest(repo), {
+    code: 'unknown-prefix-exclusion',
+    subject: 'unknown/',
+  })
 })
 test('private-overlay is an allowed public-tree file and private paths are rejected', () => {
   assert.equal(
@@ -92,17 +92,20 @@ test('private-overlay is an allowed public-tree file and private paths are rejec
   )
   assert.throws(
     () => inspectTree([{ path: '.ops.vars', mode: 'file' }], manifest),
-    /manifest outside path/,
+    {
+      code: 'outside-manifest',
+      subject: '.ops.vars',
+    },
   )
 })
 test('symlink and submodule trees are rejected', () => {
   assert.throws(
     () => inspectTree([{ path: 'README.md', mode: 'symlink' }], manifest),
-    /unsafe tree entry: symlink/,
+    { code: 'unsafe-tree-entry', subject: 'README.md', mode: 'symlink' },
   )
   assert.throws(
     () => inspectTree([{ path: 'README.md', mode: 'submodule' }], manifest),
-    /unsafe tree entry: submodule/,
+    { code: 'unsafe-tree-entry', subject: 'README.md', mode: 'submodule' },
   )
 })
 test('forbidden metadata is rejected while public metadata is allowed', () => {
@@ -113,7 +116,7 @@ test('forbidden metadata is rejected while public metadata is allowed', () => {
     'artifactshare.internal',
     'pnpm deploy',
   ])
-    assert.throws(() => inspectMetadata(value), /forbidden metadata/)
+    assert.throws(() => inspectMetadata(value), { code: 'forbidden-metadata' })
   for (const value of [
     'fix parser',
     ['https://github.com', 'artifactshare/artifactshare', 'pull/1'].join('/'),
@@ -311,10 +314,11 @@ test('external CI rejects a symlink removed before the proposal-only head', () =
       )
     throw new Error(`unexpected git call: ${args.join(' ')}`)
   }
-  assert.throws(
-    () => inspectCommitRange({ base, head: third, git }),
-    /unsafe tree entry/,
-  )
+  assert.throws(() => inspectCommitRange({ base, head: third, git }), {
+    code: 'unsafe-tree-entry',
+    subject: 'proposals/leak.md',
+    mode: 'symlink',
+  })
 })
 
 test('CI range rejects forbidden content removed by a later commit', () => {
@@ -353,7 +357,11 @@ test('CI range rejects forbidden content removed by a later commit', () => {
         headRepoFullName: 'artifactshare/artifactshare',
         baseRepoFullName: 'artifactshare/artifactshare',
       }),
-    /private-reference/,
+    {
+      code: 'changed-content-finding',
+      subject: 'proposals/leak.md',
+      category: 'private-reference',
+    },
   )
 })
 
@@ -369,7 +377,9 @@ test('external PRs may only add one root-level proposal document', () => {
       { status: 'A', path: 'proposals/b.md' },
     ],
   ])
-    assert.throws(() => assertProposalOnly(changed), /exactly one proposal/)
+    assert.throws(() => assertProposalOnly(changed), {
+      code: 'proposal-document-only',
+    })
 })
 
 test('standalone check classifies the current repository tree', () => {
@@ -440,15 +450,17 @@ test('default guardPush implementation passes a real temporary repository', () =
           input: `refs/heads/main ${symlinkHead} refs/heads/main ${'0'.repeat(40)}\n`,
           branch: 'main',
         }),
-      /unsafe tree entry: symlink/,
+      { code: 'unsafe-tree-entry', subject: 'README.md', mode: 'symlink' },
     )
 
-    execFileSync('git', ['checkout', '-q', 'HEAD~1', '--', 'README.md'], {
+    // A fresh branch off the safe commit: the push range must carry only the
+    // private path, not the symlink from the branch above.
+    execFileSync('git', ['checkout', '-q', '-b', 'private', head], {
       cwd: repo,
     })
     fs.writeFileSync(path.join(repo, '.ops.vars'), 'private\n')
     execFileSync('git', ['add', '-A'], { cwd: repo })
-    execFileSync('git', ['commit', '-qm', 'private metadata'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'private path'], { cwd: repo })
     const privateHead = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repo,
       encoding: 'utf8',
@@ -459,7 +471,7 @@ test('default guardPush implementation passes a real temporary repository', () =
           input: `refs/heads/main ${privateHead} refs/heads/main ${'0'.repeat(40)}\n`,
           branch: 'main',
         }),
-      /unsafe tree entry/,
+      { code: 'outside-manifest', subject: '.ops.vars' },
     )
 
     execFileSync('git', ['checkout', '-q', '-b', 'metadata', head], {
@@ -482,7 +494,7 @@ test('default guardPush implementation passes a real temporary repository', () =
           input: `refs/heads/main ${metadataHead} refs/heads/main ${'0'.repeat(40)}\n`,
           branch: 'main',
         }),
-      /forbidden metadata|unsafe tree entry/,
+      { code: 'forbidden-metadata' },
     )
   } finally {
     process.chdir(original)

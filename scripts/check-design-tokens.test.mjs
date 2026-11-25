@@ -8,8 +8,6 @@ import {
   THEME_CSS,
   collectViewerStylesheets,
   findStylesheetViolations,
-  findBreakpointDocumentationViolations,
-  findDesignSystemVersionViolations,
   findFontSourceViolations,
   findJapaneseTypographyViolations,
   collectDefinedVariables,
@@ -36,42 +34,45 @@ import {
   findInteractiveSpacingAnnotationViolationsInApp,
 } from './check-design-tokens.mjs'
 
-test('interactive spacing annotation is restricted to registered shared components', () => {
-  return (async () => {
-    const root = await mkdtemp(join(tmpdir(), 'design-tokens-'))
-    try {
-      const files = [
-        'apps/web/app/components/ui/input-group.tsx',
-        'apps/web/app/components/ui/segmented-control.tsx',
-        'apps/web/app/routes/example.tsx',
-        'apps/web/app/components/example.tsx',
-        'apps/web/app/components/ui/other.tsx',
-      ]
-      await Promise.all(
-        files.map(async (file) => {
-          const path = join(root, file)
-          await mkdir(dirname(path), { recursive: true })
-          await writeFile(path, 'data-gap-audit-composite')
-        }),
-      )
-      const violations = findInteractiveSpacingAnnotationViolations(
-        files.map((file) => join(root, file)),
-        root,
-      )
-      assert.equal(violations.length, 3)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })()
-})
-
-test('interactive annotation integration scans the shared UI directory', async () => {
+test('interactive spacing annotation is restricted to shared UI components', async () => {
   const root = await mkdtemp(join(tmpdir(), 'design-tokens-'))
   try {
     const files = [
-      'apps/web/app/components/ui/unregistered.tsx',
-      'apps/web/app/components/ui/unregistered.test.tsx',
-      'apps/web/app/components/ui/unregistered.spec.ts',
+      'apps/web/app/components/ui/input-group.tsx',
+      'apps/web/app/components/ui/input-group/index.tsx',
+      'apps/web/app/components/ui/other.tsx',
+      'apps/web/app/routes/example.tsx',
+      'apps/web/app/components/example.tsx',
+    ]
+    await Promise.all(
+      files.map(async (file) => {
+        const path = join(root, file)
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, 'data-gap-audit-composite')
+      }),
+    )
+    assert.deepEqual(
+      findInteractiveSpacingAnnotationViolations(
+        files.map((file) => join(root, file)),
+        root,
+      ).map((violation) => violation.file),
+      [
+        'apps/web/app/routes/example.tsx',
+        'apps/web/app/components/example.tsx',
+      ],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('interactive annotation integration skips test sources', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'design-tokens-'))
+  try {
+    const files = [
+      'apps/web/app/components/example.tsx',
+      'apps/web/app/components/example.test.tsx',
+      'apps/web/app/components/example.spec.ts',
     ]
     await Promise.all(
       files.map(async (file) => {
@@ -237,7 +238,7 @@ test('settings spacing deny does not let a sibling reset hide a positive margin'
   )
 })
 
-test('design system sync checks reject stale font, version, and breakpoint sources', () => {
+test('font and typography checks reject stale sources', () => {
   assert.deepEqual(
     findFontSourceViolations(
       '--font-sans: Inter, sans-serif;\n--font-sans: Geist;',
@@ -255,27 +256,9 @@ test('design system sync checks reject stale font, version, and breakpoint sourc
       },
     ],
   )
-  assert.deepEqual(
-    findDesignSystemVersionViolations(
-      '現行仕様 v0.15\n| 2026 | v0.16 | change |',
-    ),
-    ['current version v0.15 does not match latest history v0.16'],
-  )
-  assert.deepEqual(findDesignSystemVersionViolations('変更履歴なし'), [
-    'current version and latest history version must both be present',
-  ])
-  assert.deepEqual(
-    findBreakpointDocumentationViolations(
-      '## 10. Breakpoints\n- wide (1040px)',
-    ),
-    ['Breakpoints section must not duplicate px values'],
-  )
-  assert.deepEqual(findBreakpointDocumentationViolations('## 10. Responsive'), [
-    'Breakpoints section must be present',
-  ])
 })
 
-test('design system sync checks allow the current sources', () => {
+test('font and typography checks allow the current sources', () => {
   assert.deepEqual(
     findFontSourceViolations(
       "@import '@fontsource-variable/geist';\n--font-sans: 'Geist Variable', 'Hiragino Sans', 'Noto Sans JP', Meiryo, system-ui;",
@@ -327,18 +310,6 @@ test('design system sync checks allow the current sources', () => {
       'html:lang(ja) { word-break: auto-phrase; }',
     )[0]?.detail,
     'html:lang(ja) must use strict line breaking and auto-phrase word breaking',
-  )
-  assert.deepEqual(
-    findDesignSystemVersionViolations(
-      '現行仕様 v0.17\n| 2026 | v0.17 | change |',
-    ),
-    [],
-  )
-  assert.deepEqual(
-    findBreakpointDocumentationViolations(
-      '## 10. Breakpoints\n- **wide**: 表形式',
-    ),
-    [],
   )
 })
 

@@ -57,7 +57,10 @@ test('content deployment scripts are explicitly inside the public boundary', () 
         [{ path: 'scripts/unclassified-deployment.mjs', mode: 'file' }],
         boundary,
       ),
-    /manifest outside path/u,
+    {
+      code: 'outside-manifest',
+      subject: 'scripts/unclassified-deployment.mjs',
+    },
   )
 })
 

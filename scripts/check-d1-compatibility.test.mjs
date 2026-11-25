@@ -106,6 +106,52 @@ test('checks directly written custom compile and prepare SQL', () => {
   assert.deepEqual(rules('database.prepare(compiled.sql)'), [])
 })
 
+test('resolves SQL held in a same-file const', () => {
+  assert.deepEqual(
+    rules(`
+      const DELETE_SESSION = 'DELETE FROM sessions WHERE token = ?'
+      env.DB.prepare(DELETE_SESSION)
+    `),
+    [],
+  )
+  assert.deepEqual(
+    rules(`
+      const TERMS = 'SELECT 1 UNION SELECT 2 UNION SELECT 3'
+      const QUERY = \`\${TERMS} UNION SELECT 4 UNION SELECT 5 UNION SELECT 6\`
+      env.DB.prepare(QUERY)
+    `),
+    ['compound-term-limit'],
+  )
+  assert.deepEqual(
+    rules(`
+      import { sql } from 'kysely'
+      const QUERY = 'SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6'
+      sql.raw(QUERY)
+    `),
+    ['compound-term-limit'],
+  )
+  assert.deepEqual(
+    rules(`
+      let query = 'DELETE FROM sessions WHERE token = ?'
+      env.DB.prepare(query)
+    `),
+    ['dynamic-raw-sql'],
+  )
+  assert.deepEqual(
+    rules(`
+      function first() {
+        const QUERY = 'DELETE FROM sessions WHERE token = ?'
+        env.DB.prepare(QUERY)
+      }
+      function second() {
+        const QUERY = buildQuery()
+        env.DB.prepare(QUERY)
+      }
+    `),
+    ['dynamic-raw-sql', 'dynamic-raw-sql'],
+  )
+})
+
 test('checks sql.raw and namespace imports', () => {
   assert.deepEqual(
     rules(`

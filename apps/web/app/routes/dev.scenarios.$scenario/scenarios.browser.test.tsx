@@ -187,6 +187,7 @@ async function runInteractions(scenario: keyof typeof SCENARIO_CONTRACTS) {
           document.querySelector(interaction.readySelector!),
         ).not.toBeNull(),
       )
+    // test-wait: elapsed-time — scenario fixtures declare their own settle window after an interaction.
     if (interaction.waitMs)
       await new Promise((resolve) => setTimeout(resolve, interaction.waitMs))
   }

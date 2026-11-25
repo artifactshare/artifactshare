@@ -77,21 +77,58 @@ function combine(left, right) {
   return left.flatMap((prefix) => right.map((suffix) => prefix + suffix))
 }
 
-function staticStrings(node) {
+// A name declared once as a file-level const resolves to its initializer, so
+// lifting a static query into a named constant stays analyzable. A name
+// declared more than once is ambiguous and stays unresolved.
+function collectFileConstants(program) {
+  const initializers = new Map()
+  const ambiguous = new Set()
+  function visit(node) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child)
+      return
+    }
+    if (node.type === 'VariableDeclaration' && node.kind === 'const')
+      for (const declarator of node.declarations) {
+        if (declarator.id?.type !== 'Identifier' || !declarator.init) continue
+        if (initializers.has(declarator.id.name))
+          ambiguous.add(declarator.id.name)
+        initializers.set(declarator.id.name, declarator.init)
+      }
+    for (const [key, child] of Object.entries(node)) {
+      if (['loc', 'start', 'end', 'type'].includes(key)) continue
+      visit(child)
+    }
+  }
+  visit(program)
+  for (const name of ambiguous) initializers.delete(name)
+  return initializers
+}
+
+function staticStrings(node, constants, seen = new Set()) {
   if (!node || typeof node !== 'object') return null
   if (node.type === 'Literal' && typeof node.value === 'string')
     return [node.value]
+  if (node.type === 'Identifier') {
+    const initializer = constants?.get(node.name)
+    if (!initializer || seen.has(node.name)) return null
+    return staticStrings(initializer, constants, new Set([...seen, node.name]))
+  }
   if (node.type === 'BinaryExpression' && node.operator === '+')
-    return combine(staticStrings(node.left), staticStrings(node.right))
+    return combine(
+      staticStrings(node.left, constants, seen),
+      staticStrings(node.right, constants, seen),
+    )
   if (node.type === 'ConditionalExpression') {
-    const consequent = staticStrings(node.consequent)
-    const alternate = staticStrings(node.alternate)
+    const consequent = staticStrings(node.consequent, constants, seen)
+    const alternate = staticStrings(node.alternate, constants, seen)
     return consequent && alternate ? [...consequent, ...alternate] : null
   }
   if (node.type !== 'TemplateLiteral') return null
   let values = [node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? '']
   for (const [index, expression] of node.expressions.entries()) {
-    const substitutions = staticStrings(expression)
+    const substitutions = staticStrings(expression, constants, seen)
     if (!substitutions) return null
     values = combine(values, substitutions) ?? []
     const quasi = node.quasis[index + 1]
@@ -102,11 +139,19 @@ function staticStrings(node) {
   return values
 }
 
-function templateShapes(node) {
-  const resolved = staticStrings(node)
-  if (resolved || node?.type !== 'TemplateLiteral') return resolved
+function templateShapes(node, constants) {
+  const resolved = staticStrings(node, constants)
+  if (resolved) return resolved
+  const template =
+    node?.type === 'TemplateLiteral'
+      ? node
+      : node?.type === 'Identifier' &&
+          constants?.get(node.name)?.type === 'TemplateLiteral'
+        ? constants.get(node.name)
+        : undefined
+  if (!template) return null
   return [
-    node.quasis
+    template.quasis
       .map((quasi) => quasi.value.cooked ?? quasi.value.raw ?? '')
       .join(' ? '),
   ]
@@ -169,7 +214,7 @@ function hasD1CompatibilityPlugin(options) {
   )
 }
 
-function sqlShapes(node, imports) {
+function sqlShapes(node, imports, constants) {
   if (!node || typeof node !== 'object') return null
   if (
     node.type === 'CallExpression' &&
@@ -177,7 +222,7 @@ function sqlShapes(node, imports) {
     propertyName(node.callee.property) === 'raw' &&
     isSqlTag(node.callee.object, imports)
   )
-    return staticStrings(node.arguments[0])
+    return staticStrings(node.arguments[0], constants)
   if (
     node.type === 'ConditionalExpression' ||
     node.type === 'LogicalExpression'
@@ -185,10 +230,12 @@ function sqlShapes(node, imports) {
     const left = sqlShapes(
       node.type === 'ConditionalExpression' ? node.consequent : node.left,
       imports,
+      constants,
     )
     const right = sqlShapes(
       node.type === 'ConditionalExpression' ? node.alternate : node.right,
       imports,
+      constants,
     )
     if (!left && !right) return null
     return [...(left ?? [' ? ']), ...(right ?? [' ? '])]
@@ -199,7 +246,12 @@ function sqlShapes(node, imports) {
     node.quasi.quasis[0]?.value.cooked ?? node.quasi.quasis[0]?.value.raw ?? '',
   ]
   for (const [index, expression] of node.quasi.expressions.entries()) {
-    values = combine(values, sqlShapes(expression, imports) ?? [' ? ']) ?? []
+    values =
+      combine(
+        values,
+        sqlShapes(expression, imports, constants) ??
+          staticStrings(expression, constants) ?? [' ? '],
+      ) ?? []
     const quasi = node.quasi.quasis[index + 1]
     values = values.map(
       (value) => value + (quasi?.value.cooked ?? quasi?.value.raw ?? ''),
@@ -321,6 +373,7 @@ function lineAt(source, offset) {
 export function analyzeD1Source(source, filename = 'source.ts') {
   const parsed = parseSync(filename, source)
   const imports = collectKyselyImports(parsed.program)
+  const constants = collectFileConstants(parsed.program)
   const violations = parsed.errors.map((error) => ({
     line: 1,
     rule: 'parse-error',
@@ -383,10 +436,14 @@ export function analyzeD1Source(source, filename = 'source.ts') {
       )
 
     if (node.type === 'TaggedTemplateExpression' && isSqlTag(node.tag, imports))
-      analyzeSql(node, sqlShapes(node, imports) ?? [''], contextFor(ancestors))
+      analyzeSql(
+        node,
+        sqlShapes(node, imports, constants) ?? [''],
+        contextFor(ancestors),
+      )
 
     if (node.type === 'Property' && propertyName(node.key) === 'sql') {
-      const alternatives = templateShapes(node.value)
+      const alternatives = templateShapes(node.value, constants)
       if (alternatives) analyzeSql(node.value, alternatives)
     }
 
@@ -396,7 +453,7 @@ export function analyzeD1Source(source, filename = 'source.ts') {
     ) {
       const method = propertyName(node.callee.property)
       if (method === 'prepare') {
-        const alternatives = templateShapes(node.arguments[0])
+        const alternatives = templateShapes(node.arguments[0], constants)
         if (alternatives)
           analyzeSql(node.arguments[0], alternatives, contextFor(ancestors))
         else if (!isCompiledSql(node.arguments[0]))
@@ -407,7 +464,7 @@ export function analyzeD1Source(source, filename = 'source.ts') {
           )
       }
       if (method === 'raw' && isSqlTag(node.callee.object, imports)) {
-        const alternatives = staticStrings(node.arguments[0])
+        const alternatives = staticStrings(node.arguments[0], constants)
         if (alternatives)
           analyzeSql(node.arguments[0], alternatives, contextFor(ancestors))
         else
@@ -422,8 +479,8 @@ export function analyzeD1Source(source, filename = 'source.ts') {
         const separatorNode = node.arguments[isSqlJoin ? 1 : 0]
         if (!(isSqlJoin && !separatorNode)) {
           const separators = isSqlJoin
-            ? sqlShapes(separatorNode, imports)
-            : staticStrings(separatorNode)
+            ? sqlShapes(separatorNode, imports, constants)
+            : staticStrings(separatorNode, constants)
           if (isSqlJoin && !separators)
             report(
               node,

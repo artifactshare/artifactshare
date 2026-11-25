@@ -172,6 +172,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     .map((line) => JSON.parse(line))
     .find((message) => message.id === 998 && !message.method)
   assert.equal(question.result.outcome.outcome, 'cancelled')
+  // test-wait: elapsed-time — the unsupported reply is written to the log after the cancelled one.
   await new Promise((resolve) => setTimeout(resolve, 50))
   const unsupported = readFileSync(log, 'utf8')
     .trim()
@@ -244,6 +245,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     }),
     signal: heldAbort.signal,
   }).catch(() => null)
+  // test-wait: elapsed-time — the held request must be in flight before the competing one.
   await new Promise((resolve) => setTimeout(resolve, 50))
   const rejectedConcurrent = await fetch(heldTarget.endpoint, {
     method: 'POST',

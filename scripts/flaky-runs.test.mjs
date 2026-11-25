@@ -552,6 +552,7 @@ test('direct exit cleans inherited pipes before timeout and the next repetition'
             assert.ok(descendant > 0)
             process.kill(descendant, 'SIGKILL')
             assert.equal(afterExit, true, 'must clean up on exit, not timeout')
+            // test-wait: elapsed-time — the killed descendant must be reaped before the probe reports.
             await new Promise((resolve) => setTimeout(resolve, 30))
             cleaned = true
             return ['Remaining descendant after suite exit']
