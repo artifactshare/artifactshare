@@ -1,4 +1,5 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { constants } from 'node:sqlite'
+import { expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -8,7 +9,6 @@ import {
   verifyOAuthBinding,
 } from './oauth-verification.server'
 
-afterEach(() => vi.restoreAllMocks())
 test('missing stored keys fail unavailable without key generation, even with a JWT-shaped token', async () => {
   const { db, sqlite } = createMigratedInMemoryDb()
   try {
@@ -34,7 +34,13 @@ test('public-key projection matches pinned algorithm/grace and never reads priva
         '2026-01-01',
         new Date(Date.now() - 86400000).toISOString(),
       )
-    const prepare = vi.spyOn(sqlite, 'prepare')
+    sqlite.setAuthorizer((action, table, column) =>
+      action === constants.SQLITE_READ &&
+      table === 'jwks' &&
+      column === 'privateKey'
+        ? constants.SQLITE_DENY
+        : constants.SQLITE_OK,
+    )
     const keys = await readOnlyOAuthKeys(db)
     expect(keys).toEqual({
       keys: [
@@ -47,7 +53,6 @@ test('public-key projection matches pinned algorithm/grace and never reads priva
         },
       ],
     })
-    expect(prepare.mock.calls.flat().join(' ')).not.toContain('privateKey')
     expect(JSON.stringify(keys)).not.toContain('CANARY')
     sqlite.exec("UPDATE jwks SET expiresAt='2000-01-01'")
     await expect(readOnlyOAuthKeys(db)).rejects.toThrow('keys unavailable')

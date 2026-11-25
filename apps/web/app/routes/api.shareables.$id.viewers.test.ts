@@ -78,6 +78,24 @@ describe('/api/shareables/:id/viewers', () => {
     expect(body.totalViewers).toBe(2)
   })
 
+  test('a page smaller than the viewer list returns a cursor to the rest', async () => {
+    const first = (await (
+      await loaderResponse(
+        'https://artifactshare.test/api/shareables/s1/viewers?limit=1',
+      )
+    ).json()) as { viewers: Array<{ userId: string }>; nextCursor: string }
+    expect(first.viewers.map((viewer) => viewer.userId)).toEqual(['u-member'])
+    expect(first.nextCursor).toEqual(expect.any(String))
+
+    const rest = (await (
+      await loaderResponse(
+        `https://artifactshare.test/api/shareables/s1/viewers?limit=1&cursor=${encodeURIComponent(first.nextCursor)}`,
+      )
+    ).json()) as { viewers: Array<{ userId: string }>; nextCursor: null }
+    expect(rest.viewers.map((viewer) => viewer.userId)).toEqual(['u-owner'])
+    expect(rest.nextCursor).toBeNull()
+  })
+
   test('404 for a shareable the user cannot see, with Cache-Control', async () => {
     const response = await loaderResponse(
       'https://artifactshare.test/api/shareables/missing/viewers',

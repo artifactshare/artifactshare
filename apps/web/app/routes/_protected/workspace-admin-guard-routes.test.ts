@@ -5,6 +5,8 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
 import { loader as recipients } from './settings/recipients'
 import { loader as members } from './settings/_content/index'
+import { loader as activity } from './settings/_content/activity'
+import { settingsAdminMiddleware } from './settings/+lib/settings-admin.server'
 import { loadSettingsShell } from './settings/+lib/settings-request.server'
 import {
   action as rename,
@@ -15,7 +17,7 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/services/db.server', () => ({ createDb: () => fixture.db }))
 const fixture = createMigratedInMemoryDb()
 
-test('ownerless settings read persisted roles and require an active admin to search or rename', async () => {
+test('ownerless settings read persisted roles and require an active admin to search, rename or open admin pages', async () => {
   const { db, sqlite } = fixture
   try {
     seedWorkspace(sqlite)
@@ -74,6 +76,12 @@ test('ownerless settings read persisted roles and require an active admin to sea
       expect(result.recipients.map((person) => person.id)).toEqual(
         role === 'admin' ? ['recipient'] : [],
       )
+      const adminPage = { ...args, pattern: '/settings/activity' }
+      await settingsAdminMiddleware(adminPage, async () => new Response())
+      const opened = Promise.resolve().then(() => activity(adminPage))
+      if (role === 'admin')
+        await expect(opened).resolves.toMatchObject({ page: 1 })
+      else await expect(opened).rejects.toMatchObject({ init: { status: 403 } })
       const response = await rename({
         ...args,
         pattern: '/settings/general',

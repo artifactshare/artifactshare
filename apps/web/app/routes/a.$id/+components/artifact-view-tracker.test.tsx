@@ -141,7 +141,7 @@ describe('ArtifactViewTracker', () => {
     const props = { artifactId: 'dedup-artifact', canTrackView: true }
     await renderTracker(props)
     await React.act(async () => root.render(<div />))
-    await React.act(async () => root.render(<div />))
+    await renderTracker(props)
     expect(gtag).toHaveBeenCalledTimes(1)
   })
 })

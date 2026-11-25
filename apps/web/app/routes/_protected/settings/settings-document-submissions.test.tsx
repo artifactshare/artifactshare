@@ -127,7 +127,7 @@ const tokensAction: ActionFunction = (args) =>
 const billingAction: ActionFunction = (args) =>
   billing.action({ ...args, params: {}, pattern: '/settings/billing' })
 
-test('General shows a saved name and an invalid name in the returned page', async () => {
+test('General shows a saved name, an invalid name and an unknown intent in the returned page', async () => {
   updateWorkspaceName.mockResolvedValueOnce({ kind: 'ok' })
   const saved = await submit('/settings/general', GeneralPage, generalAction, {
     intent: 'update-workspace-name',
@@ -145,6 +145,15 @@ test('General shows a saved name and an invalid name in the returned page', asyn
   )
   expect(invalid.status).toBe(400)
   expect(invalid.html).toMatch(/data-settings-status="invalid"/)
+
+  const unknown = await submit(
+    '/settings/general',
+    GeneralPage,
+    generalAction,
+    { intent: 'delete-workspace', workspaceName: 'Renamed' },
+  )
+  expect(unknown.status).toBe(400)
+  expect(unknown.html).toMatch(/data-settings-status="invalid"/)
 })
 
 test('a native token POST renders Settings with one fresh shell and its result', async () => {
