@@ -59,7 +59,6 @@
     "scripts/check-design-tokens.mjs",
     "scripts/check-design-tokens.test.mjs",
     "scripts/check-dev-setup.mjs",
-    "scripts/check-doctor.mjs",
     "scripts/dev-setup.mjs",
     "scripts/dev-setup.test.mjs",
     "scripts/interactive-spacing-annotation-policy.mjs",
