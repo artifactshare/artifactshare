@@ -49,19 +49,26 @@ function insertUser(
   })
 }
 
-function seedWorkspace(sqlite: DatabaseSync) {
-  insert(sqlite, 'workspaces', { id: 'ws1', name: 'Workspace', created_at: AT })
-  insertUser(sqlite, { id: 'u1' })
+function insertContainer(
+  sqlite: DatabaseSync,
+  container: { id: string; kind: string; name?: string },
+) {
   insert(sqlite, 'artifact_containers', {
-    id: 'c1',
+    id: container.id,
     workspace_id: 'ws1',
-    kind: 'inbox',
-    owner_user_id: 'u1',
+    kind: container.kind,
+    owner_user_id: container.kind === 'inbox' ? 'u1' : null,
     created_by_id: 'u1',
-    name: 'Inbox',
+    name: container.name ?? container.id,
     created_at: AT,
     updated_at: AT,
   })
+}
+
+function seedWorkspace(sqlite: DatabaseSync) {
+  insert(sqlite, 'workspaces', { id: 'ws1', name: 'Workspace', created_at: AT })
+  insertUser(sqlite, { id: 'u1' })
+  insertContainer(sqlite, { id: 'c1', kind: 'inbox', name: 'Inbox' })
 }
 
 function insertShareable(
@@ -722,5 +729,228 @@ describe.each(currentSchemaSources)('constraints (%s)', (_name, create) => {
     expect(() =>
       sqlite.exec("DELETE FROM publisher_clients WHERE id = 'pc1'"),
     ).toThrow()
+  })
+
+  test('requires a workspace and an agent profile for agent authorities', () => {
+    insert(sqlite, 'agent_profiles', {
+      id: 'ap1',
+      user_id: 'u1',
+      workspace_id: 'ws1',
+      created_at: AT,
+    })
+    const authority = (
+      familyId: string,
+      overrides: Partial<Record<string, SqlValue>> = {},
+    ) =>
+      insert(sqlite, 'cli_family_authorities', {
+        family_id: familyId,
+        user_id: 'u1',
+        preset: 'agent',
+        workspace_id: 'ws1',
+        agent_profile_id: 'ap1',
+        project_name_snapshot: 'Project',
+        status: 'active',
+        created_at: AT,
+        updated_at: AT,
+        ...overrides,
+      })
+
+    // Deleting a project detaches a non-live agent authority, so project_id is
+    // optional while the workspace and the profile are not.
+    authority('f1')
+    expect(() => authority('f2', { workspace_id: null })).toThrow()
+    expect(() => authority('f3', { agent_profile_id: null })).toThrow()
+    expect(() => authority('f4', { preset: 'root' })).toThrow()
+    expect(() => authority('f5', { status: 'stale' })).toThrow()
+
+    insert(sqlite, 'sessions', {
+      id: 'sess1',
+      user_id: 'u1',
+      token: 'token-1',
+      expires_at: AT,
+      created_at: AT,
+      updated_at: AT,
+    })
+    insert(sqlite, 'cli_session_authorities', {
+      session_id: 'sess1',
+      family_id: 'f1',
+      kind: 'family',
+      preset: 'agent',
+      workspace_id: 'ws1',
+      agent_profile_id: 'ap1',
+      created_at: AT,
+    })
+    sqlite.exec("DELETE FROM cli_family_authorities WHERE family_id = 'f1'")
+    expect(
+      count(sqlite, 'SELECT COUNT(*) AS n FROM cli_session_authorities'),
+    ).toBe(0)
+  })
+
+  test('keeps one workspace owner, several admins, and only known roles', () => {
+    insertUser(sqlite, { id: 'u2' })
+    insertUser(sqlite, { id: 'u3' })
+    insertUser(sqlite, { id: 'u4' })
+    const member = (
+      userId: string,
+      overrides: Partial<Record<string, SqlValue>> = {},
+    ) =>
+      insert(sqlite, 'workspace_members', {
+        workspace_id: 'ws1',
+        user_id: userId,
+        role: 'member',
+        status: 'active',
+        created_at: AT,
+        updated_at: AT,
+        ...overrides,
+      })
+
+    member('u1', { role: 'owner' })
+    member('u2', { role: 'admin' })
+    member('u3', { role: 'admin' })
+    expect(
+      count(
+        sqlite,
+        "SELECT COUNT(*) AS n FROM workspace_members WHERE role = 'admin'",
+      ),
+    ).toBe(2)
+
+    expect(() => member('u1')).toThrow()
+    expect(() => member('u4', { role: 'invalid' })).toThrow()
+    expect(() => member('u4', { status: 'suspended' })).toThrow()
+    expect(() => member('u4', { workspace_id: 'missing' })).toThrow()
+    expect(() => member('missing')).toThrow()
+    expect(() =>
+      sqlite.exec(
+        "UPDATE workspace_members SET role = 'owner' WHERE user_id = 'u2'",
+      ),
+    ).toThrow()
+    expect(() =>
+      sqlite.exec(
+        "UPDATE workspace_members SET role = 'invalid' WHERE user_id = 'u2'",
+      ),
+    ).toThrow()
+
+    // One owner per workspace, whether or not the other row is still active.
+    member('u4', { role: 'member', status: 'removed', removed_at: AT })
+    expect(() =>
+      sqlite.exec(
+        "UPDATE workspace_members SET role = 'owner' WHERE user_id = 'u4'",
+      ),
+    ).toThrow()
+  })
+
+  test('allows only project share roles, and only on project containers', () => {
+    insertContainer(sqlite, { id: 'p1', kind: 'project' })
+    const shareDefault = (
+      id: string,
+      overrides: Partial<Record<string, SqlValue>> = {},
+    ) =>
+      insert(sqlite, 'project_share_defaults', {
+        id,
+        project_container_id: 'p1',
+        email: `${id}@example.test`,
+        created_by_id: 'u1',
+        created_at: AT,
+        updated_at: AT,
+        ...overrides,
+      })
+
+    for (const role of ['viewer', 'contributor', 'manager'])
+      shareDefault(`psd-${role}`, { role })
+    expect(() => shareDefault('psd-admin', { role: 'admin' })).toThrow()
+
+    shareDefault('psd-default')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT role FROM project_share_defaults WHERE id = 'psd-default'",
+        )
+        .get(),
+    ).toEqual({ role: 'viewer' })
+
+    // c1 is the seeded inbox: only a project container carries share defaults.
+    expect(() =>
+      shareDefault('psd-inbox', { project_container_id: 'c1' }),
+    ).toThrow()
+    expect(() =>
+      sqlite.exec(
+        "UPDATE project_share_defaults SET project_container_id = 'c1' WHERE id = 'psd-default'",
+      ),
+    ).toThrow()
+    expect(() =>
+      shareDefault('psd-repeat', { email: 'psd-viewer@example.test' }),
+    ).toThrow()
+
+    sqlite.exec("DELETE FROM artifact_containers WHERE id = 'p1'")
+    expect(
+      count(sqlite, 'SELECT COUNT(*) AS n FROM project_share_defaults'),
+    ).toBe(0)
+  })
+
+  test('keeps project membership on project containers only', () => {
+    insertContainer(sqlite, { id: 'p1', kind: 'project' })
+    const membership = (containerId: string) =>
+      insert(sqlite, 'project_members', {
+        container_id: containerId,
+        user_id: 'u1',
+        joined_at: AT,
+        last_seen_at: AT,
+      })
+    membership('p1')
+    expect(() => membership('c1')).toThrow()
+    expect(() =>
+      sqlite.exec(
+        "UPDATE project_members SET container_id = 'c1' WHERE user_id = 'u1'",
+      ),
+    ).toThrow()
+  })
+
+  test('keeps every artifact in a container the container cannot escape', () => {
+    insertShareable(sqlite, { id: 's1' })
+    expect(() =>
+      sqlite.exec("UPDATE shareables SET container_id = NULL WHERE id = 's1'"),
+    ).toThrow()
+    expect(() =>
+      insert(sqlite, 'shareables', {
+        id: 's2',
+        workspace_id: 'ws1',
+        owner_user_id: 'u1',
+        name: 's2',
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        container_id: null,
+        created_at: AT,
+        updated_at: AT,
+      }),
+    ).toThrow()
+    expect(() =>
+      sqlite.exec("DELETE FROM artifact_containers WHERE id = 'c1'"),
+    ).toThrow()
+
+    sqlite.exec("DELETE FROM shareables WHERE id = 's1'")
+    sqlite.exec("DELETE FROM artifact_containers WHERE id = 'c1'")
+    expect(count(sqlite, 'SELECT COUNT(*) AS n FROM artifact_containers')).toBe(
+      0,
+    )
+  })
+
+  test('bounds the workspace link policy', () => {
+    const set = (assignments: string) => () =>
+      sqlite.exec(`UPDATE workspaces SET ${assignments} WHERE id = 'ws1'`)
+
+    set('link_expiry_default_days = 1, link_expiry_max_days = 365')()
+    expect(set('link_expiry_default_days = 0')).toThrow()
+    expect(set('link_expiry_default_days = 366')).toThrow()
+    expect(set('link_expiry_max_days = 0')).toThrow()
+    expect(set('link_expiry_max_days = 366')).toThrow()
+    // A ceiling without a default, or below it, is not a policy.
+    expect(set('link_expiry_default_days = NULL')).toThrow()
+    expect(
+      set('link_expiry_default_days = 2, link_expiry_max_days = 1'),
+    ).toThrow()
+    expect(set('link_sharing_enabled = 2')).toThrow()
+    expect(set('external_posting_enabled = 2')).toThrow()
+
+    set('link_expiry_default_days = NULL, link_expiry_max_days = NULL')()
   })
 })

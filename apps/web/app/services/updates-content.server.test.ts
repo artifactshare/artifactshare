@@ -54,16 +54,44 @@ describe('getAllUpdates', () => {
     ])
   })
 
-  test.each(['cli', 'web'] as const)(
-    'keeps only the %s entries when filtered',
-    (product) => {
-      const filtered = getAllUpdates('en', product)
-      expect(filtered.length).toBeGreaterThan(0)
-      expect(filtered).toEqual(
-        getAllUpdates('en').filter((item) => item.products.includes(product)),
-      )
-    },
-  )
+  test('keeps only the cli entries when filtered', () => {
+    expect(getAllUpdates('en', 'cli').map((item) => item.slug)).toEqual([
+      '2026-11-17-full-text-search',
+      '2026-11-09-pdf-and-video',
+      '2026-11-09-comment-locations',
+      '2026-10-08-webassembly-in-folder-shares',
+      '2026-10-08-version-retention',
+      '2026-09-07-link-sharing-on-free',
+      '2026-09-02-collaborative-version-updates',
+      '2026-08-29-cli-preview',
+      '2026-08-18-source-available',
+      '2026-08-12-project-scoped-agent-login',
+      '2026-08-11-cli-session-management',
+      '2026-08-05-project-slack-notifications',
+      '2026-07-26-append-artifact',
+      '2026-07-13-cli-reference',
+      '2026-07-12-public-updates-page',
+      '2026-07-10-mermaid-static-site',
+    ])
+  })
+
+  test('leaves out exactly the entries no web release announced', () => {
+    const web = new Set(getAllUpdates('en', 'web').map((item) => item.slug))
+    expect(
+      getAllUpdates('en')
+        .map((item) => item.slug)
+        .filter((slug) => !web.has(slug)),
+    ).toEqual([
+      '2026-10-08-version-retention',
+      '2026-08-29-cli-preview',
+      '2026-07-26-append-artifact',
+      '2026-07-16-workspace-inventory',
+      '2026-07-16-activity-log-and-billing-estimate',
+      '2026-07-14-workspace-owner-admins',
+      '2026-07-13-member-removal-transfer-restore',
+    ])
+    expect(web.size).toBe(37)
+  })
 
   test('falls back to English when Japanese entry is missing', () => {
     const record = buildUpdateRecords([
