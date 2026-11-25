@@ -1,34 +1,26 @@
-import { fileURLToPath } from 'node:url'
-import { createTestHarness } from 'wrangler'
 import { afterAll, afterEach, beforeAll, expect, test, vi } from 'vitest'
-import { upgradeEnvironment } from '../test/better-auth-upgrade-fixture'
-import { applyBrowserFixtureSchema } from '../test/browser-fixture-schema'
-import * as batches from '../lib/d1-batch.server'
-import * as team from '../services/team-management.server'
-import * as claims from '../services/workspace-domain-claims.server'
-import { createAuth, getSessionUserFromBearer } from '../services/auth.server'
-import { createDb } from '../services/db.server'
+import { upgradeEnvironment } from '~/test/better-auth-upgrade-fixture'
+import { d1OnSqlite } from '~/test/d1-on-sqlite'
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import * as batches from '~/lib/d1-batch.server'
+import * as team from '~/services/team-management.server'
+import * as claims from '~/services/workspace-domain-claims.server'
+import { createAuth, getSessionUserFromBearer } from '~/services/auth.server'
+import { createDb } from '~/services/db.server'
 
 vi.mock('cloudflare:workers', async () => ({
-  env: (await import('../test/better-auth-upgrade-fixture')).upgradeEnvironment,
+  env: (await import('~/test/better-auth-upgrade-fixture')).upgradeEnvironment,
 }))
 
-const server = createTestHarness({
-  root: fileURLToPath(new URL('../..', import.meta.url)),
-  workers: [{ configPath: './wrangler.sandbox.jsonc' }],
-})
 let db: ReturnType<typeof createDb>
-beforeAll(async () => {
-  await server.listen()
-  const database = (await server.getWorker<{ DB: D1Database }>().getEnv()).DB
+beforeAll(() => {
+  const database = d1OnSqlite(createMigratedInMemoryDb().sqlite)
   upgradeEnvironment.DB = database
-  await applyBrowserFixtureSchema(database)
   db = createDb(database)
 })
 afterEach(() => vi.restoreAllMocks())
 afterAll(async () => {
   await db?.destroy()
-  await server.close()
 })
 
 async function signIn(email: string) {
