@@ -30,8 +30,22 @@ describe('AnonymousViewerSignInControl', () => {
     )
 
     expect(html).toContain(`href="${href}"`)
-    expect(html).toContain('text-foreground hover:bg-accent')
     expect(html).toContain('data-slot="button"')
+    // Both branches are the same control to the reader, so the link carries
+    // the same styling as the button it replaces.
+    const classes = (markup: string) =>
+      new Set((markup.match(/class="([^"]*)"/)?.[1] ?? '').split(/\s+/))
+    expect(classes(html)).toEqual(
+      classes(
+        renderToStaticMarkup(
+          <AnonymousViewerSignInControl
+            href={href}
+            label="Sign in"
+            shouldLoadAnalytics={false}
+          />,
+        ),
+      ),
+    )
   })
 
   test('uses scripted navigation when analytics is disabled', () => {

@@ -13,13 +13,20 @@ import { useLatestRef } from '~/hooks/use-latest-ref'
 export const CommentPageSessionContext = createContext<CommentSession | null>(
   null,
 )
+
+/** A consumer rendered outside its provider, which must fail before it reads anything. */
+export class MissingCommentPageSessionError extends Error {
+  constructor() {
+    super('Comment pages require a display Session')
+  }
+}
 export function useCommentPage(
   threadId: string,
   targetMessageId?: string,
   onTargetMissing?: (messageId: string) => void,
 ) {
   const session = useContext(CommentPageSessionContext)
-  if (!session) throw new Error('Comment pages require a display Session')
+  if (!session) throw new MissingCommentPageSessionError()
   const missingRef = useLatestRef(onTargetMissing)
   const [ready, notifyReady] = useReducer((value: number) => value + 1, 0)
   const hasMissingCallback = Boolean(onTargetMissing)

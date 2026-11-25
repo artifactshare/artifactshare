@@ -317,25 +317,25 @@ function screenFor(type: keyof typeof pages, intent: string) {
   }
 }
 
+// One status stands for each class the submission has to tell apart: a
+// gateway status the request can be retried after, and a platform error page
+// in front of the app, which is an unexpected server error. Every status is
+// held to its class in lib/settings-confirmation.test.ts.
 const faults = [
   'app-data',
   'offline',
   'broken',
-  // A platform error page in front of the app is an unexpected server error.
-  500,
-  502,
   503,
-  504,
+  500,
   'redirect',
   'server-error',
   'server-type-error',
   'middleware-type-error',
   'production-error',
   'route-error',
-  401,
-  403,
-  404,
 ] as const
+
+const retryable = new Set<Fault>(['app-data', 'offline', 'broken', 503])
 // Cross the browser boundary for native dialog locking, retry, handoff and
 // routing. Every row uses the same real server and client route functions.
 type Operation = (typeof operations)[number]
@@ -347,10 +347,29 @@ const noReturnedFailure = new Set<string>([
   'revoke-cli-family',
   'revoke-all-cli-families',
 ])
-const faultsFor = (operation: Operation) =>
-  noReturnedFailure.has(operation[0])
-    ? faults.filter((fault) => fault !== 'app-data')
-    : [...faults]
+
+// Every fault above is handled by the confirmation machinery all operations
+// share. What belongs to one operation is the body it posts, the failure its
+// own action returns, and the notice it leaves behind after a retry, so every
+// operation runs those three.
+const operationFaults: readonly Fault[] = ['app-data', 'offline', 500]
+
+// One operation per Settings page runs the whole list: each page renders its
+// own result, returns focus to its own trigger, and reports its own failures.
+const everyFault = new Set<string>([
+  'transfer-owner',
+  'revoke-all-cli-families',
+  'change-plan',
+  'cancel',
+  'update-external-access',
+  'disconnect-slack',
+])
+const faultsFor = (operation: Operation): Fault[] => {
+  const chosen = everyFault.has(operation[0]) ? faults : operationFaults
+  return chosen.filter(
+    (fault) => fault !== 'app-data' || !noReturnedFailure.has(operation[0]),
+  )
+}
 type Fault = (typeof faults)[number]
 
 async function mount(
@@ -607,14 +626,7 @@ for (const operation of operations)
           await vi.waitFor(() =>
             expect(container.textContent).toContain('Finished'),
           )
-        } else if (
-          fault === 'offline' ||
-          fault === 'broken' ||
-          fault === 502 ||
-          fault === 503 ||
-          fault === 504 ||
-          fault === 'app-data'
-        ) {
+        } else if (retryable.has(fault)) {
           await vi.waitFor(() => expect(alert()).not.toBeNull())
           expect(reload.mock.calls.length).toBe(loads)
           if (fault === 'app-data') {

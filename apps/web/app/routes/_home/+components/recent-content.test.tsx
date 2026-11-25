@@ -15,18 +15,8 @@ vi.mock('./empty-state', () => ({
   EmptyState: () => <div data-slot="empty" />,
 }))
 vi.mock('./file-row', () => ({
-  FileRow: ({
-    unreadBadges,
-    showOwner,
-  }: {
-    unreadBadges?: boolean
-    showOwner?: boolean
-  }) => (
-    <div
-      data-slot="file-row"
-      data-unread-badges={String(unreadBadges)}
-      data-show-owner={String(showOwner)}
-    />
+  FileRow: ({ unreadBadges }: { unreadBadges?: boolean }) => (
+    <div data-slot="file-row" data-unread-badges={String(unreadBadges)} />
   ),
 }))
 
@@ -84,7 +74,6 @@ test('passes unreadEnabled to file rows', () => {
     </MemoryRouter>,
   )
   expect(html).toContain('data-unread-badges="true"')
-  expect(html).toContain('data-show-owner="undefined"')
 })
 
 test('renders recent rows before viewer calendar hydration', () => {

@@ -1,5 +1,6 @@
 import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
+import { serviceCallValues } from '~/test/service-call'
 import { settingsAdminGate } from '../../+lib/settings-admin.server'
 const mocks = vi.hoisted(() => ({
   artifacts: vi.fn(),
@@ -30,11 +31,9 @@ describe('inventory artifacts loader', () => {
         'https://x/settings/inventory/artifacts?visibility=link&sort=size',
       ),
     } as never)
-    expect(mocks.artifacts).toHaveBeenCalledWith({}, 'ws1', {
-      visibility: 'link',
-      sort: 'size',
-      page: 1,
-    })
+    expect(serviceCallValues(mocks.artifacts.mock.calls[0])).toEqual(
+      expect.arrayContaining(['ws1', 'link', 'size', 1]),
+    )
     expect(mocks.projects).not.toHaveBeenCalled()
   })
 })

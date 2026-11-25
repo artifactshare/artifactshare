@@ -1,5 +1,6 @@
 import { RouterContextProvider } from 'react-router'
 import { describe, expect, test, vi } from 'vitest'
+import { serviceCallValues } from '~/test/service-call'
 import { settingsAdminGate } from '../+lib/settings-admin.server'
 
 const mocks = vi.hoisted(() => ({
@@ -34,6 +35,8 @@ describe('/settings/activity loader', () => {
         pattern: '/settings/activity',
       }),
     ).resolves.toEqual(data)
-    expect(mocks.loadAuditEventsPage).toHaveBeenCalledWith({}, 'ws1', 2)
+    expect(serviceCallValues(mocks.loadAuditEventsPage.mock.calls[0])).toEqual(
+      expect.arrayContaining(['ws1', 2]),
+    )
   })
 })

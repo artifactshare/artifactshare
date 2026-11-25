@@ -20,14 +20,29 @@ vi.mock('~/hooks/use-t', () => ({
 
 vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => false }))
 
+// A browser reads `allow` as a set of delegated permissions, so compare the
+// set: adding, dropping or renaming one is a real change, reordering is not.
+const delegated = (value: string | undefined) =>
+  (value ?? '')
+    .split(';')
+    .map((permission) => permission.trim())
+    .filter(Boolean)
+    .sort()
+
 describe('sandbox frame permissions', () => {
-  const expectedAllow =
-    'fullscreen; clipboard-write; language-model; summarizer; translator; language-detector'
+  const expectedAllow = [
+    'clipboard-write',
+    'fullscreen',
+    'language-detector',
+    'language-model',
+    'summarizer',
+    'translator',
+  ]
   const expectedSandbox =
     'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
 
   test('delegates exactly the supported permissions', () => {
-    expect(SANDBOX_FRAME_ALLOW).toBe(expectedAllow)
+    expect(delegated(SANDBOX_FRAME_ALLOW)).toEqual(expectedAllow)
   })
 
   test.each(['html', 'md', 'static_site'])(
@@ -61,7 +76,9 @@ describe('sandbox frame permissions', () => {
       expect(frames).toHaveLength(2)
       expect(markup).toContain(`<noscript>${frames[1]}</iframe></noscript>`)
       for (const frame of frames) {
-        expect(frame).toContain(`allow="${expectedAllow}"`)
+        expect(delegated(frame.match(/allow="([^"]*)"/)?.[1])).toEqual(
+          expectedAllow,
+        )
         expect(frame).toContain(`sandbox="${expectedSandbox}"`)
         expect(frame).toContain('referrerPolicy="no-referrer"')
       }

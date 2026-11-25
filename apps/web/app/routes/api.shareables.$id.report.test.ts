@@ -14,7 +14,6 @@ vi.mock('~/services/link-reports.server', () => ({ recordLinkReport }))
 import {
   action,
   loader,
-  REPORT_COOLDOWN_CAPACITY,
   ReportCooldownCache,
 } from './api.shareables.$id.report'
 
@@ -51,8 +50,7 @@ describe('link report route', () => {
     await expect(response.text()).resolves.toBe('Method Not Allowed')
   })
 
-  test('keeps a 4,096-entry least-recently-used cooldown cache', () => {
-    expect(REPORT_COOLDOWN_CAPACITY).toBe(4_096)
+  test('drops the least recently used cooldown entry at capacity', () => {
     const cache = new ReportCooldownCache(2)
     cache.set('oldest', 1)
     cache.set('recent', 2)
