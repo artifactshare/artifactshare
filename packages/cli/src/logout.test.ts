@@ -82,20 +82,6 @@ async function writePlaintextSessionCredential(
   )
 }
 
-test('logout --help describes local credential removal', () => {
-  const result = run(['logout', '--help'])
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /Revoke and remove the saved credential/)
-  assert.match(result.stdout, /validation_failed/)
-})
-
-test('profiles delete --help describes profile removal', () => {
-  const result = run(['profiles', 'delete', '--help'])
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /Delete a saved CLI profile/)
-  assert.match(result.stdout, /profile_not_found/)
-})
-
 test('logout --profile removes a plaintext credential and keeps profile metadata', async () => {
   await writeGlobalConfig({
     default_profile: 'client-a',

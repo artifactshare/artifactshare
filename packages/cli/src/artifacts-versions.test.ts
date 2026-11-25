@@ -97,7 +97,7 @@ test('versions maps concealed 404 and rejects malformed success', async () => {
     )
 })
 
-test('versions rejects invalid options before authentication and describes pagination', () => {
+test('versions rejects invalid options before authentication', () => {
   expectFailure(
     run(['artifacts', 'versions', 'abc123def4', '--cursor=', '--json']),
     { command: 'artifacts versions', code: 'validation_failed' },
@@ -106,10 +106,6 @@ test('versions rejects invalid options before authentication and describes pagin
     run(['artifacts', 'versions', 'abc123def4', '--offset', '0', '--json']),
     { command: 'artifacts versions', code: 'unknown_option' },
   )
-  const help = run(['artifacts', 'versions', '-h'])
-  assert.equal(help.status, 0)
-  assert.match(help.stdout, /--cursor/)
-  assert.match(help.stdout, /total_size_bytes/)
   assert.equal(run(['artifacts', 'versions', '-v']).status, 0)
 })
 

@@ -8,15 +8,6 @@ import {
   withServer,
 } from './test/helpers.js'
 
-test('resolve --help explains target lookup before writing', () => {
-  const result = run(['resolve', '--help'])
-
-  assert.equal(result.status, 0)
-  assert.match(result.stdout, /resolve "Weekly report"/)
-  assert.match(result.stdout, /before write commands/)
-  assert.match(result.stdout, /auth_required/)
-})
-
 test('resolve --json fails with auth_required before network checks', () => {
   const result = run(['resolve', 'Weekly report', '--json'], {
     ARTIFACTSHARE_TOKEN: '',

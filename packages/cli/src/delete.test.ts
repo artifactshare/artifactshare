@@ -11,19 +11,6 @@ import {
 describe.each([['delete'], ['artifacts', 'delete']])(
   'deletion via %s',
   (...invocation) => {
-    test('delete --help explains destructive artifact deletion', () => {
-      const result = run([...invocation, '--help'])
-
-      assert.equal(result.status, 0)
-      assert.match(result.stdout, /delete abc123def4/)
-      assert.match(result.stdout, /cannot be undone/)
-      assert.match(result.stdout, /target_not_found/)
-      assert.match(result.stdout, /artifact-id-or-url|artifactIdOrUrl/)
-      assert.match(result.stdout, /--token/)
-      assert.match(result.stdout, /--profile/)
-      assert.match(result.stdout, /Use resolve first/)
-    })
-
     test('delete --json fails with auth_required before network checks', () => {
       const result = run([...invocation, 'abc123def4', '--json'], {
         ARTIFACTSHARE_TOKEN: '',

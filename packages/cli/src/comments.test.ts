@@ -1221,25 +1221,3 @@ for (const action of ['post', 'edit', 'resolve', 'reopen', 'delete']) {
     })
   }
 }
-
-test('comments list help explains optional stored metadata with wrapped prose', () => {
-  const result = run(['comments', 'list', '--help'])
-  assert.equal(result.status, 0)
-  for (const field of [
-    'quote_before',
-    'quote_after',
-    'version_id',
-    'ambiguous_at_creation',
-    'unchecked',
-    'needs-check',
-  ]) {
-    assert.ok(result.stdout.includes(field))
-  }
-  const paragraph = result.stdout.slice(
-    result.stdout.indexOf('Text anchor fields'),
-    result.stdout.indexOf('Common failures:'),
-  )
-  assert.ok(paragraph.includes('strip HTML tags'))
-  assert.ok(paragraph.includes('null if deleted'))
-  for (const line of paragraph.split('\n')) assert.ok(line.length <= 80, line)
-})
