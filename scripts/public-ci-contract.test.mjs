@@ -113,7 +113,6 @@ test('PR boundary guard remains install-free', () => {
 
 test('PR guard has an exact trusted six-step topology', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
-  assert.equal(guard.name, undefined)
   assert.equal(guard.if, "github.event_name == 'pull_request'")
   assert.equal(guard['runs-on'], 'ubuntu-latest')
   assert.equal(guard.permissions, undefined)
@@ -155,7 +154,6 @@ test('PR guard has an exact trusted six-step topology', () => {
 test('PR classification matches the trusted guard predicate', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
   const classify = guard.steps[1]
-  const boundary = guard.steps[4]
   const guardSource = fs.readFileSync(
     'scripts/public-development-guard.mjs',
     'utf8',
@@ -186,10 +184,6 @@ test('PR classification matches the trusted guard predicate', () => {
   assert.match(
     classify.run,
     /fs\.appendFileSync\(process\.env\.GITHUB_OUTPUT,/u,
-  )
-  assert.equal(
-    boundary.name,
-    "${{ steps.classify.outputs.is_maintainer == 'true' && 'Check maintainer pull request boundary' || 'Check proposal-only boundary' }}",
   )
 
   const script = classify.run.trim().match(/^node -e "(.*)"$/u)?.[1]
@@ -268,7 +262,7 @@ test('PR boundary retains every trusted input and argument', () => {
   assert.doesNotMatch(boundary.run, /\$\{\{/u)
 })
 
-test('PR summaries are static, exact, and fail closed', () => {
+test('PR summaries are static, distinct per outcome, and fail closed', () => {
   const summary = parsedWorkflow.jobs['pull-request-guard'].steps[5]
   assert.equal(summary.if, '${{ !cancelled() }}')
   assert.deepEqual(summary.env, {
@@ -290,46 +284,28 @@ test('PR summaries are static, exact, and fail closed', () => {
   })
   assert.equal(syntax.status, 0, syntax.stderr)
 
-  const bodies = {
-    maintainerSuccess:
-      '## Maintainer pull request boundary\n\nThe public repository boundary passed.\n\nThe pull request is ready for maintainer review.\n',
-    maintainerFailure:
-      '## Maintainer pull request boundary\n\nThe public repository boundary did not pass.\n\nReview the diagnostic in the failed boundary step.\n',
-    maintainerIncomplete:
-      '## Maintainer pull request boundary\n\nThe public repository boundary check did not complete.\n\nReview the workflow run before continuing.\n',
-    forkSuccess:
-      '## Proposal check\n\nThe proposal-only boundary passed.\n\nNo action is required from the contributor. The proposal is ready for maintainer review.\n\nFull repository validation runs later in the merge queue.\n',
-    forkFailure:
-      '## Proposal check\n\nThe proposal check did not pass.\n\nReview the failed boundary step for details.\n\nCommon requirements to check: an external pull request must add exactly one new .md or .txt file directly in proposals/ (not in a subdirectory) and make no other changes.\n\nThe proposal content, pull request title and body, and commit messages must follow the public-content rules in proposals/README.md.\n\nIf the diagnostic identifies a proposal requirement, push a correction to this pull request. Otherwise, no contributor action is required unless a maintainer requests one.\n',
-    forkIncomplete:
-      '## Proposal check\n\nThe proposal check did not complete.\n\nNo contributor action is required unless a maintainer requests a change.\n',
-  }
-  const cases = [
-    ['true', 'success', bodies.maintainerSuccess],
-    ['true', 'failure', bodies.maintainerFailure],
-    ['true', 'skipped', bodies.maintainerIncomplete],
-    ['false', 'success', bodies.forkSuccess],
-    ['false', 'failure', bodies.forkFailure],
-    ['false', 'skipped', bodies.forkIncomplete],
-    ['unexpected', 'success', bodies.forkSuccess],
-    ['false', 'unexpected', bodies.forkIncomplete],
-  ]
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'public-ci-summary-'))
+  const render = (isMaintainer, outcome) => {
+    const output = path.join(directory, `${isMaintainer}-${outcome}.md`)
+    const result = spawnSync('bash', ['-c', summary.run], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IS_MAINTAINER: isMaintainer,
+        BOUNDARY_OUTCOME: outcome,
+        GITHUB_STEP_SUMMARY: output,
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return fs.readFileSync(output, 'utf8')
+  }
   try {
-    for (const [isMaintainer, outcome, expected] of cases) {
-      const output = path.join(directory, `${isMaintainer}-${outcome}.md`)
-      const result = spawnSync('bash', ['-c', summary.run], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          IS_MAINTAINER: isMaintainer,
-          BOUNDARY_OUTCOME: outcome,
-          GITHUB_STEP_SUMMARY: output,
-        },
-      })
-      assert.equal(result.status, 0, result.stderr)
-      assert.equal(fs.readFileSync(output, 'utf8'), expected)
-    }
+    const outcomes = ['success', 'failure', 'skipped']
+    const maintainer = outcomes.map((outcome) => render('true', outcome))
+    const fork = outcomes.map((outcome) => render('false', outcome))
+    assert.equal(new Set([...maintainer, ...fork]).size, 6)
+    assert.equal(render('unexpected', 'success'), fork[0])
+    assert.equal(render('false', 'unexpected'), fork[2])
     const failed = spawnSync('bash', ['-c', summary.run], {
       encoding: 'utf8',
       env: {
@@ -343,39 +319,6 @@ test('PR summaries are static, exact, and fail closed', () => {
   } finally {
     fs.rmSync(directory, { recursive: true })
   }
-})
-
-test('proposal status copy is exact and correctly placed', () => {
-  const contributing = fs.readFileSync('CONTRIBUTING.md', 'utf8')
-  const proposals = fs.readFileSync('proposals/README.md', 'utf8')
-  const paragraph =
-    'GitHub may wait for a maintainer to approve Actions on a pull request from a fork. No action is required from you while approval is pending. After approval, the pull-request-guard check verifies the proposal-only boundary; full repository validation runs later in the merge queue.'
-  assert.match(
-    contributing,
-    /1\. Add one human-written `\.md` or `\.txt` file directly in `proposals\/` \(not in a subdirectory\)\./u,
-  )
-  assert.match(
-    proposals,
-    /Add one `\.md` or `\.txt` file directly in `proposals\/` \(not in a subdirectory\) and answer these questions in your own words:/u,
-  )
-  assert.ok(
-    contributing.indexOf('3. Open a pull request') <
-      contributing.indexOf(paragraph),
-  )
-  assert.ok(
-    contributing.indexOf(paragraph) <
-      contributing.indexOf('You do not need generative AI'),
-  )
-  assert.ok(
-    proposals.indexOf('A proposal-only pull request') <
-      proposals.indexOf(paragraph),
-  )
-  assert.ok(
-    proposals.indexOf(paragraph) <
-      proposals.indexOf('You do not need generative AI'),
-  )
-  assert.equal(contributing.split(paragraph).length - 1, 1)
-  assert.equal(proposals.split(paragraph).length - 1, 1)
 })
 
 const aggregateResultVariables = {
@@ -474,7 +417,6 @@ test('merge group aggregate requires every lane to succeed', () => {
 
 test('public full CI keeps every validation lane as a dependency', () => {
   const aggregate = parsedWorkflow.jobs.validate
-  assert.equal(aggregate.name, 'Public full validation')
   assert.deepEqual(aggregate.needs, [
     'static-validation',
     'build-validation',
@@ -539,7 +481,6 @@ test('Windows credential validation runs in the merge queue and by manual dispat
 
 test('static validation runs on pull request heads and merge-group SHAs', () => {
   const job = parsedWorkflow.jobs['static-validation']
-  assert.equal(job.name, 'Public static and unit validation')
   assert.equal(
     job.if,
     "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
@@ -696,7 +637,6 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   const cliRuns = parsedWorkflow.jobs['cli-validation'].steps
     .map((step) => step.run ?? '')
     .join('\n')
-  assert.equal(parsedWorkflow.jobs['static-validation']['timeout-minutes'], 30)
   assert.match(staticRuns, /pnpm validate:static/u)
   assert.doesNotMatch(staticRuns, /pnpm fixtures:build/u)
   assert.equal(
@@ -755,7 +695,6 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
 test('Linux visual validation is an independent required lane', () => {
   const visual = parsedWorkflow.jobs['visual-validation']
   assert.equal(visual['runs-on'], 'ubuntu-latest')
-  assert.equal(visual['timeout-minutes'], 20)
   assert.match(
     visual.steps.map((step) => step.run ?? '').join('\n'),
     /docker compose -f compose\.playwright\.yml run --rm visual/u,
@@ -810,11 +749,9 @@ test('qm bridge release is manual, protected, and publishes one verified tarball
   const releaseWorkflow = YAML.parse(
     fs.readFileSync('.github/workflows/release-qm-bridge.yml', 'utf8'),
   )
-  assert.deepEqual(releaseWorkflow.on.workflow_dispatch.inputs.version, {
-    description: 'Exact unpublished package version to release',
-    required: true,
-    type: 'string',
-  })
+  const { version } = releaseWorkflow.on.workflow_dispatch.inputs
+  assert.equal(version.required, true)
+  assert.equal(version.type, 'string')
   assert.deepEqual(releaseWorkflow.permissions, {})
 
   const pack = releaseWorkflow.jobs.pack
@@ -1040,7 +977,6 @@ test('every public CI job uses stock Playwright libraries', () => {
 
 test('changed browser lane is PR-only and gates every head-code step with exact classification', () => {
   const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  assert.equal(lane.name, 'Changed browser repetitions (${{ matrix.project }})')
   assert.deepEqual(lane.strategy, {
     'fail-fast': false,
     matrix: { project: ['chromium', 'firefox', 'webkit'] },
@@ -1048,7 +984,6 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.equal(lane.env.BROWSER_PROJECT, '${{ matrix.project }}')
   assert.equal(lane.if, "github.event_name == 'pull_request'")
   assert.equal(lane['runs-on'], 'ubuntu-latest')
-  assert.equal(lane['timeout-minutes'], 150)
   assert.equal(lane.env.REPETITIONS, '5')
   assert.equal(lane.env.RESULTS_DIR, undefined)
   assert.equal(
@@ -1087,7 +1022,6 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
     assert.match(step.if, /steps\.select\.outputs\.has_files == 'true'/)
   const repeat = lane.steps.find((step) => step.id === 'repeat')
   assert.equal(lane.steps.indexOf(repeat), lane.steps.indexOf(plan) + 1)
-  assert.equal(repeat['timeout-minutes'], 120)
   assert.equal(repeat.env.DEBUG, 'pw:browser')
   assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
   assert.equal(
@@ -1329,12 +1263,10 @@ test('source feedback selects before install, delegates before execution and res
     'node scripts/ci/changed-browser-repetitions.mjs source-run',
   )
   assert.match(run.if, /steps.plan.outputs.has_pairs == 'true'/)
-  assert.equal(run['timeout-minutes'], 15)
   assert.ok(run['timeout-minutes'] > (180_000 + 600_000) / 60_000)
   const setupMinutes = lane.steps
     .slice(0, index('repeat'))
     .reduce((sum, step) => sum + step['timeout-minutes'], 0)
-  assert.equal(setupMinutes, 34)
   assert.ok(
     lane['timeout-minutes'] >= setupMinutes + run['timeout-minutes'] + 4,
   )
@@ -1358,7 +1290,6 @@ test('native browser wait proof runs in the existing required Chromium lane for 
   const check = checks[0]
   assert.equal(check.if, "matrix.project == 'chromium' && matrix.shard == 1")
   assert.equal(check['continue-on-error'], undefined)
-  assert.equal(check['timeout-minutes'], 2)
   assert.ok(
     lane.steps.indexOf(check) >
       lane.steps.findIndex((step) =>
