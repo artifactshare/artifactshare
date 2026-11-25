@@ -182,6 +182,9 @@ export function inspectWorkflow({ file, text, data }) {
     checkPermissions(job.permissions, where, report, { required: false })
     checkFailureVisibility(job, where, report)
 
+    if (job['timeout-minutes'] === undefined)
+      report('job-timeout', where, 'not declared')
+
     const grantsOidc =
       job.permissions === undefined
         ? inheritsOidc
@@ -358,6 +361,10 @@ test('no container escapes the runner sandbox', () => {
   assert.deepEqual(offenders('container-isolation'), [])
 })
 
+test('every job caps its own run time', () => {
+  assert.deepEqual(offenders('job-timeout'), [])
+})
+
 const pin = `@${'a'.repeat(40)}`
 const checkoutStep = {
   uses: `actions/checkout${pin}`,
@@ -370,6 +377,7 @@ function withJob(overrides) {
     jobs: {
       check: {
         'runs-on': 'ubuntu-latest',
+        'timeout-minutes': 10,
         steps: [checkoutStep, installStep],
         ...overrides,
       },
@@ -399,6 +407,18 @@ const publishStep = {
 
 for (const [name, overrides, expected, file] of [
   ['accepts a compliant workflow', {}, []],
+  [
+    'rejects a job that declares no timeout',
+    {
+      jobs: {
+        check: {
+          'runs-on': 'ubuntu-latest',
+          steps: [checkoutStep, installStep],
+        },
+      },
+    },
+    ['job-timeout'],
+  ],
   [
     'accepts an OIDC token in the job that publishes with provenance',
     {

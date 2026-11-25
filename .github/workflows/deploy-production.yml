@@ -44,6 +44,7 @@ jobs:
     name: Validate production build
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'shadow'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out validated source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,6 +86,7 @@ jobs:
     name: Deploy and verify production
     if: github.event_name == 'push' || inputs.mode == 'deploy'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: production
       url: https://artifactshare.com
