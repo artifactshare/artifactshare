@@ -47,6 +47,7 @@ export function suiteCommand(lane, report, root) {
         '--test',
         `--test-reporter=${path.join(root, 'scripts/ci/node-test-json-reporter.mjs')}`,
         `--test-reporter-destination=${report}`,
+        '--test-timeout=180000',
         'scripts/*.test.mjs',
         'packages/contract/generate-surfaces.test.mjs',
         'packages/viewer-kit/scripts/*.test.mjs',

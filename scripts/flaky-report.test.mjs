@@ -202,7 +202,7 @@ test('Node JSON Lines preserves same names in different files, skips and absent 
   assert.ok(partial.some((row) => row.error === 'Incomplete Node report'))
 })
 
-test('CLI writes JSON and summary before its success/failure exit', (t) => {
+test('CLI writes JSON, log and summary before its success/failure exit', (t) => {
   const f = fixture(t)
   for (const fail of [false, true]) {
     if (fail) fs.rmSync(path.join(f.results, 'd1'), { recursive: true })
@@ -214,11 +214,10 @@ test('CLI writes JSON and summary before its success/failure exit', (t) => {
       { encoding: 'utf8' },
     )
     assert.equal(run.status, fail ? 1 : 0, run.stderr)
-    assert.equal(
-      JSON.parse(fs.readFileSync(output)).consistentlyFailing.length,
-      fail ? 1 : 0,
-    )
-    assert.match(fs.readFileSync(summary, 'utf8'), /Consistently failing/)
+    const report = JSON.parse(fs.readFileSync(output))
+    assert.equal(report.consistentlyFailing.length, fail ? 1 : 0)
+    assert.equal(run.stdout, `${markdown(report)}\n`)
+    assert.ok(fs.readFileSync(summary, 'utf8').endsWith(markdown(report)))
   }
 })
 

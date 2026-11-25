@@ -437,8 +437,9 @@ if (
   const report = aggregate({ results, repetitions: count, sha })
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`)
-  if (summary) fs.appendFileSync(summary, markdown(report))
-  else console.log(markdown(report))
+  const table = markdown(report)
+  console.log(table)
+  if (summary) fs.appendFileSync(summary, table)
   process.exitCode =
     report.flaky.length || report.consistentlyFailing.length ? 1 : 0
 }

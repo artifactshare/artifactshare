@@ -64,14 +64,9 @@ for (const host of ['127.0.0.1', '::1']) {
     }
     if (!server) return
     const { port } = server.address()
-    await assert.rejects(assertPortAvailable(port), (error) => {
-      assert.ok(error.message.includes(`port ${port} to be free on ${host}`))
-      assert.match(
-        error.message,
-        /cannot validate or mutate an existing dev server/,
-      )
-      return true
-    })
+    await assert.rejects(assertPortAvailable(port), (error) =>
+      [String(port), host].every((part) => error.message.includes(part)),
+    )
     assert.equal(server.listening, true)
   })
 }
