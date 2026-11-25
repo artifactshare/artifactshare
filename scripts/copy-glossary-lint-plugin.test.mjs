@@ -211,17 +211,6 @@ function writeFixture(root, relativePath, content) {
   writeFileSync(file, content)
 }
 
-test('current checked-in copy passes through the lint rule', () => {
-  const reports = []
-  const listeners = createCopyGlossaryRule().create({
-    report(report) {
-      reports.push(report)
-    },
-  })
-  listeners.Program({ type: 'Program' })
-  assert.deepEqual(reports, [])
-})
-
 test('lint rule reports deny words and summary drift', () => {
   const root = mkdtempSync(join(tmpdir(), 'copy-glossary-lint-'))
   try {

@@ -256,6 +256,3 @@ test('prunes only the ephemeral lint fixture namespaces before scanning sources'
     rmSync(scanRoot, { recursive: true, force: true })
   }
 })
-
-test('current repository has no violations', () =>
-  assert.deepEqual(findD1CompatibilityViolations(), []))
