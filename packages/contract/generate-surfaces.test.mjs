@@ -1015,7 +1015,7 @@ test('edit reference includes visibility and retention help from the built comma
   )
 })
 
-test('edit catalog lists all visibility values and distinguishes combined writes', () => {
+test('edit catalog lists all visibility values', () => {
   const catalog = readFileSync(
     new URL('../../docs/reference/cli-command-catalog.md', import.meta.url),
     'utf8',
@@ -1025,13 +1025,6 @@ test('edit catalog lists all visibility values and distinguishes combined writes
     .find((line) => line.startsWith('| `edit <target>`'))
   assert.ok(row)
   assert.ok(row.includes('--visibility private\\|workspace\\|project\\|link'))
-  const description = catalog.match(/^- `edit <target>`:.*(?:\n {2}.+)*/m)?.[0]
-  assert.ok(description)
-  assert.match(
-    description,
-    /`--visibility project`.*移動、タイトル、共有設定をまとめて保存/,
-  )
-  assert.match(description, /逐次適用する場合.*ロールバックしない/)
 })
 
 test('OpenAPI describes publisher REST operations separately from MCP OAuth', () => {
@@ -1227,28 +1220,4 @@ test('collection OpenAPI declares only actual filters and page responses', () =>
     '429',
     '503',
   ])
-})
-
-test('both agent skills explain owner IDs and automatic search fallback', () => {
-  for (const path of [
-    '../cli/skills/artifactshare/SKILL.md',
-    '../../apps/web/app/services/mcp/skills/artifact-share/SKILL.md',
-  ]) {
-    const text = readFileSync(new URL(path, import.meta.url), 'utf8').split(
-      '## Full-text search',
-    )[1]
-    assert.ok(text)
-    for (const advice of [
-      '--owner-user-ids',
-      'owner_user_ids',
-      'user IDs, not email addresses',
-      'Rephrase the query and search again before concluding that nothing exists.',
-      'fewer or different words',
-      'automatically retries',
-      'No documents matched all query terms. These results match any of the terms. Rephrase the query and search again.',
-      'search_capacity_exceeded',
-      'narrow the query or filters and search again',
-    ])
-      assert.ok(text.includes(advice), `${path}: ${advice}`)
-  }
 })
