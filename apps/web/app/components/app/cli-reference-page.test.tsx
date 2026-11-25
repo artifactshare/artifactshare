@@ -58,7 +58,7 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     expect(html).toContain(
       locale === 'en'
         ? 'Updates without --dry-run remove temporary files left by an interrupted CLI update; --dry-run leaves them untouched.'
-        : '--dry-run 以外の更新では、途中で止まった更新が残した一時ファイルを削除します。--dry-run では削除しません。',
+        : '--dry-run 以外の更新では途中で止まった更新の一時ファイルを削除しますが、--dry-run では削除しません。',
     )
   })
 
@@ -190,12 +190,12 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     expect(role.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
         ? 'Empty labels, control characters, and invalid, invisible-only, or repeated --label values fail locally with validation_failed before authentication.'
-        : '--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+        : '--label が空・制御文字を含む・不正・不可視文字のみ・重複指定のいずれかだと、認証前にローカルで validation_failed になります。',
     )
     expect(role.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
         ? 'Successful JSON includes the stored label at data.version.label, or null when omitted. data.version.number matches the Viewer version number (v{number}); older servers may omit it.'
-        : '成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。',
+        : '成功時の JSON では data.version.label に保存されたラベル（省略時は null）、data.version.number に共有ページのバージョン番号（v{number}）が返ります（古いサーバーでは省略される場合があります）。',
     )
     expect(role.replace(/<[^>]+>/g, '')).toBe(
       renderToStaticMarkup(
@@ -218,7 +218,7 @@ test.each(['en', 'ja'] as const)(
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
         ? 'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get &lt;target&gt; --json returns the current version as data.version_id. For static sites, download &lt;target&gt; --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.'
-        : 'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get &lt;target&gt; --json が現在のバージョンを data.version_id として返します。静的サイトでは download &lt;target&gt; --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
+        : 'login --preset agent で expected_version_required が返ったときは、前回成功した share / update 出力の data.version.id を --expected-version に渡して再実行してください。前回の出力がない場合は、単一 HTML / Markdown なら artifacts get &lt;target&gt; --json の data.version_id、静的サイトなら download &lt;target&gt; --json の data.version.id を取得し、現在の内容（data.content またはダウンロードしたファイル）が編集元と違っていれば変更を適用し直したうえで --expected-version に指定します。',
     )
     expect(html).toContain('--expected-version &lt;version-id&gt;')
     const shareRole = html.match(
@@ -227,12 +227,12 @@ test.each(['en', 'ja'] as const)(
     expect(shareRole.replace(/<[^>]+>/g, '')).toBe(
       locale === 'en'
         ? 'Share a local file (HTML, Markdown, PDF, or MP4 video up to 25 MiB; a .pdf must start with %PDF-, a .mp4 needs an ftyp box), folder, or static site. A share --key resend preserves visibility. If --visibility differs after normalization (at home, project compares as private), the command fails with key_visibility_mismatch before creating a version. Use edit &lt;id&gt; --visibility &lt;value&gt; --json to change it, and artifacts get &lt;id&gt; --json to check it for HTML and Markdown artifacts. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).'
-        : 'ローカルのファイル（HTML、Markdown、25 MiB までの PDF と MP4 動画。.pdf は %PDF- で始まり、.mp4 は ftyp box を持つ必要があります）、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit &lt;id&gt; --visibility &lt;value&gt; --json、HTML・Markdown の共有範囲の確認には artifacts get &lt;id&gt; --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+        : 'ローカルのファイル（HTML、Markdown、25 MiB までの PDF・MP4 動画。.pdf は先頭が %PDF-、.mp4 は ftyp box を持つ必要があります）、フォルダ、静的サイトを共有します。share --key は既存の共有範囲を変更せず、home の project 指定は private として比較します。正規化後の --visibility が現在の値と違う場合は新しいバージョンを作らず key_visibility_mismatch で失敗するため、変更には edit &lt;id&gt; --visibility &lt;value&gt; --json、HTML・Markdown の共有範囲確認には artifacts get &lt;id&gt; --json を使います。login --preset agent のプロファイルで --key を使って再公開するときは、--expected-version の指定も必要です（「失敗と復旧」を参照）。',
     )
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'
         ? 'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery).'
-        : '既存の共有リンクのまま、新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+        : '同じ共有リンクのまま新しいバージョンをアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定が必要です（「失敗と復旧」を参照）。',
     )
   },
 )
@@ -246,7 +246,7 @@ test.each(['en', 'ja'] as const)(
     expect(html).toContain(
       locale === 'en'
         ? 'N or all (owner only). Keeps the latest N versions; publisher-managed artifacts count only publisher versions and keep all versions people added. Older eligible versions are permanently deleted; all clears the limit.'
-        : 'N または all(所有者のみ)。最新の N 版を残します。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格情報で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+        : 'N または all（所有者のみ）。最新の N バージョンを残します。publisher の資格情報で作成したファイルや publisher クライアントに割り当てたファイルでは、publisher が追加したバージョンだけを数え、人が追加したバージョンはすべて残します。削除された古いバージョンは元に戻せません。all で上限を解除します。',
     )
     const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
     expect(editCard).toContain(
@@ -258,7 +258,7 @@ test.each(['en', 'ja'] as const)(
     expect(html).toContain(
       locale === 'en'
         ? 'requires the artifact to be in a project after the edit'
-        : '編集後の保存先がプロジェクトであることが必要',
+        : '編集後の保存先がプロジェクトである必要があり',
     )
   },
 )

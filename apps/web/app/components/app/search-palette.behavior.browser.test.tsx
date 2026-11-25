@@ -915,7 +915,7 @@ test('daily refusal retains keywords, shows UTC reset and suppresses retry; empt
   await page.getByRole('button', { name: /^検索(?::|$)/ }).click()
   const field = page.getByRole('combobox', { name: /^(Keywords|キーワード)$/ })
   await field.fill('alpha')
-  await expect.element(page.getByText(/本日の検索回数の上限/)).toBeVisible()
+  await expect.element(page.getByText(/本日の検索回数上限/)).toBeVisible()
   expect(document.body.textContent).toContain('2026年11月21日 00:00 UTC')
   await expect
     .element(page.getByRole('button', { name: '再読み込み', exact: true }))
@@ -925,7 +925,7 @@ test('daily refusal retains keywords, shows UTC reset and suppresses retry; empt
   expect(router.state.location.pathname).toBe('/')
   await field.fill('')
   await expect
-    .element(page.getByText(/本日の検索回数の上限/))
+    .element(page.getByText(/本日の検索回数上限/))
     .not.toBeInTheDocument()
 })
 

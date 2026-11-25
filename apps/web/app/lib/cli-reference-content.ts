@@ -165,71 +165,76 @@ const commands: CliReferenceCommand[] = CLI_REFERENCE_PUBLIC_COMMANDS.map(
 
 const jaRoleByPath: Record<string, string> = {
   append:
-    'ローカルの UTF-8 ファイルを既存の単一 HTML / Markdown の末尾へ追記します。',
-  artifacts: '成果物の一覧表示、読み取り、削除を行います。',
-  'artifacts delete': 'delete の別名です。成果物を完全に削除します。',
+    'ローカルの UTF-8 ファイルを、既存の単一 HTML または Markdown の末尾へ追記します。',
+  artifacts: 'ファイルの一覧表示、読み取り、削除を行います。',
+  'artifacts delete': 'delete の別名です。ファイルを完全に削除します。',
   'artifacts get':
-    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読みます。過去の版や続きの読み取りでもタイトルと共有範囲は現在の情報です。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。静的サイトは本文なしのメタデータを返し、--include、--version、--offset は使えません。新しい get はメタデータ応答を明示的に要求します。旧 CLI には従来どおり unsupported-kind を返すため、open は引き続きダウンロードを案内します。人または agent の資格情報での get は retain_versions、version_count、total_size_bytes も返します。版数と合計サイズの対象は、呼び出し元が履歴で閲覧できる版です。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。publisher の資格情報には version_count と total_size_bytes を返しません。',
+    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読み取ります。過去のバージョンや続きを読み取るときも、タイトルと共有範囲には現在の情報が返ります。過去の公開済みのバージョンを読むには --version <version-id> を指定し、本文が途中で切れたときは同じ --version と --offset <next_offset> を渡して続きを取得します（version_id と format は返された本文のものです）。削除済みのバージョンを指定すると version_removed が返ります。静的サイトは本文を含まないメタデータだけを返し、--include・--version・--offset は使えません。現行の get はメタデータ応答を明示的に要求し、旧 CLI には従来どおり unsupported-kind を返すため、open では引き続きダウンロードを案内します。通常ユーザーまたは agent の資格情報では retain_versions・version_count・total_size_bytes も返ります。バージョン数と合計サイズの集計対象は呼び出し元が履歴で閲覧できるバージョンに限られ、静的サイトでは所有者を含め公開日時のある公開済みのバージョンだけを対象にします。publisher の資格情報には version_count と total_size_bytes を返しません。',
   'artifacts versions':
-    'ファイルと静的サイトの保存済みバージョンを新しい順に50件ずつ表示します。各行は version_id、created_at、size_bytes、is_current を含みます。has_more が true なら next_cursor を --cursor に渡します。retain_versions の null は無制限です。version_count と total_size_bytes は、呼び出し元が履歴で閲覧できる版を集計します。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。各版のサイズには継承ファイルも含めます。再利用ファイルは版ごとに数える論理バイト数で、実際の保存容量や請求額ではありません。publisher が作成した静的サイトの版では creator が null の場合があります。管理対象の成果物では人が作成した版と現在の版を保護するため、保持設定を超える場合があります。publisher の資格情報では履歴を読めず、version_count と total_size_bytes も取得できません。閲覧不可は target_not_found、不正なカーソルは --cursor を外して再取得します。',
+    '単一ファイルと静的サイトの保存済みのバージョンを新しい順に 50 件ずつ表示します。各行には version_id・created_at・size_bytes・is_current が含まれ、has_more が true のときは next_cursor を --cursor に渡して続きを取得します。retain_versions が null のときは上限なしです。version_count と total_size_bytes は呼び出し元が履歴で閲覧できるバージョンを集計し、静的サイトでは所有者を含め公開日時のある公開済みのバージョンだけを対象にします。各バージョンのサイズには前のバージョンから引き継いだファイルも含まれますが、再利用ファイルをバージョンごとに数える論理バイト数のため、実際の保存容量や請求額とは異なります。publisher が作った静的サイトのバージョンでは creator が null になることがあります。管理対象のファイルでは人が作成したバージョンと現在のバージョンを保護するため、バージョン数が保持設定を超える場合があります。publisher の資格情報では履歴・version_count・total_size_bytes を取得できません。閲覧できない対象は target_not_found になり、不正なカーソルで失敗したときは --cursor を外して取り直します。',
   'artifacts list':
-    'project または home を含む、アクセスできる成果物を一覧表示します。--q で本文とタイトル、--query でタイトルだけを検索します（絞り込み、ページ送り、0 件のときは「失敗と復旧」を参照）。検索フィルターを使わない従来の一覧と、人の通常の資格情報による検索では、各行の retain_versions、version_count、total_size_bytes で保持設定・版数・論理バイト数を確認できます。制限付き agent や bot の検索結果には、この3項目を含めません。版数と合計サイズの対象は、呼び出し元が履歴で閲覧できる版です。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。publisher の資格情報では一覧を取得できません。ページを取得して手元で total_size_bytes を比較します。',
-  changelog: 'CLI のリリースノートを表示します。',
-  comments: '成果物のコメントを扱います。',
-  'comments delete': 'コメントメッセージを削除します。',
-  'comments edit': 'コメントメッセージを編集します。',
+    'プロジェクトや home を含め、アクセスできるファイルを一覧表示します。--q は本文とタイトル、--query はタイトルだけを対象に検索します（絞り込み・ページ送り・0 件時の対処は「失敗と復旧」を参照）。検索フィルターを使わない通常の一覧と、通常ユーザーの資格情報による検索では、各行の retain_versions・version_count・total_size_bytes で保持設定・バージョン数・論理バイト数を確認できます。制限付き agent や bot の検索結果にはこの 3 項目を含めません。バージョン数と合計サイズの集計対象は呼び出し元が履歴で閲覧できるバージョンに限られ、静的サイトでは所有者を含め公開日時のある公開済みのバージョンだけを対象にします。publisher の資格情報では一覧を取得できません。容量を比べたいときはページを取得して手元で total_size_bytes を比較します。',
+  changelog: 'CLI の変更履歴（リリースノート）を表示します。',
+  comments: 'ファイルに付いたコメントを操作します。',
+  'comments delete': 'コメントを削除します。',
+  'comments edit': 'コメントの本文を編集します。',
   'comments list':
-    '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。本文範囲のアンカーは target_path にページの場所を返します。複数ファイルのサイトでは #/ または #!/ で始まるハッシュルートも含みます。PDF のページへのコメントは page_number と、投稿した版の version_id・version_number を返します。',
+    '各スレッドの最初のコメントと最新 3 件の返信を表示します。それ以前の返信は --thread-id と --before を使って最大 50 件ずつ取得できます。本文への引用コメントでは target_path にページの場所が返り、複数ファイルのサイトでは #/ や #!/ で始まるハッシュルートも含まれます。PDF ページへのコメントでは page_number に加え、投稿時のバージョンの version_id と version_number が返ります。',
   'comments post':
-    'コメントや返信を投稿します。引用位置は投稿時には確認せず、その版を共有ページで開いたときに完全一致で確認します。',
+    'コメントや返信を投稿します。引用箇所の一致確認は投稿時には行わず、そのバージョンを共有ページで開いたときに完全一致で照合します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
   'comments resolve': 'コメントスレッドを解決済みにします。',
-  config: 'ローカル CLI 設定を確認、変更します。',
-  'config get': 'user、repository、effective のスコープで設定を読み取ります。',
+  config: 'ローカルの CLI 設定を確認・変更します。',
+  'config get':
+    'user・repository・effective の各スコープで設定を読み取ります。',
   'config set': 'user または repository のスコープに設定を保存します。',
-  'config unset': 'スコープに保存した設定を削除します。',
-  delete: '成果物を完全に削除します。',
-  doctor: 'トークンの保存先、認証、設定、接続状態を確認します。',
-  download: '成果物をローカルパスへダウンロードします。',
-  edit: '成果物のタイトル、visibility、共有先、投稿先を編集します。',
-  init: 'agent を検出し、skill をインストールして初期設定を始めます。',
+  'config unset': '指定したスコープに保存されている設定を削除します。',
+  delete: 'ファイルを完全に削除します。',
+  doctor: 'トークンの保存先、認証、設定、接続状態を診断します。',
+  download: 'ファイルをローカルのパスへダウンロードします。',
+  edit: 'ファイルのタイトル、共有範囲（visibility）、共有先、投稿先を変更します。',
+  init: '利用中のエージェントを検出し、スキルをインストールして初期設定を進めます。',
   login:
-    '通常権限または1プロジェクトに制限した agent 権限で CLI を認証します。',
+    '通常権限、または 1 つのプロジェクトに絞った agent 権限で CLI にログインします。',
   logout: '保存済みの認証情報を失効させて削除します。',
-  move: '成果物を project または home へ移動します。',
+  move: 'ファイルをプロジェクトまたは home へ移動します。',
   preview:
-    'ローカルファイルを共有ページと同じ見た目で表示し、コメントできます。',
+    'ローカルのファイルを共有ページと同じ見た目で表示し、その場でコメントできます。',
   'preview start':
-    'ローカルの .md / .html を配信します。preview <file> として起動します。',
+    'ローカルの .md / .html を配信します。通常は preview <file> として起動します。',
   'preview next': '未処理のコメントバッチをエージェントへ返します。',
-  'preview done': '標準入力の JSON で結果を一括報告します（世代単位で冪等）。',
-  'preview reply': 'スレッドへ返信を追記します。状態は変わりません。',
+  'preview done':
+    '標準入力の JSON で対応結果を一括報告します（世代単位で冪等）。',
+  'preview reply':
+    'スレッドへ返信を追記します（スレッドの状態は変わりません）。',
   'preview history':
-    '送信したバッチごとに、コメントと、エージェントが報告する前後の文書をローカルの履歴から読みます。',
-  'preview stop': 'プレビューを終了します。コメントは保存されたままです。',
-  open: 'Artifact Share URL を読み取り、必要なら CLI skill を準備します。',
-  profiles: '名前付きの認証 profile を管理します。',
-  'profiles delete': '名前付き profile を削除します。',
+    '送信したバッチごとに、コメントとエージェントが報告する前後の文書をローカル履歴から読み取ります。',
+  'preview stop':
+    'プレビューを終了します。コメントはローカルに保存されたまま残ります。',
+  open: 'Artifact Share の URL を読み取り、必要なら CLI スキルを準備します。',
+  profiles: '名前付きの認証プロファイルを管理します。',
+  'profiles delete': '名前付きのプロファイルを削除します。',
   'profiles import-token':
-    'CI または手動発行 token を profile に取り込みます。',
-  'profiles list': '保存済み profile を一覧表示します。',
-  'profiles use': '使用する active profile を選択します。',
-  projects: 'project を管理します。',
-  'projects create': 'project を作成します。',
-  'projects edit': 'project の詳細、audience、アーカイブ状態を編集します。',
+    'CI 用または手動発行のトークンをプロファイルへ取り込みます。',
+  'profiles list': '保存済みのプロファイルを一覧表示します。',
+  'profiles use': '使用するプロファイルを切り替えます。',
+  projects: 'プロジェクトを管理します。',
+  'projects create': '新しいプロジェクトを作成します。',
+  'projects edit': 'プロジェクトの詳細、共有範囲、アーカイブ状態を変更します。',
   'projects list': '現在投稿できる有効なプロジェクトを一覧表示します。',
-  resolve: 'URL、ID、その他の Artifact Share の値を解決します。',
+  resolve: 'URL や ID などから対象の Artifact Share 情報を解決します。',
   share:
-    'ローカルのファイル（HTML、Markdown、25 MiB までの PDF と MP4 動画。.pdf は %PDF- で始まり、.mp4 は ftyp box を持つ必要があります）、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit <id> --visibility <value> --json、HTML・Markdown の共有範囲の確認には artifacts get <id> --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
-  skills: 'インストール済みの Artifact Share agent skill を管理します。',
-  'skills ensure': '検出した tool に skill があることを確認します。',
-  'skills install': '選択した tool に skill をインストールします。',
-  'skills list': 'skill がインストールされた tool を一覧表示します。',
-  'skills remove': 'tool からインストール済み skill を削除します。',
-  'skills update': 'インストール済み skill を更新します。',
+    'ローカルのファイル（HTML、Markdown、25 MiB までの PDF・MP4 動画。.pdf は先頭が %PDF-、.mp4 は ftyp box を持つ必要があります）、フォルダ、静的サイトを共有します。share --key は既存の共有範囲を変更せず、home の project 指定は private として比較します。正規化後の --visibility が現在の値と違う場合は新しいバージョンを作らず key_visibility_mismatch で失敗するため、変更には edit <id> --visibility <value> --json、HTML・Markdown の共有範囲確認には artifacts get <id> --json を使います。login --preset agent のプロファイルで --key を使って再公開するときは、--expected-version の指定も必要です（「失敗と復旧」を参照）。',
+  skills: 'インストール済みの Artifact Share エージェントスキルを管理します。',
+  'skills ensure':
+    '検出したツールにスキルが入っていることを確認し、必要なら導入・更新します。',
+  'skills install': '指定したツールにスキルをインストールします。',
+  'skills list': 'スキルが入っているツールを一覧表示します。',
+  'skills remove': '指定したツールからインストール済みのスキルを削除します。',
+  'skills update': 'インストール済みのスキルを更新します。',
   update:
-    '既存の共有リンクのまま、新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
-  whoami: 'active account と workspace を表示します。',
+    '同じ共有リンクのまま新しいバージョンをアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定が必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます（NFC 正規化と前後の Unicode 空白除去のあと 1〜80 コードポイント。内部の空白と大文字小文字は保持し、文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可）。省略するとラベルなしで作成され、あとから変更はできません。成功時の JSON では data.version.label に保存されたラベル（省略時は null）、data.version.number に共有ページのバージョン番号（v{number}）が返ります（古いサーバーでは省略される場合があります）。履歴は artifacts get --include versions で取得できます。--label が空・制御文字を含む・不正・不可視文字のみ・重複指定のいずれかだと、認証前にローカルで validation_failed になります。',
+  whoami: '現在使っているアカウントとワークスペースを表示します。',
 }
 
 const EN: CliReferenceContent = {
@@ -323,26 +328,26 @@ const JA: CliReferenceContent = {
   optionHelp: {
     'artifacts versions': {
       '--cursor':
-        '前の履歴ページの next_cursor を指定します。最初から取得する場合は省略します。',
+        '前の履歴ページで返った next_cursor を指定します。最初から取得する場合は省略します。',
     },
     'artifacts get': {
       '--version':
-        '読み取る公開済みバージョンの ID。省略すると現在の本文を返します。',
+        '読み取る公開済みのバージョンの ID。省略すると現在の本文を返します。',
     },
     share: {
       '--expected-version':
-        '--key で更新する際の現在のバージョン ID。番号ではなく、前回の share/update の data.version.id を指定します。artifacts get では data.version_id として返されます。',
+        '--key で更新するときの現在のバージョン ID。バージョン番号ではなく、前回の share / update で返った data.version.id を指定します（artifacts get では data.version_id）。',
     },
     update: {
       '--expected-version':
-        '更新対象の現在のバージョン ID。番号ではなく、前回の share/update の data.version.id を指定します。artifacts get では data.version_id として返されます。agent プリセットでのログインでは必須です。',
+        '更新対象の現在のバージョン ID。バージョン番号ではなく、前回の share / update で返った data.version.id を指定します（artifacts get では data.version_id）。agent プリセットでログインしているときは必須です。',
     },
     download: {
-      '--force': '既存の出力を置換し、復旧用のバックアップを保持します。',
+      '--force': '既存の出力を置き換え、復旧用のバックアップを残します。',
     },
     edit: {
       '--retain-versions':
-        'N または all(所有者のみ)。最新の N 版を残します。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格情報で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+        'N または all（所有者のみ）。最新の N バージョンを残します。publisher の資格情報で作成したファイルや publisher クライアントに割り当てたファイルでは、publisher が追加したバージョンだけを数え、人が追加したバージョンはすべて残します。削除された古いバージョンは元に戻せません。all で上限を解除します。',
     },
   },
   title: 'Artifact Share CLI リファレンス',
@@ -353,46 +358,46 @@ const JA: CliReferenceContent = {
     introduction: {
       title: '導入と認証',
       body: [
-        `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。`,
-        `Claude Code のユーザー単位のスキルは CLAUDE_CONFIG_DIR の指定先の skills、未設定なら ~/.claude/skills に入ります。相対パスは CLI の作業ディレクトリを基準に解決し、~ は展開しません。空文字や空白だけのときは、自動では書き込みません。CLAUDE_CONFIG_DIR に空でないパスを設定するか、変数を解除してください。skills list と doctor で利用不可の理由を確認できます。スキルのフォルダーを共有するディレクトリリンクは、リンク先ごとに一度だけ処理し、aliases と resolved_folder_path を表示します。同梱パス、所有権記録、更新途中の記録、CLI の予約パスに含まれないユーザー追加リンクは、たどらずに無視し、user_links に表示します。所有権記録や管理対象の旧ルールがない未管理フォルダーは、SKILL.md や references がリンクでも、update と remove のどちらでも skipped_unmanaged として残します。list と doctor もリンク先を読まずに未管理と表示します。管理対象のフォルダーや強制インストールでは、保護対象パスのリンクは --force でも拒否します。表示されたリンクを通常のファイルやディレクトリに置き換えるか、削除してください。編集済みファイルを置換するには skills update --force を使います。--dry-run 以外の更新では、途中で止まった更新が残した一時ファイルを削除します。--dry-run では削除しません。新しい CLI がインストールした版には update_available: false と理由を hint に表示し、更新を勧めません。skills install と skills update はそのフォルダーを変更せず、--force を明示した場合だけダウングレードします。`,
-        `login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効させます。`,
-        `publisher は API 専用です。版の追加で返す shareUrl は、HTML・Markdown・静的サイトのいずれも共有範囲によらずアプリの /a/:id 形式です。開くときは通常のアクセス確認とホストへの振り分けを行います。人による更新の URL は従来どおりです。publisher による版の追加は定期更新として扱い、一覧の順序やフィード、未読表示を変えません。履歴で定期更新の印を確認できます。API の updated_at は実際の更新時刻です。publisher の資格情報では、device_name を指定し、ブラウザで新規作成か既存のクライアントを使い続けるかを選びます。publisher の資格情報では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格情報では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格情報では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格情報では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格情報では、個別アセットの取得はできません。publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格情報では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、対象となる古い版の削除は取り消せません。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格情報で追加した版だけを数えます。publisher の資格情報で追加した最新 N 件の版と現在の版を残し、人が追加した版はすべて残します。下書きは数えません。このルールは所有者が unrestricted 資格情報で設定するときも同じです。それ以外のファイルでは、これまでどおりすべての公開版を数えます。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格情報は、一覧、解決、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
+        `Node.js 22.19 以降が必要です。まず ${CLI_REFERENCE_EXAMPLES.init} を実行してブラウザでログインします。CI 環境では、代わりに profiles import-token でトークンを取り込んで使います。`,
+        `Claude Code のユーザー向けスキルは、CLAUDE_CONFIG_DIR が設定されていればその配下の skills、未設定なら ~/.claude/skills に配置されます。相対パスは CLI の作業ディレクトリを基準に解決され、~ は展開しません。空文字や空白だけのときは自動書き込みを行わないため、空でないパスを設定するか環境変数を解除してください（利用できない理由は skills list や doctor で確認できます）。スキルフォルダを共有するディレクトリリンクはリンク先ごとに一度だけ処理し、aliases と resolved_folder_path を表示します。同梱パス・所有権記録・更新途中の記録・CLI の予約パスに含まれないユーザー追加リンクはたどらずに無視し、user_links に表示します。所有権記録や管理対象の旧ルールがない未管理フォルダは、SKILL.md や references がリンクであっても update / remove の双方で skipped_unmanaged として残し、list / doctor でもリンク先を読まずに未管理と表示します。管理対象のフォルダや強制インストールでは、保護対象パスのリンクは --force を付けても拒否されるため、リンクを通常のファイルやディレクトリへ置き換えるか削除してください。手元で編集したファイルを上書きするには skills update --force を使います。--dry-run 以外の更新では途中で止まった更新の一時ファイルを削除しますが、--dry-run では削除しません。新しい CLI が入れたバージョンには update_available: false と理由を hint に表示して更新を勧めず、skills install / skills update は --force を明示したときだけダウングレードします。`,
+        `login --preset agent を使うと、AI エージェントの権限を、選んだ 1 つのプロジェクトだけに絞れます。新しいプロファイルの既定は unrestricted で、既存プロファイルは前回の preset を引き継ぎます。資格情報は --profile で分けられ、ブラウザでログインした CLI セッションは logout、API トークンは「設定」→「トークン」から失効できます。`,
+        `publisher は API 専用の資格情報です。バージョンの追加で返る shareUrl は HTML・Markdown・静的サイトのいずれも共有範囲によらず /a/:id 形式になり、開くときは通常のアクセス確認とホスト振り分けが動きます（人による更新の URL は従来どおりです）。publisher が追加したバージョンは定期更新として扱われ、一覧の並び順・フィード・未読表示は変わりません。履歴には定期更新の印が付き、API の updated_at には実際の更新時刻が入ります。認証時は device_name を指定し、ブラウザで新規クライアントを作るか既存クライアントを使い続けるかを選びます（同名での新規作成はできないため、別の名前でやり直してください）。この資格情報で扱えるのは、ホームに自分だけの公開範囲で作ったファイル・静的サイトと、作成または割り当て済みの対象に限られます。単一ファイルの更新には expected_version、静的サイトの差分更新には base_version と delete_path を使い、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します（個別アセットの取得はできません）。内容の取得時は共有範囲も返り、静的サイトではメタデータのみ返ります。また、削除と POST/PATCH による retain_versions（正の整数または null）の変更が可能で、上限を超えた古いバージョンの削除は取り消せません。publisher で作成・割り当てされたファイルでは、以前のクライアント分を含め publisher が追加したバージョンだけを数え、最新 N バージョンと現在のバージョン、さらに人が追加したすべてのバージョンを残します（下書きは数えません。所有者が unrestricted 資格情報で設定するときも同じ規則で、それ以外のファイルは従来どおり全公開版を数えます）。所有者は unrestricted 資格情報かブラウザセッションから POST /api/cli/artifacts/:id/adopt に whoami/doctor で確認した publisher_client_id を送り、既存ファイルを割り当てられます（以前のクライアントのアクセスは置き換わり、監査ログに記録されます）。なお、publisher の資格情報では一覧・解決・コメント・共有範囲変更・移動・プロジェクト操作・追記・上書き投稿は利用できず、CLI での publisher ログインや投稿・ダウンロードにも対応していません。クライアントの権限範囲は doctor で確認できます。`,
       ],
     },
     basics: {
       title: '基本操作',
-      body: '対象には成果物 ID、共有 URL、artifactshareusercontent.com のバージョン付き実行 URL（認証済みは a-、リンク閲覧は l-）を指定できます。旧配信 URL は ID の解決だけに使います。ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。REST API の POST /api/shareables/:id/versions?artifact_kind=static_site では、base_version=v1 と繰り返しの delete_path（例: delete_path=data/old.parquet）を指定できます。送信したファイルを差し替え、それ以外のファイルは現在の版から引き継ぎます。基準は現在の公開バージョンに限り、古い場合は 409 version_conflict を返します。base_version は、エージェントの更新で必要な expected_version の代わりにもなります。expected_version も指定する場合は、base_version と同じ値にしてください。削除には基準の指定が必要で、同じパスの送信と削除はできません。削除だけの更新でも index.html または index.md を残してください。バージョンのサイズはファイル一覧の合計、保存容量は重複を除いた実体の合計です。CLI update に継承用のオプションはありません。ブラウザの共有ページは URL のフラグメント（#）を HTML・Markdown・静的サイトに渡し、フレーム内の変更を URL に反映します。「リンクをコピー」にも含まれるため、絞り込み状態や見出しを共有できます。静的サイトでは最初に開くページだけが共有 URL のフラグメントを更新し、サブページでは変更しません。CLI のローカルプレビューは対象外です。',
+      body: '操作対象にはファイル ID、共有リンク、artifactshareusercontent.com のバージョン付き実行 URL（認証済みは a-、リンク閲覧は l-）を指定できます。旧配信 URL は ID の解決にのみ使えます。コマンドの役割は、新規共有が share、同じ URL のままの更新が update、読み取りが open または artifacts get、ローカル保存が download、レビューが comments、整理が projects、アカウントと設定が profiles と config、エージェントの準備が skills です。REST API の POST /api/shareables/:id/versions?artifact_kind=static_site では、base_version=v1 と繰り返しの delete_path（例: delete_path=data/old.parquet）を指定して、送信したファイルだけを更新し残りを現在のバージョンから引き継げます。基準にできるのは現在の公開版に限られ、古い場合は 409 version_conflict が返ります。base_version はエージェント更新時の expected_version の代わりにもなります（両方指定する場合は同じ値にしてください）。削除には基準の指定が必要で、同じパスの送信と削除は同時に行えません。削除だけの更新でも index.html または index.md は残してください。バージョンのサイズはファイル一覧の合計、保存容量は重複を除いた実体の合計です。CLI の update には継承用のオプションはありません。また、ブラウザの共有ページは URL のフラグメント（#）を HTML・Markdown・静的サイトへ渡し、フレーム内の変化を共有ページの URL へ反映します。「リンクをコピー」にも含まれるため、絞り込み状態や見出し位置をそのまま共有できます。静的サイトでは最初に開くページだけがフラグメントを更新し、サブページでは変わりません。CLI のローカルプレビューは対象外です。',
     },
     commands: {
       title: 'コマンドリファレンス',
-      body: '以下のコマンド一覧は、公開 CLI の help から生成しています。構文と使えるオプションも、生成した snapshot から表示しています。',
+      body: '以下のコマンド一覧は、公開 CLI の help から自動生成しています。構文と使えるオプションも、生成済みのスナップショットから表示しています。',
     },
     'json-exit': {
       title: 'JSON と終了コード',
-      body: '--json、pipe、その他の非対話実行では、成功を schema_version: 2、ok: true、command、data の共通 envelope として stdout に出します。失敗は schema_version: 2、ok: false、command、error として stderr に出します。ツールを絞らない skills update/remove の一部が失敗した場合は、stdout の ok: true と data.targets を保ち、失敗行に action: failed、code: skill_update_conflict、hint を返して終了コード 1 になります。終了コード 0 は成功、1 はコマンドの失敗、130 はキャンセルです。auth_required には verification URL と user code が含まれるので、承認後に同じコマンドを再実行します。',
+      body: '--json、パイプ、その他の非対話実行では、成功時に schema_version: 2、ok: true、command、data を含む共通形式で stdout へ出力し、失敗時は schema_version: 2、ok: false、command、error を stderr へ出力します。ツールを絞らずに実行した skills update / remove で一部だけ失敗した場合は、stdout の ok: true と data.targets を保ったまま失敗行に action: failed、code: skill_update_conflict、hint を返し、終了コード 1 で終わります。終了コードは 0 が成功、1 がコマンドの失敗、130 がキャンセルです。auth_required が返った場合は含まれている verification URL と user code で承認し、同じコマンドを再実行してください。',
     },
     destinations: {
-      title: 'project、home、audience、設定',
-      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus の管理者権限、閲覧権限、成果物への個別共有だけでは投稿できません。人間のエージェントは承認した1つの投稿先に制限されます。workspace の bot は管理者が承認した複数の投稿先を、資格情報の再取り込みなしで選べます。非公開プロジェクト向けのレポートは --visibility project を明示してください。どちらも非公開プロジェクトでは contributor/manager の権限が必要です。publisher はプロジェクトを選択できません。edit は --visibility private|workspace|project|link を指定できます。project の共有範囲には、編集後の保存先がプロジェクトであることが必要です。必要なら同じコマンドに --project-id <id> を指定します。home での明示的な --visibility project（--home との併用を含む）は変更せずに拒否します。プロジェクトの成果物を home に移す場合、project を明示指定していなければ private になります。project への投稿はその project の audience に届きます。投稿先を指定しない share は home に投稿します。home_audience は目的別に使い分けます。個人の安全な既定値には user、一緒に使う全員が合意した方針には repository、一回限りの指定には明示 --visibility を使い、config get home_audience --scope effective --json で実効値を確認します。正本の設定は home_audience で、private は自分だけ、workspace は社内全員です。repository 設定は .artifactshare/config.json、user 設定は user config directory に保存します。home の解決順は repository の home_audience、repository の default_artifact_visibility、user の home_audience、user の default_artifact_visibility、アカウントに応じた製品既定値です。home_audience を設定していないときは、組織の共有範囲を使えるアカウントなら workspace、それ以外のアカウントなら private になります。明示指定や設定による workspace は利用できなければ従来どおりエラーになり、link へ自動変更しません。リンク共有には --visibility link を明示します。config は通信せず、source が product_default の workspace は未確定の方針を表します。share とプレビューでアカウントを確認して確定します。whoami と doctor は workspace.visibility_available を返します。この項目を返さない旧サーバーでは workspace と従来のエラー動作を維持します。private への変更時は共有結果に visibility_source: product_default_private と visibility_hint が含まれます。default_artifact_visibility は、互換性のために残している別名です。default_project_visibility は projects create 用の独立した既定値です。--grant-email は project の個別共有先を追加するだけで、project の visibility を暗黙に変更しません。',
+      title: 'project、home、共有範囲、設定',
+      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、Team プランの有効なオーナー・管理者、または確認済みメールアドレスで登録された contributor / manager です。Free / Plus の管理者権限、閲覧権限、ファイル単位の個別共有だけでは投稿できません。人間のエージェントは本人が承認した 1 つの投稿先に制限され、ワークスペースの bot は管理者が承認した複数の投稿先を資格情報の再取り込みなしで選べます。非公開プロジェクト向けのレポートでは --visibility project を明示してください（いずれも非公開プロジェクトでは contributor / manager の権限が必要です）。publisher はプロジェクトを選べません。edit では --visibility private|workspace|project|link を指定できますが、project を指定するには編集後の保存先がプロジェクトである必要があり、必要なら同じコマンドで --project-id <id> を指定します。home に対する明示的な --visibility project（--home との併用を含む）は変更せずに拒否されます。プロジェクトのファイルを home に移す場合、project を明示していなければ private になります。プロジェクトへ投稿したファイルはそのプロジェクトの共有範囲に届き、投稿先を省略した share は home へ投稿されます。home_audience は目的に応じて使い分けます。個人の安全な既定値には user、参加者全員で合意した方針には repository、1 回だけの指定には明示の --visibility を使い、実効値は config get home_audience --scope effective --json で確認します。基準となる設定キーは home_audience（private は自分だけ、workspace は社内全員）で、repository 設定は .artifactshare/config.json、user 設定は user config ディレクトリに保存されます。home の解決順は repository の home_audience → repository の default_artifact_visibility → user の home_audience → user の default_artifact_visibility → アカウントに応じた製品既定値です。未設定時は、ワークスペース共有を使えるアカウントなら workspace、それ以外は private になります。明示指定や設定で workspace を選んだ場合は、利用できなければエラーになり、自動で link へは切り替わりません（リンク共有には --visibility link を明示してください）。config はオフラインで動くため、source が product_default の workspace は未確定の方針を表し、share とプレビュー時にアカウントを確認して確定します。whoami と doctor は workspace.visibility_available を返します（この項目を返さない旧サーバーでは workspace と従来のエラー動作を維持します）。private へ切り替わったときの共有結果には visibility_source: product_default_private と visibility_hint が含まれます。default_artifact_visibility は互換性のための別名、default_project_visibility は projects create 用の、ほかの設定とは別の既定値です。--grant-email はプロジェクトの個別共有先を足すだけで、プロジェクトの visibility 自体は変えません。',
     },
     recovery: {
       title: '失敗と復旧',
       body: [
-        'artifacts list --q は本文とタイトル、--query はタイトルだけを検索します。両方の指定や、--query と所有者・期間の併用は validation_failed です。--owner-user-ids にメールアドレスではなくユーザー ID を繰り返し指定でき（MCP は owner_user_ids 配列）、--project-id または --home で場所を絞れます。期間は --date-field updated|viewed と --days 7|30|90、または ISO 形式の --from/--to を指定します。日付だけの上限はその UTC 日を含みます。API の空 q は一覧検索、CLI の --q は空文字不可です。',
-        '検索は抜粋を返し、正規化したタイトルが同じ文書をまとめます。group_size は検索全体で一致した閲覧可能な文書数、total はグループ総数です。上限は 1000、eq は正確な件数、gte は下限です。--cursor では同じ条件を繰り返し、条件や資格情報を変えたら cursor なしでやり直してください。制限付きエージェントとボットは発見可能かつ資格情報で読めるプロジェクト内だけを検索し、版の集計は返しません。publisher・bridge・bootstrap は一覧取得・検索できません。',
-        '0 件でも存在しないと結論づけず、言い換えて再検索してください。検索が完了して 0 件だった場合は成功として search_hint: "Rephrase the query and search again before concluding that nothing exists." を返します。語を減らすか別の語で再検索します。正規化後の語が 2 つ以上あり、すべての語に一致する結果がなければ、いずれかの語に一致する検索へ自動で切り替わります。追加のフラグや OR 構文は不要です。その場合の search_hint は "No documents matched all query terms. These results match any of the terms. Rephrase the query and search again." です。',
-        'HTTP 429 の search_daily_limit_exceeded は1日の検索回数の上限です。全文検索は全クライアントで利用者1人につき UTC の1日あたり1,000回を共有します。error.details.retry_at（UTC）までお待ちください。retry_after_seconds は Retry-After と同じ待ち時間です。タイトルだけの一覧は対象外です。',
-        'HTTP 503 の search_capacity_exceeded は検索容量の上限を超えたエラーです。検索語や条件を絞って再検索してください。このエラーは検索が成功して 0 件だったことを意味しません。CLI では service_error として出力され、details.api_code が search_capacity_exceeded になります。MCP では search_capacity_exceeded のツールエラーを返します。',
+        'artifacts list --q は本文とタイトル、--query はタイトルだけを検索します。両方の同時指定や、--query と所有者・期間フィルターの併用は validation_failed になります。--owner-user-ids にはメールアドレスではなくユーザー ID を繰り返し指定でき（MCP では owner_user_ids 配列）、--project-id または --home で場所を絞れます。期間は --date-field updated|viewed と --days 7|30|90、または ISO 形式の --from/--to で指定します（日付だけの上限はその UTC 日を含みます）。API では空の q で一覧検索になりますが、CLI の --q は空文字を指定できません。',
+        '検索は抜粋を返し、正規化したタイトルが同じ文書を 1 つにまとめます。group_size は一致した閲覧可能な文書数、total はグループ総数（上限 1000、eq は正確な件数、gte は下限）です。--cursor で続きを取得するときは同じ条件を繰り返し、条件や資格情報を変えたら cursor なしでやり直してください。制限付きエージェントとボットは、発見可能かつ資格情報で読めるプロジェクト内だけを検索し、バージョンの集計は返しません。publisher・bridge・bootstrap は一覧取得・検索とも利用できません。',
+        '0 件でも存在しないと決めつけず、言い換えて再検索してください。正常に完了して 0 件だった場合は成功扱いとなり、search_hint: "Rephrase the query and search again before concluding that nothing exists." が返ります。語を減らすか別の語に変えて再検索してください。正規化後の語が 2 つ以上あり、すべての語に一致する文書がなければ、いずれかの語に一致する検索へ自動で切り替わります（追加フラグや OR 構文は不要です）。このときの search_hint は "No documents matched all query terms. These results match any of the terms. Rephrase the query and search again." です。',
+        'HTTP 429 の search_daily_limit_exceeded は 1 日の検索回数上限に達したエラーです。全文検索は全クライアント共通で利用者 1 人につき UTC の 1 日あたり 1,000 回までです。error.details.retry_at（UTC）まで待ってから再実行してください（retry_after_seconds は Retry-After と同じ待ち時間です）。タイトルだけの一覧取得は回数に含まれません。',
+        'HTTP 503 の search_capacity_exceeded は検索容量の上限を超えたエラーです。検索語や条件を絞って再検索してください（検索が成功して 0 件だったわけではありません）。CLI では service_error（details.api_code が search_capacity_exceeded）、MCP では search_capacity_exceeded のツールエラーとして返ります。',
 
-        'download の ID は ^[a-z0-9]{10}$ に限定し、一覧と index の不正な ID や重複は書き込み前に拒否します。出力ルートの親がリンクでも使用でき、リンク先のディレクトリの同一性を再確認します。ルート、index、一覧に含まれる成果物ツリーのリンクは --force でも拒否します。事前検査では変更のない成果物を含む全対象と index を確認し、無関係な内容は走査しません。通信エラーやマニフェストのパス・内容・IDの不備は成果物ごとの失敗として記録しますが、書き込み境界の違反を検出したら、後続の成果物と最終 index の公開を中断します。置換前のデータと index は成功後も保持し、data.backup_paths と人向け出力で案内します。復旧に失敗した場合もエラーに保存先を示します。内容を確認してから手動で削除してください。',
-        '設定保存時の init は、設定パスのリンクや差し替えを拒否します。Node のパスベース操作では、検査と操作の間の任意の同時変更まで原子的に防ぐ保証はありません。init は未知の設定キーを保持します。Git worktree と submodule でも設定は保存しますが、.git ファイル、リンク、.git の中の gitdir や commondir のファイル、安全に更新できない exclude は git_exclude_warning で手動追加する行を案内します。',
-        'Windows の短い名前など、別の綴りで指定したファイルは、保存されている本来の名前から種類と content type を決めます。列挙後に消えたファイルは changed、途中に通常のファイルを含む相対パス（例: file.txt/x）は not_found になります。share・append・update の相対パスは物理的な現在のディレクトリ内に限定され、途中のリンクも拒否されます。絶対パスの親ディレクトリは信頼しますが、選択対象とその配下のリンクは拒否します。親ディレクトリ参照（..）を含むパスは使えません。直接の絶対パスを指定してください。リンク先を選択範囲にコピーするか、リンク先の絶対パスを指定します。ドット（.）で始まる名前と除外対象は、検査の前に省きます。認証やプロジェクト検索の前に読み取りを完了し、認証の再試行では検証済みの内容を再利用します。validation_failed の details.path と details.reason（parent_traversal、link、outside_cwd、not_found、changed、unsupported_guarantee、invalid_type）を確認してください。見つからないパスは確認し、outside_cwd では絶対パスを指定し、読み取り中の変更は再試行し、保証やファイル種別の問題は個別のヒントに従います。upload_read_failed では details.errno とファイルシステムの状態・権限を確認して再試行します。POSIX では利用可能な no-follow open を使い、Windows ではハンドルの同一性を確認して lstat がリンクと判定した対象を拒否します。検査の間に差し替えて元に戻す操作や、同じファイルを同じサイズで書き換える操作は検出できない場合があります。',
-        'auth_required または token_invalid なら login を実行し直すか、有効なトークンをプロファイルに取り込みます。そのあと、同じコマンドを再実行します。unknown_option は認証・通信・書き込みの前に返されます。details.option をヒントやコマンドのヘルプに従って修正してください。invalid_expected_version では番号ではなく、share/update の出力の data.version.id、または artifacts get <target> --json の data.version_id を指定します。どちらも recovery.kind: change_input です。unsupported_node_version では Node.js を 22.19.0 以上に更新してください。人または実行環境側の対応が必要です（recovery.kind: ask_human、agent_recoverable: false、requires_human: true）。details.reason がない validation_failed は構文とオプションを確認します。target_not_found は URL または ID を解決し直します。self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。network_failed は base URL を確認して、投稿先を変えずに再試行します。login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
+        'download で扱う ID は ^[a-z0-9]{10}$ に限られ、一覧や index に不正な ID や重複があると書き込み前に拒否されます。出力先の親ディレクトリがリンクであっても使用でき、リンク先の同一性を再確認します。一方、出力ルート・index・一覧に含まれるファイルツリー内のリンクは --force を付けても拒否されます。事前検査では変更のない対象を含む全ファイルと index を確認し、無関係な内容は走査しません。通信エラーやマニフェストの不備（パス・内容・ID）はファイルごとの失敗として記録しますが、書き込み境界の違反を検出すると後続のファイルと最終 index の公開を中断します。置き換え前のデータと index は成功後も保持され、data.backup_paths と人向け出力に保存先が表示されます。復旧に失敗したときもエラーに保存先が出るため、内容を確認してから手動で削除してください。',
+        '設定保存時の init は、設定パスのリンクや途中の差し替えを拒否します（Node のパスベース操作では、検査と操作の間の同時変更まで原子的に防ぐ保証はありません）。init は未知の設定キーをそのまま残します。Git worktree や submodule でも設定は保存できますが、.git ファイル、リンク、.git 内の gitdir / commondir ファイル、安全に更新できない exclude は git_exclude_warning となり、手動で追加すべき行を案内します。',
+        'Windows の短い名前など別表記で指定したファイルも、保存されている本来の名前から種類と content type を判定します。列挙後に消えたファイルは changed、途中に通常ファイルを含む相対パス（例: file.txt/x）は not_found になります。share・append・update の相対パスは物理的なカレントディレクトリ内に限られ、途中のリンクも拒否されます。絶対パスは親ディレクトリを信頼しますが、選択対象とその配下のリンクは拒否されます。親ディレクトリ参照（..）を含むパスは使えないため、直接の絶対パスを指定するか、リンク先を対象範囲内へコピーしてください。ドット（.）で始まる名前と除外対象は検査前に省きます。ローカル読み取りは認証やプロジェクト検索の前に完了させ、認証の再試行時には検証済みの内容を再利用します。validation_failed が出たときは details.path と details.reason（parent_traversal、link、outside_cwd、not_found、changed、unsupported_guarantee、invalid_type）を確認し、パスの見直しや絶対パス指定、再試行、個別ヒントに従って対処してください。upload_read_failed は details.errno とファイルシステムの状態・権限を確認して再試行します。POSIX では利用可能な no-follow open を使い、Windows ではハンドルの同一性を確認して lstat がリンクと判定した対象を拒否します（ただし検査中の差し替え・復元や同サイズの書き換えは検出できない場合があります）。',
+        'auth_required または token_invalid のときは、login をやり直すか有効なトークンをプロファイルに取り込んでから同じコマンドを再実行します。unknown_option は認証・通信・書き込みの前に返るため、details.option をヒントやヘルプに沿って修正してください。invalid_expected_version ではバージョン番号ではなく、share / update 出力の data.version.id か artifacts get <target> --json の data.version_id を渡します（いずれも recovery.kind: change_input）。unsupported_node_version は Node.js を 22.19.0 以上へ更新する必要があり、人や実行環境側での対応が求められます（recovery.kind: ask_human、agent_recoverable: false、requires_human: true）。details.reason のない validation_failed は構文とオプションを、target_not_found は URL や ID を確認し直します。self_upload_disabled は Google または Microsoft でログインして再実行し、network_failed は base URL を確認して投稿先を変えずに再試行します。login --preset agent で expected_version_required が返ったときは、前回成功した share / update 出力の data.version.id を --expected-version に渡して再実行してください。前回の出力がない場合は、単一 HTML / Markdown なら artifacts get <target> --json の data.version_id、静的サイトなら download <target> --json の data.version.id を取得し、現在の内容（data.content またはダウンロードしたファイル）が編集元と違っていれば変更を適用し直したうえで --expected-version に指定します。',
       ],
     },
     related: {
       title: '関連ガイド',
-      body: '接続方法は connect ガイド、agent への頼み方は AI から Artifact Share を使うガイド、変更情報は updates、導入の詳細は npm package ページを参照してください。',
+      body: '接続方法は接続ガイド、エージェントへの頼み方は「AI から Artifact Share を使う」ガイド、変更履歴は更新情報、パッケージの詳細は npm ページをご覧ください。',
     },
   },
   commandsHeading: '公開コマンド一覧',

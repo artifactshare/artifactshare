@@ -185,11 +185,11 @@ const EN: ShareWithAiContent = {
 const JA: ShareWithAiContent = {
   title: 'AI から Artifact Share を使う',
   intro:
-    'Artifact Share は、AI が作った HTML をブラウザで開けるリンクにします。Markdown、フォルダ、静的サイトにも対応。同じ URL で次の版へ更新し、コメントやプロジェクト整理も使えます。',
+    'Artifact Share は、AI が作った HTML をブラウザで開けるリンクにします。Markdown、フォルダ、静的サイトにも対応。同じ URL のまま更新し、コメントやプロジェクト整理も使えます。',
   connectLead: {
-    before: 'はじめかたは',
+    before: '始め方は',
     link: '接続ガイド',
-    after: 'をどうぞ。',
+    after: 'をご覧ください。',
   },
   tasksHeading: 'できること',
   tasksIntro:
@@ -210,13 +210,13 @@ const JA: ShareWithAiContent = {
     },
     {
       id: 'update',
-      title: '同じ URL で次の版へ更新する',
+      title: '同じ URL のまま更新する',
       routes: ['mcp', 'cli'],
-      ask: 'as のリンクをこの新しい版に更新して。',
+      ask: 'as のリンクをこの新しいバージョンに更新して。',
       output:
         '✓ v2 に更新しました。URL は同じ — https://artifactshare.com/a/abc123',
       detail:
-        '同じ URL で次の版へ更新します。リンクを受け取った人は常に最新版を見られます。',
+        '同じ URL のまま更新します。リンクを受け取った人は常に最新版を見られます。',
     },
     {
       id: 'comment',
@@ -308,7 +308,7 @@ const JA: ShareWithAiContent = {
   og: {
     title: 'AI から Artifact Share を使う',
     description:
-      'AI が作った HTML をブラウザで開けるリンクに。Codex、Claude Code、Cursor Agent では CLI、Claude、ChatGPT、Cursor のチャット、Claude Cowork では remote MCP を使えます。',
+      'AI が作った HTML をブラウザで開けるリンクに。Codex、Claude Code、Cursor Agent では CLI、Claude、ChatGPT、Cursor のチャット、Claude Cowork ではリモート MCP を使えます。',
   },
 }
 

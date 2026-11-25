@@ -25,23 +25,23 @@ const GETTING_STARTED_COPY = {
   ja: {
     eyebrow: 'Artifact Share を始める',
     heading: 'ファイルを共有して、共有リンクを受け取る',
-    lead: 'Web、CLI、MCP のいずれかから投稿できます。無料プランはカード登録なしで始められます。',
+    lead: 'Web、CLI、MCP のどれからでも投稿できます。Free プランはクレジットカード不要で始められます。',
     web: {
       title: 'ブラウザからアップロード',
-      body: 'ブラウザで HTML、Markdown、フォルダを選んでアップロードします。ログインしていない場合は、ログイン後にそのままアップロード画面へ進みます。',
+      body: 'ブラウザで HTML、Markdown、フォルダを選んでアップロードします。未ログインでも、ログイン後にそのままアップロード画面へ進みます。',
       cta: 'アップロードを開く',
     },
     cli: {
       title: 'CLI で投稿',
-      body: 'Codex、Claude Code、Cursor Agent では、CLI からローカルのファイル、フォルダ、複数ファイルのサイトを共有できます。',
+      body: 'Codex、Claude Code、Cursor Agent から、ローカルのファイルやフォルダ、複数ファイルのサイトを共有できます。',
       cta: 'CLI をセットアップ',
     },
     mcp: {
       title: 'チャットから投稿',
-      body: 'Claude、ChatGPT、Cursor のチャットから、単一の HTML または Markdown を投稿します。',
+      body: 'Claude、ChatGPT、Cursor のチャットから、単一の HTML や Markdown をそのまま投稿できます。',
       cta: 'MCP を接続',
     },
-    note: '最初のファイルを共有するときに、プロジェクトは必要ありません。あとからファイルを整理するときに使えます。',
+    note: '最初のファイルを共有するときにプロジェクトは不要です。ファイルが増えてから整理に使えます。',
   },
 } as const satisfies Record<
   Locale,

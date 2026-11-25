@@ -23,9 +23,9 @@ test.each([
   ['en', null, 'Keeping all versions'],
   ['en', 1, 'Keeping only the latest version'],
   ['en', 2, 'Keeping the latest 2 versions'],
-  ['ja', null, 'すべての版を残しています'],
+  ['ja', null, 'すべてのバージョンを残しています'],
   ['ja', 1, '最新版だけを残しています'],
-  ['ja', 2, '最新2件の版を残しています'],
+  ['ja', 2, '最新 2 件のバージョンを残しています'],
 ] as const)(
   'renders %s setting %s without a runtime contract dependency',
   (locale, retainVersions, summary) => {
@@ -59,12 +59,12 @@ test.each(['en', 'ja'] as const)(
       expect(html).toContain(
         locale === 'en'
           ? 'All versions people added are kept'
-          : '人が追加した版はすべて残します',
+          : '人が追加したバージョンはすべて残します',
       )
       expect(html).toContain(
         locale === 'en'
           ? 'Keep the latest scheduled versions'
-          : '最新の定期更新の版を残す',
+          : '最新の定期更新のバージョンを残す',
       )
       if (retainVersions !== null)
         expect(html).toContain(
@@ -72,14 +72,14 @@ test.each(['en', 'ja'] as const)(
             ? retainVersions === 1
               ? 'Keeping the latest scheduled version.'
               : 'Keeping the latest 2 scheduled versions.'
-            : `最新${retainVersions}件の定期更新の版`,
+            : `最新 ${retainVersions} 件の定期更新のバージョン`,
         )
     }
     const unmanaged = renderToStaticMarkup(
       <RetentionEditor artifactId="s1" retainVersions={1} />,
     )
     expect(unmanaged).not.toContain(
-      locale === 'en' ? 'All versions people added' : '人が追加した版',
+      locale === 'en' ? 'All versions people added' : '人が追加したバージョン',
     )
   },
 )
@@ -99,7 +99,7 @@ test.each(['en', 'ja'] as const)(
     expect(html).toContain(
       locale === 'en'
         ? 'The older current scheduled version is also kept.'
-        : 'ファイルの現在の版に設定されている古い定期更新の版も残しています。',
+        : '現在のバージョンに設定されている古い定期更新のバージョンも残しています。',
     )
     expect(html).toMatch(
       /role="radiogroup"[^>]*aria-describedby="[^"]+-protection"/,

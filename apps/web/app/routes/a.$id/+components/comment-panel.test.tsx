@@ -451,7 +451,7 @@ test.each(['en', 'ja'] as const)(
     }
     const html = renderThreads([cached])
     expect(html).toContain(
-      language === 'en' ? 'Show 17 more replies' : '返信をあと17件表示',
+      language === 'en' ? 'Show 17 more replies' : '返信をあと 17 件表示',
     )
     expect(html).not.toContain('Cached reply 1')
     expect(html).toContain('Cached reply 9')
