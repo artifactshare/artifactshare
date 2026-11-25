@@ -103,9 +103,9 @@ describe('trackEvent', () => {
         referrer_domain: undefined,
       }),
     ).toBe(true)
-    expect(gtag).toHaveBeenCalledWith('event', 'artifact_view', {
-      artifact_id: 'a',
-    })
+    expect(gtag.mock.calls).toStrictEqual([
+      ['event', 'artifact_view', { artifact_id: 'a' }],
+    ])
   })
   test('forwards a PDF artifact view with its render type', () => {
     const gtag = vi.fn()

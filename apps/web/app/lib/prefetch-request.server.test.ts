@@ -47,5 +47,12 @@ describe('isPrefetchRequest', () => {
         }),
       ),
     ).toBe(true)
+    expect(
+      isPrefetchRequest(
+        new Request('https://artifactshare.com/a/file', {
+          headers: { 'Sec-Purpose': 'prerender' },
+        }),
+      ),
+    ).toBe(true)
   })
 })

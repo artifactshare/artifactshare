@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest'
 import {
-  CONSENT_REQUIRED_COUNTRIES,
   isAnalyticsConsentState,
   isConsentRequiredRegion,
   resolveAnalyticsConsent,
@@ -19,8 +18,13 @@ describe('isAnalyticsConsentState', () => {
 })
 
 describe('isConsentRequiredRegion', () => {
-  test('requires consent for every allowlisted country', () => {
-    for (const country of CONSENT_REQUIRED_COUNTRIES) {
+  test('requires consent in the EU, EEA, UK, and EU outermost regions', () => {
+    const consentRequired = [
+      'AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE',
+      'IS LI NO GB',
+      'AX GF GP MQ RE YT MF',
+    ].flatMap((group) => group.split(' '))
+    for (const country of consentRequired) {
       expect(isConsentRequiredRegion(country)).toBe(true)
       expect(isConsentRequiredRegion(country.toLowerCase())).toBe(true)
     }

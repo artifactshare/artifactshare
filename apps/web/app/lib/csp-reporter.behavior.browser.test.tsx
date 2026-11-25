@@ -881,7 +881,7 @@ describe('CSP reporter runtime behavior', () => {
 
   test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
     const sanitized = sanitizeMermaidSvg(
-      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><a href="javascript:alert(1)"><text>Unsafe href</text></a><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="javascript:alert(1)"><text>Unsafe xlink</text></a><script>alert(1)</script></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><a href="javascript:alert(1)"><text>Unsafe href</text></a><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="javascript:alert(1)"><text>Unsafe xlink</text></a><script>alert(1)</script><img src="https://example.com/pixel.png"></svg>',
     )
 
     expect(sanitized).toContain('<svg')
@@ -889,7 +889,9 @@ describe('CSP reporter runtime behavior', () => {
     expect(sanitized).not.toContain('onload')
     expect(sanitized).not.toContain('<script')
     expect(sanitized).not.toContain('javascript:')
+    expect(sanitized).not.toContain('<img')
     const svg = new DOMParser().parseFromString(sanitized, 'image/svg+xml')
+    expect(svg.querySelector('parsererror')).toBeNull()
     expect(svg.querySelectorAll('a')).toHaveLength(2)
     for (const anchor of svg.querySelectorAll('a')) {
       expect(anchor.hasAttribute('href')).toBe(false)
