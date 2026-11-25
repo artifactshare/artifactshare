@@ -198,6 +198,34 @@ describe('groupByDay', () => {
     })
   })
 
+  test('keeps an item without a timestamp in place, in a group with no heading', () => {
+    const items: Item[] = [
+      { id: 'newer', updatedAt: utcIso(2026, 6, 15, 12) },
+      { id: 'undated', updatedAt: '' },
+      { id: 'older', updatedAt: utcIso(2026, 6, 15, 8) },
+    ]
+
+    const groups = groupByDay(
+      items,
+      (item) => item.updatedAt,
+      'en',
+      dayAt,
+      'UTC',
+    )
+
+    expect(
+      groups.map((group) => [
+        group.key,
+        group.heading,
+        group.items.map((item) => item.id),
+      ]),
+    ).toEqual([
+      ['2026-06-15', 'Today', ['newer']],
+      ['', '', ['undated']],
+      ['2026-06-15', 'Today', ['older']],
+    ])
+  })
+
   test('preserves input order within each group', () => {
     const items: Item[] = [
       { id: 'first', updatedAt: utcIso(2026, 6, 15, 18) },

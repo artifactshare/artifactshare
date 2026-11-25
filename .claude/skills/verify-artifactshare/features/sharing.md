@@ -4,7 +4,7 @@ The owner changes who can view a file: only specific people (the default for a F
 
 ## Sub-features
 
-- `share-dialog` opens `Change who can view this file` from the visibility button in the viewer top bar.
+- `share-dialog` opens `Change who can view this file` from the visibility button in the viewer top bar: the audience menu, the pending-change footer, the link expiry field, and the copy actions for a link-shared file.
 - `share-people` adds a person by email, and the change applies after `Save`.
 - `share-denied` shows a refusal page to a signed-in person without access and a sign-in page to a signed-out visitor.
 - `share-link` turns on link sharing, so a signed-out visitor can open the URL.
@@ -29,6 +29,11 @@ Preconditions:
 - **Add a person.** Fill the `Enter a name or email address` combobox with the `Plus owner` persona email (`dev-plus-owner` at the `artifactshare.local` domain), then click `Add` (exact). The count becomes 2, and the new row reads `Plus owner … · Viewer Unsaved` with a `Remove …` button. `Cancel` and `Save` buttons appear. Click `Save`, and `Unsaved` disappears.
 - **Allowed member.** Reload the member's page. The file content renders in the iframe.
 - **Signed-out visitor.** Use `launchBrowser()` (no cookies) and open the URL. The page shows `Sign in to view this file` with `Continue with Google`, `Sign in with Microsoft`, and `Sign in with email`. No viewer frame.
+- **Dialog footer.** With nothing changed the footer (`[data-slot="dialog-footer"]`) holds one button, `Close`. A pending change adds `Cancel` before `Save`. Clicking `Close` with nothing pending posts no save.
+- **Audience menu.** The audience button is named after the current audience, so locate it as the dialog's collapsed menu button (`getByRole('button', { expanded: false })`), then pick a `menuitemradio` named after `upload.visibility.<visibility>`. The people list is shown for `private`, `workspace` and `project`, not for `link`.
+- **Link expiry.** Choosing `Anyone with the link` shows the `Link expiry date` textbox filled with the policy default (30 days out on a Free workspace) and a `No expiration` checkbox. Emptying the date disables `Save`, sets `aria-invalid`, and fills the `aria-describedby` element with the required-date message. Abandoning an expiry edit by switching the audience back leaves nothing to save.
+- **What Save posts.** The journey watches `POST /api/shareables/<id>/save`. Switching to link and saving posts `{"visibility":"link"}`; adding a person and restoring the expiry date posts only `{"addEmails":[…]}`; `No expiration` posts `{"link_expires_at":null}`, and unchecking it restores the finite default and posts that date. While the save is in flight (held with `page.route`), the audience button, the expiry field and `Save` are disabled and the footer's `status` announces the save.
+- **Copy actions.** A link-shared file's dialog shows the read-only `Share link` field, `Copy link`, and `Open as a recipient` (`target="_blank"`, `rel="noopener noreferrer"`) with the same URL. With clipboard permissions granted, `Copy link` writes that URL to the clipboard, the already-mounted `[data-copy-status]` live region announces it, and a signed-out visitor opens the copied URL. The announcement clears after 2.2s.
 - **Link sharing via CLI.** `runCli(..., ['edit', url, '--visibility', 'link', '--no-link-expiry', '--json'], { token })` exits `0`. The signed-out visitor now sees the content at the same `/a/<id>` URL. The owner's top-bar button reads `Link sharing · Change who can view`.
 
 ## Gotchas
@@ -37,4 +42,7 @@ Preconditions:
 - Adding a person does nothing until `Save`. A test that stops at `Add` proves nothing.
 - `edit --visibility link` without an expiry option is rejected. Pass `--no-link-expiry` or `--link-expires-at`.
 - Email invitations are not delivered locally. Prove access by signing in as the other persona, not by checking an inbox.
+- A save that leaves the file private closes the dialog, so read the saved state by reopening it. A save that leaves the file link-shared keeps it open.
+- The grant input commits a valid address on blur, so after the audience menu restores focus, press `Enter` in the input instead of clicking `Add`.
+- The local link URL is `https://<id>.localhost:<app port>/`, which Chromium resolves to loopback.
 - The public repo scan rejects literal email addresses in tracked files. Build persona emails in code (the journey joins the two parts).
