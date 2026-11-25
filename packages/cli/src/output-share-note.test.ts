@@ -5,7 +5,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('human share output includes the private-default note', () => {
+test('human share output repeats the visibility hint the server sent', () => {
   const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
   writeSuccess(
     'share',
@@ -20,7 +20,7 @@ test('human share output includes the private-default note', () => {
     },
     { json: false },
   )
-  expect(String(write.mock.calls[0]![0])).toContain(
-    'Visibility: private\nNote: Home defaults to private.\n',
-  )
+  const output = String(write.mock.calls[0]![0])
+  expect(output).toContain('Visibility: private')
+  expect(output).toContain('Home defaults to private.')
 })

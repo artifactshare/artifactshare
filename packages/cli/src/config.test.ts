@@ -514,7 +514,7 @@ test('config repository mutation refuses malformed JSON without changing the fil
     { command: 'config set', code: 'validation_failed' },
   )
 
-  assert.match(failure.error.message, /invalid JSON/)
+  assert.ok(failure.error.hint.includes(configPath))
   assert.equal(await readFile(configPath, 'utf8'), malformed)
 })
 
@@ -560,7 +560,7 @@ test('config user mutation refuses malformed JSON without changing the file', as
     { command: 'config set', code: 'validation_failed' },
   )
 
-  assert.match(failure.error.message, /invalid JSON/)
+  assert.ok(failure.error.hint.includes(configPath))
   assert.equal(await readFile(configPath, 'utf8'), malformed)
 })
 
@@ -595,7 +595,7 @@ test.skipIf(rootBypassesFilePermissions)(
         { command: 'config set', code: 'validation_failed' },
       )
 
-      assert.match(failure.error.message, /could not be written/)
+      assert.ok(failure.error.hint.includes(configPath))
       assert.equal(await readFile(configPath, 'utf8'), original)
     } finally {
       await chmod(configPath, 0o600)

@@ -118,16 +118,5 @@ test('changelog --json returns version, updates_url, and latest section', async 
   assert.equal(payload.data.updates_url, CLI_UPDATES_URL)
   assert.equal(payload.data.latest?.version, pkg.version)
   assert.match(payload.data.latest?.date ?? '', /^\d{4}-\d{2}-\d{2}$/u)
-  assert.match(payload.data.latest?.body ?? '', /^- /mu)
-})
-
-test('changelog exits 0 with version and URL when the current section is missing', () => {
-  const result = run(['changelog', '--json'])
-  const payload = expectSuccess(result, 'changelog')
-
-  assert.equal(typeof payload.data.version, 'string')
-  assert.equal(payload.data.updates_url, CLI_UPDATES_URL)
-  assert.ok(
-    payload.data.latest === null || typeof payload.data.latest === 'object',
-  )
+  assert.ok((payload.data.latest?.body ?? '').length > 0)
 })

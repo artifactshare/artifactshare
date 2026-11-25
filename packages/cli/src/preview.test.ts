@@ -368,8 +368,8 @@ test('reuse reports a different Codex session separately from credentials', asyn
     command: 'preview',
     code: 'validation_failed',
   })
-  assert.match(failure.error.message, /different agent session/i)
-  assert.doesNotMatch(failure.error.message, /credentials/i)
+  assert.match(failure.error.hint, / preview stop /)
+  assert.ok(failure.error.hint.includes(filePath))
 })
 
 test('preview next times out with no submission and errors with no session', async () => {
@@ -757,7 +757,7 @@ test('a PDF file is refused with share guidance', async () => {
     command: 'preview',
     code: 'validation_failed',
   })
-  assert.match(payload.error.message, /PDF files cannot be previewed/)
+  assert.match(payload.error.hint, /share <file\.pdf>/)
 })
 
 test('an MP4 video is refused with share guidance', async () => {
@@ -769,7 +769,7 @@ test('an MP4 video is refused with share guidance', async () => {
     command: 'preview',
     code: 'validation_failed',
   })
-  assert.match(payload.error.message, /Video files cannot be previewed/)
+  assert.match(payload.error.hint, /share <file\.mp4>/)
 })
 
 test('a session id that is not 16 hex characters is refused', async () => {

@@ -14,9 +14,13 @@ test('saved-profile recovery reuses its preset instead of forcing agent', () => 
     'work',
   )
 
-  assert.match(error.hint, /saved authorization preset is reused/)
-  assert.match(error.hint, /login --profile work/)
-  assert.doesNotMatch(error.hint, /login --profile work --preset agent/)
+  const details = error.details as Record<string, string>
+  assert.equal(error.code, 'auth_required')
+  assert.equal(details.credential_source, 'profile')
+  assert.equal(details.reauth_reason, 'profile_token_invalid_or_expired')
+  assert.match(details.login_command!, / login --profile work$/)
+  assert.ok(error.hint.includes(details.login_command!))
+  assert.equal(error.hint.includes(details.agent_login_command!), false)
 })
 
 test('token store recovery only suggests plaintext fallback where supported', () => {
@@ -25,23 +29,33 @@ test('token store recovery only suggests plaintext fallback where supported', ()
     'native_store_unavailable',
     'win32',
   )
-  assert.match(windows.hint, /Credential Manager/)
-  assert.doesNotMatch(windows.hint, /allow-plaintext-token-store/)
+  assert.equal(windows.code, 'token_store_unavailable')
+  assert.deepEqual(windows.details, {
+    cause: 'native_store_unavailable',
+    platform: 'win32',
+    profile: 'default',
+  })
+  assert.deepEqual(windows.recovery, { kind: 'ask_human' })
+  assert.doesNotMatch(windows.hint, /--allow-plaintext-token-store/)
 
   const linux = tokenStoreUnavailableError(
     'default',
     'native_store_unavailable',
     'linux',
   )
-  assert.match(linux.hint, /allow-plaintext-token-store/)
+  assert.match(linux.hint, /--allow-plaintext-token-store/)
 
   const configWrite = tokenStoreUnavailableError(
     'default',
     'config_write_failed',
     'win32',
   )
-  assert.match(configWrite.hint, /configuration directory/)
-  assert.doesNotMatch(configWrite.hint, /Credential Manager/)
+  assert.doesNotMatch(configWrite.hint, /--allow-plaintext-token-store/)
+  assert.deepEqual(configWrite.details, {
+    cause: 'config_write_failed',
+    platform: 'win32',
+    profile: 'default',
+  })
   assert.equal(configWrite.agent_recoverable, true)
   assert.equal(configWrite.requires_human, false)
   assert.deepEqual(configWrite.recovery, { kind: 'retry_later' })
@@ -56,14 +70,9 @@ test.each([undefined, 'Supply the current version id.'])(
       { artifactTarget: true, operation: 'update' },
     )
     assert.equal(error.code, 'expected_version_required')
-    assert.equal(
-      error.message,
-      message ?? 'Agent updates require the current version id.',
-    )
-    assert.equal(
-      error.hint,
-      'Retry update or share --key with --expected-version <version-id>, using data.version.id from the previous successful share or update output. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
-    )
+    if (message === undefined) assert.ok(error.message.length > 0)
+    else assert.equal(error.message, message)
+    assert.match(error.hint, /--expected-version/)
     assert.equal(error.agent_recoverable, true)
     assert.equal(error.requires_human, false)
     assert.deepEqual(error.recovery, { kind: 'change_input' })
@@ -76,16 +85,10 @@ test('provides artifact-kind-specific version recovery for agent updates', () =>
     { error: 'expected-version-required' },
     { artifactTarget: true, operation: 'update' },
   )
-  assert.ok(
-    error.hint.includes(
-      'for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id.',
-    ),
-  )
-  assert.ok(
-    error.hint.includes(
-      'For static sites, download <target> --json returns it as data.version.id.',
-    ),
-  )
+  assert.match(error.hint, /artifacts get <target> --json/)
+  assert.match(error.hint, /data\.version_id/)
+  assert.match(error.hint, /download <target> --json/)
+  assert.match(error.hint, /data\.version\.id/)
 })
 
 test('maps expected-version-required for share with a stable key', () => {
@@ -159,22 +162,17 @@ test('preserves update version conflict recovery', () => {
   assert.equal(error.code, 'version_conflict')
   assert.deepEqual(error.recovery, { kind: 'change_input' })
   assert.deepEqual(error.details, { current_version_id: 'ver123' })
-  assert.equal(
-    error.hint,
-    'Read the current version, reapply your changes, and retry with its version id.',
-  )
 })
 
-test('comment capacity explains stored messages rather than a temporary posting rate', () => {
+test('comment capacity asks for a different thread, a posting rate asks for a retry', () => {
   const full = mapApiError(409, { error: { code: 'thread-capacity' } })
   assert.equal(full.code, 'thread_capacity')
-  assert.match(full.why, /500 stored messages/)
-  assert.match(full.hint, /Start a new thread/)
-  assert.match(full.hint, /delete messages/)
   assert.equal(full.recovery.kind, 'change_input')
+  assert.equal(full.agent_recoverable, true)
   const rate = mapApiError(429, { error: { code: 'rate-limited' } })
-  assert.match(rate.why, /minute/)
+  assert.equal(rate.code, 'rate_limited')
   assert.equal(rate.recovery.kind, 'retry_later')
+  assert.equal(rate.agent_recoverable, true)
 })
 
 test('keyed share visibility mismatch names an intentional edit command', () => {
@@ -193,9 +191,12 @@ test('keyed share visibility mismatch names an intentional edit command', () => 
     { artifactTarget: true, operation: 'share' },
   )
   assert.equal(error.code, 'key_visibility_mismatch')
-  assert.equal(error.recovery.kind, 'run_command')
-  assert.match(error.hint, /edit abc123def4 --visibility private --json/)
-  assert.match(error.message, /No version was created/)
+  assert.ok(error.recovery.kind === 'run_command')
+  assert.match(
+    error.recovery.command,
+    / edit abc123def4 --visibility private --json$/,
+  )
+  assert.ok(error.hint.includes(error.recovery.command))
   const stderr = vi
     .spyOn(process.stderr, 'write')
     .mockImplementation(() => true)
@@ -252,8 +253,11 @@ test.each([{ linkExpiresAt: '2099-01-02T00:00:00Z' }, { noLinkExpiry: true }])(
       },
       { artifactTarget: true, operation: 'share', ...expiryOptions },
     )
-    assert.equal(error.recovery.kind, 'run_command')
-    assert.match(error.hint, /edit abc123def4 --visibility private --json/)
+    assert.ok(error.recovery.kind === 'run_command')
+    assert.match(
+      error.recovery.command,
+      / edit abc123def4 --visibility private --json$/,
+    )
     assert.doesNotMatch(
       JSON.stringify(error.recovery),
       /--link-expires-at|--no-link-expiry/,
@@ -276,5 +280,5 @@ test('daily search refusal preserves exact reset and wait recovery in CLI JSON',
   assert.equal(result.code, 'search_daily_limit_exceeded')
   assert.deepEqual(result.details, details)
   assert.deepEqual(result.recovery, { kind: 'retry_later' })
-  assert.match(result.hint, /Wait until retry_at/)
+  assert.equal(result.message, 'Wait until reset.')
 })

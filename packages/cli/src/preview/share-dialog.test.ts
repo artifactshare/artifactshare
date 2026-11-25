@@ -406,10 +406,17 @@ test('the dialog page is served with both locales embedded', async () => {
   await withDialogServer({}, async (port) => {
     const response = await rawRequest(port, { path: '/' })
     assert.equal(response.status, 200)
-    assert.ok(response.body.includes('preview.shareDialog.title'))
-    assert.ok(response.body.includes('共有する'))
-    assert.ok(response.body.includes('Keep previewing'))
     assert.ok(response.body.includes('artifactshare-preview-share'))
+    const bootstrap = JSON.parse(
+      /var bootstrap = (\{.*\});/.exec(response.body)![1]!,
+    )
+    const { en, ja } = bootstrap.messages
+    assert.deepEqual(Object.keys(en).sort(), Object.keys(ja).sort())
+    assert.ok(Object.keys(en).length > 0)
+    assert.ok(
+      Object.keys(en).every((key) => key.startsWith('preview.shareDialog.')),
+    )
+    assert.ok(Object.keys(en).some((key) => en[key] !== ja[key]))
   })
 })
 

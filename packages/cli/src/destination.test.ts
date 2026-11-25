@@ -124,7 +124,8 @@ test('repository visibility short-circuits unreadable lower-priority user config
       repositoryConfig('public'),
     )
     assert.ok('error' in invalid)
-    assert.match(invalid.error.message, /Repository/)
+    assert.equal(invalid.error.code, 'validation_failed')
+    assert.equal(invalid.error.hint.includes(configHome), false)
   } finally {
     if (originalConfigHome === undefined) {
       delete process.env.ARTIFACTSHARE_CONFIG_HOME

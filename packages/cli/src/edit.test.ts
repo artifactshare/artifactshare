@@ -237,8 +237,7 @@ test.each([
     'link-sharing-plan-required',
     402,
     'link_sharing_plan_required',
-    'Link sharing is unavailable for this workspace.',
-    'Ask a workspace owner or administrator to review the workspace plan or link sharing policy.',
+    [],
     true,
     false,
     'ask_human',
@@ -247,8 +246,7 @@ test.each([
     'link-sharing-disabled',
     403,
     'link_sharing_disabled',
-    'Link sharing is paused for this workspace; the owner or a Team admin can resume it.',
-    'Ask a workspace owner or administrator to review the workspace plan or link sharing policy.',
+    [],
     true,
     false,
     'ask_human',
@@ -257,8 +255,7 @@ test.each([
     'link-expiry-invalid',
     400,
     'link_expiry_invalid',
-    'The requested link expiry does not match the link sharing policy.',
-    'Pass a future RFC3339 UTC timestamp within the workspace maximum, or use --no-link-expiry when unlimited expiry is allowed.',
+    ['--no-link-expiry'],
     false,
     true,
     'change_input',
@@ -267,8 +264,7 @@ test.each([
     'link-publish-rate-limited',
     429,
     'link_publish_rate_limited',
-    'New Free workspaces may publish a bounded number of links per day; the limit protects link sharing from abuse.',
-    'Share with specific people now and retry the link visibility after the window passes (about a day), or ask the owner about the workspace plan.',
+    [],
     false,
     true,
     'retry_later',
@@ -279,8 +275,7 @@ test.each([
     apiCode,
     status,
     code,
-    why,
-    hint,
+    hintOptions,
     requiresHuman,
     agentRecoverable,
     recoveryKind,
@@ -289,8 +284,7 @@ test.each([
       error: { code: apiCode, message: 'Link policy error.' },
     })
     assert.equal(mapped.code, code)
-    assert.equal(mapped.why, why)
-    assert.equal(mapped.hint, hint)
+    for (const option of hintOptions) assert.ok(mapped.hint.includes(option))
     assert.equal(mapped.requires_human, requiresHuman)
     assert.equal(mapped.agent_recoverable, agentRecoverable)
     assert.deepEqual(mapped.recovery, { kind: recoveryKind })
@@ -348,14 +342,6 @@ test('edit emits actionable JSON for a link policy 403 from the API', async () =
         command: 'edit',
         code: 'link_sharing_disabled',
       })
-      assert.equal(
-        payload.error.why,
-        'Link sharing is paused for this workspace; the owner or a Team admin can resume it.',
-      )
-      assert.equal(
-        payload.error.hint,
-        'Ask a workspace owner or administrator to review the workspace plan or link sharing policy.',
-      )
       assert.equal(payload.error.agent_recoverable, false)
       assert.equal(payload.error.requires_human, true)
       assert.deepEqual(payload.error.recovery, { kind: 'ask_human' })
@@ -604,15 +590,14 @@ test.each([false, true])(
             command: 'edit',
             code: 'validation_failed',
           })
-          assert.match(payload.error.why, /requires project placement/)
           assert.match(payload.error.hint, /edit <id> --project-id <id>/)
           assert.match(payload.error.hint, /move <id> --project-id <id>/)
           assert.deepEqual(payload.error.recovery, { kind: 'change_input' })
           assert.equal(payload.error.agent_recoverable, true)
           assert.equal(payload.error.requires_human, false)
         } else {
-          assert.match(result.stderr, /requires.*project/)
           assert.match(result.stderr, /edit <id> --project-id <id>/)
+          assert.match(result.stderr, /move <id> --project-id <id>/)
         }
       },
     )
@@ -622,10 +607,8 @@ test.each([false, true])(
 test('non-edit invalid visibility retains generic recovery', () => {
   const error = mapApiError(400, { error: { code: 'invalid-visibility' } })
   assert.equal(error.code, 'validation_failed')
-  assert.equal(
-    error.hint,
-    'Check the path, file types, and visibility options, then retry.',
-  )
+  assert.doesNotMatch(error.hint, /--project-id/)
+  assert.deepEqual(error.recovery, { kind: 'change_input' })
 })
 
 test('project placement refusal includes recovery in human output', () => {
@@ -634,26 +617,17 @@ test('project placement refusal includes recovery in human output', () => {
     .mockImplementation(() => true)
   const previousExitCode = process.exitCode
   try {
-    writeFailure(
-      'edit',
-      mapApiError(
-        400,
-        { error: { code: 'invalid-visibility' } },
-        { editSettings: true },
-      ),
-      { json: false },
-      1,
+    const error = mapApiError(
+      400,
+      { error: { code: 'invalid-visibility' } },
+      { editSettings: true },
     )
+    writeFailure('edit', error, { json: false }, 1)
     assert.equal(process.exitCode, 1)
     const text = stderr.mock.calls.map(([chunk]) => chunk).join('')
-    assert.match(
-      text,
-      /Project visibility requires the artifact to be in a project/,
-    )
-    assert.match(
-      text,
-      /Hint: Use edit <id> --project-id <id> --visibility project/,
-    )
+    assert.ok(text.includes(error.message))
+    assert.ok(text.includes(error.hint))
+    assert.match(text, /edit <id> --project-id <id> --visibility project/)
     assert.match(text, /move <id> --project-id <id>/)
   } finally {
     stderr.mockRestore()

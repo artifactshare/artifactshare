@@ -169,7 +169,11 @@ test('legacy raw profile tokens require login again', async () => {
     assert.equal(result.ok, false)
     if (!result.ok) {
       assert.equal(result.error.code, 'auth_required')
-      assert.match(result.error.why, /old format/)
+      assert.match(
+        String(result.error.details?.login_command),
+        / login --profile legacy$/,
+      )
+      assert.equal(JSON.stringify(result.error).includes('raw-token'), false)
       assert.equal(result.profile, 'legacy')
     }
   } finally {
@@ -263,9 +267,14 @@ test('auth_required suggests another profile with a saved token', async () => {
       assert.ok(result.error.hint.includes('init --profile production'))
       assert.ok(result.error.hint.includes('profiles use production'))
       assert.ok(
-        result.error.hint.includes('saved authorization preset is reused'),
+        result.error.hint.includes(String(result.error.details?.login_command)),
       )
-      assert.ok(!result.error.hint.includes('--profile stale --preset agent'))
+      assert.equal(
+        result.error.hint.includes(
+          String(result.error.details?.agent_login_command),
+        ),
+        false,
+      )
     }
   } finally {
     await rm(root, { recursive: true, force: true })

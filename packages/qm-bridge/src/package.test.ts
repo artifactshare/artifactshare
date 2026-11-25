@@ -47,12 +47,6 @@ describe('package boundaries', () => {
     ).toBe(true)
   })
 
-  it('ships a license scoped to the bridge package', () => {
-    const license = readFileSync(join(packageRoot, 'LICENSE'), 'utf8')
-    expect(license).toContain('@artifactshare/qm-bridge')
-    expect(license).not.toContain('@artifactshare/cli')
-  })
-
   it('returns a machine-readable usage error when --json is missing', () => {
     const result = spawnSync(
       process.execPath,

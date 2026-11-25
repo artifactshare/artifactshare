@@ -724,7 +724,7 @@ for (const value of ['', ' \t ']) {
         invoke([action, '--tool', 'codex,claude', '--scope', 'user']),
         { code: 'validation_failed' },
       )
-      assert.match(failure.error.hint, /CLAUDE_CONFIG_DIR.*non-empty.*unset/)
+      assert.match(failure.error.hint, /CLAUDE_CONFIG_DIR/)
       assert.equal(await pathExists(userCodexSkillPath()), false)
     }
     const automatic = expectSuccess(invoke(['ensure', '--tool', 'auto']))
@@ -735,6 +735,7 @@ for (const value of ['', ' \t ']) {
     const target = expectSuccess(invoke(['list'])).data.targets.find(
       (t: any) => t.tool === 'claude' && t.scope === 'user',
     )
+    assert.match(target.hint, /CLAUDE_CONFIG_DIR/)
     assert.deepEqual(target, {
       aliases: [
         { tool: 'claude', scope: 'user', path: null, folder_path: null },
@@ -745,7 +746,7 @@ for (const value of ['', ' \t ']) {
       path: null,
       available: false,
       code: 'validation_failed',
-      hint: 'Set CLAUDE_CONFIG_DIR to a non-empty path or unset it to use ~/.claude.',
+      hint: target.hint,
       installed: false,
       managed: false,
       installed_version: null,
