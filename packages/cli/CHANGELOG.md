@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Accept an id that begins with `-` wherever a command takes one positionally, such as `projects edit <id> --archive`. About one project id in 64 begins with a dash, and those ids were rejected as an unknown option. A mistyped option still fails as one.
+
 - Update bundled skill guidance: shared HTML and folder shares now load font files from cdnjs and unpkg as well as jsDelivr, so icon and font packages served from those CDNs display. Update the bundled skill to version 70.
 
 - Search artifact body text with `artifacts list --q`, owner/project/period filters, grouped counts and excerpts. Restricted credentials retain their read scope; empty searches suggest rephrasing.

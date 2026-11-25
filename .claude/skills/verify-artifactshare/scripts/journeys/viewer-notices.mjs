@@ -11,6 +11,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  actUntil,
   capture,
   countedLabel,
   createApiToken,
@@ -306,9 +307,17 @@ try {
     .first()
     .getByRole('heading', { name: title })
     .waitFor({ timeout: 30_000 })
-  await jaPage.getByRole('button', { name: uiText('ja', 'comments.title'), exact: true }).click()
   const jaSheet = jaPage.getByRole('dialog', { name: uiText('ja', 'comments.title') })
-  await jaSheet.waitFor()
+  // This is the first interaction after the page loads, so the click can land
+  // before hydration and never open the sheet.
+  await actUntil(
+    jaPage,
+    () =>
+      jaPage
+        .getByRole('button', { name: uiText('ja', 'comments.title'), exact: true })
+        .click(),
+    jaSheet,
+  )
   const jaSheetBox = await stableBox(jaSheet)
   const jaThread = jaSheet.getByRole('article').filter({ hasText: body }).first()
   await jaThread

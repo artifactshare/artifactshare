@@ -8,6 +8,13 @@ import {
 } from './errors.js'
 import { camelCase, unsupportedUpdateOption } from './shared.js'
 
+// Gunshi reads every token that begins with '-' as an option and offers no
+// terminator that fills a positional instead, so a dash-leading positional
+// reaches it behind this prefix and is stripped back off here. A NUL byte
+// cannot occur in a process argument, so the prefix never collides with a
+// value a caller passed.
+const POSITIONAL_PREFIX = '\0'
+
 export function parsedArgsFromContext(
   command: CliCommand,
   ctx: Readonly<CommandContext>,
@@ -34,7 +41,11 @@ export function parsedArgsFromContext(
   return {
     command,
     options,
-    positionals: ctx.positionals.slice(command.includes(' ') ? 2 : 1),
+    positionals: ctx.positionals
+      .slice(command.includes(' ') ? 2 : 1)
+      .map((value) =>
+        value.startsWith(POSITIONAL_PREFIX) ? value.slice(1) : value,
+      ),
   }
 }
 
@@ -57,6 +68,13 @@ function optionsFromContext(ctx: Readonly<CommandContext>): CliOptions {
 export type OptionDefinition = Pick<Command, 'args' | 'toKebab' | 'subCommands'>
 type Option = { name: string; boolean: boolean; spelling?: string }
 type Options = Map<string, Option>
+export type CommandSpec = { options: Options; positionals: number }
+
+export function positionalCount(definition: OptionDefinition): number {
+  return Object.values(definition.args ?? {}).filter(
+    (schema) => schema.type === 'positional',
+  ).length
+}
 
 export function optionMetadata(
   definition: OptionDefinition,
@@ -89,9 +107,9 @@ export function optionMetadata(
   return options
 }
 
-export function createArgumentParser(catalog: Map<string, Options>) {
+export function createArgumentParser(catalog: Map<string, CommandSpec>) {
   const allOptions: Options = new Map(
-    [...catalog.values()].flatMap((options) => [...options]),
+    [...catalog.values()].flatMap(({ options }) => [...options]),
   )
   const VALUE_FLAGS = new Set(
     [...allOptions]
@@ -133,15 +151,86 @@ export function createArgumentParser(catalog: Map<string, Options>) {
     return token === '--' || allOptions.has(token.split('=')[0] ?? '')
   }
 
+  function optionsFor(command?: CliCommand): Options {
+    return (catalog.get(command ?? '') ?? catalog.get('')!).options
+  }
+
+  // A nanoid id can begin with '-' (about one in 64), so `projects edit <id>`
+  // and every other id positional must accept one. A dash token that matches no
+  // spelling takes the command's next free positional slot, unless it still
+  // reads as an option attempt: '--achive', '-x' and '-json' keep their
+  // unknown-option errors, and a command with no free slot keeps rejecting
+  // every unknown option.
+  function dashPositionalIndexes(
+    argv: string[],
+    command?: CliCommand,
+  ): ReadonlySet<number> {
+    const indexes = new Set<number>()
+    const slots = catalog.get(command ?? '')?.positionals ?? 0
+    if (slots === 0) return indexes
+    const options = optionsFor(command)
+    const words = commandWordIndexes(argv)
+    let filled = 0
+    for (let i = 0; i < argv.length; i += 1) {
+      const arg = argv[i] ?? ''
+      if (arg === '--') break
+      if (words.has(i)) continue
+      if (!arg.startsWith('-') || arg === '-') {
+        filled += 1
+        continue
+      }
+      const eqIndex = arg.indexOf('=')
+      const option = options.get(eqIndex === -1 ? arg : arg.slice(0, eqIndex))
+      if (option) {
+        if (!option.boolean && eqIndex === -1) i += 1
+        continue
+      }
+      if (filled >= slots || readsAsOption(arg, options)) continue
+      indexes.add(i)
+      filled += 1
+    }
+    return indexes
+  }
+
+  function readsAsOption(arg: string, options: Options): boolean {
+    if (arg.startsWith('--')) return true
+    const eqIndex = arg.indexOf('=')
+    const name = eqIndex === -1 ? arg.slice(1) : arg.slice(1, eqIndex)
+    return name.length === 1 || options.has(`--${name}`)
+  }
+
+  function commandWordIndexes(argv: string[]): ReadonlySet<number> {
+    const found = findCommandCandidate(argv)
+    if (!found) return new Set()
+    const indexes = new Set([found.index])
+    const subcommands = SUBCOMMANDS[found.command]
+    if (!subcommands) return indexes
+    const subIndex = nextPositionalIndex(argv, found.index)
+    if (subIndex === undefined) return indexes
+    const sub = argv[subIndex]
+    if (sub !== undefined && subcommands.includes(sub)) indexes.add(subIndex)
+    return indexes
+  }
+
+  function escapeDashPositionals(argv: string[]): string[] {
+    const indexes = dashPositionalIndexes(argv, commandNameFromArgv(argv))
+    if (indexes.size === 0) return argv
+    return argv.map((arg, index) =>
+      indexes.has(index) ? `${POSITIONAL_PREFIX}${arg}` : arg,
+    )
+  }
+
   function validateRawArgs(
     argv: string[],
     command?: CliCommand,
   ): CliError | null {
-    const options = catalog.get(command ?? '') ?? catalog.get('')!
+    const options = optionsFor(command)
+    const dashPositionals = dashPositionalIndexes(argv, command)
     for (let i = 0; i < argv.length; i += 1) {
       const arg = argv[i] ?? ''
       if (arg === '--') break
-      if (!arg.startsWith('-') || arg === '-') continue
+      if (!arg.startsWith('-') || arg === '-' || dashPositionals.has(i))
+        continue
       const eqIndex = arg.indexOf('=')
       const spelling = eqIndex === -1 ? arg : arg.slice(0, eqIndex)
       const artifactIdError = unsupportedShareArtifactId(
@@ -154,7 +243,7 @@ export function createArgumentParser(catalog: Map<string, Options>) {
         const error = unknownOptionError(spelling, [...options.keys()])
         if (
           command === 'update' &&
-          catalog.get('share')?.has(spelling) &&
+          catalog.get('share')?.options.has(spelling) &&
           unsupportedUpdateOption({
             [camelCase(spelling.replace(/^--?/, ''))]: true,
           })
@@ -315,7 +404,7 @@ export function createArgumentParser(catalog: Map<string, Options>) {
   // Normalize supported camelCase spellings before Gunshi resolves values.
   // Values and positional arguments after -- must remain byte-for-byte intact.
   function normalizeOptionSpellings(argv: string[]): string[] {
-    const options = catalog.get(commandNameFromArgv(argv) ?? '')!
+    const options = optionsFor(commandNameFromArgv(argv))
     const result: string[] = []
     for (let i = 0; i < argv.length; i += 1) {
       const arg = argv[i]!
@@ -348,7 +437,15 @@ export function createArgumentParser(catalog: Map<string, Options>) {
     argv: string[],
     commandCandidate: string | undefined,
   ): string[] {
-    argv = normalizeOptionSpellings(argv)
+    return escapeDashPositionals(
+      hoistCommandForGunshi(normalizeOptionSpellings(argv), commandCandidate),
+    )
+  }
+
+  function hoistCommandForGunshi(
+    argv: string[],
+    commandCandidate: string | undefined,
+  ): string[] {
     if (commandCandidate === undefined) return argv
     const found = findCommandCandidate(argv)
     if (!found) return argv
