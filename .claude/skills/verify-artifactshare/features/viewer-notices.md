@@ -6,7 +6,7 @@ The viewer tells people two things along the bottom edge: the sandbox security b
 
 - `security-banner` lists the blocked resources for the file being viewed, with a count and an expandable `What was blocked` section.
 - `toast-placement` lifts toasts above the comment sheet while it is open and drops them back when it closes.
-- `toast-copy-recovery` shows the link to copy by hand when the browser refuses the clipboard, with a close button and (when it can) a `Open sharing settings` action.
+- `toast-copy-recovery` shows the link to copy by hand when the browser refuses the clipboard, with a close button and, where the caller offers it, an `Open sharing settings` action.
 - `toast-over-consent` keeps a toast readable above the analytics consent banner, which takes the same bottom edge.
 
 ## How to get to it (user POV)
