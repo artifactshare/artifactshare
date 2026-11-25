@@ -47,6 +47,37 @@ test('rejects invalid counts without clamping', () => {
   assert.equal(validateCount('20'), 20)
 })
 
+test('suites under repetition do not inherit the runner controls', async (t) => {
+  const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-runs-'))
+  t.after(() => fs.rmSync(results, { recursive: true, force: true }))
+  const saved = { ...process.env }
+  t.after(() => {
+    for (const name of ['REPETITIONS', 'SHARD', 'RESULTS_DIR'])
+      if (saved[name] === undefined) delete process.env[name]
+      else process.env[name] = saved[name]
+  })
+  Object.assign(process.env, {
+    REPETITIONS: '20',
+    SHARD: '{}',
+    RESULTS_DIR: results,
+  })
+  let env
+  await runShard({
+    shard: plan(1).find((entry) => entry.suite === 'scripts'),
+    repetitions: 1,
+    sha: 'example-sha',
+    results,
+    executor: (command, args, options) => {
+      env = options.env
+      return { exitCode: 0, signal: null }
+    },
+  })
+  assert.equal(env.REPETITIONS, undefined)
+  assert.equal(env.SHARD, undefined)
+  assert.equal(env.RESULTS_DIR, undefined)
+  assert.equal(env.PATH, process.env.PATH)
+})
+
 test('runner continues after failed and thrown children, with separate evidence', async (t) => {
   const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-runs-'))
   t.after(() => fs.rmSync(results, { recursive: true, force: true }))
