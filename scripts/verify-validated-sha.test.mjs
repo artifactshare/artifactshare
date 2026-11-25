@@ -53,7 +53,8 @@ for (const [name, run] of [
         token: 'test-token',
         fetchImpl: () => response(run ? [run] : []),
       }),
-      /No successful merge-group validation/u,
+      // Rejected, and the rejection names the SHA that stays undeployable.
+      (error) => error instanceof Error && error.message.includes(sha),
     )
   })
 
