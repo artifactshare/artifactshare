@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { Response } from 'undici'
 import * as fs from 'node:fs/promises'
 import { dirname, basename, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -12,14 +11,10 @@ import {
   type TestContext,
 } from 'vitest'
 import { runDownload } from './command-runners/download.js'
-import { cliFetch } from './api.js'
-import { writeFailure, writeSuccess } from './output.js'
+import { writeSuccess } from './output.js'
+import { startServer } from './test/server.js'
 import type { ParsedArgs } from './types.js'
 
-vi.mock('./api.js', async (original) => ({
-  ...(await original<typeof import('./api.js')>()),
-  cliFetch: vi.fn(),
-}))
 vi.mock('./credentials.js', () => ({
   resolveCredential: async () => ({
     ok: true,
@@ -31,22 +26,37 @@ vi.mock('./destination.js', async (original) => ({
   ...(await original<typeof import('./destination.js')>()),
   resolveProjectConfig: async () => ({ config: null }),
 }))
-vi.mock('./output.js', async (original) => ({
-  ...(await original<typeof import('./output.js')>()),
-  writeFailure: vi.fn(),
-  writeSuccess: vi.fn(),
-}))
+
+/** One stub reply: JSON by default, or raw text for artifact file content. */
+type Reply = { status?: number; json?: unknown; text?: string }
+/** Every request path the command asked the stub API for, in order. */
+let requests: string[] = []
+/** What the stub API answers; `serve` installs the ordinary project route. */
+let route: (url: string) => Reply = () => ({ status: 404, json: {} })
+let stdout = ''
+let stderr = ''
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  requests = []
+  route = () => ({ status: 404, json: {} })
+  stdout = ''
+  stderr = ''
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stdout += String(chunk)
+    return true
+  })
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr += String(chunk)
+    return true
+  })
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   process.exitCode = 0
 })
 const id = 'abc123def4'
 const otherId = 'html123abc'
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status })
+const json = (body: unknown, status = 200): Reply => ({ status, json: body })
 const entry = (artifactId: unknown) => ({
   id: artifactId,
   title: 'Report',
@@ -76,29 +86,53 @@ async function fixture(t: TestContext) {
     await fs.mkdtemp(join(tmpdir(), 'download-boundary-')),
   )
   t.onTestFinished(() => fs.rm(base, { recursive: true, force: true }))
+  const server = await startServer((request, response) => {
+    const url = request.url ?? ''
+    requests.push(url)
+    const reply = route(url)
+    response.statusCode = reply.status ?? 200
+    if (reply.text === undefined) {
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(reply.json ?? {}))
+    } else response.end(reply.text)
+  })
+  t.onTestFinished(() => server.close())
   const output = join(base, 'output')
   const args: ParsedArgs = {
     command: 'download',
-    options: { projectId: 'project', output, baseUrl: 'https://example.test' },
+    options: { projectId: 'project', output, baseUrl: server.baseUrl },
     positionals: [],
   }
   return { base, output, args }
 }
 function serve(entries: unknown[] = [entry(id)]) {
-  vi.mocked(cliFetch).mockImplementation(async (input) => {
-    const url = String(input)
+  route = (url) => {
     if (url.includes('project_id='))
       return json({ artifacts: entries, has_more: false, limit: 50 })
     if (url.endsWith('/download'))
       return json(manifest(url.includes(otherId) ? otherId : id))
-    return new Response('# abc')
-  })
+    return { text: '# abc' }
+  }
+}
+/** Wrap the installed route, leaving the rest of the project flow intact. */
+function intercept(next: (url: string) => Reply | undefined) {
+  const previous = route
+  route = (url) => next(url) ?? previous(url)
 }
 function failure() {
-  assert.equal(vi.mocked(writeSuccess).mock.calls.length, 0)
-  const call = vi.mocked(writeFailure).mock.calls.at(-1)
-  assert.ok(call)
-  return call[1]
+  assert.equal(stdout, '')
+  assert.notEqual(stderr, '')
+  return JSON.parse(stderr).error as {
+    code: string
+    message: string
+    hint: string
+  }
+}
+function succeeded<T>(): T {
+  assert.equal(stderr, '')
+  const payload = JSON.parse(stdout)
+  assert.equal(payload.ok, true)
+  return payload.data as T
 }
 
 for (const shape of ['contract', 'compatibility']) {
@@ -141,18 +175,16 @@ for (const shape of ['contract', 'compatibility']) {
 for (const duplicate of [id, id.toUpperCase()]) {
   test(`rejects ID collision across pages: ${duplicate}`, async (t) => {
     const { base, args } = await fixture(t)
-    vi.mocked(cliFetch)
-      .mockResolvedValueOnce(
-        json({
-          artifacts: [entry(id)],
-          has_more: true,
-          next_cursor: 'next',
-          limit: 1,
-        }),
-      )
-      .mockResolvedValueOnce(
-        json({ artifacts: [entry(duplicate)], has_more: false, limit: 1 }),
-      )
+    let page = 0
+    route = () =>
+      ++page === 1
+        ? json({
+            artifacts: [entry(id)],
+            has_more: true,
+            next_cursor: 'next',
+            limit: 1,
+          })
+        : json({ artifacts: [entry(duplicate)], has_more: false, limit: 1 })
     await runDownload(args, { json: true })
     assert.equal(failure().code, 'validation_failed')
     assert.deepEqual(await fs.readdir(base), [])
@@ -197,7 +229,7 @@ for (const input of ['ABC123DEF4', `${id} `, ` ${id}`, `${id}\t`, `\n${id}`]) {
       },
     })
     assert.equal(failure().code, 'validation_failed')
-    assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
+    assert.deepEqual(requests, [])
     assert.equal(mutations, 0)
     assert.deepEqual(await fs.readdir(base), [])
   })
@@ -208,7 +240,7 @@ for (const manifestId of ['..', otherId]) {
     const { base, args } = await fixture(t)
     delete args.options.projectId
     args.positionals = [id]
-    vi.mocked(cliFetch).mockResolvedValue(json(manifest(manifestId)))
+    route = () => json(manifest(manifestId))
     await runDownload(args, { json: true })
     assert.equal(failure().code, 'validation_failed')
     assert.deepEqual(await fs.readdir(base), [])
@@ -228,11 +260,8 @@ for (const single of [false, true]) {
     args.options.force = true
     serve()
     await runDownload(args, { json: true })
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+    const data = succeeded<{ backup_paths: string[] }>()
     assert.deepEqual(await fs.readdir(artifact), ['index.md'])
-    const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
-      backup_paths: string[]
-    }
     assert.equal(data.backup_paths.length, 1)
     const backup = data.backup_paths[0]!
     assert.equal(await fs.readFile(join(backup, 'old'), 'utf8'), 'original')
@@ -241,22 +270,9 @@ for (const single of [false, true]) {
       single ? [basename(dirname(backup)), 'output'].sort() : ['output'],
     )
     assert.equal(dirname(dirname(backup)), single ? base : output)
-    const { writeSuccess: renderSuccess } =
-      await vi.importActual<typeof import('./output.js')>('./output.js')
-    const stdout = vi
-      .spyOn(process.stdout, 'write')
-      .mockImplementation(() => true)
-    try {
-      renderSuccess('download', data, { json: false })
-      assert.ok(
-        stdout.mock.calls
-          .map(([text]) => String(text))
-          .join('')
-          .includes(`Original data retained at ${backup}`),
-      )
-    } finally {
-      stdout.mockRestore()
-    }
+    stdout = ''
+    writeSuccess('download', data, { json: false })
+    assert.ok(stdout.includes(`Original data retained at ${backup}`))
   })
 }
 
@@ -293,12 +309,11 @@ for (const force of [false, true]) {
         await fs.rename(source, destination)
       },
     })
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-    const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
+    const data = succeeded<{
       ok: number
       failed: number
       backup_paths: string[]
-    }
+    }>()
     assert.equal(data.ok, 1)
     assert.equal(data.failed, 0)
     assert.equal(renames.length, force ? 4 : 2)
@@ -341,20 +356,16 @@ test('incremental run skips content and retains previous index backup', async (t
   const { output, args } = await fixture(t)
   serve()
   await runDownload(args, { json: true })
-  assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+  succeeded()
   const indexPath = join(output, 'index.json')
   const oldIndex = (await fs.stat(indexPath)).ino
   const oldContent = await fs.readFile(indexPath, 'utf8')
-  vi.clearAllMocks()
-  serve()
+  stdout = ''
+  requests = []
   await runDownload(args, { json: true })
-  assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-  const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
-    unchanged: number
-    backup_paths: string[]
-  }
+  const data = succeeded<{ unchanged: number; backup_paths: string[] }>()
   assert.equal(data.unchanged, 1)
-  assert.equal(vi.mocked(cliFetch).mock.calls.length, 2)
+  assert.equal(requests.length, 2)
   assert.equal(data.backup_paths.length, 1)
   assert.equal((await fs.stat(data.backup_paths[0]!)).ino, oldIndex)
   assert.equal(await fs.readFile(data.backup_paths[0]!, 'utf8'), oldContent)
@@ -388,7 +399,7 @@ test('empty project publishes a regular index and cleans workspace', async (t) =
   const { base, output, args } = await fixture(t)
   serve([])
   await runDownload(args, { json: true })
-  assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+  succeeded()
   assert.deepEqual(
     JSON.parse(await fs.readFile(join(output, 'index.json'), 'utf8')).artifacts,
     [],
@@ -403,17 +414,12 @@ test('unsupported kinds with valid IDs skip successfully without file requests',
     { ...entry(otherId), artifact_kind: 'workspace_app' },
   ])
   await runDownload(args, { json: true })
-  assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+  const data = succeeded<{ ok: number; skipped: number; failed: number }>()
   assert.equal(process.exitCode, 0)
-  const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
-    ok: number
-    skipped: number
-    failed: number
-  }
   assert.equal(data.ok, 0)
   assert.equal(data.skipped, 2)
   assert.equal(data.failed, 0)
-  assert.equal(vi.mocked(cliFetch).mock.calls.length, 1)
+  assert.equal(requests.length, 1)
   const index = JSON.parse(
     await fs.readFile(join(output, 'index.json'), 'utf8'),
   )
@@ -491,17 +497,11 @@ test('partial content failure keeps original data and continues ordinary project
   await fs.writeFile(join(root, 'original'), 'keep')
   args.options.force = true
   serve([entry(id), entry(otherId)])
-  const fetch = vi.mocked(cliFetch).getMockImplementation()!
-  vi.mocked(cliFetch).mockImplementation(async (url, options) => {
-    if (String(url).includes(`/${id}/download/`)) return json({}, 500)
-    return fetch(url, options)
-  })
+  intercept((url) =>
+    url.includes(`/${id}/download/`) ? json({}, 500) : undefined,
+  )
   await runDownload(args, { json: true })
-  assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-  const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
-    ok: number
-    failed: number
-  }
+  const data = succeeded<{ ok: number; failed: number }>()
   assert.equal(data.ok, 1)
   assert.equal(data.failed, 1)
   assert.equal(await fs.readFile(join(root, 'original'), 'utf8'), 'keep')
@@ -517,8 +517,8 @@ for (const input of [
     args.positionals = [input]
     serve()
     await runDownload(args, { json: true })
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-    assert.equal(vi.mocked(cliFetch).mock.calls.length, 2)
+    succeeded()
+    assert.equal(requests.length, 2)
     assert.deepEqual(await fs.readdir(base), ['output'])
   })
 }
@@ -541,17 +541,14 @@ for (const paths of [
         if (priorIndex) await fs.writeFile(join(output, 'index.json'), index)
         args.options.force = force
         serve([entry(id), entry(otherId)])
-        const fetch = vi.mocked(cliFetch).getMockImplementation()!
-        vi.mocked(cliFetch).mockImplementation(async (url, options) => {
-          if (String(url).endsWith(`/${id}/download`)) {
-            const body = manifest()
-            body.files = paths.map((path) => ({ ...body.files[0]!, path }))
-            return json(body)
-          }
-          return fetch(url, options)
+        intercept((url) => {
+          if (!url.endsWith(`/${id}/download`)) return undefined
+          const body = manifest()
+          body.files = paths.map((path) => ({ ...body.files[0]!, path }))
+          return json(body)
         })
         await runDownload(args, { json: true })
-        assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+        succeeded()
         assert.equal(process.exitCode, 1)
         const results = JSON.parse(
           await fs.readFile(join(output, 'index.json'), 'utf8'),
@@ -586,20 +583,13 @@ for (const bad of ['identity', 'malformed', 'ABC123DEF4', '../x', 123, null]) {
     await fs.mkdir(output)
     args.options.force = true
     serve([entry(id), entry(otherId)])
-    const fetch = vi.mocked(cliFetch).getMockImplementation()!
-    vi.mocked(cliFetch).mockImplementation(async (url, options) => {
-      if (String(url).endsWith(`/${id}/download`)) {
-        if (bad === 'malformed') return json({ files: [] })
-        return json(manifest(bad === 'identity' ? otherId : bad))
-      }
-      return fetch(url, options)
+    intercept((url) => {
+      if (!url.endsWith(`/${id}/download`)) return undefined
+      if (bad === 'malformed') return json({ files: [] })
+      return json(manifest(bad === 'identity' ? otherId : bad))
     })
     await runDownload(args, { json: true })
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-    const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
-      ok: number
-      failed: number
-    }
+    const data = succeeded<{ ok: number; failed: number }>()
     assert.equal(data.ok, 1)
     assert.equal(data.failed, 1)
     assert.equal(process.exitCode, 1)
@@ -640,8 +630,7 @@ for (const [single, force] of [
     args.options.force = force
     serve()
     await runDownload(args, { json: true })
-    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
-    assert.equal(vi.mocked(writeSuccess).mock.calls.length, 1)
+    succeeded()
     const artifact = single
       ? join(parent, 'output')
       : join(parent, 'output', id)
@@ -665,8 +654,9 @@ test('project rejects links in unchanged artifact contents without inspecting un
   await fs.symlink(outside, join(output, 'node_modules'))
   await fs.symlink(outside, join(output, '.git'))
   await fs.symlink(outside, join(output, id, 'unrelated'))
-  vi.clearAllMocks()
-  serve()
+  stdout = ''
+  stderr = ''
+  requests = []
   const visited: string[] = []
   await runDownload(args, { json: true }, false, {
     lstat: async (path) => {
@@ -708,11 +698,7 @@ test('project aborts publication when an artifact destination changes during sta
   assert.equal(failure().code, 'validation_failed')
   await assert.rejects(fs.lstat(join(output, otherId)), { code: 'ENOENT' })
   assert.equal(await fs.readFile(join(output, 'index.json'), 'utf8'), oldIndex)
-  assert.ok(
-    !vi
-      .mocked(cliFetch)
-      .mock.calls.some(([url]) => String(url).includes(`/${otherId}/download`)),
-  )
+  assert.ok(!requests.some((url) => url.includes(`/${otherId}/download`)))
   assert.equal(
     await fs.readFile(join(base, 'original', 'old'), 'utf8'),
     'original',
@@ -743,8 +729,7 @@ for (const force of [false, true]) {
       assert.equal(failure().code, 'validation_failed')
       assert.ok(failure().message.includes(join(output, id)))
       assert.equal(mutations, 0)
-      assert.equal(vi.mocked(writeSuccess).mock.calls.length, 0)
-      assert.equal(vi.mocked(cliFetch).mock.calls.length, 1)
+      assert.equal(requests.length, 1)
       assert.equal(await fs.readFile(join(output, id), 'utf8'), 'original')
       assert.equal(await fs.readFile(join(output, 'index.json'), 'utf8'), index)
       assert.deepEqual(
@@ -773,7 +758,7 @@ for (const force of [false, true]) {
     assert.equal(failure().code, 'validation_failed')
     assert.ok(failure().message.includes(join(output, id)))
     assert.equal(mutations, 0)
-    assert.equal(vi.mocked(cliFetch).mock.calls.length, 1)
+    assert.equal(requests.length, 1)
     assert.deepEqual(await fs.readdir(base), ['output'])
     assert.deepEqual(await fs.readdir(output), [id])
     assert.equal(await fs.readFile(join(output, id), 'utf8'), 'keep')
@@ -785,7 +770,7 @@ for (const body of [null, [], 'invalid', {}, { files: [] }]) {
     const { base, args } = await fixture(t)
     delete args.options.projectId
     args.positionals = [id]
-    vi.mocked(cliFetch).mockResolvedValue(json(body))
+    route = () => json(body)
     let mutations = 0
     await runDownload(args, { json: true }, false, {
       checkpoint: async () => {
@@ -813,17 +798,14 @@ for (const paths of [
       await fs.mkdir(output)
       await fs.writeFile(join(output, 'index.json'), '{"artifacts":[]}')
       serve([entry(id), entry(otherId)])
-      const fetch = vi.mocked(cliFetch).getMockImplementation()!
-      vi.mocked(cliFetch).mockImplementation(async (url, options) => {
-        if (String(url).endsWith(`/${id}/download`)) {
-          const body = manifest()
-          body.files = paths.map((path) => ({ ...body.files[0]!, path }))
-          return json(body)
-        }
-        return fetch(url, options)
+      intercept((url) => {
+        if (!url.endsWith(`/${id}/download`)) return undefined
+        const body = manifest()
+        body.files = paths.map((path) => ({ ...body.files[0]!, path }))
+        return json(body)
       })
       await runDownload(args, { json: true })
-      assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+      succeeded()
       assert.equal(process.exitCode, 1)
       const index = JSON.parse(
         await fs.readFile(join(output, 'index.json'), 'utf8'),

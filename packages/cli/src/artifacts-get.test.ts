@@ -476,13 +476,13 @@ test('artifacts get --json rejects malformed success responses', async () => {
   )
 })
 
-for (const flag of [
-  ['--version', 'v1'],
-  ['--version=v1'],
-  ['--version', '-AbCdEfGhIjKlMnO'],
-  ['--version=-AbCdEfGhIjKlMnO'],
-]) {
-  const versionId = flag.length === 2 ? flag[1] : flag[0]!.split('=')[1]
+for (const [flag, versionId] of [
+  [['--version', 'v1'], 'v1'],
+  [['--version=v1'], 'v1'],
+  [['--version', '-AbCdEfGhIjKlMnO'], '-AbCdEfGhIjKlMnO'],
+  [['--version=-AbCdEfGhIjKlMnO'], '-AbCdEfGhIjKlMnO'],
+  [['--version', ' v1 '], 'v1'],
+] as const) {
   test(`historical get dispatches ${flag.join(' ')} and preserves common options`, async () => {
     await withServer(
       (request, response) => {

@@ -38,6 +38,31 @@ const request: OwnedBridgeRequest = {
   ],
 }
 
+/** Read a multipart body back the way a server would: with the boundary the
+ * request declared, which also proves header and body agree. */
+function multipartParts(contentType: string, body: ArrayBuffer | undefined) {
+  const boundary = /^multipart\/form-data; boundary=([^;]+)$/.exec(
+    contentType,
+  )?.[1]
+  // RFC 2046 bans a delimiter outside this set, whatever generated it.
+  expect(boundary).toMatch(/^[A-Za-z0-9'()+_,\-./:=?]{1,70}$/)
+  const text = new TextDecoder().decode(body)
+  expect(text.endsWith(`--${boundary}--\r\n`)).toBe(true)
+  return text
+    .split(`--${boundary}`)
+    .slice(1, -1)
+    .map((chunk) => {
+      const separator = chunk.indexOf('\r\n\r\n')
+      const headers = chunk.slice(2, separator)
+      return {
+        name: /name="([^"]*)"/.exec(headers)?.[1],
+        filename: /filename="([^"]*)"/.exec(headers)?.[1],
+        contentType: /Content-Type: (.*)/.exec(headers)?.[1],
+        value: chunk.slice(separator + 4).replace(/\r\n$/, ''),
+      }
+    })
+}
+
 function json(value: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(value), {
     ...init,
@@ -76,19 +101,36 @@ describe('ArtifactShareBridgeClient', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('builds deterministic multipart and validates success', async () => {
+  it('builds multipart a parser can read back and validates success', async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
-        expect(init?.headers).toMatchObject({ authorization: 'Bearer token' })
-        expect(init?.headers).toMatchObject({
-          'content-type':
-            'multipart/form-data; boundary=artifactshare-bridge-11111111111111111111111111111111',
-        })
-        const body = new TextDecoder().decode(init?.body as ArrayBuffer)
-        expect(body).toContain('Content-Type: application/json\r\n\r\n')
-        expect(body).toContain(
-          'filename="file-0"\r\nContent-Type: text/markdown',
+        const headers = init?.headers as Record<string, string>
+        expect(headers).toMatchObject({ authorization: 'Bearer token' })
+        const parts = multipartParts(
+          headers['content-type'] ?? '',
+          init?.body as ArrayBuffer,
         )
+        expect(parts.map((part) => part.name)).toEqual(['metadata', 'file'])
+        expect(parts[0]).toMatchObject({
+          contentType: 'application/json',
+          filename: undefined,
+        })
+        expect(JSON.parse(parts[0]!.value)).toMatchObject({
+          request_id: 'request-1',
+          operation: 'publish',
+          requested_audience: 'workspace',
+          content: {
+            kind: 'file',
+            files: [
+              { index: 0, path: 'report.md', media_type: 'text/markdown' },
+            ],
+          },
+        })
+        expect(parts[1]).toMatchObject({
+          filename: 'file-0',
+          contentType: 'text/markdown',
+          value: 'AB',
+        })
         return json({
           schema_version: 1,
           ok: true,

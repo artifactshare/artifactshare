@@ -6,6 +6,7 @@ import { createShareDialogHandler } from './share-dialog.js'
 
 test('refreshes only the editable dialog, coalescing pending snapshots and preserving auth, upload and result', async () => {
   const listeners = vi.spyOn(window, 'addEventListener')
+  const styles: Element[] = []
   const opener = window
   vi.stubGlobal('opener', opener)
   vi.useFakeTimers()
@@ -62,9 +63,19 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     const script = parsed.querySelector('script')!.textContent!
     parsed.querySelector('script')!.remove()
     document.body.innerHTML = parsed.body.innerHTML
+    // The dialog's own stylesheet decides which part is on screen, so the test
+    // can read the visible panel instead of the class names behind it.
+    for (const style of parsed.querySelectorAll('style'))
+      styles.push(document.head.appendChild(style.cloneNode(true) as Element))
     const executable = document.createElement('script')
     executable.textContent = script
     document.body.appendChild(executable)
+    const visibleParts = () =>
+      ['form-part', 'auth-part', 'done-part'].filter(
+        (part) =>
+          getComputedStyle(document.querySelector<HTMLElement>(`.${part}`)!)
+            .display !== 'none',
+      )
     const refresh = (
       origin = 'https://example.com',
       source: Window | null = opener,
@@ -121,16 +132,14 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
         interval_seconds: 5,
       }),
     )
-    await vi.waitFor(() =>
-      expect(document.querySelector('#dialog')!.className).toBe('dialog auth'),
-    )
+    await vi.waitFor(() => expect(visibleParts()).toEqual(['auth-part']))
     expect(document.activeElement).toBe(document.querySelector('#authLink'))
     refresh()
     refresh()
     expect(document.querySelector('#userCode')!.textContent).toBe('CODE')
     expect(snapshots).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(5000)
-    expect(document.querySelector('#dialog')!.className).toBe('dialog')
+    expect(visibleParts()).toEqual(['form-part'])
     expect(document.activeElement).toBe(document.querySelector('#destination'))
     expect(visibility.value).toBe('link')
     const error = document.querySelector<HTMLElement>('#shareError')!
@@ -204,11 +213,7 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
         warnings: [{ message: 'Saved note' }],
       }),
     )
-    await vi.waitFor(() =>
-      expect(document.querySelector('#dialog')!.className).toBe(
-        'dialog shared',
-      ),
-    )
+    await vi.waitFor(() => expect(visibleParts()).toEqual(['done-part']))
     refresh()
     expect(document.activeElement).toBe(document.querySelector('#shareUrl'))
     expect(document.querySelector<HTMLInputElement>('#shareUrl')!.value).toBe(
@@ -228,5 +233,6 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     vi.restoreAllMocks()
     document.body.removeAttribute('tabindex')
     document.body.innerHTML = ''
+    for (const style of styles) style.remove()
   }
 })

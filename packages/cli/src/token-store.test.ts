@@ -89,9 +89,20 @@ test('Windows Credential Manager keeps credential values off process arguments',
   assert.equal(await store?.read('account'), 'stored-value')
   assert.equal(await store?.delete('account'), true)
   assert.ok(calls.every(({ args }) => !args.includes('secret-value')))
-  assert.match(
-    Buffer.from(calls[1]?.input ?? '', 'base64').toString('utf8'),
-    /secret-value/,
+  // The credential value reaches PowerShell only on stdin, and only once:
+  // on the write operation that was asked to store it.
+  const requests = calls.map(
+    ({ input }) =>
+      JSON.parse(Buffer.from(input ?? '', 'base64').toString('utf8')) as {
+        operation: string
+        value?: string
+      },
+  )
+  assert.deepEqual(
+    requests
+      .filter((request) => request.value === 'secret-value')
+      .map((request) => request.operation),
+    ['write'],
   )
 })
 

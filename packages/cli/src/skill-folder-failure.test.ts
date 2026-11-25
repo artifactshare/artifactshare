@@ -38,8 +38,18 @@ const bundle = (version: number): SkillBundle => ({
   },
 })
 let root: string
+// A test that times out is abandoned while its filesystem transaction keeps
+// running, so this removal can race files appearing under `root` and fail with
+// ENOTEMPTY. Retrying keeps one timeout from being reported twice, once as the
+// test and again as the next test's cleanup.
 const cleanup = async () => {
-  if (root) await rm(root, { recursive: true, force: true })
+  if (root)
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 50,
+    })
 }
 afterEach(async () => {
   vi.mocked(mkdir).mockRestore()
@@ -138,13 +148,21 @@ test('references precede manifest and entry is always renamed last', async () =>
   const destinations = vi
     .mocked(rename)
     .mock.calls.map((args) => basename(String(args[1])))
-  assert.deepEqual(destinations, [
+  assert.deepEqual([...destinations].sort(), [
+    '.artifactshare-managed.json',
     '.artifactshare-pending.json',
+    'SKILL.md',
     'a.md',
     'b.md',
-    '.artifactshare-managed.json',
-    'SKILL.md',
   ])
+  // Crash safety, not a fixed sequence: the pending intent lands before any
+  // content, the manifest only once every file it describes is in place, and
+  // the entry point last so a half-written folder is never discoverable.
+  const at = (name: string) => destinations.indexOf(name)
+  assert.equal(at('.artifactshare-pending.json'), 0)
+  assert.equal(at('SKILL.md'), destinations.length - 1)
+  assert.ok(at('a.md') < at('.artifactshare-managed.json'))
+  assert.ok(at('b.md') < at('.artifactshare-managed.json'))
 })
 
 for (const failurePath of [
