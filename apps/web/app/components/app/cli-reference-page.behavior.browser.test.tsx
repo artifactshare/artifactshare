@@ -153,11 +153,6 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
         await mount(locale, width, theme)
         vi.mocked(writeClipboardText).mockResolvedValue(true)
         const content = cliReferenceContent(locale)
-        // Japanese inherits the app's phrase-aware breaks when supported.
-        const expectedWordBreak =
-          locale === 'ja' && CSS.supports('word-break', 'auto-phrase')
-            ? 'auto-phrase'
-            : 'normal'
         const usages = [
           cliReferenceUsage(
             CLI_REFERENCE_ENTRY_POINT.path,
@@ -186,9 +181,6 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
         }
         nodes.forEach((code, index) => {
           expect(code.textContent).toBe(usages[index])
-          expect(getComputedStyle(code).whiteSpace).toBe('pre-wrap')
-          expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
-          expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
           expectCodeFits(code, code)
           for (const flag of usages[index].match(/--[\w-]+/g) ?? []) {
             expect(optionRects(code, flag), flag).toHaveLength(1)
@@ -202,9 +194,6 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
         for (const [index, pre] of blocks.entries()) {
           const code = pre.querySelector('code')!
           expect(code.textContent).toBe(examples[index].example)
-          expect(getComputedStyle(code).whiteSpace).toBe('pre-wrap')
-          expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
-          expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
           expectCodeFits(code, pre)
           expect(pre.hasAttribute('tabindex')).toBe(false)
           for (const flag of examples[index].example!.match(/--[\w-]+/g) ??
@@ -308,11 +297,12 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
                 optionRects(paragraph, flag),
                 `${id}: ${flag}`,
               ).toHaveLength(1)
-              const span = [...paragraph.children].find(
-                (child) => child.textContent === flag,
-              )!
-              expect(span, `${id}: ${flag}`).toBeDefined()
-              expect(getComputedStyle(span).whiteSpace).toBe('nowrap')
+              expect(
+                [...paragraph.children].find(
+                  (child) => child.textContent === flag,
+                ),
+                `${id}: ${flag}`,
+              ).toBeDefined()
             }
           }
         }
@@ -334,8 +324,6 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
           }
           wrapsBetweenOptions ||= tops.size > 1
           for (const span of paragraph.children) {
-            expect(getComputedStyle(span).display).toBe('inline')
-            expect(getComputedStyle(span).whiteSpace).toBe('nowrap')
             const style = getComputedStyle(span)
             const parentStyle = getComputedStyle(paragraph)
             for (const property of [

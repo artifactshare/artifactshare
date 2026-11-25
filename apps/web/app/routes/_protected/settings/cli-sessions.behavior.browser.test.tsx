@@ -70,13 +70,15 @@ test.each(['light', 'dark'])(
         { initialEntries: ['/settings/tokens'] },
       )
       await act(async () => root.render(<RouterProvider router={router} />))
-      const label = container.querySelector<HTMLElement>('td .font-medium')!
-      expect(label.textContent).toContain(name)
+      const identity = `${name} · ublisher`
+      const label = page.getByText(identity, { exact: true }).element()
       expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth)
-      const access = label.parentElement!.lastElementChild as HTMLElement
-      expect(access.textContent).toBe(
-        `${en['team.tokens.cli.preset']}: ${en['team.tokens.cli.preset.publisher']}`,
-      )
+      const access = page
+        .getByText(
+          `${en['team.tokens.cli.preset']}: ${en['team.tokens.cli.preset.publisher']}`,
+          { exact: true },
+        )
+        .element()
       expect(getComputedStyle(access).whiteSpace).toBe('normal')
       expect(access.scrollWidth).toBeLessThanOrEqual(access.clientWidth)
       // Firefox can report one extra pixel of visible glyph overflow.
@@ -86,7 +88,7 @@ test.each(['light', 'dark'])(
         Number.parseFloat(getComputedStyle(access).lineHeight),
       )
       const revoke = page.getByRole('button', {
-        name: `Revoke ${name} · ublisher`,
+        name: `Revoke ${identity}`,
         exact: true,
       })
       await expect.element(revoke).toBeVisible()
@@ -169,15 +171,15 @@ test.each(['en', 'ja'] as const)(
         name: copy['team.tokens.name'],
       })
       await input.fill('Daily')
-      const label = container.querySelector<HTMLLabelElement>(
-        'label[for="token-name"]',
-      )!
-      expect(label.control).toBe(input.element())
+      // The field is named by a label the reader can see, not only by ARIA.
+      const [label] = (input.element() as HTMLInputElement).labels ?? []
+      expect(label).toBeInstanceOf(HTMLLabelElement)
+      expect(label!.textContent).toContain(copy['team.tokens.name'])
       await expect.element(input).toHaveValue('Daily')
-      await expect.element(page.elementLocator(label)).toBeVisible()
-      expect(label.getBoundingClientRect().width).toBeGreaterThan(1)
-      expect(label.getBoundingClientRect().height).toBeGreaterThan(1)
-      expect(getComputedStyle(label).clipPath).toBe('none')
+      await expect.element(page.elementLocator(label!)).toBeVisible()
+      expect(label!.getBoundingClientRect().width).toBeGreaterThan(1)
+      expect(label!.getBoundingClientRect().height).toBeGreaterThan(1)
+      expect(getComputedStyle(label!).clipPath).toBe('none')
     } finally {
       await act(async () => root.unmount())
       router.dispose()

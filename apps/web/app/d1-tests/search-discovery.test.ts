@@ -106,16 +106,13 @@ it('uses ID lookups with all filters and five indexed sparse sources', async () 
     .prepare(`EXPLAIN QUERY PLAN ${sparse.sql}`)
     .bind(...sparse.parameters)
     .all<{ detail: string }>()
-  const details = plan.results.map((row) => row.detail).join('\n')
-  for (const index of [
-    'shareables_owner_user_id',
-    'shareable_grants_lower_email_shareable',
-    'project_members_user',
-    'project_share_defaults_lower_email_container',
-    'shareable_viewer_recency_viewer_time',
-  ]) {
-    expect(details).toContain(index)
-  }
+  // Every sparse source has to be served by an index. Listing the index names
+  // pins the plan to them; a dropped index shows up as a scan either way.
+  expect(
+    plan.results
+      .map((row) => row.detail)
+      .filter((detail) => /^SCAN\b/.test(detail)),
+  ).toEqual([])
   expect(
     await buildSparseDiscoveryQuery(db, viewer, {}, now).execute(),
   ).toHaveLength(2000)

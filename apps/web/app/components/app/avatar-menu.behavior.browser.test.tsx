@@ -6,7 +6,31 @@ import { AvatarMenu } from './avatar-menu'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { ViewerFixture } from '~/routes/dev.scenarios.$scenario/+components/viewer-fixture'
 import { AppTopbar } from './app-topbar'
+import { bindI18n } from '~/lib/i18n'
+import { requiredWait } from '~/test/browser-waits'
 import '~/app.css'
+
+const ja = bindI18n('ja')
+const receivedEmpty = ja.t('accessRequests.receivedEmpty')
+
+// Radix slides the sheet in; its position is only measurable once the
+// animation it starts on mount has finished.
+async function openedSheet() {
+  const sheet = page.getByRole('dialog', {
+    name: ja.t('accessRequests.title'),
+  })
+  await expect.element(sheet).toBeVisible()
+  const element = sheet.element()
+  await requiredWait(
+    'access request sheet open animation',
+    Promise.all(
+      element
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    ),
+  )
+  return element as HTMLElement
+}
 
 const submitMock = vi.hoisted(() => vi.fn())
 const navigateMock = vi.hoisted(() => vi.fn())
@@ -26,8 +50,8 @@ vi.mock('~/components/app/analytics-consent-provider', () => ({
 }))
 
 vi.mock('~/hooks/use-t', async () => {
-  const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('ja') }
+  const i18n = await import('~/lib/i18n')
+  return { useT: () => i18n.bindI18n('ja') }
 })
 
 let root: Root | undefined
@@ -100,21 +124,17 @@ describe('AvatarMenu access requests', () => {
     )
 
     await page.getByRole('button', { name: 'user@example.com' }).click()
-    await page.getByRole('menuitem', { name: '閲覧リクエスト' }).click()
+    await page
+      .getByRole('menuitem', { name: ja.t('accessRequests.title') })
+      .click()
 
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain(
-        '未対応のリクエストはありません。',
-      ),
+      expect(document.body.textContent).toContain(receivedEmpty),
     )
-    await new Promise((resolve) => window.setTimeout(resolve, 600))
+    const sheet = await openedSheet()
 
-    const sheet = document.querySelector<HTMLElement>(
-      '[data-slot="sheet-content"]',
-    )
     const topbar = document.querySelector<HTMLElement>('header')
-    expect(sheet).not.toBeNull()
-    expect(sheet?.getBoundingClientRect().top).toBe(
+    expect(sheet.getBoundingClientRect().top).toBe(
       topbar?.getBoundingClientRect().bottom,
     )
     expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull()
@@ -126,10 +146,8 @@ describe('AvatarMenu access requests', () => {
     headerAction.addEventListener('click', headerClick)
     headerAction.click()
     expect(headerClick).toHaveBeenCalledOnce()
-    expect(sheet?.contains(document.activeElement)).toBe(true)
-    expect(document.body.textContent).toContain(
-      '未対応のリクエストはありません。',
-    )
+    expect(sheet.contains(document.activeElement)).toBe(true)
+    expect(document.body.textContent).toContain(receivedEmpty)
   })
 
   test.each([
@@ -183,28 +201,24 @@ describe('AvatarMenu access requests', () => {
       expect(host.querySelector('time')).toBeNull()
       expect(host.textContent).not.toContain('データ更新')
       await page.getByRole('button', { name: 'viewer@example.test' }).click()
-      await page.getByRole('menuitem', { name: '閲覧リクエスト' }).click()
+      await page
+        .getByRole('menuitem', { name: ja.t('accessRequests.title') })
+        .click()
 
       await vi.waitFor(() =>
-        expect(document.body.textContent).toContain(
-          '未対応のリクエストはありません。',
-        ),
+        expect(document.body.textContent).toContain(receivedEmpty),
       )
-      await new Promise((resolve) => window.setTimeout(resolve, 600))
+      const sheet = await openedSheet()
 
-      const sheet = document.querySelector('[data-slot="sheet-content"]')
-      expect(sheet).not.toBeNull()
       if (width > 820) {
         const topbar = document.querySelector('#viewer-topbar')
-        expect(sheet?.getBoundingClientRect().top).toBe(
+        expect(sheet.getBoundingClientRect().top).toBe(
           topbar?.getBoundingClientRect().bottom,
         )
       }
       expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull()
-      expect(sheet?.contains(document.activeElement)).toBe(true)
-      expect(document.body.textContent).toContain(
-        '未対応のリクエストはありません。',
-      )
+      expect(sheet.contains(document.activeElement)).toBe(true)
+      expect(document.body.textContent).toContain(receivedEmpty)
     },
   )
 
@@ -322,13 +336,11 @@ describe('AvatarMenu access requests', () => {
 
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain(
-        'このリクエストは処理済みか、現在は確認できません。',
+        ja.t('accessRequests.unavailableError'),
       ),
     )
 
     expect(document.querySelector('iframe')).not.toBeNull()
-    expect(document.body.textContent).not.toContain(
-      '未対応のリクエストはありません。',
-    )
+    expect(document.body.textContent).not.toContain(receivedEmpty)
   })
 })

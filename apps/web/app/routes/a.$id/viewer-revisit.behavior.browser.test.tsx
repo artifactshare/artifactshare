@@ -21,6 +21,11 @@ vi.mock('react-router', async (importOriginal) => ({
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
+// The revisit hint is the button that offers the unread comments by count.
+function commentsHint() {
+  return page.getByRole('button', { name: /^\d+ new comments?$/ })
+}
+
 const time = '2026-01-03T00:00:00.000Z'
 const textSubject: Extract<CommentThreadView['subject'], { kind: 'text' }> = {
   kind: 'text',
@@ -212,9 +217,9 @@ async function mount(fixture: Parameters<typeof Harness>[0]) {
   root.render(<Harness {...fixture} />)
   await vi.waitFor(() =>
     expect(
-      document.querySelector(
-        fixture.context.commentCount > 0 ? '[data-revisit-comments]' : 'output',
-      ),
+      fixture.context.commentCount > 0
+        ? commentsHint().query()
+        : document.querySelector('output'),
     ).not.toBeNull(),
   )
 }
@@ -252,9 +257,7 @@ for (const width of [390, 1280]) {
     async (kind) => {
       await page.viewport(width, 800)
       await mount(entryFixture(kind))
-      await userEvent.click(
-        document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
-      )
+      await commentsHint().click()
       const target = () => document.getElementById('comment-card-thread-first')!
       await vi.waitFor(() => expect(document.activeElement).toBe(target()))
       await Promise.all(
@@ -267,7 +270,7 @@ for (const width of [390, 1280]) {
       await vi.waitFor(() => {
         expect(document.activeElement).toBe(target())
       })
-      expect(document.querySelector('[data-revisit-comments]')).toBeNull()
+      expect(commentsHint().query()).toBeNull()
       await expect
         .element(page.getByRole('tab', { name: 'All', exact: true }))
         .toHaveAttribute('aria-selected', 'true')
@@ -334,7 +337,7 @@ for (const width of [390, 1280]) {
         expect(document.querySelector('output')?.dataset.target).toBe('')
         expect(document.activeElement).not.toBe(target())
       })
-      expect(document.querySelector('[data-revisit-comments]')).toBeNull()
+      expect(commentsHint().query()).toBeNull()
       expect(
         document.querySelectorAll('[data-new-comment-message]'),
       ).toHaveLength(kind === 'resolved' ? 1 : 2)
@@ -345,7 +348,7 @@ for (const width of [390, 1280]) {
         expect(document.querySelector('[data-new-comment-thread]')).toBeNull(),
       )
       expect(document.querySelector('[data-new-comment-message]')).toBeNull()
-      expect(document.querySelector('[data-revisit-comments]')).toBeNull()
+      expect(commentsHint().query()).toBeNull()
       await expect
         .element(
           page.getByRole('button', {
@@ -364,9 +367,7 @@ test('deleted message pairs open all without a stale target', async () => {
     { threadId: 'thread-first', messageId: 'deleted-message' },
   ]
   await mount(fixture)
-  await userEvent.click(
-    document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
-  )
+  await commentsHint().click()
   await expect
     .element(page.getByRole('tab', { name: 'All', exact: true }))
     .toHaveAttribute('aria-selected', 'true')
@@ -395,12 +396,10 @@ test('a count clicked after closing the panel focuses once and switching files c
     expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
   })
   // Ordinary opening uses the entry target without dismissing the count hint.
-  expect(document.querySelector('[data-revisit-comments]')).not.toBeNull()
+  expect(commentsHint().query()).not.toBeNull()
   // Wait for the sheet to close before clicking the count hint underneath it.
   await closeCommentsPanel()
-  await userEvent.click(
-    document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
-  )
+  await commentsHint().click()
   await vi.waitFor(() =>
     expect(document.activeElement?.id).toBe('comment-card-thread-first'),
   )
@@ -520,11 +519,11 @@ test.each(['Comments', 'Version status: v1'])(
   async (returnTarget) => {
     await page.viewport(390, 800)
     await mount(entryFixture('artifact'))
-    await userEvent.click(
+    await (
       returnTarget === 'Comments'
         ? page.getByRole('button', { name: 'Comments', exact: true })
-        : document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
-    )
+        : commentsHint()
+    ).click()
     await vi.waitFor(() =>
       expect(document.activeElement?.id).toBe('comment-card-thread-first'),
     )
@@ -605,9 +604,7 @@ test.each(['deep-link', 'anchor-navigation'] as const)(
     // Close the sheet so the count hint is reachable, then reopen with a
     // request containing only messages that have since been removed.
     await closeCommentsPanel()
-    await userEvent.click(
-      document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
-    )
+    await commentsHint().click()
     await expect
       .element(page.getByRole('tab', { name: 'All', exact: true }))
       .toHaveAttribute('aria-selected', 'true')

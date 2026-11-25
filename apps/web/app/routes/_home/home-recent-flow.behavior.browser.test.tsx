@@ -89,11 +89,16 @@ const layoutContext = {
 }
 
 const cases = [
-  { relation: 'all', expected: '?unread=1' },
-  { relation: 'own', expected: '?relation=own&unread=1' },
-  { relation: 'project', expected: '?relation=project&unread=1' },
-  { relation: 'shared', expected: '?relation=shared&unread=1' },
+  { relation: 'all', expected: { unread: '1' } },
+  { relation: 'own', expected: { relation: 'own', unread: '1' } },
+  { relation: 'project', expected: { relation: 'project', unread: '1' } },
+  { relation: 'shared', expected: { relation: 'shared', unread: '1' } },
 ] as const
+
+// The filters the next page receives, not the order they were written in.
+function query(search: string) {
+  return Object.fromEntries(new URLSearchParams(search))
+}
 
 let root: Root | undefined
 afterEach(() => {
@@ -191,7 +196,7 @@ describe('home recent flow', () => {
       await vi.waitFor(() =>
         expect(router.state.location.pathname).toBe('/recent'),
       )
-      expect(router.state.location.search).toBe(expected)
+      expect(query(router.state.location.search)).toEqual(expected)
       expect(
         host.querySelector(
           '[aria-label="Recent filters"] [aria-current="page"]',
@@ -227,12 +232,18 @@ describe('home recent flow', () => {
     )
     router.navigate(-1)
     await vi.waitFor(() => expect(router.state.location.pathname).toBe('/'))
-    expect(router.state.location.search).toBe('?relation=project&unread=1')
+    expect(query(router.state.location.search)).toEqual({
+      relation: 'project',
+      unread: '1',
+    })
     router.navigate(1)
     await vi.waitFor(() =>
       expect(router.state.location.pathname).toBe('/recent'),
     )
-    expect(router.state.location.search).toBe('?relation=project&unread=1')
+    expect(query(router.state.location.search)).toEqual({
+      relation: 'project',
+      unread: '1',
+    })
   })
 
   test('footer continues filtered Home history on Recent page two', async () => {
@@ -259,8 +270,10 @@ describe('home recent flow', () => {
     await vi.waitFor(() =>
       expect(router.state.location.pathname).toBe('/recent'),
     )
-    expect(router.state.location.search).toBe(
-      '?page=2&relation=project&unread=1',
-    )
+    expect(query(router.state.location.search)).toEqual({
+      page: '2',
+      relation: 'project',
+      unread: '1',
+    })
   })
 })

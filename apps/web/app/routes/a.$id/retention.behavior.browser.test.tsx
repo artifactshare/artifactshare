@@ -45,6 +45,20 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   await page.viewport(1280, 800)
 })
+function saveButton() {
+  return page.getByRole('button', {
+    name: bindTestI18n(state.locale).t('vw.retentionSave'),
+    exact: true,
+  })
+}
+function changeButton(expanded = false) {
+  return page.getByRole('button', {
+    name: bindTestI18n(state.locale).t(
+      expanded ? 'common.close' : 'vw.retentionChange',
+    ),
+    exact: true,
+  })
+}
 async function mount(
   retainVersions: number | null = null,
   expand = true,
@@ -79,17 +93,9 @@ async function mount(
     ),
   )
   await waitForBrowserLayout()
-  const change = host.querySelector<HTMLButtonElement>(
-    '[data-retention-change]',
-  )!
-  if (expand && change.getAttribute('aria-expanded') === 'false') {
-    await page
-      .getByRole('button', {
-        name: state.locale === 'ja' ? '変更' : 'Change',
-        exact: true,
-      })
-      .click()
-  }
+  const change = changeButton().query()
+  if (expand && change?.getAttribute('aria-expanded') === 'false')
+    await changeButton().click()
 }
 async function limited(publisherManaged = false) {
   await page
@@ -101,9 +107,7 @@ async function limited(publisherManaged = false) {
     .click()
 }
 async function submit() {
-  await page
-    .getByRole('button', { name: 'Save version setting', exact: true })
-    .click()
+  await saveButton().click()
 }
 function preview(count: number, snapshot = 'snapshot') {
   return Response.json(
@@ -128,9 +132,7 @@ test('uses the server count, cancels without another request, and restores keybo
     expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
   )
   await vi.waitFor(() =>
-    expect(document.activeElement).toBe(
-      host.querySelector('[data-retention-save]'),
-    ),
+    expect(document.activeElement).toBe(saveButton().element()),
   )
   expect(fetchMock).toHaveBeenCalledTimes(1)
   expect(state.revalidate).not.toHaveBeenCalled()
@@ -193,9 +195,7 @@ test.each([false, true])(
     )
     expect(state.revalidate).toHaveBeenCalledTimes(1)
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(
-        host.querySelector('[data-retention-change]'),
-      ),
+      expect(document.activeElement).toBe(changeButton(true).element()),
     )
     expect(document.activeElement?.isConnected).toBe(true)
   },
@@ -228,12 +228,7 @@ test.each(['', '0', '-1', '1.5', '9007199254740992'])(
     await page
       .getByRole('spinbutton', { name: 'Number of versions to keep' })
       .fill(value)
-    await vi.waitFor(() =>
-      expect(
-        host.querySelector<HTMLButtonElement>('[data-retention-save]')!
-          .disabled,
-      ).toBe(true),
-    )
+    await expect.element(saveButton()).toBeDisabled()
     expect(host.textContent).toContain('Enter a whole number of at least 1.')
     expect(fetchMock).not.toHaveBeenCalled()
   },
@@ -318,7 +313,7 @@ test('edits a valid count and saves zero-removal settings without confirmation',
   await page
     .getByRole('spinbutton', { name: 'Number of versions to keep' })
     .fill('5')
-  const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
+  const save = saveButton().element() as HTMLButtonElement
   save.focus()
   await userEvent.keyboard('{Enter}')
   await vi.waitFor(() => expect(state.revalidate).toHaveBeenCalledTimes(1))
@@ -362,10 +357,7 @@ test('revalidation replaces a historical version removed by its owner with the e
     return Promise.resolve(Response.json({ kind: 'saved' }))
   })
   await act(async () => root.render(<RouterProvider router={router!} />))
-  await vi.waitFor(() =>
-    expect(host.querySelector('[data-retention-save]')).not.toBeNull(),
-  )
-  await page.getByRole('button', { name: 'Change', exact: true }).click()
+  await changeButton().click()
   await limited()
   await submit()
   await vi.waitFor(() =>
@@ -433,8 +425,8 @@ test('untouched settings follow loader changes without replacing focused control
   expect(host.querySelector('input[type="number"]')).toBe(input)
   expect(input.value).toBe('5')
   expect(document.activeElement).toBe(input)
-  const save = host.querySelector<HTMLButtonElement>('[data-retention-change]')!
-  save.focus()
+  const change = changeButton(true).element() as HTMLButtonElement
+  change.focus()
   await mount(null)
   expect(host.querySelector('input[type="number"]')).toBeNull()
   expect(
@@ -443,12 +435,12 @@ test('untouched settings follow loader changes without replacing focused control
       .element()
       .getAttribute('aria-checked'),
   ).toBe('true')
-  expect(document.activeElement).toBe(save)
+  expect(document.activeElement).toBe(change)
   await mount(3)
   expect(
     host.querySelector<HTMLInputElement>('input[type="number"]')?.value,
   ).toBe('3')
-  expect(document.activeElement).toBe(save)
+  expect(document.activeElement).toBe(change)
   expect(fetchMock).not.toHaveBeenCalled()
 })
 
@@ -490,9 +482,7 @@ test('failed submissions retain their edited value through refresh and retry, th
   await vi.waitFor(() =>
     expect(host.querySelector('[role="status"]')?.textContent).toBe('Saved'),
   )
-  expect(
-    host.querySelector<HTMLButtonElement>('[data-retention-save]')?.disabled,
-  ).toBe(true)
+  expect((saveButton().element() as HTMLButtonElement).disabled).toBe(true)
   expect(JSON.parse(fetchMock.mock.calls[1][1].body).retain_versions).toBe(2)
   await mount(6)
   expect(
@@ -515,18 +505,18 @@ test.each([
     expect(change.element().getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('form')!.getBoundingClientRect().height).toBe(0)
     expect(host.querySelector('form')!.hidden).toBe(true)
-    const changeButton = change.element() as HTMLButtonElement
-    changeButton.focus()
+    const toggle = change.element() as HTMLButtonElement
+    toggle.focus()
     await userEvent.keyboard('{Enter}')
-    expect(changeButton.getAttribute('aria-expanded')).toBe('true')
-    expect(changeButton.textContent).toBe(locale === 'en' ? 'Close' : '閉じる')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.textContent).toBe(bindTestI18n(locale).t('common.close'))
     await userEvent.keyboard('{Enter}')
-    expect(changeButton.getAttribute('aria-expanded')).toBe('false')
-    expect(changeButton.textContent).toBe(changeLabel)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toBe(changeLabel)
     expect(host.querySelector('form')!.hidden).toBe(true)
     await userEvent.keyboard('{Enter}')
     expect(host.querySelector('form')!.hidden).toBe(false)
-    const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
+    const save = saveButton().element() as HTMLButtonElement
     expect(save.disabled).toBe(true)
     const radioName =
       locale === 'en' ? 'Keep only the latest versions' : '最新の版だけを残す'
@@ -565,9 +555,7 @@ test.each([390, 1280])(
   async (width) => {
     await page.viewport(width, 600)
     await mount(24, false)
-    const change = host.querySelector<HTMLButtonElement>(
-      '[data-retention-change]',
-    )!
+    const change = changeButton().element()
     const row = host.querySelector('li')!
     const summary = change.parentElement!
     expect(summary.getBoundingClientRect().height).toBe(
@@ -667,9 +655,8 @@ test.each([
     await waitForBrowserLayout()
     // Observe before any field/click helper can scroll the save action into view.
     const panel = document.querySelector('[data-slot="sheet-content"]')!
-    const save = panel.querySelector<HTMLButtonElement>(
-      '[data-retention-save]',
-    )!
+    const save = saveButton().element() as HTMLButtonElement
+    expect(panel.contains(save)).toBe(true)
     // Disabled buttons intentionally ignore pointer hits; measure every clipping
     // ancestor before any interaction can scroll the initial action into view.
     const expectUnclipped = (element: Element) => {
