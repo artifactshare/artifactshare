@@ -158,8 +158,8 @@
     {
       "category": "public-ci-reachability",
       "path": "^\\.github/workflows/release-cli\\.yml$",
-      "pattern": "^pnpm publish$",
-      "reason": "CLI publishing is isolated to the tag-only OIDC release workflow"
+      "pattern": "^npm publish$",
+      "reason": "CLI publishing is isolated to the protected publish job of the tag-only OIDC release workflow"
     },
     {
       "category": "public-ci-reachability",

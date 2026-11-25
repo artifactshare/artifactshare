@@ -5,17 +5,17 @@ on:
     tags:
       - 'cli-v*'
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 
 concurrency:
   group: release-cli
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release CLI
+  pack:
+    name: Build release tarball
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -53,6 +53,63 @@ jobs:
       - run: pnpm --filter @artifactshare/cli test:package
       - run: pnpm check:cli-changelog
       - run: pnpm check:cli-reference
-      - name: Publish to npm
-        working-directory: packages/cli
-        run: pnpm publish --no-git-checks --access public --provenance
+      - name: Pack the tarball and refuse unresolved workspace ranges
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          TGZ=$(pnpm --filter @artifactshare/cli pack --pack-destination "$RUNNER_TEMP/release" | tail -1)
+          tar -xzOf "$TGZ" package/package.json |
+            node -e '
+              const manifest = JSON.parse(
+                require("node:fs").readFileSync(0, "utf8"),
+              )
+              const left = [
+                "dependencies",
+                "devDependencies",
+                "optionalDependencies",
+                "peerDependencies",
+              ]
+                .flatMap((field) => Object.entries(manifest[field] ?? {}))
+                .filter(([, range]) => String(range).startsWith("workspace:"))
+              if (left.length > 0) {
+                console.error("workspace ranges in the tarball: " + JSON.stringify(left))
+                process.exit(1)
+              }
+            '
+          cd "$RUNNER_TEMP/release"
+          sha256sum "$(basename "$TGZ")" > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-release
+          path: |
+            ${{ runner.temp }}/release/*.tgz
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish approved tarball
+    needs: pack
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cli-release
+          path: ${{ runner.temp }}/release
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.3
+          registry-url: https://registry.npmjs.org
+      - name: Verify and publish exact tarball
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS
+          mapfile -t tarballs < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+          npm publish "${tarballs[0]}" --access public --provenance

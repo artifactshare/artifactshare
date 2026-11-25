@@ -704,20 +704,42 @@ test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', (
     fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
   )
   assert.deepEqual(releaseWorkflow.on.push.tags, ['cli-v*'])
-  assert.equal(releaseWorkflow.permissions.contents, 'read')
-  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
-  const release = releaseWorkflow.jobs.release
-  const text = JSON.stringify(release)
-  const runs = release.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(runs, /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/)
-  assert.match(runs, /pnpm check:cli-release/)
-  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
-  assert.match(runs, /pnpm check:cli-reference/)
+  assert.deepEqual(releaseWorkflow.permissions, {})
+
+  const pack = releaseWorkflow.jobs.pack
+  const packText = JSON.stringify(pack)
+  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n')
+  assert.equal(pack.permissions.contents, 'read')
+  assert.equal(pack.permissions['id-token'], undefined)
+  assert.equal(pack.environment, undefined)
   assert.match(
-    text,
-    /pnpm publish --no-git-checks --access public --provenance/,
+    packRuns,
+    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/,
   )
-  assert.doesNotMatch(text, /secrets\./)
+  assert.match(packRuns, /pnpm check:cli-release/)
+  assert.match(packRuns, /TAG_VERSION="\$\{GITHUB_REF_NAME#cli-v\}"/)
+  assert.match(packRuns, /test "\$TAG_VERSION" = "\$PKG_VERSION"/)
+  assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(packRuns, /pnpm check:cli-reference/)
+  assert.match(packRuns, /@artifactshare\/cli pack --pack-destination/)
+  assert.match(packRuns, /startsWith\("workspace:"\)/)
+  assert.match(packRuns, /sha256sum "\$\(basename "\$TGZ"\)" > SHA256SUMS/)
+  assert.match(packText, /actions\/upload-artifact@[0-9a-f]{40}/)
+  assert.doesNotMatch(packRuns, /^\s*(?:npm|pnpm)(?:\s+\S+)*\s+publish\b/mu)
+  assert.doesNotMatch(packText, /secrets\./)
+
+  const publish = releaseWorkflow.jobs.publish
+  const publishRuns = publish.steps.map((step) => step.run ?? '').join('\n')
+  assert.equal(publish.needs, 'pack')
+  assert.equal(publish.environment, 'production')
+  assert.equal(publish.permissions['id-token'], 'write')
+  assert.match(publishRuns, /sha256sum --check SHA256SUMS/)
+  assert.match(publishRuns, /test "\$\{#tarballs\[@\]\}" -eq 1/)
+  assert.match(
+    publishRuns,
+    /npm publish "\$\{tarballs\[0\]\}" --access public --provenance/,
+  )
+  assert.doesNotMatch(JSON.stringify(publish), /secrets\./)
 })
 
 test('reserved package release is protected, tag-only, and OIDC-only', () => {
