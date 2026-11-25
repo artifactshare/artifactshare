@@ -3,8 +3,9 @@ import { errors } from 'playwright'
 import { createServer, type IncomingMessage } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
-import type { Frame, Page } from 'playwright'
+import type { Frame, Locator, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
+import type { Locale } from '../lib/i18n'
 import {
   viewerPreferencesMessage,
   type ViewerPreferences,
@@ -16,9 +17,77 @@ import {
   parentDocument,
   type ParentWindow,
 } from './pdf-viewer-browser-command'
+import {
+  inState,
+  viewerQueries,
+  type ViewerPart,
+  type ViewerQueries,
+} from './viewer-queries'
 
 const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'video-viewer-browser-fixture-only-'.repeat(3)
+
+// Every part of the player a reader acts on, by the role it is published
+// under and the catalogue keys behind its name; a control that toggles
+// carries one name per state. The picture, the controls row, the total time
+// and the media element keep their own hooks: the player gives them no name.
+const VIDEO_PARTS = {
+  player: { role: 'main', names: ['videoViewer.player'] },
+  picture: { css: '.video-picture' },
+  // The one button over the picture, which invites the first play and then
+  // a replay.
+  startPlay: { role: 'button', within: 'picture', css: 'button' },
+  controls: { css: '#controls' },
+  // Named by its own label text rather than an aria-label, which is also
+  // what tells it apart from the volume slider inside the frame.
+  seek: {
+    role: 'slider',
+    names: ['videoViewer.seek'],
+    within: 'controls',
+    css: 'input[type="range"]:not([aria-label])',
+  },
+  play: {
+    role: 'button',
+    names: ['videoViewer.play', 'videoViewer.pause', 'videoViewer.replay'],
+    within: 'controls',
+  },
+  back: { role: 'button', names: ['videoViewer.back'] },
+  elapsed: { role: 'status', within: 'controls' },
+  duration: { css: '#duration' },
+  mute: { role: 'button', names: ['videoViewer.mute', 'videoViewer.unmute'] },
+  volume: { role: 'slider', names: ['videoViewer.volume'] },
+  settings: { role: 'button', names: ['videoViewer.settings'] },
+  playbackOptions: { role: 'region', names: ['videoViewer.settings'] },
+  speed: { role: 'combobox', names: ['videoViewer.speed'] },
+  fullscreen: {
+    role: 'button',
+    names: ['videoViewer.fullscreen', 'videoViewer.exitFullscreen'],
+  },
+  enterFullscreen: { role: 'button', names: ['videoViewer.fullscreen'] },
+  exitFullscreen: { role: 'button', names: ['videoViewer.exitFullscreen'] },
+  download: {
+    role: 'link',
+    names: ['videoViewer.download'],
+    within: 'controls',
+  },
+  status: { role: 'status', css: '[role="status"]' },
+  statusMessage: { within: 'status', css: 'p' },
+  statusDownload: {
+    role: 'link',
+    names: ['videoViewer.downloadOriginal'],
+    within: 'status',
+    css: 'a',
+  },
+  // The page's own media element, which carries no role of its own. The
+  // fixtures also reach it by this id where they stand in for the engine.
+  video: { css: '#video' },
+} as const satisfies Record<string, ViewerPart>
+
+type VideoQueries = ViewerQueries<typeof VIDEO_PARTS>
+type VideoSelectors = ReturnType<VideoQueries['selectors']>
+
+const videoQueries = (frame: Frame, locale: Locale) =>
+  viewerQueries(VIDEO_PARTS, frame, locale)
 
 // controls: the media element's own requests are held, so it stays loading
 //   and the test sets the media state explicitly. Download still fetches the
@@ -200,9 +269,9 @@ function isMediaRequest(request: IncomingMessage): boolean {
 
 // Replaces the element's media state with a 60-second clip the test controls,
 // then reports metadata the way a decodable clip would.
-function simulateLoadedClip(frame: Frame) {
-  return frame.evaluate(() => {
-    const video = document.getElementById('video') as HTMLVideoElement
+function simulateLoadedClip(frame: Frame, q: VideoQueries) {
+  return frame.evaluate((selector) => {
+    const video = document.querySelector(selector) as HTMLVideoElement
     let time = 0
     let paused = true
     const define = (name: string, descriptor: PropertyDescriptor) =>
@@ -230,13 +299,14 @@ function simulateLoadedClip(frame: Frame) {
     }
     video.dispatchEvent(new Event('durationchange'))
     video.dispatchEvent(new Event('loadedmetadata'))
-  })
+  }, q.selector('video'))
 }
 
-function snapshot(frame: Frame) {
-  return frame.evaluate(() => {
-    const video = document.getElementById('video') as HTMLVideoElement
-    const byId = (id: string) => document.getElementById(id)!
+function snapshot(frame: Frame, q: VideoQueries) {
+  return frame.evaluate((selectors) => {
+    const find = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)!
+    const video = find(selectors.video) as HTMLVideoElement
     const visible = (element: Element) => {
       const rect = element.getBoundingClientRect()
       return rect.width > 0 && rect.height > 0
@@ -252,9 +322,18 @@ function snapshot(frame: Frame) {
         height: box.height,
       }
     }
+    // What a reader hears the control called: its own label, or the text of
+    // the label around it.
+    const named = (element: Element) =>
+      element.getAttribute('aria-label') ??
+      element.closest('label')?.textContent?.trim() ??
+      ''
     const controls = [
-      ...byId('controls').querySelectorAll('button, a, input, select'),
+      ...find(selectors.controls).querySelectorAll('button, a, input, select'),
     ].filter(visible)
+    const seek = find(selectors.seek) as HTMLInputElement
+    const mute = find(selectors.mute)
+    const fullscreenElement = document.fullscreenElement
     return {
       state: document.documentElement.dataset.videoState,
       paused: video.paused,
@@ -263,49 +342,53 @@ function snapshot(frame: Frame) {
       muted: video.muted,
       volume: video.volume,
       nativeControls: video.controls,
-      elapsed: byId('elapsed').textContent,
-      duration: byId('duration').textContent,
-      seekValue: Number((byId('seek') as HTMLInputElement).value),
-      seekText: byId('seek').getAttribute('aria-valuetext'),
-      playLabel: byId('play').getAttribute('aria-label'),
-      startHidden: byId('start-play').hidden,
-      statusHidden: byId('status').hidden,
-      muteLabel: byId('mute').getAttribute('aria-label'),
-      mutePressed: byId('mute').getAttribute('aria-pressed'),
-      volumeSlider: Number((byId('volume') as HTMLInputElement).value),
-      volumeVisible: visible(byId('mute')) || visible(byId('volume')),
+      elapsed: find(selectors.elapsed).textContent,
+      duration: find(selectors.duration).textContent,
+      seekValue: Number(seek.value),
+      seekText: seek.getAttribute('aria-valuetext'),
+      playLabel: named(find(selectors.play)),
+      startHidden: find(selectors.startPlay).hidden,
+      statusHidden: find(selectors.status).hidden,
+      muteLabel: named(mute),
+      mutePressed: mute.getAttribute('aria-pressed'),
+      volumeSlider: Number((find(selectors.volume) as HTMLInputElement).value),
+      volumeVisible: visible(mute) || visible(find(selectors.volume)),
       touchDevice: matchMedia('(hover: none) and (pointer: coarse)').matches,
-      picture: rect(document.querySelector('.video-picture')!),
-      controlsBox: rect(byId('controls')),
+      picture: rect(find(selectors.picture)),
+      controlsBox: rect(find(selectors.controls)),
       controls: controls.map((element) => ({
-        id: element.id,
+        name: named(element),
         ...rect(element),
       })),
       viewport: { width: innerWidth, height: innerHeight },
       scrollWidth: document.documentElement.scrollWidth,
       fullscreenEnabled: document.fullscreenEnabled,
-      fullscreen: document.fullscreenElement?.id ?? null,
+      fullscreen: !fullscreenElement
+        ? null
+        : fullscreenElement === find(selectors.player)
+          ? 'player'
+          : 'other',
       // Set by the stub that stands in for the video's own full screen.
       videoFullscreen:
         document.documentElement.dataset.testVideoFullscreen === 'true',
-      fullscreenLabel: byId('fullscreen').getAttribute('aria-label'),
+      fullscreenLabel: named(find(selectors.fullscreen)),
     }
-  })
+  }, q.selectors())
 }
 
 // Sets a range the way a reader's drag does. React ignores a value set
 // through the element's own property, so this uses the native setter.
-function setRangeValue(frame: Frame, id: string, value: number) {
+function setRangeValue(frame: Frame, selector: string, value: number) {
   return frame.evaluate(
     ([target, next]) => {
-      const input = document.getElementById(target) as HTMLInputElement
+      const input = document.querySelector(target) as HTMLInputElement
       Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         'value',
       )!.set!.call(input, String(next))
       input.dispatchEvent(new Event('input', { bubbles: true }))
     },
-    [id, value] as const,
+    [selector, String(value)] as const,
   )
 }
 
@@ -317,33 +400,35 @@ async function framedPlayer(page: Page, name: string) {
     waitUntil: 'domcontentloaded',
   })
   await frame.waitForFunction(
-    () => document.getElementById('controls')?.hidden === false,
-    undefined,
+    (controls) =>
+      document.querySelector<HTMLElement>(controls)?.hidden === false,
+    VIDEO_PARTS.controls.css,
     { timeout: 15000 },
   )
   return frame
 }
 
-function preferencesState(frame: Frame) {
-  return frame.evaluate(() => {
-    const video = document.getElementById('video') as HTMLVideoElement & {
-      probe?: true
-    }
-    const label = (id: string) =>
-      document.getElementById(id)!.getAttribute('aria-label')
+function preferencesState(frame: Frame, q: VideoQueries) {
+  return frame.evaluate((selectors) => {
+    const find = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)
+    const video = find(selectors.video) as HTMLVideoElement & { probe?: true }
+    const status = find(selectors.status)!
     return {
       lang: document.documentElement.lang,
       theme: document.documentElement.dataset.theme ?? null,
       colorScheme: getComputedStyle(document.documentElement).colorScheme,
-      background: getComputedStyle(document.getElementById('controls')!)
-        .backgroundColor,
-      player: label('player'),
-      play: label('play'),
-      settings: label('settings'),
-      message: document.getElementById('status')!.hidden
+      background: getComputedStyle(find(selectors.controls)!).backgroundColor,
+      // Both are found by the name the catalogue gives them in the language
+      // the app asked for.
+      playerNamed: find(selectors.player) !== null,
+      settingsNamed: find(selectors.settings) !== null,
+      // Which of the play button's names it carries now.
+      play: find(selectors.play)?.getAttribute('aria-label') ?? null,
+      message: status.hidden
         ? null
-        : document.getElementById('status-message')!.textContent,
-      startHidden: document.getElementById('start-play')!.hidden,
+        : find(selectors.statusMessage)!.textContent,
+      startHidden: find(selectors.startPlay)!.hidden,
       paused: video.paused,
       currentTime: video.currentTime,
       playbackRate: video.playbackRate,
@@ -351,7 +436,7 @@ function preferencesState(frame: Frame) {
       // playing through every change.
       sameVideo: video.probe === true,
     }
-  })
+  }, q.selectors())
 }
 
 // The player starts in the browser's language, takes the app's preferences
@@ -361,10 +446,15 @@ function preferencesState(frame: Frame) {
 async function preferencesFlow(
   page: Page,
   frame: Frame,
-  browser: 'en' | 'ja',
+  browser: Locale,
   signEntry: () => Promise<string>,
 ) {
   const app = browser === 'en' ? 'ja' : 'en'
+  // Each language has its own queries: the names the player publishes move
+  // with the language the app asks for.
+  const queries = (locale: Locale) => videoQueries(frame, locale)
+  const own = queries(browser)
+  const asked = queries(app)
   const send = async (preferences: ViewerPreferences) => {
     await parentWindow(page).sendPreferences(
       viewerPreferencesMessage(preferences),
@@ -376,32 +466,34 @@ async function preferencesFlow(
       `${preferences.locale} ${preferences.theme}`,
       { timeout: 5000 },
     )
-    return preferencesState(frame)
+    return preferencesState(frame, queries(preferences.locale))
   }
-  const initial = await preferencesState(frame)
+  const initial = await preferencesState(frame, own)
   // Late: the loading notice on screen follows the app's language.
   const late = await send({ locale: app, theme: 'light' })
-  await simulateLoadedClip(frame)
-  const loaded = await preferencesState(frame)
+  await simulateLoadedClip(frame, asked)
+  const loaded = await preferencesState(frame, asked)
   // A seek before the first play also retires the large play button.
-  await setRangeValue(frame, 'seek', 50)
-  const seekedFirst = await preferencesState(frame)
-  await frame.click('#settings')
-  await frame.selectOption('#speed', '1.5')
-  await frame.press('#speed', 'Escape')
-  await frame.click('#play')
-  await frame.evaluate(() => {
+  await setRangeValue(frame, asked.selector('seek'), 50)
+  const seekedFirst = await preferencesState(frame, asked)
+  await asked.find('settings').click()
+  await asked.find('speed').selectOption('1.5')
+  await asked.find('speed').press('Escape')
+  await asked.find('play').click()
+  await frame.evaluate((selector) => {
     ;(
-      document.getElementById('video') as HTMLVideoElement & { probe?: true }
+      document.querySelector(selector) as HTMLVideoElement & { probe?: true }
     ).probe = true
-  })
+  }, asked.selector('video'))
   // Where only the video can go full screen (iPhone Safari), the video does,
   // with the system's controls, and no failure notice shows.
-  const videoOnlyFullscreen = await frame.evaluate(async () => {
-    const player = document.getElementById('player') as HTMLElement & {
+  const videoOnlyFullscreen = await frame.evaluate(async (selectors) => {
+    const player = document.querySelector(selectors.player) as HTMLElement & {
       webkitRequestFullscreen?: unknown
     }
-    const video = document.getElementById('video') as HTMLVideoElement & {
+    const video = document.querySelector(
+      selectors.video,
+    ) as HTMLVideoElement & {
       webkitEnterFullscreen?: () => void
     }
     Object.defineProperty(player, 'requestFullscreen', {
@@ -416,26 +508,29 @@ async function preferencesFlow(
     video.webkitEnterFullscreen = () => {
       entered = true
     }
-    document.getElementById('fullscreen')!.click()
+    document.querySelector<HTMLElement>(selectors.fullscreen)!.click()
     // test-wait: elapsed-time — the fullscreen request must be handled before the notice is read.
     await new Promise((resolve) => setTimeout(resolve, 100))
     delete (player as { requestFullscreen?: unknown }).requestFullscreen
     delete player.webkitRequestFullscreen
     delete video.webkitEnterFullscreen
-    return { entered, notice: !document.getElementById('status')!.hidden }
-  })
+    return {
+      entered,
+      notice: !document.querySelector<HTMLElement>(selectors.status)!.hidden,
+    }
+  }, asked.selectors())
   // A visible failure notice: the player refuses to go full screen.
-  await frame.evaluate(() => {
-    document.getElementById('player')!.requestFullscreen = () =>
+  await frame.evaluate((selector) => {
+    document.querySelector<HTMLElement>(selector)!.requestFullscreen = () =>
       Promise.reject(new Error('refused'))
-  })
-  await frame.click('#fullscreen')
+  }, asked.selector('player'))
+  await asked.find('fullscreen').click()
   await frame.waitForFunction(
-    () => !document.getElementById('status')!.hidden,
-    undefined,
+    (status) => !document.querySelector<HTMLElement>(status)!.hidden,
+    asked.selector('status'),
     { timeout: 5000 },
   )
-  const refused = await preferencesState(frame)
+  const refused = await preferencesState(frame, asked)
   const changed = await send({ locale: browser, theme: 'dark' })
   // Counts the messages the player has handled: its own listener runs
   // before this later one for each message.
@@ -469,7 +564,7 @@ async function preferencesFlow(
     undefined,
     { timeout: 5000 },
   )
-  const ignored = await preferencesState(frame)
+  const ignored = await preferencesState(frame, own)
   await send({ locale: app, theme: 'dark' })
   const next = new URL(await signEntry())
   await page.evaluate(
@@ -490,7 +585,10 @@ async function preferencesFlow(
     app,
     { timeout: 5000 },
   )
-  const replaced = await preferencesState(replacement)
+  const replaced = await preferencesState(
+    replacement,
+    videoQueries(replacement, app),
+  )
   return {
     initial,
     late,
@@ -631,6 +729,9 @@ export const videoViewerScenario = defineBrowserCommand(
             : {}),
         })
     let browserContext: Awaited<ReturnType<typeof createContext>> | undefined
+    // The player speaks the browser's language until the app asks for
+    // another one.
+    const viewerLocale: Locale = locale === 'ja-JP' ? 'ja' : 'en'
     try {
       await harness.listen()
       await applyBrowserFixtureSchema((await sandbox.getEnv()).DB)
@@ -645,6 +746,8 @@ export const videoViewerScenario = defineBrowserCommand(
         throw new Error('Missing fixture port')
       origin = `http://127.0.0.1:${address.port}`
       browserContext = await createContext()
+      // Every query waits for its own control instead of hanging the test.
+      browserContext.setDefaultTimeout(15000)
       await browserContext.addInitScript(() => {
         const violations: string[] = []
         ;(window as unknown as { violations: string[] }).violations = violations
@@ -665,7 +768,7 @@ export const videoViewerScenario = defineBrowserCommand(
         const flow = await preferencesFlow(
           player,
           frame,
-          locale === 'ja-JP' ? 'ja' : 'en',
+          viewerLocale,
           signEntry,
         )
         const violations: string[] = []
@@ -694,23 +797,31 @@ export const videoViewerScenario = defineBrowserCommand(
       if (entryResponse?.status() !== 200)
         throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
       const frame = player.mainFrame()
+      const q = videoQueries(frame, viewerLocale)
       // The player has mounted its controls.
       await frame.waitForFunction(
-        () => document.getElementById('controls')?.hidden === false,
+        (controls) =>
+          document.querySelector<HTMLElement>(controls)?.hidden === false,
+        VIDEO_PARTS.controls.css,
       )
       const status = () =>
-        frame.evaluate(() => ({
-          state: document.documentElement.dataset.videoState,
-          message: document.getElementById('status-message')!.textContent,
-          statusHidden: document.getElementById('status')!.hidden,
-          downloadOffered: !document.getElementById('status-download')!.hidden,
-          downloadHref: document
-            .getElementById('status-download')!
-            .getAttribute('href'),
-          autoplay: (document.getElementById('video') as HTMLVideoElement)
-            .autoplay,
-          paused: (document.getElementById('video') as HTMLVideoElement).paused,
-        }))
+        frame.evaluate((selectors) => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          const download = document.querySelector<HTMLAnchorElement>(
+            selectors.statusDownload,
+          )!
+          return {
+            state: document.documentElement.dataset.videoState,
+            message: document.querySelector(selectors.statusMessage)!
+              .textContent,
+            statusHidden: document.querySelector<HTMLElement>(selectors.status)!
+              .hidden,
+            downloadOffered: !download.hidden,
+            downloadHref: download.getAttribute('href'),
+            autoplay: video.autoplay,
+            paused: video.paused,
+          }
+        }, q.selectors())
       const initial = await status()
       const common = () =>
         frame.evaluate(() => ({
@@ -723,10 +834,10 @@ export const videoViewerScenario = defineBrowserCommand(
         requests.filter(
           (url) => !url.startsWith(origin) && !url.startsWith('blob:'),
         )
-      const saveFromLink = async (selector: string) => {
+      const saveFromLink = async (link: Locator) => {
         const [saved] = await Promise.all([
           player.waitForEvent('download'),
-          frame.click(selector),
+          link.click(),
         ])
         // A stream works with a local or a remotely connected browser.
         const chunks: Buffer[] = []
@@ -746,7 +857,7 @@ export const videoViewerScenario = defineBrowserCommand(
           { timeout: 15000 },
         )
         const media = () =>
-          frame.evaluate(() => {
+          frame.evaluate((selectors) => {
             const video = document.getElementById('video') as HTMLVideoElement
             return {
               readyState: video.readyState,
@@ -755,15 +866,15 @@ export const videoViewerScenario = defineBrowserCommand(
               currentTime: video.currentTime,
               paused: video.paused,
               seeking: video.seeking,
-              elapsed: document.getElementById('elapsed')!.textContent,
-              total: document.getElementById('duration')!.textContent,
+              elapsed: document.querySelector(selectors.elapsed)!.textContent,
+              total: document.querySelector(selectors.duration)!.textContent,
             }
-          })
+          }, q.selectors())
         const before = await media()
         // Decodable means playback really advances; an engine that cannot
         // decode the clip reports a media error once it tries.
         if (!(await frame.evaluate(failedState))) {
-          await frame.click('#start-play')
+          await q.find('startPlay').click()
           await frame.waitForFunction(
             () =>
               (document.getElementById('video') as HTMLVideoElement)
@@ -792,7 +903,7 @@ export const videoViewerScenario = defineBrowserCommand(
             workerStatuses,
           }
         }
-        await frame.click('#play')
+        await q.find('play').click()
         await frame.evaluate(() => {
           const video = document.getElementById('video') as HTMLVideoElement
           video.addEventListener(
@@ -803,7 +914,7 @@ export const videoViewerScenario = defineBrowserCommand(
             { once: true },
           )
         })
-        await setRangeValue(frame, 'seek', 50)
+        await setRangeValue(frame, q.selector('seek'), 50)
         // Seekable means the engine completes the seek at the target time;
         // some engines decode the clip but never finish seeking it.
         const seekCompleted = await frame
@@ -844,15 +955,17 @@ export const videoViewerScenario = defineBrowserCommand(
       }
 
       if (scenario === 'acquire-failure') {
-        await simulateLoadedClip(frame)
+        await simulateLoadedClip(frame, q)
         await frame.waitForFunction(
-          () => document.getElementById('download')!.dataset.ready === 'failed',
-          undefined,
+          (download) =>
+            document.querySelector<HTMLElement>(download)!.dataset.ready ===
+            'failed',
+          q.selector('download'),
           { timeout: 10000 },
         )
         const afterFailure = await status()
         const playerUrl = player.url()
-        const saved = await saveFromLink('#status-download')
+        const saved = await saveFromLink(q.find('statusDownload'))
         return {
           initial,
           final: afterFailure,
@@ -877,7 +990,7 @@ export const videoViewerScenario = defineBrowserCommand(
         return {
           initial,
           final: await status(),
-          snapshot: await snapshot(frame),
+          snapshot: await snapshot(frame, q),
           ...(await common()),
           origin,
           // WebKit reports its own media pipeline's blob: URLs.
@@ -888,69 +1001,73 @@ export const videoViewerScenario = defineBrowserCommand(
         }
       }
 
-      await simulateLoadedClip(frame)
-      const loaded = await snapshot(frame)
+      await simulateLoadedClip(frame, q)
+      const loaded = await snapshot(frame, q)
       const steps: Record<string, Awaited<ReturnType<typeof snapshot>>> = {}
-      const setRange = (id: string, value: number) =>
-        setRangeValue(frame, id, value)
+      const setRange = (part: 'seek' | 'volume', value: number) =>
+        setRangeValue(frame, q.selector(part), value)
 
       // Play and pause with the buttons; nothing played before.
-      await frame.click('#start-play')
-      steps.playing = await snapshot(frame)
-      await frame.click('#play')
-      steps.pausedByButton = await snapshot(frame)
+      await q.find('startPlay').click()
+      steps.playing = await snapshot(frame, q)
+      await q.find('play').click()
+      steps.pausedByButton = await snapshot(frame, q)
 
       // Seek bar bounds and times.
       await setRange('seek', 100)
-      steps.seekEnd = await snapshot(frame)
+      steps.seekEnd = await snapshot(frame, q)
       await setRange('seek', 50)
-      steps.seekMiddle = await snapshot(frame)
+      steps.seekMiddle = await snapshot(frame, q)
 
       // Shortcuts while the player has focus.
-      await frame.focus('#player')
+      await q.find('player').focus()
       await player.keyboard.press('ArrowRight')
-      steps.arrowRight = await snapshot(frame)
+      steps.arrowRight = await snapshot(frame, q)
       await player.keyboard.press('ArrowLeft')
       await player.keyboard.press('ArrowLeft')
-      steps.arrowLeftTwice = await snapshot(frame)
+      steps.arrowLeftTwice = await snapshot(frame, q)
       await player.keyboard.press('Space')
-      steps.space = await snapshot(frame)
+      steps.space = await snapshot(frame, q)
       await player.keyboard.press('k')
-      steps.k = await snapshot(frame)
+      steps.k = await snapshot(frame, q)
       await setRange('seek', 0)
-      await frame.focus('#player')
+      await q.find('player').focus()
       await player.keyboard.press('ArrowLeft')
-      steps.arrowLeftAtStart = await snapshot(frame)
+      steps.arrowLeftAtStart = await snapshot(frame, q)
       // The seek bar keeps its own arrow keys (one native step, not 5 s) and
       // Space on a button activates only that button, once.
-      await frame.focus('#seek')
+      await q.find('seek').focus()
       await player.keyboard.press('ArrowRight')
-      steps.seekArrow = await snapshot(frame)
-      await frame.focus('#play')
+      steps.seekArrow = await snapshot(frame, q)
+      await q.find('play').focus()
       await player.keyboard.press('Space')
-      steps.spaceOnPlayButton = await snapshot(frame)
-      await frame.click('#play')
+      steps.spaceOnPlayButton = await snapshot(frame, q)
+      await q.find('play').click()
 
       // Speed endpoints through the settings popover.
-      await frame.click('#settings')
+      await q.find('settings').click()
       const settingsOpen = await frame.evaluate(
-        () => !document.getElementById('playback-options')!.hidden,
+        (options) => !document.querySelector<HTMLElement>(options)!.hidden,
+        q.selector('playbackOptions'),
       )
-      const speedOptions = await frame.evaluate(() =>
-        [...document.querySelectorAll<HTMLOptionElement>('#speed option')].map(
-          (option) => Number(option.value),
-        ),
+      const speedOptions = await frame.evaluate(
+        (speed) =>
+          [
+            ...document.querySelectorAll<HTMLOptionElement>(`${speed} option`),
+          ].map((option) => Number(option.value)),
+        q.selector('speed'),
       )
-      await frame.selectOption('#speed', '0.5')
-      steps.slowest = await snapshot(frame)
-      await frame.selectOption('#speed', '2')
-      steps.fastest = await snapshot(frame)
+      await q.find('speed').selectOption('0.5')
+      steps.slowest = await snapshot(frame, q)
+      await q.find('speed').selectOption('2')
+      steps.fastest = await snapshot(frame, q)
       await player.keyboard.press('Escape')
       // Escape in the panel closes it and returns to its button.
       const settingsClosed = await frame.evaluate(
-        () =>
-          document.getElementById('playback-options')!.hidden &&
-          document.activeElement?.id === 'settings',
+        (selectors) =>
+          document.querySelector<HTMLElement>(selectors.playbackOptions)!
+            .hidden && !!document.activeElement?.matches(selectors.settings),
+        q.selectors(),
       )
 
       // At the end the large button offers a replay.
@@ -963,7 +1080,7 @@ export const videoViewerScenario = defineBrowserCommand(
         video.pause()
         video.dispatchEvent(new Event('ended'))
       })
-      steps.ended = await snapshot(frame)
+      steps.ended = await snapshot(frame, q)
       await frame.evaluate(() => {
         const video = document.getElementById('video') as HTMLVideoElement
         Object.defineProperty(video, 'ended', {
@@ -977,10 +1094,12 @@ export const videoViewerScenario = defineBrowserCommand(
       // and a player that cannot go full screen. Each clears on the next
       // seek.
       const notice = () =>
-        frame.evaluate(() =>
-          document.getElementById('status')!.hidden
-            ? null
-            : document.getElementById('status-message')!.textContent,
+        frame.evaluate(
+          (selectors) =>
+            document.querySelector<HTMLElement>(selectors.status)!.hidden
+              ? null
+              : document.querySelector(selectors.statusMessage)!.textContent,
+          q.selectors(),
         )
       const clearNotice = () =>
         frame.evaluate(() =>
@@ -988,8 +1107,8 @@ export const videoViewerScenario = defineBrowserCommand(
         )
       const noticeShown = () =>
         frame.waitForFunction(
-          () => !document.getElementById('status')!.hidden,
-          undefined,
+          (shown) => !document.querySelector<HTMLElement>(shown)!.hidden,
+          q.selector('status'),
           { timeout: 5000 },
         )
       await frame.evaluate(() => {
@@ -1014,7 +1133,7 @@ export const videoViewerScenario = defineBrowserCommand(
         video.play = () =>
           Promise.reject(new DOMException('Not allowed', 'NotAllowedError'))
       })
-      await frame.click('#play')
+      await q.find('play').click()
       await noticeShown()
       notices.playRefused = await notice()
       await frame.evaluate(() => {
@@ -1025,8 +1144,8 @@ export const videoViewerScenario = defineBrowserCommand(
       })
       await clearNotice()
       // Neither the player nor the video can go full screen.
-      await frame.evaluate(() => {
-        const element = document.getElementById('player')!
+      await frame.evaluate((selector) => {
+        const element = document.querySelector(selector)!
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
           Object.defineProperty(element, name, {
             configurable: true,
@@ -1037,22 +1156,28 @@ export const videoViewerScenario = defineBrowserCommand(
           'webkitEnterFullscreen',
           { configurable: true, value: undefined },
         )
-      })
-      await frame.click('#fullscreen')
+      }, q.selector('player'))
+      await q.find('fullscreen').click()
       await noticeShown()
       notices.fullscreenUnavailable = await notice()
       notices.fullscreenElement = await frame.evaluate(
-        () => document.fullscreenElement?.id ?? null,
+        (selector) =>
+          !document.fullscreenElement
+            ? null
+            : document.fullscreenElement === document.querySelector(selector)
+              ? 'player'
+              : 'other',
+        q.selector('player'),
       )
-      await frame.evaluate(() => {
-        const element = document.getElementById('player')!
+      await frame.evaluate((selector) => {
+        const element = document.querySelector(selector)!
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
           Reflect.deleteProperty(element, name)
         Reflect.deleteProperty(
           document.getElementById('video')!,
           'webkitEnterFullscreen',
         )
-      })
+      }, q.selector('player'))
       await clearNotice()
 
       let volumeCapability: 'not-offered' | 'applied' | 'unapplied' =
@@ -1062,9 +1187,10 @@ export const videoViewerScenario = defineBrowserCommand(
       if (width >= 700 && !touch) {
         // volumechange is dispatched asynchronously.
         const pressed = (value: string) =>
-          frame.waitForSelector(`#mute[aria-pressed="${value}"]`, {
-            state: 'attached',
-          })
+          frame.waitForSelector(
+            inState(q.selector('mute'), `[aria-pressed="${value}"]`),
+            { state: 'attached' },
+          )
         nativeVolumeSupported = await frame.evaluate(() => {
           const video = document.getElementById('video') as HTMLVideoElement
           const previous = video.volume
@@ -1091,25 +1217,23 @@ export const videoViewerScenario = defineBrowserCommand(
             if (!(error instanceof errors.TimeoutError)) throw error
             return false
           })
-        steps.volume = await snapshot(frame)
+        steps.volume = await snapshot(frame, q)
         // Classify the captured observation, including application just after timeout.
         volumeCapability =
           Math.abs(steps.volume.volume - 0.4) < 0.01 ? 'applied' : 'unapplied'
-        await frame.click('#mute')
+        await q.find('mute').click()
         await pressed('true')
-        steps.muted = await snapshot(frame)
-        await frame.click('#mute')
+        steps.muted = await snapshot(frame, q)
+        await q.find('mute').click()
         await pressed('false')
-        steps.unmuted = await snapshot(frame)
+        steps.unmuted = await snapshot(frame, q)
       }
 
-      // Full screen keeps the controls with the picture.
-      // The label follows fullscreenchange, which engines dispatch later.
-      const fullscreenLabel = (label: string) =>
-        frame.waitForSelector(`#fullscreen[aria-label="${label}"]`, {
-          state: 'attached',
-          timeout: 3000,
-        })
+      // Full screen keeps the controls with the picture. The name of the
+      // button follows fullscreenchange, which engines dispatch later.
+      const waitForFullscreenName = (
+        part: 'enterFullscreen' | 'exitFullscreen',
+      ) => q.find(part).waitFor({ state: 'attached', timeout: 3000 })
 
       // Where the player cannot go full screen but the video can (iPhone
       // Safari, and WebKit in tests), the video's own full screen is used;
@@ -1126,40 +1250,41 @@ export const videoViewerScenario = defineBrowserCommand(
             },
           })
       })
-      await frame.click('#fullscreen')
+      await q.find('fullscreen').click()
       await frame.waitForFunction(
-        () => {
+        (selectors) => {
           const video = document.getElementById('video') as HTMLVideoElement
           if (document.fullscreenEnabled)
             return (
-              document.fullscreenElement?.id === 'player' &&
-              document
-                .getElementById('fullscreen')!
-                .getAttribute('aria-label') === 'Exit full screen'
+              document.fullscreenElement ===
+                document.querySelector(selectors.player) &&
+              !!document.querySelector(selectors.exitFullscreen)
             )
           if ('webkitEnterFullscreen' in video)
             return (
               document.documentElement.dataset.testVideoFullscreen === 'true'
             )
-          return !document.getElementById('status')!.hidden
+          return !document.querySelector<HTMLElement>(selectors.status)!.hidden
         },
-        undefined,
+        q.selectors(),
         { timeout: 3000 },
       )
-      steps.fullscreen = await snapshot(frame)
+      steps.fullscreen = await snapshot(frame, q)
       let fullscreenSettings = null
       if (steps.fullscreen.fullscreen) {
         // The settings open inside the full-screen player and still work.
-        await frame.click('#settings')
-        await frame.selectOption('#speed', '1.25')
-        fullscreenSettings = await frame.evaluate(() => {
-          const panel = document.getElementById('playback-options')!
+        await q.find('settings').click()
+        await q.find('speed').selectOption('1.25')
+        fullscreenSettings = await frame.evaluate((selectors) => {
+          const panel = document.querySelector<HTMLElement>(
+            selectors.playbackOptions,
+          )!
           const box = panel.getBoundingClientRect()
           return {
             open: !panel.hidden,
             insidePlayer: document
-              .getElementById('player')!
-              .contains(document.getElementById('speed')),
+              .querySelector(selectors.player)!
+              .contains(document.querySelector(selectors.speed)),
             onScreen:
               box.width > 0 &&
               box.top >= 0 &&
@@ -1167,21 +1292,28 @@ export const videoViewerScenario = defineBrowserCommand(
               box.right <= innerWidth,
             playbackRate: (document.getElementById('video') as HTMLVideoElement)
               .playbackRate,
-            fullscreen: document.fullscreenElement?.id ?? null,
+            fullscreen: !document.fullscreenElement
+              ? null
+              : document.fullscreenElement ===
+                  document.querySelector(selectors.player)
+                ? 'player'
+                : 'other',
           }
-        })
-        await frame.click('#settings')
-        await frame.click('#fullscreen')
+        }, q.selectors())
+        await q.find('settings').click()
+        await q.find('fullscreen').click()
         await frame.waitForFunction(() => document.fullscreenElement === null)
-        await fullscreenLabel('Full screen')
+        await waitForFullscreenName('enterFullscreen')
       }
-      steps.afterFullscreen = await snapshot(frame)
+      steps.afterFullscreen = await snapshot(frame, q)
 
       // Download keeps working after the sandbox cookie expires: the player
       // fetched the whole original while it was valid.
       await frame.waitForFunction(
-        () => document.getElementById('download')!.dataset.ready === 'true',
-        undefined,
+        (download) =>
+          document.querySelector<HTMLElement>(download)!.dataset.ready ===
+          'true',
+        q.selector('download'),
         { timeout: 10000 },
       )
       await browserContext.clearCookies()
@@ -1193,7 +1325,7 @@ export const videoViewerScenario = defineBrowserCommand(
       const save = async () => {
         const [saved] = await Promise.all([
           player.waitForEvent('download'),
-          frame.click('#download'),
+          q.find('download').click(),
         ])
         // A stream works with a local or a remotely connected browser.
         const chunks: Buffer[] = []
@@ -1315,7 +1447,7 @@ type Snapshot = {
   touchDevice: boolean
   picture: Rect
   controlsBox: Rect
-  controls: Array<Rect & { id: string }>
+  controls: Array<Rect & { name: string }>
   viewport: { width: number; height: number }
   scrollWidth: number
   fullscreenEnabled: boolean
@@ -1338,9 +1470,9 @@ type PreferencesState = {
   theme: string | null
   colorScheme: string
   background: string
-  player: string | null
+  playerNamed: boolean
+  settingsNamed: boolean
   play: string | null
-  settings: string | null
   message: string | null
   startHidden: boolean
   paused: boolean

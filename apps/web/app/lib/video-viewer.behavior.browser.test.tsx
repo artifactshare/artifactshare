@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import { server } from 'vitest/browser'
+import { bindI18n } from '~/lib/i18n'
+
+const enText = bindI18n('en')
+const jaText = bindI18n('ja')
 
 // Each controls walk already returns independent snapshots and closes its browser
 // context. Reuse those immutable observations within this file/engine only.
@@ -29,7 +33,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     // Loading first, with the download already offered; never autoplays.
     expect(result.initial).toMatchObject({
       state: 'loading',
-      message: 'Loading video…',
+      message: enText.t('videoViewer.loading'),
       statusHidden: false,
       downloadOffered: true,
       autoplay: false,
@@ -50,18 +54,18 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     )
     expect(loaded.scrollWidth).toBeLessThanOrEqual(loaded.viewport.width)
     for (const control of loaded.controls) {
-      expect(control.left, control.id).toBeGreaterThanOrEqual(0)
-      expect(control.right, control.id).toBeLessThanOrEqual(
+      expect(control.left, control.name).toBeGreaterThanOrEqual(0)
+      expect(control.right, control.name).toBeLessThanOrEqual(
         loaded.viewport.width,
       )
-      expect(control.top, control.id).toBeGreaterThanOrEqual(
+      expect(control.top, control.name).toBeGreaterThanOrEqual(
         loaded.picture.bottom - 1,
       )
       // The app's version chip covers the frame's bottom-right 64x46px.
       const underChip =
         control.right > loaded.viewport.width - 64 &&
         control.bottom > loaded.viewport.height - 46
-      expect(underChip, control.id).toBe(false)
+      expect(underChip, control.name).toBe(false)
     }
     expect(result.offOrigin).toEqual([])
     expect(result.violations).toEqual([])
@@ -74,12 +78,12 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     expect(steps!.playing).toMatchObject({
       paused: false,
       startHidden: true,
-      playLabel: 'Pause',
+      playLabel: enText.t('videoViewer.pause'),
     })
     // Once played, a pause keeps the frame clear of the large play button.
     expect(steps!.pausedByButton).toMatchObject({
       paused: true,
-      playLabel: 'Play',
+      playLabel: enText.t('videoViewer.play'),
       startHidden: true,
     })
     expect(steps!.seekEnd).toMatchObject({
@@ -103,7 +107,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     expect(steps!.ended).toMatchObject({
       paused: true,
       startHidden: false,
-      playLabel: 'Play again',
+      playLabel: enText.t('videoViewer.replay'),
     })
   })
 
@@ -129,7 +133,9 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     const fullscreen = steps!.fullscreen!
     if (fullscreen.fullscreenEnabled) {
       expect(fullscreen.fullscreen).toBe('player')
-      expect(fullscreen.fullscreenLabel).toBe('Exit full screen')
+      expect(fullscreen.fullscreenLabel).toBe(
+        enText.t('videoViewer.exitFullscreen'),
+      )
       expect(fullscreen.controlsBox.bottom).toBeLessThanOrEqual(
         fullscreen.viewport.height + 1,
       )
@@ -143,7 +149,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       })
       expect(steps!.afterFullscreen).toMatchObject({
         fullscreen: null,
-        fullscreenLabel: 'Full screen',
+        fullscreenLabel: enText.t('videoViewer.fullscreen'),
       })
     } else if (fullscreen.videoFullscreen) {
       // Only the video can go full screen here: it does, with the
@@ -158,13 +164,12 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     const { notices } = await controlScenario(width)
 
     expect(notices).toEqual({
-      buffering: 'Loading…',
+      buffering: enText.t('videoViewer.buffering'),
       afterBuffering: null,
-      playRefused:
-        'The video could not start. Try again, or download the video.',
+      playRefused: enText.t('videoViewer.playFailed'),
       // Where neither the player nor the video can go full screen, the
       // reader is told so.
-      fullscreenUnavailable: 'Full screen isn’t available here.',
+      fullscreenUnavailable: enText.t('videoViewer.fullscreenFailed'),
       fullscreenElement: null,
     })
   })
@@ -219,17 +224,25 @@ test('offers volume and mute on desktop', async () => {
     expect(steps!.volume!.volume).toBeCloseTo(0.4, 2)
   else expect(steps!.volume!.volume).toBe(1)
   expect(steps!.muted).toMatchObject({ mutePressed: 'true' })
-  expect(steps!.muted).toMatchObject({ muted: true, muteLabel: 'Unmute' })
-  expect(steps!.unmuted).toMatchObject({ muted: false, muteLabel: 'Mute' })
+  expect(steps!.muted).toMatchObject({
+    muted: true,
+    muteLabel: enText.t('videoViewer.unmute'),
+  })
+  expect(steps!.unmuted).toMatchObject({
+    muted: false,
+    muteLabel: enText.t('videoViewer.mute'),
+  })
 })
 
 test('omits volume on phones and keeps 44px touch targets', async () => {
   const { loaded } = await controlScenario(390)
 
   expect(loaded!.volumeVisible).toBe(false)
-  for (const control of loaded!.controls.filter(({ id }) => id !== 'seek')) {
-    expect(control.width, control.id).toBeGreaterThanOrEqual(44)
-    expect(control.height, control.id).toBeGreaterThanOrEqual(44)
+  for (const control of loaded!.controls.filter(
+    ({ name }) => name !== enText.t('videoViewer.seek'),
+  )) {
+    expect(control.width, control.name).toBeGreaterThanOrEqual(44)
+    expect(control.height, control.name).toBeGreaterThanOrEqual(44)
   }
 })
 
@@ -243,9 +256,11 @@ test('omits volume on a landscape phone wider than the narrow layout', async () 
   // Firefox cannot emulate a coarse, hover-less pointer; the others can.
   if (server.browser !== 'firefox') expect(loaded!.touchDevice).toBe(true)
   expect(loaded!.volumeVisible).toBe(!loaded!.touchDevice)
-  for (const control of loaded!.controls.filter(({ id }) => id !== 'seek')) {
-    expect(control.width, control.id).toBeGreaterThanOrEqual(44)
-    expect(control.height, control.id).toBeGreaterThanOrEqual(44)
+  for (const control of loaded!.controls.filter(
+    ({ name }) => name !== enText.t('videoViewer.seek'),
+  )) {
+    expect(control.width, control.name).toBeGreaterThanOrEqual(44)
+    expect(control.height, control.name).toBeGreaterThanOrEqual(44)
   }
 })
 
@@ -295,7 +310,7 @@ test('says when the original could not be kept and still downloads it from the l
     downloadOffered: true,
     downloadHref: '/__as_video/original.mp4?download=1',
   })
-  expect(result.final!.message).toMatch(/couldn’t be kept for download/)
+  expect(result.final!.message).toBe(enText.t('videoViewer.downloadAtRisk'))
   expect(result.fallbackDownload).toEqual({
     name: savedName,
     sameBytes: true,
@@ -304,43 +319,18 @@ test('says when the original could not be kept and still downloads it from the l
 })
 
 // The player speaks the app's language, set by the reader in the app, not the
-// browser's, and follows the app's theme.
+// browser's, and follows the app's theme. Every label and notice is read
+// through the catalogue, so only the language that reached the player is
+// pinned, never the wording.
 describe.each([
-  {
-    browser: 'ja-JP',
-    own: {
-      lang: 'ja',
-      player: '動画プレーヤー',
-      loading: '動画を読み込んでいます…',
-      pause: '一時停止',
-      fullscreenFailed: 'この環境では全画面表示を利用できません。',
-    },
-    app: {
-      lang: 'en',
-      player: 'Video player',
-      loading: 'Loading video…',
-      fullscreenFailed: 'Full screen isn’t available here.',
-    },
-  },
-  {
-    browser: 'en-US',
-    own: {
-      lang: 'en',
-      player: 'Video player',
-      loading: 'Loading video…',
-      pause: 'Pause',
-      fullscreenFailed: 'Full screen isn’t available here.',
-    },
-    app: {
-      lang: 'ja',
-      player: '動画プレーヤー',
-      loading: '動画を読み込んでいます…',
-      fullscreenFailed: 'この環境では全画面表示を利用できません。',
-    },
-  },
+  { browser: 'ja-JP', own: 'ja', app: 'en' },
+  { browser: 'en-US', own: 'en', app: 'ja' },
 ] as const)(
   'video player in the app language with a $browser browser',
   ({ browser, own, app }) => {
+    const ownText = bindI18n(own)
+    const appText = bindI18n(app)
+
     test('follows late and changed app preferences without interrupting playback', async () => {
       const result = await server.commands.videoViewerScenario(
         'preferences',
@@ -358,21 +348,23 @@ describe.each([
         sameVideo: true,
       }
 
-      // Before the app's preferences arrive: the browser's language.
+      // Before the app's preferences arrive: the browser's language. The
+      // player is found under the name that language gives it.
       expect(flow.initial).toMatchObject({
-        lang: own.lang,
+        lang: own,
         theme: 'system',
-        player: own.player,
-        message: own.loading,
+        playerNamed: true,
+        message: ownText.t('videoViewer.loading'),
       })
       // Late: the app's language, including the notice already on screen.
       expect(flow.late).toMatchObject({
-        lang: app.lang,
+        lang: app,
         theme: 'light',
         colorScheme: 'light',
         background: light,
-        player: app.player,
-        message: app.loading,
+        playerNamed: true,
+        settingsNamed: true,
+        message: appText.t('videoViewer.loading'),
       })
       // A seek before the first play retires the large play button, which
       // stays hidden while paused.
@@ -384,36 +376,37 @@ describe.each([
       })
       expect(flow.videoOnlyFullscreen).toEqual({ entered: true, notice: false })
       expect(flow.refused).toMatchObject({
-        lang: app.lang,
-        message: app.fullscreenFailed,
+        lang: app,
+        message: appText.t('videoViewer.fullscreenFailed'),
       })
       // Changed while playing: new labels and notice, same playback.
       expect(flow.changed).toMatchObject({
-        lang: own.lang,
+        lang: own,
         theme: 'dark',
         colorScheme: 'dark',
         background: dark,
-        play: own.pause,
-        message: own.fullscreenFailed,
+        playerNamed: true,
+        play: ownText.t('videoViewer.pause'),
+        message: ownText.t('videoViewer.fullscreenFailed'),
         ...playing,
       })
       // Malformed preferences, and preferences not from the parent, change
       // nothing.
       expect(flow.ignored).toMatchObject({
-        lang: own.lang,
+        lang: own,
         theme: 'dark',
         background: dark,
-        play: own.pause,
-        message: own.fullscreenFailed,
+        play: ownText.t('videoViewer.pause'),
+        message: ownText.t('videoViewer.fullscreenFailed'),
         ...playing,
       })
       // A replacement frame is a fresh player with the current preferences.
       expect(flow.replaced).toMatchObject({
-        lang: app.lang,
+        lang: app,
         theme: 'dark',
         background: dark,
-        player: app.player,
-        message: app.loading,
+        playerNamed: true,
+        message: appText.t('videoViewer.loading'),
         paused: true,
         currentTime: 0,
         sameVideo: false,
@@ -430,7 +423,13 @@ describe('video player terminal states', () => {
     const result = await server.commands.videoViewerScenario('damaged', 1440)
 
     expect(['unsupported', 'corrupt']).toContain(result.final!.state)
-    expect(result.final!.message).toMatch(/damaged/)
+    expect(result.final!.message).toBe(
+      enText.t(
+        result.final!.state === 'corrupt'
+          ? 'videoViewer.corrupt'
+          : 'videoViewer.unsupported',
+      ),
+    )
     expect(result.final!.downloadOffered).toBe(true)
     expect(result.final!.downloadHref).toBe(
       '/__as_video/original.mp4?download=1',
@@ -447,7 +446,7 @@ describe('video player terminal states', () => {
 
     expect(result.initial.state).toBe('loading')
     expect(result.final!.state).toBe('transport')
-    expect(result.final!.message).toMatch(/could not be loaded.*Reload/)
+    expect(result.final!.message).toBe(enText.t('videoViewer.transport'))
     expect(result.final!.downloadOffered).toBe(true)
   })
 })

@@ -1,9 +1,11 @@
+// Relative, not aliased: the browser drivers read the catalogue from the
+// Vitest config graph, which is bundled before the `~` alias exists.
 import {
   DEFAULT_LOCALE,
   MESSAGES,
   type Locale,
   type TKey,
-} from '~/i18n/messages'
+} from '../i18n/messages'
 
 export type { Locale, TKey }
 

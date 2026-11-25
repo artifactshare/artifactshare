@@ -4,17 +4,147 @@ import { requiredWait } from './browser-waits'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
-import type { Download, Frame, Page } from 'playwright'
+import type { Download, Frame, Locator, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
+import type { Locale } from '../lib/i18n'
 import {
   viewerPreferencesMessage,
   type ViewerPreferences,
 } from '../viewers/shared/preferences'
 import { PDF_ORIGINAL_PATH, PDFJS_ASSET_PREFIX } from '../viewers/pdf/paths'
 import { applyBrowserFixtureSchema } from './browser-fixture-schema'
+import {
+  viewerQueries,
+  type ViewerPart,
+  type ViewerQueries,
+} from './viewer-queries'
 
 const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'pdf-viewer-browser-fixture-only-'.repeat(3)
+
+// Every part of the viewer a reader acts on, by the role it is published
+// under and the catalogue key behind its name. Rewording the copy moves
+// these queries with the product; renaming an id or a class leaves them
+// alone. What the viewer gives no name keeps its own hook: the page area and
+// the pages pdf.js draws, the two status regions it never labels, and the
+// size options, whose labels are percentages rather than copy.
+const PDF_PARTS = {
+  toolbar: { role: 'banner', names: ['pdfViewer.toolbar'] },
+  pages: { role: 'button', names: ['pdfViewer.openPages'] },
+  previous: { role: 'button', names: ['pdfViewer.previous'] },
+  pageNumber: { role: 'textbox', names: ['pdfViewer.pageNumber'] },
+  pageCount: { role: 'status', within: 'toolbar' },
+  next: { role: 'button', names: ['pdfViewer.next'] },
+  settings: { role: 'button', names: ['pdfViewer.openSettings'] },
+  searchToggle: { role: 'button', names: ['pdfViewer.search'] },
+  download: { role: 'link', names: ['pdfViewer.download'], within: 'toolbar' },
+  content: { role: 'region', names: ['pdfViewer.content'] },
+  searchBar: { role: 'search' },
+  searchQuery: { role: 'searchbox', names: ['pdfViewer.searchQuery'] },
+  searchResults: { role: 'status', within: 'searchBar' },
+  searchPrevious: { role: 'button', names: ['pdfViewer.searchPrevious'] },
+  searchNext: { role: 'button', names: ['pdfViewer.searchNext'] },
+  searchClose: { role: 'button', names: ['pdfViewer.searchClose'] },
+  // The menu and the sheet are named by their own title, which CSS cannot
+  // match, so the readers inside the frame find them by role alone.
+  settingsMenu: {
+    role: 'menu',
+    names: ['pdfViewer.settings'],
+    css: '[role="menu"]',
+  },
+  layoutPage: {
+    role: 'menuitemradio',
+    names: ['pdfViewer.layoutPage'],
+    within: 'settingsMenu',
+    css: '[data-layout="page"]',
+  },
+  layoutScroll: {
+    role: 'menuitemradio',
+    names: ['pdfViewer.layoutScroll'],
+    within: 'settingsMenu',
+    css: '[data-layout="scroll"]',
+  },
+  pagesSheet: {
+    role: 'dialog',
+    names: ['pdfViewer.pages'],
+    css: '[role="dialog"]',
+  },
+  pagesClose: { role: 'button', names: ['pdfViewer.closePages'] },
+  pagesDownload: {
+    role: 'link',
+    names: ['pdfViewer.download'],
+    within: 'pagesSheet',
+    css: 'a',
+  },
+  pageList: { role: 'navigation', names: ['pdfViewer.choosePage'] },
+  pageItems: { role: 'button', within: 'pageList' },
+  // Takes the page number: `selector('pageItem', { n })`.
+  pageItem: {
+    role: 'button',
+    names: ['pdfViewer.goToPage'],
+    within: 'pageList',
+  },
+  status: { role: 'status', css: '[role="status"]' },
+  statusMessage: { within: 'status', css: 'p' },
+  statusDownload: {
+    role: 'link',
+    names: ['pdfViewer.downloadOriginal'],
+    within: 'status',
+    css: 'a',
+  },
+} as const satisfies Record<string, ViewerPart>
+
+type PdfPart = keyof typeof PDF_PARTS
+type PdfQueries = ViewerQueries<typeof PDF_PARTS>
+type PdfSelectors = ReturnType<PdfQueries['selectors']>
+
+const pdfQueries = (frame: Frame, locale: Locale) =>
+  viewerQueries(PDF_PARTS, frame, locale)
+
+// The parts the viewer must publish under their catalogue names, which is
+// how the app's language reaching the viewer is observed.
+const NAMED = [
+  'toolbar',
+  'pages',
+  'previous',
+  'pageNumber',
+  'next',
+  'settings',
+  'searchToggle',
+  'content',
+] as const satisfies readonly PdfPart[]
+
+async function namedParts(q: PdfQueries) {
+  const found: string[] = []
+  for (const part of NAMED)
+    if ((await q.find(part).count()) > 0) found.push(part)
+  return found
+}
+
+// Runs inside the frame: which control the keyboard is on. The list is
+// inline because the frame cannot reach this module's values.
+function focusedPart(selectors: PdfSelectors) {
+  const active = document.activeElement
+  if (!active) return null
+  for (const part of [
+    'pages',
+    'previous',
+    'pageNumber',
+    'next',
+    'settings',
+    'searchToggle',
+    'download',
+    'searchQuery',
+    'searchPrevious',
+    'searchNext',
+    'searchClose',
+    'pagesClose',
+    'pagesDownload',
+    'content',
+  ] as const)
+    if (active.matches(selectors[part])) return part
+  return null
+}
 
 export type PdfScenario =
   | 'landscape'
@@ -279,32 +409,39 @@ async function seedPdfArtifact(
     )
 }
 
-function pageNumber(frame: Frame): Promise<number> {
-  return frame.evaluate(() =>
-    Number((document.getElementById('page-number') as HTMLInputElement).value),
+function pageNumber(frame: Frame, q: PdfQueries): Promise<number> {
+  return frame.evaluate(
+    (selector) =>
+      Number(document.querySelector<HTMLInputElement>(selector)!.value),
+    q.selector('pageNumber'),
   )
 }
 
-async function waitForPage(frame: Frame, page: number): Promise<number> {
+async function waitForPage(
+  frame: Frame,
+  q: PdfQueries,
+  page: number,
+): Promise<number> {
   await requiredWait(
     'PDF page number',
     frame.waitForFunction(
-      (expected) =>
-        (document.getElementById('page-number') as HTMLInputElement).value ===
-        String(expected),
-      page,
+      ({ selector, expected }) =>
+        document.querySelector<HTMLInputElement>(selector)!.value === expected,
+      { selector: q.selector('pageNumber'), expected: String(page) },
       { timeout: 5000 },
     ),
   )
-  return pageNumber(frame)
+  return pageNumber(frame, q)
 }
 
-function layout(frame: Frame) {
-  return frame.evaluate(() => {
-    const box = (id: string) => {
-      const rect = document.getElementById(id)!.getBoundingClientRect()
+function layout(frame: Frame, q: PdfQueries) {
+  return frame.evaluate((selectors) => {
+    const find = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)!
+    const box = (control: string, selector: string) => {
+      const rect = find(selector).getBoundingClientRect()
       return {
-        id,
+        control,
         left: rect.left,
         right: rect.right,
         top: Math.round(rect.top),
@@ -312,13 +449,11 @@ function layout(frame: Frame) {
         height: Math.round(rect.height),
       }
     }
-    const container = document.getElementById('viewer-container')!
+    const container = find(selectors.content)
     const current = document.querySelector<HTMLElement>(
-      `.page[data-page-number="${(document.getElementById('page-number') as HTMLInputElement).value}"]`,
+      `.page[data-page-number="${(find(selectors.pageNumber) as HTMLInputElement).value}"]`,
     )!
-    const download = document
-      .getElementById('download')!
-      .getBoundingClientRect()
+    const download = find(selectors.download).getBoundingClientRect()
     return {
       frameWidth: innerWidth,
       download: {
@@ -330,42 +465,40 @@ function layout(frame: Frame) {
       verticalOverflow: container.scrollHeight - container.clientHeight,
       scrollTop: container.scrollTop,
       pagerCenter:
-        (document.getElementById('previous')!.getBoundingClientRect().left +
-          document.getElementById('next')!.getBoundingClientRect().right) /
+        (find(selectors.previous).getBoundingClientRect().left +
+          find(selectors.next).getBoundingClientRect().right) /
         2,
       toolbarHeight: Math.round(
-        document.getElementById('pdf-toolbar')!.getBoundingClientRect().height,
+        find(selectors.toolbar).getBoundingClientRect().height,
       ),
       // Every control of the row, in owner order.
-      controls: [
-        'pages',
-        'previous',
-        'page-number',
-        'next',
-        'fit',
-        'search-toggle',
-        'download',
-      ]
+      controls: (
+        [
+          'pages',
+          'previous',
+          'pageNumber',
+          'next',
+          'settings',
+          'searchToggle',
+          'download',
+        ] as const
+      )
         .filter(
-          (id) => document.getElementById(id)!.getClientRects().length > 0,
+          (control) => find(selectors[control]).getClientRects().length > 0,
         )
-        .map(box),
-      pageCountRight: document
-        .getElementById('page-count')!
-        .getBoundingClientRect().right,
+        .map((control) => box(control, selectors[control])),
+      pageCountRight: find(selectors.pageCount).getBoundingClientRect().right,
       documentScrollWidth: document.documentElement.scrollWidth,
-      previousDisabled: (
-        document.getElementById('previous') as HTMLButtonElement
-      ).disabled,
-      nextDisabled: (document.getElementById('next') as HTMLButtonElement)
+      previousDisabled: (find(selectors.previous) as HTMLButtonElement)
         .disabled,
+      nextDisabled: (find(selectors.next) as HTMLButtonElement).disabled,
       container: {
         width: container.clientWidth,
         height: container.clientHeight,
       },
       page: { width: current.offsetWidth, height: current.offsetHeight },
     }
-  })
+  }, q.selectors())
 }
 
 async function selectFirstLine(page: Page, frame: Frame): Promise<string> {
@@ -401,31 +534,25 @@ async function settle(frame: Frame) {
   )
 }
 
-async function goToPage(frame: Frame, page: number) {
-  await frame.fill('#page-number', String(page))
-  await frame.press('#page-number', 'Enter')
-  return waitForPage(frame, page)
+async function goToPage(frame: Frame, q: PdfQueries, page: number) {
+  await q.find('pageNumber').fill(String(page))
+  await q.find('pageNumber').press('Enter')
+  return waitForPage(frame, q, page)
 }
 
-function focusedId(frame: Frame) {
-  return frame.evaluate(() => document.activeElement?.id ?? null)
+function focusedControl(frame: Frame, q: PdfQueries) {
+  return frame.evaluate(focusedPart, q.selectors())
 }
 
 // The page list and the settings menu leave the document once closed and
 // then return focus in a later task. Failure to close must reject.
-async function waitForClosed(frame: Frame, selector: string) {
-  await frame.waitForFunction(
-    (closed) => !document.querySelector(closed),
-    selector,
-    {
-      timeout: 5000,
-    },
-  )
+async function waitForClosed(frame: Frame, closing: Locator) {
+  await closing.waitFor({ state: 'detached', timeout: 5000 })
   await settle(frame)
 }
 
-function waitForPagesClosed(frame: Frame) {
-  return waitForClosed(frame, '[data-pdf-pages]')
+function waitForPagesClosed(frame: Frame, q: PdfQueries) {
+  return waitForClosed(frame, q.find('pagesSheet'))
 }
 
 // Arrow keys move focus between menu items in a later task.
@@ -436,13 +563,12 @@ async function pressInMenu(page: Page, frame: Frame, key: string) {
 
 async function savedBytes(
   page: Page,
-  frame: Frame,
-  selector: string,
+  link: Locator,
   original: Uint8Array<ArrayBuffer>,
 ) {
   const [saved] = await Promise.all([
     page.waitForEvent('download'),
-    frame.click(selector),
+    link.click(),
   ])
   return Buffer.compare(await downloadBytes(saved), Buffer.from(original)) === 0
 }
@@ -455,64 +581,67 @@ async function downloadBytes(saved: Download): Promise<Buffer> {
   return Buffer.concat(chunks)
 }
 
-function pageListThumbnails(frame: Frame) {
-  return frame.evaluate(() => ({
-    items: document.querySelectorAll('#page-list button').length,
-    drawn: [
-      ...document.querySelectorAll<HTMLElement>(
-        '#page-list button[data-rendered]',
-      ),
-    ].map((item) => Number(item.dataset.page)),
-  }))
+function pageListThumbnails(frame: Frame, q: PdfQueries) {
+  return frame.evaluate(
+    (items) => ({
+      items: document.querySelectorAll(items).length,
+      drawn: [
+        ...document.querySelectorAll<HTMLElement>(`${items}[data-rendered]`),
+      ].map((item) => Number(item.dataset.page)),
+    }),
+    q.selector('pageItems'),
+  )
 }
 
-function waitForThumbnail(frame: Frame, n: number) {
+function waitForThumbnail(frame: Frame, q: PdfQueries, n: number) {
   return frame
     .waitForFunction(
-      (expected) =>
-        !!document.querySelector(
-          `#page-list button[data-page="${expected}"][data-rendered]`,
-        ),
-      n,
+      (drawn) => !!document.querySelector(drawn),
+      `${q.selector('pageItem', { n })}[data-rendered]`,
       { timeout: 10000 },
     )
     .then(() => true)
 }
 
-async function observePageListOpening(frame: Frame) {
-  const beforeOpen = await pageListThumbnails(frame)
-  await goToPage(frame, 40)
-  await frame.click('#pages')
-  const currentDrawn = await waitForThumbnail(frame, 40)
-  const opened = await frame.evaluate(() => {
-    const dialog = document.querySelector('[data-pdf-pages]')!
-    const list = document.getElementById('page-list')!
-    const current = [...list.querySelectorAll<HTMLElement>('[aria-current]')]
-    const box = current[0]?.getBoundingClientRect()
-    const visible = list.getBoundingClientRect()
-    return {
-      open: dialog.getAttribute('data-state') === 'open',
-      // The controls outside the open list are hidden from assistive
-      // technology (live status regions stay announced).
-      modal:
-        dialog.getAttribute('role') === 'dialog' &&
-        !!document
-          .getElementById('pdf-toolbar')!
+async function observePageListOpening(frame: Frame, q: PdfQueries) {
+  const beforeOpen = await pageListThumbnails(frame, q)
+  await goToPage(frame, q, 40)
+  await q.find('pages').click()
+  // The list is a dialog a reader finds by its own title.
+  await q.find('pagesSheet').waitFor({ state: 'visible', timeout: 5000 })
+  const currentDrawn = await waitForThumbnail(frame, q, 40)
+  const opened = await frame.evaluate(
+    ({ selectors, currentItem }) => {
+      const dialog = document.querySelector(selectors.pagesSheet)!
+      const list = document.querySelector<HTMLElement>(selectors.pageList)!
+      const current = [...list.querySelectorAll<HTMLElement>('[aria-current]')]
+      const box = current[0]?.getBoundingClientRect()
+      const visible = list.getBoundingClientRect()
+      return {
+        open: dialog.getAttribute('data-state') === 'open',
+        // The controls outside the open list are hidden from assistive
+        // technology (live status regions stay announced).
+        modal: !!document
+          .querySelector(selectors.toolbar)!
           .closest('[aria-hidden="true"]'),
-      heading: dialog.querySelector('[data-slot="sheet-title"]')!.textContent,
-      current: current.map((item) => ({
-        page: Number(item.dataset.page),
-        marker: item.getAttribute('aria-current'),
-        label: item.getAttribute('aria-label'),
-      })),
-      focusedPage: (document.activeElement as HTMLElement).dataset.page ?? null,
-      currentVisible:
-        !!box && box.top >= visible.top && box.bottom <= visible.bottom,
-      thumbnailWidth: list.querySelector<HTMLCanvasElement>(
-        'button[data-page="40"] canvas',
-      )!.width,
-    }
-  })
+        current: current.map((item) => ({
+          page: Number(item.dataset.page),
+          marker: item.getAttribute('aria-current'),
+        })),
+        focusedPage:
+          (document.activeElement as HTMLElement).dataset.page ?? null,
+        currentVisible:
+          !!box && box.top >= visible.top && box.bottom <= visible.bottom,
+        thumbnailWidth: document.querySelector<HTMLCanvasElement>(
+          `${currentItem} canvas`,
+        )!.width,
+      }
+    },
+    {
+      selectors: q.selectors(),
+      currentItem: q.selector('pageItem', { n: 40 }),
+    },
+  )
   return { beforeOpen, currentDrawn, opened }
 }
 
@@ -521,28 +650,34 @@ async function observePageListOpening(frame: Frame) {
 async function pageListFlow(
   page: Page,
   frame: Frame,
+  q: PdfQueries,
   width: number,
   clearCookies: () => Promise<void>,
   originalFetches: () => number,
   original: Uint8Array<ArrayBuffer>,
 ) {
-  const thumbnails = () => pageListThumbnails(frame)
-  const waitDrawn = (n: number) => waitForThumbnail(frame, n)
+  const thumbnails = () => pageListThumbnails(frame, q)
+  const waitDrawn = (n: number) => waitForThumbnail(frame, q, n)
   // A closed list has left the document and returned focus.
   const dialogState = async () => {
-    await waitForPagesClosed(frame)
-    return frame.evaluate(() => ({
-      open: !!document.querySelector('[data-pdf-pages][data-state="open"]'),
-      focusedId: document.activeElement?.id ?? null,
-    }))
+    await waitForPagesClosed(frame, q)
+    return {
+      open: await frame.evaluate(
+        (sheet) => !!document.querySelector(`${sheet}[data-state="open"]`),
+        q.selector('pagesSheet'),
+      ),
+      focusedControl: await focusedControl(frame, q),
+    }
   }
-  const { beforeOpen, currentDrawn, opened } =
-    await observePageListOpening(frame)
+  const { beforeOpen, currentDrawn, opened } = await observePageListOpening(
+    frame,
+    q,
+  )
   // Keys that turn pages leave the page alone behind the open list.
   await page.keyboard.press('ArrowRight')
-  const pageAfterArrowRight = await pageNumber(frame)
+  const pageAfterArrowRight = await pageNumber(frame, q)
   await page.keyboard.press('ArrowLeft')
-  const pageAfterArrowLeft = await pageNumber(frame)
+  const pageAfterArrowLeft = await pageNumber(frame, q)
   const setHidden = (hidden: boolean) =>
     frame.evaluate((hide) => {
       if (hide)
@@ -556,16 +691,16 @@ async function pageListFlow(
   // A slow neighbour of page 40 is being drawn: its canvas has its
   // thumbnail size but is not drawn yet.
   const slowHandle = await frame.waitForFunction(
-    (pages) =>
+    ({ pages, items }) =>
       pages.find((n) => {
         const item = document.querySelector<HTMLElement>(
-          `#page-list button[data-page="${n}"]`,
+          `${items}[data-page="${n}"]`,
         )!
         return (
           item.querySelector('canvas')!.width === 240 && !item.dataset.rendered
         )
       }) ?? false,
-    SLOW_PAGES,
+    { pages: SLOW_PAGES, items: q.selector('pageItems') },
     { timeout: 10000 },
   )
   const slowPage = (await slowHandle.jsonValue()) as number
@@ -584,60 +719,60 @@ async function pageListFlow(
   const afterOpen = await thumbnails()
   // While the viewer page is hidden, newly visible items stay undrawn.
   await setHidden(true)
-  await frame.evaluate(() => {
-    document.getElementById('page-list')!.scrollTop = 0
-  })
+  await frame.evaluate((list) => {
+    document.querySelector(list)!.scrollTop = 0
+  }, q.selector('pageList'))
   // test-wait: elapsed-time — observe absence of delayed background work.
   await frame.waitForTimeout(1000)
   const whileHidden = await thumbnails()
   await setHidden(false)
   const resumed = await waitDrawn(1)
-  await frame.evaluate(() => {
-    const list = document.getElementById('page-list')!
-    list.scrollTop = list.scrollHeight
-  })
+  await frame.evaluate((list) => {
+    const items = document.querySelector(list)!
+    items.scrollTop = items.scrollHeight
+  }, q.selector('pageList'))
   const lastDrawn = await waitDrawn(100)
   await page.keyboard.press('Escape')
   const afterEscape = await dialogState()
   // On phones the list covers the whole frame, so there is no outside.
   let afterBackdrop = null
   if (width >= 780) {
-    await frame.click('#pages')
+    await q.find('pages').click()
     // The list listens for outside clicks once it has opened.
     await frame.waitForFunction(
-      () =>
-        !!document.activeElement?.closest(
-          '[data-pdf-pages][data-state="open"]',
-        ),
-      undefined,
+      (sheet) =>
+        !!document.activeElement?.closest(`${sheet}[data-state="open"]`),
+      q.selector('pagesSheet'),
       { timeout: 5000 },
     )
     await settle(frame)
     await page.mouse.click(40, 400)
     afterBackdrop = await dialogState()
   }
-  await frame.click('#pages')
-  await frame.click('#pages-close')
+  await q.find('pages').click()
+  await q.find('pagesClose').click()
   const afterCloseButton = await dialogState()
-  await frame.click('#pages')
-  await frame.click('#page-list button[data-page="5"]')
-  const chosenPage = await waitForPage(frame, 5)
+  await q.find('pages').click()
+  await q.find('pageItem', { n: 5 }).click()
+  const chosenPage = await waitForPage(frame, q, 5)
   const chosenState = await dialogState()
   // The list marks the chosen page when it opens again.
-  await frame.click('#pages')
+  await q.find('pages').click()
   const chosen = {
     page: chosenPage,
     ...chosenState,
-    marked: await frame.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>('#page-list [aria-current]')]
-        .map((item) => Number(item.dataset.page))
-        .join(),
+    marked: await frame.evaluate(
+      (list) =>
+        [...document.querySelectorAll<HTMLElement>(`${list} [aria-current]`)]
+          .map((item) => Number(item.dataset.page))
+          .join(),
+      q.selector('pageList'),
     ),
   }
   await clearCookies()
   const fetchesBefore = originalFetches()
   const download = {
-    sameBytes: await savedBytes(page, frame, '#pages-download', original),
+    sameBytes: await savedBytes(page, q.find('pagesDownload'), original),
     fetchedOriginal: originalFetches() > fetchesBefore,
   }
   return {
@@ -663,89 +798,90 @@ async function pageListFlow(
   }
 }
 
-function searchState(frame: Frame) {
-  return frame.evaluate(() => ({
-    open: !document.getElementById('search-bar')!.hidden,
-    expanded: document
-      .getElementById('search-toggle')!
-      .getAttribute('aria-expanded'),
-    focusedId: document.activeElement?.id ?? null,
-    results: document.getElementById('search-results')!.textContent,
-    query: (document.getElementById('search-query') as HTMLInputElement).value,
-    inputWidth: document.getElementById('search-query')!.getBoundingClientRect()
-      .width,
-    barOverflow:
-      document.getElementById('search-bar')!.scrollWidth -
-      document.getElementById('search-bar')!.clientWidth,
-    highlights: document.querySelectorAll('.textLayer .highlight').length,
-    page: Number(
-      (document.getElementById('page-number') as HTMLInputElement).value,
-    ),
-    containerHeight: document.getElementById('viewer-container')!.clientHeight,
-  }))
+async function searchState(frame: Frame, q: PdfQueries) {
+  const focused = await focusedControl(frame, q)
+  return {
+    ...(await frame.evaluate((selectors) => {
+      const find = (selector: string) =>
+        document.querySelector<HTMLElement>(selector)!
+      const bar = find(selectors.searchBar)
+      return {
+        open: !bar.hidden,
+        expanded: find(selectors.searchToggle).getAttribute('aria-expanded'),
+        results: find(selectors.searchResults).textContent,
+        query: (find(selectors.searchQuery) as HTMLInputElement).value,
+        inputWidth: find(selectors.searchQuery).getBoundingClientRect().width,
+        barOverflow: bar.scrollWidth - bar.clientWidth,
+        highlights: document.querySelectorAll('.textLayer .highlight').length,
+        page: Number((find(selectors.pageNumber) as HTMLInputElement).value),
+        containerHeight: find(selectors.content).clientHeight,
+      }
+    }, q.selectors())),
+    focusedControl: focused,
+  }
 }
 
-async function waitForResults(frame: Frame, pattern: string) {
+async function waitForResults(frame: Frame, q: PdfQueries, pattern: string) {
   await frame.waitForFunction(
-    (source) =>
+    ({ results, source }) =>
       new RegExp(source).test(
-        document.getElementById('search-results')!.textContent ?? '',
+        document.querySelector(results)!.textContent ?? '',
       ),
-    pattern,
+    { results: q.selector('searchResults'), source: pattern },
     { timeout: 10000 },
   )
-  return searchState(frame)
+  return searchState(frame, q)
 }
 
 // Search across pages: both ways in, stepping both ways, no results, an
 // emptied query, and both ways out.
-async function searchFlow(page: Page, frame: Frame) {
-  const closed = await searchState(frame)
-  await frame.focus('#viewer-container')
+async function searchFlow(page: Page, frame: Frame, q: PdfQueries) {
+  const closed = await searchState(frame, q)
+  await q.find('content').focus()
   await page.keyboard.press('ControlOrMeta+f')
-  const openedByShortcut = await searchState(frame)
+  const openedByShortcut = await searchState(frame, q)
   await page.keyboard.type(SEARCH_TERM)
-  const first = await waitForResults(frame, '^1 ')
+  const first = await waitForResults(frame, q, '^1 ')
   await frame.waitForSelector('.textLayer .highlight.selected', {
     timeout: 10000,
   })
-  const highlighted = await searchState(frame)
+  const highlighted = await searchState(frame, q)
   await page.keyboard.press('Enter')
-  const second = await waitForResults(frame, '^2 ')
+  const second = await waitForResults(frame, q, '^2 ')
   await page.keyboard.press('Enter')
-  const third = await waitForResults(frame, '^3 ')
+  const third = await waitForResults(frame, q, '^3 ')
   await page.keyboard.press('Shift+Enter')
-  const back = await waitForResults(frame, '^2 ')
-  await frame.click('#search-next')
-  const nextButton = await waitForResults(frame, '^3 ')
-  await frame.click('#search-previous')
-  const previousButton = await waitForResults(frame, '^2 ')
-  await frame.fill('#search-query', 'zebra')
-  const absent = await waitForResults(frame, '^[^0-9]+$')
-  await frame.fill('#search-query', '')
-  const emptied = await waitForResults(frame, '^$')
+  const back = await waitForResults(frame, q, '^2 ')
+  await q.find('searchNext').click()
+  const nextButton = await waitForResults(frame, q, '^3 ')
+  await q.find('searchPrevious').click()
+  const previousButton = await waitForResults(frame, q, '^2 ')
+  await q.find('searchQuery').fill('zebra')
+  const absent = await waitForResults(frame, q, '^[^0-9]+$')
+  await q.find('searchQuery').fill('')
+  const emptied = await waitForResults(frame, q, '^$')
   // Emptied while the search it started is still running: no late counts.
-  await frame.fill('#search-query', SEARCH_TERM)
+  await q.find('searchQuery').fill(SEARCH_TERM)
   // test-wait: elapsed-time — cross the search debounce before clearing the pending query.
   await frame.waitForTimeout(300)
-  await frame.fill('#search-query', '')
+  await q.find('searchQuery').fill('')
   // test-wait: elapsed-time — observe absence of delayed background work.
   await frame.waitForTimeout(1000)
-  const emptiedWhileSearching = await searchState(frame)
-  await frame.fill('#search-query', SEARCH_TERM)
+  const emptiedWhileSearching = await searchState(frame, q)
+  await q.find('searchQuery').fill(SEARCH_TERM)
   // A fresh search starts from the current page, which is still page 4.
-  const resumed = await waitForResults(frame, '^2 ')
+  const resumed = await waitForResults(frame, q, '^2 ')
   await page.keyboard.press('Escape')
   await frame.waitForFunction(
     () => document.querySelectorAll('.textLayer .highlight').length === 0,
     undefined,
     { timeout: 5000 },
   )
-  const closedByEscape = await searchState(frame)
-  await frame.click('#search-toggle')
-  const reopened = await searchState(frame)
-  await frame.click('#search-close')
-  const closedByButton = await searchState(frame)
+  const closedByEscape = await searchState(frame, q)
+  await q.find('searchToggle').click()
+  const reopened = await searchState(frame, q)
+  await q.find('searchClose').click()
+  const closedByButton = await searchState(frame, q)
   return {
     closed,
     openedByShortcut,
@@ -766,68 +902,73 @@ async function searchFlow(page: Page, frame: Frame) {
   }
 }
 
-async function searchOnce(frame: Frame) {
-  await frame.click('#search-toggle')
-  await frame.fill('#search-query', SEARCH_TERM)
-  return waitForResults(frame, '.')
+async function searchOnce(frame: Frame, q: PdfQueries) {
+  await q.find('searchToggle').click()
+  await q.find('searchQuery').fill(SEARCH_TERM)
+  return waitForResults(frame, q, '.')
 }
 
-// The display settings menu: its options carry data-layout and data-size,
-// and the viewer keeps the current choice on the body.
-const SETTINGS = '[data-pdf-settings]'
-
-function chooseSetting(frame: Frame, option: string) {
-  return frame.click(`${SETTINGS} ${option}`)
+// The size options are chosen by the value they set on the body: their
+// labels are percentages, which the catalogue does not hold.
+function chooseSize(q: PdfQueries, size: string) {
+  return q.find('settingsMenu').locator(`[data-size="${size}"]`).click()
 }
 
-function settingsState(frame: Frame) {
-  return frame.evaluate((settings) => {
-    const options = document.querySelector(settings)
-    const container = document.getElementById('viewer-container')!
-    const current = document.querySelector<HTMLElement>(
-      `.page[data-page-number="${(document.getElementById('page-number') as HTMLInputElement).value}"]`,
-    )!
-    const box = options?.getBoundingClientRect() ?? { left: 0, right: 0 }
-    return {
-      open: options?.getAttribute('data-state') === 'open',
-      expanded: document.getElementById('fit')!.getAttribute('aria-expanded'),
-      layout: document.body.dataset.mode ?? null,
-      size: document.body.dataset.size ?? null,
-      mode: document.body.dataset.mode,
-      page: Number(
-        (document.getElementById('page-number') as HTMLInputElement).value,
-      ),
-      focusedId: document.activeElement?.id ?? null,
-      focusInSettings: !!options?.contains(document.activeElement),
-      focusedCheckedLayout:
-        document.activeElement?.matches(
-          `${settings} [data-layout][aria-checked="true"]`,
-        ) ?? false,
-      focusedSize:
-        (document.activeElement as HTMLElement | null)?.dataset.size ?? null,
-      popover: { left: box.left, right: box.right },
-      frameWidth: innerWidth,
-      pageWidth: current.offsetWidth,
-      pageHeight: current.offsetHeight,
-      container: {
-        width: container.clientWidth,
-        height: container.clientHeight,
-      },
-      horizontalOverflow: container.scrollWidth - container.clientWidth,
-      dialogOpen: !!document.querySelector(
-        '[data-pdf-pages][data-state="open"]',
-      ),
-      searchOpen: !document.getElementById('search-bar')!.hidden,
-    }
-  }, SETTINGS)
+function chooseLayout(q: PdfQueries, view: 'page' | 'scroll') {
+  return q.find(view === 'page' ? 'layoutPage' : 'layoutScroll').click()
+}
+
+async function settingsState(frame: Frame, q: PdfQueries) {
+  const focused = await focusedControl(frame, q)
+  return {
+    ...(await frame.evaluate((selectors) => {
+      const find = (selector: string) =>
+        document.querySelector<HTMLElement>(selector)!
+      const options = document.querySelector(selectors.settingsMenu)
+      const container = find(selectors.content)
+      const current = document.querySelector<HTMLElement>(
+        `.page[data-page-number="${(find(selectors.pageNumber) as HTMLInputElement).value}"]`,
+      )!
+      const box = options?.getBoundingClientRect() ?? { left: 0, right: 0 }
+      return {
+        open: options?.getAttribute('data-state') === 'open',
+        expanded: find(selectors.settings).getAttribute('aria-expanded'),
+        layout: document.body.dataset.mode ?? null,
+        size: document.body.dataset.size ?? null,
+        mode: document.body.dataset.mode,
+        page: Number((find(selectors.pageNumber) as HTMLInputElement).value),
+        focusInSettings: !!options?.contains(document.activeElement),
+        focusedCheckedLayout:
+          document.activeElement?.matches(
+            `${selectors.settingsMenu} [data-layout][aria-checked="true"]`,
+          ) ?? false,
+        focusedSize:
+          (document.activeElement as HTMLElement | null)?.dataset.size ?? null,
+        popover: { left: box.left, right: box.right },
+        frameWidth: innerWidth,
+        pageWidth: current.offsetWidth,
+        pageHeight: current.offsetHeight,
+        container: {
+          width: container.clientWidth,
+          height: container.clientHeight,
+        },
+        horizontalOverflow: container.scrollWidth - container.clientWidth,
+        dialogOpen: !!document.querySelector(
+          `${selectors.pagesSheet}[data-state="open"]`,
+        ),
+        searchOpen: !find(selectors.searchBar).hidden,
+      }
+    }, q.selectors())),
+    focusedControl: focused,
+  }
 }
 
 // A swipe made of touch events carrying only the coordinates the viewer reads,
 // which every engine can dispatch.
-async function swipeLeft(frame: Frame, turns: boolean) {
-  const before = await pageNumber(frame)
-  await frame.evaluate(() => {
-    const container = document.getElementById('viewer-container')!
+async function swipeLeft(frame: Frame, q: PdfQueries, turns: boolean) {
+  const before = await pageNumber(frame, q)
+  await frame.evaluate((content) => {
+    const container = document.querySelector(content)!
     const fire = (type: string, key: string, x: number) => {
       const event = new Event(type)
       Object.defineProperty(event, key, {
@@ -837,38 +978,39 @@ async function swipeLeft(frame: Frame, turns: boolean) {
     }
     fire('touchstart', 'touches', 300)
     fire('touchend', 'changedTouches', 100)
-  })
-  if (turns) await waitForPage(frame, before + 1)
+  }, q.selector('content'))
+  if (turns) await waitForPage(frame, q, before + 1)
   else {
     // test-wait: elapsed-time — a swipe in scroll mode must not turn a page later.
     await frame.waitForTimeout(500)
   }
-  return pageNumber(frame)
+  return pageNumber(frame, q)
 }
 
 // Display settings on a 4-page slide deck, starting from page 3.
 async function settingsFlow(
   page: Page,
   frame: Frame,
+  q: PdfQueries,
   width: number,
   height: number,
 ) {
-  await goToPage(frame, 3)
-  const initial = await settingsState(frame)
-  await frame.click('#fit')
-  const opened = await settingsState(frame)
-  await chooseSetting(frame, '[data-layout="scroll"]')
+  await goToPage(frame, q, 3)
+  const initial = await settingsState(frame, q)
+  await q.find('settings').click()
+  const opened = await settingsState(frame, q)
+  await chooseLayout(q, 'scroll')
   await settle(frame)
-  const scrollLayout = await settingsState(frame)
+  const scrollLayout = await settingsState(frame, q)
   const sizes: Record<string, Awaited<ReturnType<typeof settingsState>>> = {}
   for (const size of ['auto', 'page-fit', 'page-width', '1', '1.5', '2']) {
-    await chooseSetting(frame, `[data-size="${size}"]`)
+    await chooseSize(q, size)
     await settle(frame)
-    sizes[size] = await settingsState(frame)
+    sizes[size] = await settingsState(frame, q)
   }
-  await chooseSetting(frame, '[data-layout="page"]')
+  await chooseLayout(q, 'page')
   await settle(frame)
-  const pageLayout = await settingsState(frame)
+  const pageLayout = await settingsState(frame, q)
   const expectedPageWidth = await frame
     .locator('.page[data-page-number="3"]')
     .evaluate((element) => (element as HTMLElement).offsetWidth)
@@ -878,12 +1020,12 @@ async function settingsFlow(
   })
   // ResizeObserver-driven refit and popover positioning can follow layout.
   await frame.waitForFunction(
-    ({ expectedWidth, expectedPageWidth: pageWidth }) => {
+    ({ expectedWidth, expectedPageWidth: pageWidth, menu }) => {
       const current = document.querySelector<HTMLElement>(
         '.page[data-page-number="3"]',
       )
       const popover = document
-        .querySelector('[data-pdf-settings][data-state="open"]')
+        .querySelector(`${menu}[data-state="open"]`)
         ?.getBoundingClientRect()
       return (
         innerWidth === expectedWidth &&
@@ -894,79 +1036,83 @@ async function settingsFlow(
         popover.right <= innerWidth
       )
     },
-    { expectedWidth: Math.round(width * 0.8), expectedPageWidth },
+    {
+      expectedWidth: Math.round(width * 0.8),
+      expectedPageWidth,
+      menu: q.selector('settingsMenu'),
+    },
     { timeout: 5000 },
   )
-  const afterResize = await settingsState(frame)
+  const afterResize = await settingsState(frame, q)
   await page.setViewportSize({ width, height })
-  await frame.click('#next')
-  await waitForPage(frame, 4)
+  await q.find('next').click()
+  await waitForPage(frame, q, 4)
   await settle(frame)
-  const afterNext = await settingsState(frame)
+  const afterNext = await settingsState(frame, q)
 
-  await frame.click('#fit')
+  await q.find('settings').click()
   await page.keyboard.press('Escape')
-  await waitForClosed(frame, SETTINGS)
-  const afterEscape = await settingsState(frame)
+  await waitForClosed(frame, q.find('settingsMenu'))
+  const afterEscape = await settingsState(frame, q)
   // Keyboard only: open, move to the other layout and choose it, move on to
   // the sizes.
-  await frame.focus('#fit')
+  await q.find('settings').focus()
   await pressInMenu(page, frame, 'Enter')
-  const keyboardOpened = await settingsState(frame)
+  const keyboardOpened = await settingsState(frame, q)
   await pressInMenu(page, frame, 'ArrowDown')
   await pressInMenu(page, frame, 'Enter')
-  const keyboardLayout = await settingsState(frame)
+  const keyboardLayout = await settingsState(frame, q)
   await pressInMenu(page, frame, 'ArrowDown')
-  const keyboardToSize = (await settingsState(frame)).focusedSize
+  const keyboardToSize = (await settingsState(frame, q)).focusedSize
   await page.keyboard.press('Escape')
-  await waitForClosed(frame, SETTINGS)
-  const keyboardEscape = await settingsState(frame)
-  await frame.click('#fit')
-  await frame.click('#viewer-container', { position: { x: 10, y: 10 } })
-  const afterOutsideClick = await settingsState(frame)
+  await waitForClosed(frame, q.find('settingsMenu'))
+  const keyboardEscape = await settingsState(frame, q)
+  await q.find('settings').click()
+  await q.find('content').click({ position: { x: 10, y: 10 } })
+  const afterOutsideClick = await settingsState(frame, q)
 
   // Opening one surface closes the one it would overlap.
-  await frame.click('#fit')
-  await frame.click('#search-toggle')
-  const settingsToSearch = await settingsState(frame)
+  await q.find('settings').click()
+  await q.find('searchToggle').click()
+  const settingsToSearch = await settingsState(frame, q)
   // Ctrl/Cmd+F from the open settings moves focus to the search field and
   // keeps it there after the menu closes.
   await page.keyboard.press('Escape')
-  await frame.click('#fit')
+  await q.find('settings').click()
   await page.keyboard.press('ControlOrMeta+f')
-  await waitForClosed(frame, SETTINGS)
-  const shortcutToSearch = await settingsState(frame)
-  await frame.click('#fit')
-  const searchToSettings = await settingsState(frame)
-  await frame.click('#pages')
-  const settingsToPages = await settingsState(frame)
+  await waitForClosed(frame, q.find('settingsMenu'))
+  const shortcutToSearch = await settingsState(frame, q)
+  await q.find('settings').click()
+  const searchToSettings = await settingsState(frame, q)
+  await q.find('pages').click()
+  const settingsToPages = await settingsState(frame, q)
   await page.keyboard.press('Escape')
-  await frame.click('#search-toggle')
-  await frame.click('#pages')
-  const searchToPages = await settingsState(frame)
+  await q.find('searchToggle').click()
+  await q.find('pages').click()
+  const searchToPages = await settingsState(frame, q)
   await page.keyboard.press('Escape')
-  await waitForPagesClosed(frame)
-  const pagesClosed = await settingsState(frame)
+  await waitForPagesClosed(frame, q)
+  const pagesClosed = await settingsState(frame, q)
 
   // Swipes turn pages only one page at a time while the page fits the width.
-  await frame.click('#fit')
-  await chooseSetting(frame, '[data-layout="page"]')
-  await chooseSetting(frame, '[data-size="page-fit"]')
+  await q.find('settings').click()
+  await chooseLayout(q, 'page')
+  await chooseSize(q, 'page-fit')
   await page.keyboard.press('Escape')
-  await goToPage(frame, 2)
+  await goToPage(frame, q, 2)
   await settle(frame)
-  const fittedSwipe = await swipeLeft(frame, true)
-  await frame.click('#fit')
-  await chooseSetting(frame, '[data-size="2"]')
+  const fittedSwipe = await swipeLeft(frame, q, true)
+  await q.find('settings').click()
+  await chooseSize(q, '2')
   await page.keyboard.press('Escape')
-  const zoomed = await settingsState(frame)
-  const zoomedSwipe = await swipeLeft(frame, false)
-  await frame.click('#fit')
-  await chooseSetting(frame, '[data-size="page-fit"]')
-  await chooseSetting(frame, '[data-layout="scroll"]')
+  const zoomed = await settingsState(frame, q)
+  const zoomedSwipe = await swipeLeft(frame, q, false)
+  await q.find('settings').click()
+  await chooseSize(q, 'page-fit')
+  await chooseLayout(q, 'scroll')
   await page.keyboard.press('Escape')
   await settle(frame)
-  const continuousSwipe = await swipeLeft(frame, false)
+  const continuousSwipe = await swipeLeft(frame, q, false)
   return {
     initial,
     opened,
@@ -1005,45 +1151,51 @@ function breakPageDrawing() {
   }
 }
 
-function statusState(frame: Frame) {
-  return frame.evaluate(() => ({
-    state: document.documentElement.dataset.pdfState,
-    message: document.getElementById('status-message')!.textContent,
-    downloadOffered: !document.getElementById('status-download')!.hidden,
-    page: Number(
-      (document.getElementById('page-number') as HTMLInputElement).value,
-    ),
-  }))
+function statusState(frame: Frame, q: PdfQueries) {
+  return frame.evaluate(
+    (selectors) => ({
+      state: document.documentElement.dataset.pdfState,
+      message: document.querySelector(selectors.statusMessage)!.textContent,
+      downloadOffered: !document.querySelector<HTMLElement>(
+        selectors.statusDownload,
+      )!.hidden,
+      page: Number(
+        document.querySelector<HTMLInputElement>(selectors.pageNumber)!.value,
+      ),
+    }),
+    q.selectors(),
+  )
 }
 
 // A page that cannot be drawn says so while it is the current page, with
 // the original download; moving to a page that drew clears it.
-async function pageFailureFlow(frame: Frame) {
+async function pageFailureFlow(frame: Frame, q: PdfQueries) {
   await frame.evaluate(() => {
     ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
       true
   })
-  await goToPage(frame, 4)
+  await goToPage(frame, q, 4)
   await frame.waitForFunction(
     () => document.documentElement.dataset.pdfState === 'page-error',
     undefined,
     { timeout: 10000 },
   )
-  const failed = await statusState(frame)
+  const failed = await statusState(frame, q)
   await frame.evaluate(() => {
     ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
       false
   })
-  await goToPage(frame, 1)
+  await goToPage(frame, q, 1)
   await frame.waitForFunction(
     () => document.documentElement.dataset.pdfState === 'ready',
     undefined,
     { timeout: 10000 },
   )
   const recovered = {
-    ...(await statusState(frame)),
+    ...(await statusState(frame, q)),
     statusHidden: await frame.evaluate(
-      () => document.getElementById('status')!.hidden,
+      (status) => document.querySelector<HTMLElement>(status)!.hidden,
+      q.selector('status'),
     ),
   }
   return { failed, recovered }
@@ -1102,33 +1254,39 @@ async function viewerFrame(page: Page, name: string) {
   return frame
 }
 
-function viewerLabels() {
-  const label = (id: string) =>
-    document.getElementById(id)?.getAttribute('aria-label') ?? null
+// The viewer's own language, and which parts it publishes under their
+// catalogue names in that language: a label left in another language is
+// simply not found.
+async function viewerLabels(frame: Frame, q: PdfQueries) {
   return {
-    lang: document.documentElement.lang,
-    toolbar: label('pdf-toolbar'),
-    pages: label('pages'),
-    content: label('viewer-container'),
-    contentLang:
-      document.getElementById('viewer-container')?.getAttribute('lang') ?? null,
+    ...(await frame.evaluate(
+      (content) => ({
+        lang: document.documentElement.lang,
+        contentLang:
+          document.querySelector(content)?.getAttribute('lang') ?? null,
+      }),
+      q.selector('content'),
+    )),
+    named: await namedParts(q),
   }
 }
 
-function preferencesState(frame: Frame) {
-  return frame.evaluate(() => {
-    const toolbar = document.getElementById('pdf-toolbar')!
+function preferencesState(frame: Frame, q: PdfQueries) {
+  return frame.evaluate((selectors) => {
+    const toolbar = document.querySelector<HTMLElement>(selectors.toolbar)
+    const content = document.querySelector(selectors.content)
     return {
       lang: document.documentElement.lang,
       theme: document.documentElement.dataset.theme ?? null,
-      toolbar: toolbar.getAttribute('aria-label'),
-      background: getComputedStyle(toolbar).backgroundColor,
+      // Both are found by the name the catalogue gives them in the language
+      // the app asked for.
+      toolbarNamed: toolbar !== null,
+      contentNamed: content !== null,
+      background: toolbar ? getComputedStyle(toolbar).backgroundColor : null,
       colorScheme: getComputedStyle(document.documentElement).colorScheme,
-      contentLang: document
-        .getElementById('viewer-container')!
-        .getAttribute('lang'),
+      contentLang: content?.getAttribute('lang') ?? null,
       page: Number(
-        (document.getElementById('page-number') as HTMLInputElement).value,
+        document.querySelector<HTMLInputElement>(selectors.pageNumber)!.value,
       ),
       layout: document.body.dataset.mode ?? null,
       size: document.body.dataset.size ?? null,
@@ -1139,7 +1297,7 @@ function preferencesState(frame: Frame) {
           .probe === true,
       renderedPages: document.querySelectorAll('.page canvas').length,
     }
-  })
+  }, q.selectors())
 }
 
 // The viewer starts on the app defaults, takes the app's preferences late
@@ -1148,8 +1306,12 @@ function preferencesState(frame: Frame) {
 async function preferencesFlow(
   page: Page,
   frame: Frame,
+  browser: Locale,
   signEntry: () => Promise<string>,
 ) {
+  // Each language has its own queries: the names the viewer publishes move
+  // with the language the app asks for.
+  const queries = (locale: Locale) => pdfQueries(frame, locale)
   const send = async (preferences: ViewerPreferences, expected: string) => {
     await parentWindow(page).sendPreferences(
       viewerPreferencesMessage(preferences),
@@ -1162,16 +1324,16 @@ async function preferencesFlow(
       { timeout: 5000 },
     )
     await settle(frame)
-    return preferencesState(frame)
+    return preferencesState(frame, queries(preferences.locale))
   }
-  await goToPage(frame, 3)
+  await goToPage(frame, queries(browser), 3)
   await settle(frame)
   await frame.evaluate(() => {
     ;(
       document.getElementById('viewer') as HTMLElement & { probe?: true }
     ).probe = true
   })
-  const initial = await preferencesState(frame)
+  const initial = await preferencesState(frame, queries(browser))
   // The browser prefers dark; the app chose light.
   const late = await send({ locale: 'ja', theme: 'light' }, 'ja light')
   await page.emulateMedia({ colorScheme: 'light' })
@@ -1179,7 +1341,7 @@ async function preferencesFlow(
   const system = await send({ locale: 'en', theme: 'system' }, 'en system')
   await page.emulateMedia({ colorScheme: 'dark' })
   await settle(frame)
-  const systemChanged = await preferencesState(frame)
+  const systemChanged = await preferencesState(frame, queries('en'))
   await page.evaluate(() => {
     const parent = window as unknown as ParentWindow
     for (const invalid of [
@@ -1200,7 +1362,7 @@ async function preferencesFlow(
   )
   // test-wait: elapsed-time — malformed and non-parent messages must remain ignored.
   await frame.waitForTimeout(500)
-  const ignored = await preferencesState(frame)
+  const ignored = await preferencesState(frame, queries('en'))
   const beforeReplacement = await send(
     { locale: 'ja', theme: 'dark' },
     'ja dark',
@@ -1223,7 +1385,10 @@ async function preferencesFlow(
       timeout: 5000,
     },
   )
-  const replaced = await preferencesState(replacement)
+  const replaced = await preferencesState(
+    replacement,
+    pdfQueries(replacement, 'ja'),
+  )
   return {
     frame: replacement,
     result: {
@@ -1249,7 +1414,12 @@ type PageReport = {
 // The page the viewer reports to its parent through every way of moving, the
 // pages its parent opens, the commands it ignores, a page that cannot be
 // drawn and a reload. The parent page records every report of its frame.
-async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
+async function pageBridgeFlow(
+  page: Page,
+  frame: Frame,
+  q: PdfQueries,
+  width: number,
+) {
   const reports = () =>
     page.evaluate(() =>
       (window as unknown as { reports: PageReport[] }).reports.map(
@@ -1310,28 +1480,28 @@ async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
   await sync('a'.repeat(64))
   const initial = await waitReport('ready', 1)
   const mode = await frame.evaluate(() => document.body.dataset.mode)
-  await frame.click('#next')
+  await q.find('next').click()
   const afterButton = await waitReport('ready', 2)
-  await frame.focus('#viewer-container')
+  await q.find('content').focus()
   await page.keyboard.press('End')
   const afterKey = await waitReport('ready', 14)
-  await searchOnce(frame)
+  await searchOnce(frame, q)
   const afterSearch = await waitReport('ready', 9)
-  await frame.click('#search-close')
+  await q.find('searchClose').click()
   let afterScroll: PageReport | undefined
   if (mode === 'scroll') {
-    await frame.evaluate(() => {
+    await frame.evaluate((content) => {
       const target = document.querySelector<HTMLElement>(
         '.page[data-page-number="3"]',
       )!
-      document.getElementById('viewer-container')!.scrollTop = target.offsetTop
-    })
+      document.querySelector(content)!.scrollTop = target.offsetTop
+    }, q.selector('content'))
     afterScroll = await waitReport('ready', 3)
   }
 
   await command(open(12))
   const opened = {
-    page: await waitForPage(frame, 12),
+    page: await waitForPage(frame, q, 12),
     report: await waitReport('ready', 12),
   }
   const beforeIgnored = (await reports()).length
@@ -1341,7 +1511,7 @@ async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
   await frame.evaluate((message) => window.postMessage(message, '*'), open(3))
   await flush()
   const ignored = {
-    page: await pageNumber(frame),
+    page: await pageNumber(frame, q),
     reports: (await reports()).slice(beforeIgnored),
   }
 
@@ -1355,7 +1525,7 @@ async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
   const failed = await waitReport('unavailable')
   await command(open(1))
   await flush()
-  const whileFailed = await pageNumber(frame)
+  const whileFailed = await pageNumber(frame, q)
   await frame.evaluate(() => {
     ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
       false
@@ -1543,6 +1713,8 @@ export const pdfViewerScenario = defineBrowserCommand(
         throw new Error('Missing fixture port')
       origin = `http://127.0.0.1:${address.port}`
       context = await createContext()
+      // Every query waits for its own control instead of hanging the test.
+      context.setDefaultTimeout(15000)
       await context.addInitScript(() => {
         const violations: string[] = []
         ;(window as unknown as { violations: string[] }).violations = violations
@@ -1577,6 +1749,12 @@ export const pdfViewerScenario = defineBrowserCommand(
           throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
         frame = artifact.mainFrame()
       }
+      // The viewer speaks the language the app asked for, or the browser's
+      // until it does.
+      const q = pdfQueries(
+        frame,
+        options.app?.locale ?? (options.locale === 'ja-JP' ? 'ja' : 'en'),
+      )
       const initialState = await frame.evaluate(
         () => document.documentElement.dataset.pdfState,
       )
@@ -1601,7 +1779,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         } finally {
           clearTimeout(requestTimeout)
         }
-        await frame.waitForSelector('#download', { timeout: 10000 })
+        await q.find('download').waitFor({ state: 'visible', timeout: 10000 })
         await frame.evaluate(() => {
           ;(window as unknown as { stayed: boolean }).stayed = true
         })
@@ -1610,7 +1788,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         )
         const [saved] = await Promise.all([
           artifact.waitForEvent('download'),
-          frame.click('#download'),
+          q.find('download').click(),
         ])
         earlyDownload = {
           clickedWhile,
@@ -1638,14 +1816,17 @@ export const pdfViewerScenario = defineBrowserCommand(
           options.app.locale,
           { timeout: 5000 },
         )
-      const status = await frame.evaluate(() => ({
-        state: document.documentElement.dataset.pdfState,
-        message: document.getElementById('status-message')!.textContent,
-        downloadOffered: !document.getElementById('status-download')!.hidden,
-        downloadHref: document
-          .getElementById('status-download')!
-          .getAttribute('href'),
-      }))
+      const status = await frame.evaluate((selectors) => {
+        const download = document.querySelector<HTMLAnchorElement>(
+          selectors.statusDownload,
+        )!
+        return {
+          state: document.documentElement.dataset.pdfState,
+          message: document.querySelector(selectors.statusMessage)!.textContent,
+          downloadOffered: !download.hidden,
+          downloadHref: download.getAttribute('href'),
+        }
+      }, q.selectors())
       const common = {
         ...status,
         initialState,
@@ -1664,7 +1845,7 @@ export const pdfViewerScenario = defineBrowserCommand(
           layout: document.body.dataset.mode ?? null,
           size: document.body.dataset.size ?? null,
         })),
-        labels: await frame.evaluate(viewerLabels),
+        labels: await viewerLabels(frame, q),
         earlyDownload,
       }
       if (status.state !== 'ready') return common
@@ -1684,7 +1865,7 @@ export const pdfViewerScenario = defineBrowserCommand(
       })
 
       if (scenario === 'pages') {
-        const initial = await layout(frame)
+        const initial = await layout(frame, q)
         // A download that left a narrow row comes back once the row widens.
         let widened: Awaited<ReturnType<typeof layout>> | undefined
         const narrowViewport = artifact.viewportSize()
@@ -1693,13 +1874,8 @@ export const pdfViewerScenario = defineBrowserCommand(
             width: 1440,
             height: narrowViewport.height,
           })
-          await frame.waitForFunction(
-            () =>
-              document.getElementById('download')!.getClientRects().length > 0,
-            undefined,
-            { timeout: 5000 },
-          )
-          widened = await layout(frame)
+          await q.find('download').waitFor({ state: 'visible', timeout: 5000 })
+          widened = await layout(frame, q)
           await artifact.setViewportSize(narrowViewport)
         }
         // Toolbar checks still use the 100-page fixture and exercise resizing,
@@ -1710,11 +1886,12 @@ export const pdfViewerScenario = defineBrowserCommand(
           return await finish({
             initial,
             widened,
-            pageListOpened: await observePageListOpening(frame),
+            pageListOpened: await observePageListOpening(frame, q),
           })
         const pageList = await pageListFlow(
           artifact,
           frame,
+          q,
           width,
           () => context!.clearCookies(),
           originalFetches,
@@ -1723,13 +1900,18 @@ export const pdfViewerScenario = defineBrowserCommand(
         return await finish({ initial, widened, pageList })
       }
       if (scenario === 'page-failure')
-        return await finish({ pageFailure: await pageFailureFlow(frame) })
+        return await finish({ pageFailure: await pageFailureFlow(frame, q) })
       if (scenario === 'page-bridge' || scenario === 'page-bridge-report')
         return await finish({
-          pageBridge: await pageBridgeFlow(artifact, frame, width),
+          pageBridge: await pageBridgeFlow(artifact, frame, q, width),
         })
       if (scenario === 'preferences') {
-        const flow = await preferencesFlow(artifact, frame, signEntry)
+        const flow = await preferencesFlow(
+          artifact,
+          frame,
+          options.locale === 'ja-JP' ? 'ja' : 'en',
+          signEntry,
+        )
         return {
           ...common,
           preferences: flow.result,
@@ -1742,12 +1924,12 @@ export const pdfViewerScenario = defineBrowserCommand(
         }
       }
       if (scenario === 'search')
-        return await finish({ search: await searchFlow(artifact, frame) })
+        return await finish({ search: await searchFlow(artifact, frame, q) })
       if (scenario === 'image-only' || scenario === 'late-text')
-        return await finish({ searchOnce: await searchOnce(frame) })
+        return await finish({ searchOnce: await searchOnce(frame, q) })
       if (scenario === 'settings')
         return await finish({
-          settingsFlow: await settingsFlow(artifact, frame, width, height),
+          settingsFlow: await settingsFlow(artifact, frame, q, width, height),
         })
 
       if (scenario === 'embedded-font') {
@@ -1819,11 +2001,11 @@ export const pdfViewerScenario = defineBrowserCommand(
       }
 
       if (MIXED_SIZES[scenario]) {
-        await frame.click('#next')
-        const mixedPage = await waitForPage(frame, 2)
+        await q.find('next').click()
+        const mixedPage = await waitForPage(frame, q, 2)
         await frame.waitForFunction(
-          (slide) => {
-            const container = document.getElementById('viewer-container')!
+          ({ slide, content }) => {
+            const container = document.querySelector(content)!
             const current = document.querySelector<HTMLElement>(
               '.page[data-page-number="2"]',
             )!
@@ -1837,23 +2019,26 @@ export const pdfViewerScenario = defineBrowserCommand(
               (pageElement) => pageElement.offsetWidth <= container.clientWidth,
             )
           },
-          scenario === 'mixed-slides',
+          {
+            slide: scenario === 'mixed-slides',
+            content: q.selector('content'),
+          },
           { timeout: 5000 },
         )
         await settle(frame)
-        const mixed = await layout(frame)
+        const mixed = await layout(frame, q)
         const mixedMode = await frame.evaluate(() => document.body.dataset.mode)
         // Fit page in continuous layout refits each page reached.
         let continuousFit = null
         if (scenario === 'mixed-slides') {
-          await frame.click('#fit')
-          await chooseSetting(frame, '[data-layout="scroll"]')
+          await q.find('settings').click()
+          await chooseLayout(q, 'scroll')
           await artifact.keyboard.press('Escape')
-          await goToPage(frame, 1)
+          await goToPage(frame, q, 1)
           await settle(frame)
-          await goToPage(frame, 2)
+          await goToPage(frame, q, 2)
           await settle(frame)
-          continuousFit = await layout(frame)
+          continuousFit = await layout(frame, q)
         }
         return {
           continuousFit,
@@ -1875,46 +2060,46 @@ export const pdfViewerScenario = defineBrowserCommand(
         PAGE_SIZES[scenario === 'portrait' ? 'portrait' : 'landscape'][0]
       const mode = await frame.evaluate(() => document.body.dataset.mode)
       const pageCount = await frame.evaluate(
-        () => document.getElementById('page-count')!.textContent,
+        (count) => document.querySelector(count)!.textContent,
+        q.selector('pageCount'),
       )
-      const initial = await layout(frame)
+      const initial = await layout(frame, q)
       const scale = initial.page.width / ((pageWidthPt * 4) / 3)
       const selection = await selectFirstLine(artifact, frame)
 
-      await frame.focus('#viewer-container')
+      await q.find('content').focus()
       const navigation: Record<string, number> = {}
-      await frame.click('#next')
-      navigation.afterNextButton = await waitForPage(frame, 2)
-      await frame.focus('#viewer-container')
+      await q.find('next').click()
+      navigation.afterNextButton = await waitForPage(frame, q, 2)
+      await q.find('content').focus()
       await artifact.keyboard.press('ArrowRight')
-      navigation.afterArrowRight = await waitForPage(frame, 3)
+      navigation.afterArrowRight = await waitForPage(frame, q, 3)
       await artifact.keyboard.press('End')
-      navigation.afterEnd = await waitForPage(frame, 4)
-      const atEnd = await layout(frame)
+      navigation.afterEnd = await waitForPage(frame, q, 4)
+      const atEnd = await layout(frame, q)
       await artifact.keyboard.press('ArrowRight')
-      navigation.pastEnd = await waitForPage(frame, 4)
+      navigation.pastEnd = await waitForPage(frame, q, 4)
       await artifact.keyboard.press('ArrowLeft')
-      navigation.afterArrowLeft = await waitForPage(frame, 3)
-      await frame.click('#previous')
-      navigation.afterPreviousButton = await waitForPage(frame, 2)
-      await frame.focus('#viewer-container')
+      navigation.afterArrowLeft = await waitForPage(frame, q, 3)
+      await q.find('previous').click()
+      navigation.afterPreviousButton = await waitForPage(frame, q, 2)
+      await q.find('content').focus()
       await artifact.keyboard.press('Home')
-      navigation.afterHome = await waitForPage(frame, 1)
-      const atStart = await layout(frame)
+      navigation.afterHome = await waitForPage(frame, q, 1)
+      const atStart = await layout(frame, q)
 
       let scrolledPage: number | null = null
       if (mode === 'scroll') {
-        await frame.evaluate(() => {
+        await frame.evaluate((content) => {
           const target = document.querySelector<HTMLElement>(
             '.page[data-page-number="3"]',
           )!
-          document.getElementById('viewer-container')!.scrollTop =
-            target.offsetTop
-        })
-        scrolledPage = await waitForPage(frame, 3)
+          document.querySelector(content)!.scrollTop = target.offsetTop
+        }, q.selector('content'))
+        scrolledPage = await waitForPage(frame, q, 3)
       } else {
-        await frame.click('#next')
-        await waitForPage(frame, 2)
+        await q.find('next').click()
+        await waitForPage(frame, q, 2)
       }
       // Download serves the bytes pdf.js already holds, so it keeps working
       // after the sandbox cookie is gone.
@@ -1922,7 +2107,7 @@ export const pdfViewerScenario = defineBrowserCommand(
       const fetchesBeforeDownload = originalFetches()
       const [saved] = await Promise.all([
         artifact.waitForEvent('download'),
-        frame.click('#download'),
+        q.find('download').click(),
       ])
       const download = {
         name: saved.suggestedFilename(),
@@ -1939,7 +2124,7 @@ export const pdfViewerScenario = defineBrowserCommand(
       )
       const [savedAfterHide] = await Promise.all([
         artifact.waitForEvent('download'),
-        frame.click('#download'),
+        q.find('download').click(),
       ])
       const afterBackForward = {
         renderedPages: await frame.evaluate(
@@ -1951,14 +2136,14 @@ export const pdfViewerScenario = defineBrowserCommand(
             Buffer.from(scenarioPdf(scenario)),
           ) === 0,
       }
-      const beforeResize = await pageNumber(frame)
+      const beforeResize = await pageNumber(frame, q)
       await artifact.setViewportSize({
         width: Math.round(width * 0.8),
         height: Math.round(height * 0.8),
       })
       await frame.waitForFunction(
-        ({ expectedWidth, expectedHeight, expectedPage, fitPage }) => {
-          const container = document.getElementById('viewer-container')!
+        ({ expectedWidth, expectedHeight, expectedPage, fitPage, content }) => {
+          const container = document.querySelector(content)!
           const current = document.querySelector<HTMLElement>(
             `.page[data-page-number="${expectedPage}"]`,
           )
@@ -1977,12 +2162,13 @@ export const pdfViewerScenario = defineBrowserCommand(
           expectedHeight: Math.round(height * 0.8),
           expectedPage: beforeResize,
           fitPage: mode === 'page',
+          content: q.selector('content'),
         },
         { timeout: 5000 },
       )
       const afterResize = {
-        pageNumber: await pageNumber(frame),
-        ...(await layout(frame)),
+        pageNumber: await pageNumber(frame, q),
+        ...(await layout(frame, q)),
       }
       return {
         ...common,
@@ -2017,7 +2203,7 @@ export const pdfViewerScenario = defineBrowserCommand(
 )
 
 type Box = {
-  id: string
+  control: string
   left: number
   right: number
   top: number
@@ -2070,7 +2256,7 @@ declare module 'vitest/browser' {
       violations: string[]
       workerStatuses: string[]
       settings: { layout: string | null; size: string | null }
-      labels: ReturnType<typeof viewerLabels>
+      labels: Awaited<ReturnType<typeof viewerLabels>>
       preferences?: Awaited<ReturnType<typeof preferencesFlow>>['result']
       pageList?: Awaited<ReturnType<typeof pageListFlow>>
       pageListOpened?: Awaited<ReturnType<typeof observePageListOpening>>

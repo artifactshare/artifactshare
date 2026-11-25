@@ -6,6 +6,7 @@ import { cdp, page, server, userEvent } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentThreadView } from '~/lib/comments'
+import { bindI18n } from '~/lib/i18n'
 import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import { CommentPanel } from './+components/comment-panel'
@@ -13,17 +14,27 @@ import { VersionWidget } from './+components/version-widget'
 import { useViewerComments } from './+components/viewer-shell'
 
 vi.mock('~/hooks/use-t', async () => {
-  const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('en') }
+  const i18n = await import('~/lib/i18n')
+  return { useT: () => i18n.bindI18n('en') }
 })
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
+// The viewer is mounted in English above, so the names it publishes are the
+// English catalogue's.
+const en = bindI18n('en')
+
+/** The comments the entry fixture brings back, which the hint counts. */
+const ENTRY_COMMENT_COUNT = 2
+
 // The revisit hint is the button that offers the unread comments by count.
-function commentsHint() {
-  return page.getByRole('button', { name: /^\d+ new comments?$/ })
+function commentsHint(count = ENTRY_COMMENT_COUNT) {
+  return page.getByRole('button', {
+    name: en.tPlural('vw.revisitComments', count, { count: String(count) }),
+    exact: true,
+  })
 }
 
 const time = '2026-01-03T00:00:00.000Z'
@@ -98,7 +109,7 @@ function entryFixture(kind: 'artifact' | 'resolved' | 'orphaned') {
   const context: ViewerRevisitContext = {
     entryCurrentVersionId: 'v1',
     version: null,
-    commentCount: 2,
+    commentCount: ENTRY_COMMENT_COUNT,
     newCommentMessages: [
       { messageId: 'thread-last-message-0', threadId: 'thread-last' },
       { messageId: 'thread-first-message-0', threadId: 'thread-first' },
@@ -218,7 +229,7 @@ async function mount(fixture: Parameters<typeof Harness>[0]) {
   await vi.waitFor(() =>
     expect(
       fixture.context.commentCount > 0
-        ? commentsHint().query()
+        ? commentsHint(fixture.context.commentCount).query()
         : document.querySelector('output'),
     ).not.toBeNull(),
   )
