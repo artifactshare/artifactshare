@@ -270,7 +270,11 @@ test.each([
     'This version was removed by the version retention setting.',
     'Open latest version',
   ],
-  ['ja', 'この版は、残す版数の設定により削除されました。', '最新版を開く'],
+  [
+    'ja',
+    'このバージョンは、残すバージョン数の設定によって削除されました。',
+    '最新版を開く',
+  ],
 ] as const)(
   'removed page in %s has no sandbox and navigates to latest without obsolete targets',
   async (locale, explanation, latest) => {
@@ -379,14 +383,16 @@ test.each([1, 2])(
     state.locale = 'ja'
     fetchMock.mockResolvedValueOnce(preview(count))
     await mount(3)
-    await page.getByRole('spinbutton', { name: '残す版数' }).fill('1')
+    await page.getByRole('spinbutton', { name: '残すバージョン数' }).fill('1')
     await page
-      .getByRole('button', { name: '版数の設定を保存', exact: true })
+      .getByRole('button', { name: 'バージョン数の設定を保存', exact: true })
       .click()
     await vi.waitFor(() =>
       expect(
         document.querySelector('[role="alertdialog"]')?.textContent,
-      ).toContain(`古い版を${count}件削除します。この操作は取り消せません。`),
+      ).toContain(
+        `古いバージョンを ${count} 件削除します。この操作は取り消せません。`,
+      ),
     )
   },
 )
@@ -493,8 +499,8 @@ test('failed submissions retain their edited value through refresh and retry, th
 test.each([
   ['en', null, 'Keeping all versions', 'Change', 'Saved'],
   ['en', 4, 'Keeping the latest 4 versions', 'Change', 'Saved'],
-  ['ja', null, 'すべての版を残しています', '変更', '保存しました'],
-  ['ja', 4, '最新4件の版を残しています', '変更', '保存しました'],
+  ['ja', null, 'すべてのバージョンを残しています', '変更', '保存しました'],
+  ['ja', 4, '最新 4 件のバージョンを残しています', '変更', '保存しました'],
 ] as const)(
   'compact %s summary for %s expands by keyboard and announces a save once',
   async (locale, setting, summary, changeLabel, savedLabel) => {
@@ -519,7 +525,9 @@ test.each([
     const save = saveButton().element() as HTMLButtonElement
     expect(save.disabled).toBe(true)
     const radioName =
-      locale === 'en' ? 'Keep only the latest versions' : '最新の版だけを残す'
+      locale === 'en'
+        ? 'Keep only the latest versions'
+        : '最新のバージョンだけを残す'
     await page.getByRole('radio', { name: radioName }).click()
     const input = page.getByRole('spinbutton')
     await input.fill('5')
@@ -722,7 +730,7 @@ test.each([
     const protection =
       locale === 'en'
         ? 'All versions people added are kept'
-        : '人が追加した版はすべて残します'
+        : '人が追加したバージョンはすべて残します'
     expect(panel.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
@@ -744,7 +752,8 @@ test.each([
     fetchMock.mockResolvedValueOnce(preview(count))
     await page
       .getByRole('button', {
-        name: locale === 'en' ? 'Save version setting' : '版数の設定を保存',
+        name:
+          locale === 'en' ? 'Save version setting' : 'バージョン数の設定を保存',
         exact: true,
       })
       .click()
@@ -755,12 +764,12 @@ test.each([
     expect(dialog.textContent).toContain(
       locale === 'en'
         ? 'Remove older scheduled versions?'
-        : '定期更新の古い版を削除しますか？',
+        : '定期更新の古いバージョンを削除しますか？',
     )
     expect(dialog.textContent).toContain(
       locale === 'en'
         ? `${count} scheduled ${count === 1 ? 'version' : 'versions'} will be removed. All versions people added are kept. This cannot be undone.`
-        : `定期更新の古い版を${count}件削除します。人が追加した版はすべて残します。この操作は取り消せません。`,
+        : `定期更新の古いバージョンを ${count} 件削除します。人が追加したバージョンはすべて残します。この操作は取り消せません。`,
     )
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       retain_versions: 1,
@@ -820,7 +829,7 @@ test.each(['en', 'ja'] as const)(
       await waitForBrowserLayout()
       await page
         .getByRole('button', {
-          name: locale === 'en' ? 'Version status: v1' : '版の状態: v1',
+          name: locale === 'en' ? 'Version status: v1' : 'バージョンの状態: v1',
           exact: true,
         })
         .click()
@@ -829,7 +838,7 @@ test.each(['en', 'ja'] as const)(
         host.textContent?.includes(
           locale === 'en'
             ? 'All versions people added are kept.'
-            : '人が追加した版はすべて残します。',
+            : '人が追加したバージョンはすべて残します。',
         ),
       ).toBe(false)
       expect(host.textContent).toContain('v1')

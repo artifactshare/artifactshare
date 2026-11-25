@@ -1,66 +1,83 @@
 # 公開製品開発の現行制約
 
-公開 checkout で製品コードを変更するときの判断用正本です。
-機械検査が担う事項と、変更時に人が確認する事項を領域ごとに分けます。
+公開リポジトリで製品コードを変更するときに参照する判断基準です。
+領域ごとに「機械検査で強制済み」「人が判断する現行規則」「復元しない事項」を分けて整理しています。
 
 ## Analytics
 
-- **機械検査で強制済み**：`apps/web/app/lib/analytics/events.ts` が event 名、event ごとの parameter key、custom dimension の対応を閉じた型で定義し、lint が許可された送信経路外の `gtag` と `dataLayer.push` を拒否します。
-- **人が判断する現行規則**：利用者行動を変える変更では計測への影響を確認し、`apps/web/app/lib/analytics/events.ts` の定義と全送信経路を同じ変更で整合させます。管理設定を変更する script が対象 tree にある場合は、その script も同じ PR で更新します。
-- **復元しない事項**：現行実装に該当がない分析基盤の手順は復元しません。
+- **機械検査で強制済み**: `apps/web/app/lib/analytics/events.ts` でイベント名、イベントごとのパラメーターキー、カスタムディメンションの対応を閉じた型で定義しています。lint は、許可された送信経路以外からの `gtag` と `dataLayer.push` 呼び出しを拒否します。
+- **人が判断する現行規則**: 利用者の行動に関わる変更では計測への影響を確かめ、`apps/web/app/lib/analytics/events.ts` の定義と全送信経路を同じ変更でそろえます。管理設定を変えるスクリプトがリポジトリ内にある場合は、そのスクリプトも同じ PR で更新します。
+- **復元しない事項**: 現行実装に該当がない分析基盤の手順は復元しません。
 
 ## 依存管理
 
-- **機械検査で強制済み**：CI の frozen install と `scripts/public-ci-contract.test.mjs` が lockfile 前提を検査します。
-- **人が判断する現行規則**：`pnpm-workspace.yaml` の `minimumReleaseAgeExclude` を変更する場合は、除外対象にした理由を確認します。依存変更では lockfile を再解決し、`pnpm install --frozen-lockfile` で再現性を確認します。
-- **復元しない事項**：現行実装に該当がない build system 固有の規則は復元しません。
+- **機械検査で強制済み**: CI の frozen install と `scripts/workflow-policy.test.mjs` が lockfile との一致を検査します。
+- **人が判断する現行規則**: `pnpm-workspace.yaml` の `minimumReleaseAgeExclude` を編集するときは、除外する理由を確認します。依存関係を変更したら lockfile を再生成し、`pnpm install --frozen-lockfile` で再現できることを確かめます。
+- **復元しない事項**: 現行実装に該当がないビルドシステム固有の規則は復元しません。
 
 ## D1 と SQLite
 
-- **機械検査で強制済み**：schema と migration の整合は `apps/web/check-schema.mjs`、危険な migration 操作と新しい `PRAGMA foreign_keys` setter は `apps/web/check-migrations.mjs` が検査します。Kysely plugin は query builder の最終的な OperationNode を実行・compile 前に検査し、変数や配列を経由した場合も 6 項以上の compound SELECT と 101 個以上の bound parameter を拒否します。この plugin は本番 D1 接続とテスト用 SQLite 接続の両方に適用します。`scripts/check-d1-compatibility.mjs` は本番コードの Kysely 接続に plugin があることを強制し、同じ式に直接記述された raw SQL、custom compile、D1 `prepare`、`join` を AST から検査します。データフローは追跡せず、query builder の組み立ては runtime plugin が検査します。制限内の compound SELECT は `EXISTS` と raw interpolation を含めて許可します。利用者入力の部分一致検索には、50-byteのpattern上限があるLIKE/GLOBではなく `instr()` を使って入力全文の意味を保ちます。Wrangler Test HarnessのD1 suiteは既存のWrangler設定から全migrationを適用し、D1固有のSQL境界とデータ入りの代表的なtable再構築をCIで検査します。schema の正本は `apps/web/db/schema.sql` です。
-- **人が判断する現行規則**：型より先に schema と migration の `CHECK`、`UNIQUE`、外部キーを確認します。migration 番号は作成時点の main の最新番号に続け、`UNIQUE` 列へ重複 index を作りません。既存行を backfill する migration では、移行時点の値（`now`、その時点の権限や名前）ではなく、元データから求めた値を書きます。元データから求められない値は、列が許すなら NULL にして欠測として扱います。D1 と SQLite の差に依存する変更では、constraint error の cause と再照会を組み合わせ、メール照合には `apps/web/app/lib/grant-emails.server.ts` の `lowerEmail` を使います。D1 とテスト用 SQLite では制約の適用方法が異なるため、型検査や SQLite test の成功だけで互換性を断定しません。
-- **復元しない事項**：公開範囲外の運用手順は復元しません。
+- **機械検査で強制済み**:
+  - スキーマとマイグレーションの整合は `apps/web/check-schema.mjs`、危険なマイグレーション操作と新しい `PRAGMA foreign_keys` 設定は `apps/web/check-migrations.mjs` が検査します。スキーマの基準ファイルは `apps/web/db/schema.sql` です。
+  - Kysely プラグインは、クエリビルダーが組み立てた最終の `OperationNode` を実行・コンパイル前に検査し、変数や配列を経由した場合も含めて 6 項以上の compound SELECT と 101 個以上のバインドパラメーターを拒否します。このプラグインは本番 D1 接続とテスト用 SQLite 接続の両方に入れます。
+  - `scripts/check-d1-compatibility.mjs` は、本番コードの Kysely 接続にこのプラグインが組み込まれていることを強制し、同じ式に直接書かれた生 SQL・カスタムコンパイル・D1 `prepare`・`join` を AST で検査します（データフローは追わず、クエリビルダーの組み立ては実行時プラグインが検査します）。制限内の compound SELECT は `EXISTS` や raw interpolation を含めて許可されます。
+  - 利用者入力による部分一致検索では、50 バイトのパターン上限がある `LIKE`/`GLOB` ではなく `instr()` を使い、入力全文の意味を保ちます。
+  - Wrangler Test Harness の D1 スイートは、既存の Wrangler 設定から全マイグレーションを適用し、D1 固有の SQL 境界とデータ入りテーブルの再構築を CI で検証します。
+- **人が判断する現行規則**:
+  - TypeScript の型より先に、スキーマとマイグレーションの `CHECK`・`UNIQUE`・外部キー制約を確認します。マイグレーション番号は作成時点の `main` の最新番号に続け、`UNIQUE` 列へ重複インデックスを作りません。
+  - 既存行をバックフィルするマイグレーションでは、移行時点の値（`now` やその時点の権限・名前）ではなく、元データから導ける値を書き込みます。元データから導けない値は、列が NULL を許すなら NULL のまま欠測として扱います。
+  - D1 と SQLite の差異が絡む変更では、constraint error の `cause` 確認と再照会を組み合わせます。メールアドレスの照合には `apps/web/app/lib/grant-emails.server.ts` の `lowerEmail` を使います。D1 とテスト用 SQLite では制約の効き方が異なるため、型検査や SQLite テストが通っただけで互換性を断定しません。
+- **復元しない事項**: 公開範囲外の運用手順は復元しません。
 
 ## React Router と Web UI
 
-- **機械検査で強制済み**：認証 middleware の割り当ては `apps/web/app/routes/auth-middleware-contract.test.ts`、design token は `scripts/check-design-tokens.mjs` が検査します。
-- **人が判断する現行規則**：client code から server-only module を import しません。loader、action、middleware では正規化済みの `url` を使い、生の受信 URL が必要な場合だけ `request.url` を使います。hydration 前後で DOM 構造を変える場合は hydration gate を設けます。CLI が呼ぶ API route では Bearer token 対応 middleware を使います。「表示されないこと」を確認する test では、条件を反転した負の対照も実行します。fake timers 下では `Response` の `text()`、`json()`、`arrayBuffer()` が microtask だけで完了すると仮定しません。body の読み取りには実 task が必要な場合があるため、`apps/web/app/test/wait-for-real-task-condition.ts` の共有 helper で観測可能な結果を待ちます。 `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。query で取得した要素の `click()`、`focus()`、`dispatchEvent()` を optional chaining で呼び出してはいけません。
-- **復元しない事項**：機械検査へ置き換わった token 値や DOM 断片の一覧は復元しません。
+- **機械検査で強制済み**: 認証ミドルウェアの割り当ては `apps/web/app/routes/auth-middleware-contract.test.ts`、デザイントークンは `scripts/check-design-tokens.mjs` が検査します。
+- **人が判断する現行規則**:
+  - クライアントコードからサーバー専用モジュールを import しません。loader・action・middleware では正規化済みの `url` を使い、生の受信 URL が本当に必要なときだけ `request.url` を使います。
+  - hydration 前後で DOM 構造が変わる場合は hydration gate を置きます。CLI が呼ぶ API ルートには Bearer トークン対応ミドルウェアを付けます。
+  - 「表示されないこと」を確かめるテストでは、条件を反転した負の対照も実行します。
+  - fake timers 下では `Response` の `text()`・`json()`・`arrayBuffer()` が microtask だけで完了すると前提にしません。本文の読み取りに実タスクが必要なことがあるため、`apps/web/app/test/wait-for-real-task-condition.ts` の共通ヘルパーで観測可能な結果を待ちます。
+  - `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。query で取得した要素の `click()`・`focus()`・`dispatchEvent()` は optional chaining で呼び出してはいけません。
+- **復元しない事項**: 機械検査へ置き換わったトークン値や DOM 断片の一覧は復元しません。
 
 ## Tests
 
-Browser wait、capability 判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
+ブラウザ待機、機能判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
 
-- **機械検査で強制済み**：Public CI の `changed-browser-repetitions` job（check 名 `Changed browser behavior repetitions`）と `Flaky detector` workflow（`.github/workflows/flaky-detector.yml`）が反復実行で不安定なテストを検出します。
-- **人が判断する現行規則**：sheet や dialog の開閉後に focus や open 状態を検証する前に、mount または unmount と開閉アニメーションの完了を待ちます。`[data-slot="sheet-content"]` の出現や消失など、観測可能な条件で待ち、固定時間の sleep は使いません。`vi.waitFor` で重い処理（大きな文書、多数のコメント、migration を再適用する D1 reset）や既定の1秒を超える可能性がある条件を待つ場合は、CI runner がローカルの約2倍の時間を要することを見込んだ明示的な timeout を設定します。短時間で成立する条件では既定値を使えます。重い fixture を使うテストにも明示的な timeout を設定し、CI での所要時間を見込んで既定値に依存しません。D1 suite の test と hook の timeout は `apps/web/app/test/vitest.d1.config.ts` を参照します。sub-pixel の layout 値は根拠を明記した許容誤差で比較し、一時ディレクトリはテストごとに固有のものを使います。browser test では iframe 自体に focus を当ててから内部要素に focus を当てます。Firefox では frame の browsing context に focus がないと、内部要素の `focus()` 後も `<body>` に focus が残る場合があるためです。
-- **復元しない事項**：現行実装に該当がないテスト手順はここへ復元しません。
+- **機械検査で強制済み**: Public CI の `changed-browser-repetitions` ジョブ（チェック名 `Changed browser behavior repetitions`）と `Flaky detector` ワークフロー（`.github/workflows/flaky-detector.yml`）が、反復実行によって不安定なテストを検出します。
+- **人が判断する現行規則**:
+  - sheet や dialog の開閉後にフォーカスや開閉状態を検証するときは、マウント・アンマウントとアニメーション完了を待ちます。固定時間の `sleep` は使わず、`[data-slot="sheet-content"]` の出現・消失など観測可能な条件で待ちます。
+  - `vi.waitFor` で重い処理（大きな文書、多数のコメント、マイグレーションを再適用する D1 リセット）や既定の 1 秒を超え得る条件を待つ場合は、CI ランナーがローカルの約 2 倍かかることを見込んで明示的な timeout を指定します（短時間で終わる条件は既定値のままで構いません）。重いフィクスチャを使うテストにも同様に明示的な timeout を設定します。D1 スイートのテストとフックの timeout は `apps/web/app/test/vitest.d1.config.ts` を参照します。
+  - サブピクセルのレイアウト値は、根拠を明記した許容誤差で比較します。一時ディレクトリはテストごとに固有のものを使います。
+  - ブラウザテストでは、まず iframe 自体にフォーカスを当ててから内部要素へフォーカスを移します（Firefox ではフレームの browsing context にフォーカスがないと、内部要素で `focus()` を呼んでも `<body>` にフォーカスが残ることがあるためです）。
+- **復元しない事項**: 現行実装に該当がないテスト手順は復元しません。
 
 ## Workers
 
-- **機械検査で強制済み**：request entrypoint と lazy initialization の契約は、`apps/web/workers/app.test.ts` が検査します。
-- **人が判断する現行規則**：request 内で生成した promise を isolate lifetime の cache へ保存しません。`apps/web/workers/app.ts` の `anchorAuthInit` と `anchorServerBuild`、認証処理の hang recovery を維持します。中断された request の promise を isolate 全体で再利用すると、未解決状態が後続 request に引き継がれるためです。
-- **復元しない事項**：公開範囲外の運用設定は復元しません。
+- **機械検査で強制済み**: リクエストのエントリポイントと遅延初期化の契約は、`apps/web/workers/app.test.ts` が検査します。
+- **人が判断する現行規則**: リクエスト内で作った Promise を、isolate の生存期間にわたるキャッシュへ保存しません。`apps/web/workers/app.ts` の `anchorAuthInit`・`anchorServerBuild` と、認証処理のハング復旧を維持します。途中で中断されたリクエストの Promise を isolate 全体で使い回すと、未解決状態が後続のリクエストへ引き継がれてしまうためです。
+- **復元しない事項**: 公開範囲外の運用設定は復元しません。
 
 ## i18n
 
-- **機械検査で強制済み**：翻訳の利用箇所で指定する key は、`apps/web/app/i18n/messages.ts` が型検査します。`apps/web/app/i18n/catalog-parity.test.ts` が en.json と ja.json の key の一致、key ごとの placeholder の一致、en に文がある key の ja の文の存在を検査します。`tPlural` が連結して作る `One`/`Other` の key も同じ検査に入ります。
-- **人が判断する現行規則**：`apps/web/app/i18n/en.json` と `apps/web/app/i18n/ja.json` の意味を揃えます。日本語 UI に内部語彙や英語動詞をそのまま出さず、toast と error message に literal backtick を入れません。同じ画面内では文体を統一します。
-- **復元しない事項**：現行実装に該当がない locale の運用規則は復元しません。
+- **機械検査で強制済み**: 翻訳の呼び出し箇所で指定するキーは、`apps/web/app/i18n/messages.ts` が型検査します。`apps/web/app/i18n/catalog-parity.test.ts` は、en.json と ja.json でキーがそろっていること、キーごとのプレースホルダーがそろっていること、en に文があるキーには ja にも文があることを検査します。`tPlural` が連結して作る `One` と `Other` のキーも、同じ検査の対象です。
+- **人が判断する現行規則**: `apps/web/app/i18n/en.json` と `apps/web/app/i18n/ja.json` で意味をそろえます。日本語 UI に内部用語や英語動詞をそのまま出さず、トーストやエラーメッセージに literal backtick を入れません。同じ画面内では文体を統一します。
+- **復元しない事項**: 現行実装に該当がない locale 運用規則は復元しません。
 
 ## Legal
 
-- **機械検査で強制済み**：legal markdown の公開 surface は、`apps/web/app/services/legal-content.server.ts` の test と build が検査します。
-- **人が判断する現行規則**：`apps/web/app/legal/` の日英文書を対で確認します。利用者向け価格表示を変える場合は、legal 文書と `apps/web/app/i18n/en.json`、`apps/web/app/i18n/ja.json` の `billing.*` 表示を同じ変更で揃えます。
-- **復元しない事項**：公開範囲外の契約情報は復元しません。
+- **機械検査で強制済み**: 法務 Markdown の公開範囲は、`apps/web/app/services/legal-content.server.ts` のテストとビルドが検査します。
+- **人が判断する現行規則**: `apps/web/app/legal/` の日英文書は必ず対で確認します。利用者向けの価格表示を変えるときは、法務文書と `apps/web/app/i18n/en.json`・`apps/web/app/i18n/ja.json` の `billing.*` 表示を同じ変更でそろえます。
+- **復元しない事項**: 公開範囲外の契約情報は復元しません。
 
 ## Updates
 
-- **機械検査で強制済み**：filename、frontmatter、language pair、visibility の契約は、`apps/web/app/services/updates-content.server.test.ts` と `apps/web/app/services/updates-visibility.server.test.ts` が検査します。
-- **人が判断する現行規則**：本文には、一般化した利用状況、解消する問題、利用者に起きる変化を残します。外部へ出せない文脈は書きません。形式の詳細は parser と test を正本とし、ここへ複製しません。
-- **復元しない事項**：機械検査へ置き換わった frontmatter の全項目一覧は復元しません。
+- **機械検査で強制済み**: ファイル名、frontmatter、language pair、公開設定の契約は、`apps/web/app/services/updates-content.server.test.ts` と `apps/web/app/services/updates-visibility.server.test.ts` が検査します。
+- **人が判断する現行規則**: 本文には、一般化した利用場面、解消する課題、利用者に起きる変化を書きます。外部へ出せない内部文脈は書かず、形式の詳細はパーサーとテストに任せてここへ重複記載しません。
+- **復元しない事項**: 機械検査へ置き換わった frontmatter 全項目の一覧は復元しません。
 
 ## CLI
 
-- **機械検査で強制済み**：release tag、version、changelog は `scripts/check-cli-changelog.mjs`、command/API surface は `packages/contract/generate-surfaces.mjs` が `packages/contract` の共有契約から生成・検査します。生成済みの capability matrix は `apps/web/app/lib/cli-capability-matrix.json` に配置します。
-- **人が判断する現行規則**：command、option、JSON、認証の契約を変える場合は、capability matrix、help、reference、同梱 skill を同じ変更で整合させます。token store を通る test は OS の credential store から隔離します。引数処理を変える場合は、`packages/cli/src/args.ts` の Gunshi 正規化と空値の扱いを確認します。
-- **復元しない事項**：公開範囲外の release 操作は復元しません。
+- **機械検査で強制済み**: リリースタグ、バージョン、changelog は `scripts/check-cli-changelog.mjs`、コマンドと API の公開仕様は `packages/contract/generate-surfaces.mjs` が `packages/contract` の共有契約から生成・検査します。生成済みの capability matrix は `apps/web/app/lib/cli-capability-matrix.json` に置きます。
+- **人が判断する現行規則**: コマンド、オプション、JSON 出力、認証の契約を変えるときは、capability matrix・help・リファレンス・同梱スキルを同じ変更でそろえます。トークン保存先を通るテストは OS の credential store から隔離します。引数処理を変えるときは、`packages/cli/src/args.ts` における Gunshi の正規化と空値の扱いを確認します。
+- **復元しない事項**: 公開範囲外のリリース操作は復元しません。

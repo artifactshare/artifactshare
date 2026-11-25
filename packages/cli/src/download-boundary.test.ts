@@ -97,6 +97,10 @@ async function fixture(t: TestContext) {
     } else response.end(reply.text)
   })
   t.onTestFinished(() => server.close())
+  t.onTestFinished(() => {
+    const unanswered = server.stubFailure()
+    if (unanswered) throw unanswered
+  })
   const output = join(base, 'output')
   const args: ParsedArgs = {
     command: 'download',

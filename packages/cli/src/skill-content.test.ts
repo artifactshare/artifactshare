@@ -3,10 +3,7 @@ import { posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { test } from 'vitest'
-import {
-  loadSkillBundle,
-  managedState,
-} from './command-runners/skill-folder.js'
+import { loadSkillBundle } from './command-runners/skill-folder.js'
 
 const lines = (text: string) => text.replace(/\n$/, '').split('\n').length
 const links = (text: string) =>
@@ -45,7 +42,9 @@ function validateBundle(files: Record<string, string>) {
   }
 }
 
-test('bundled entrypoint is short, valid, managed and links every reference', async () => {
+// loadSkillBundle refuses a bundle whose managed marker is missing or invalid,
+// and skill-folder.test.ts proves that refusal, so loading here covers it.
+test('bundled entrypoint is short, valid and links every reference', async () => {
   const bundle = await loadSkillBundle(
     fileURLToPath(new URL('../skills/artifactshare', import.meta.url)),
   )
@@ -57,10 +56,6 @@ test('bundled entrypoint is short, valid, managed and links every reference', as
   assert.equal(metadata.name, 'artifactshare')
   assert.equal(typeof metadata.description, 'string')
   assert.ok(metadata.description.length > 0)
-  const state = managedState(entry)
-  assert.ok(state.kind === 'managed')
-  assert.equal(state.version, bundle.version)
-  assert.ok(Number.isInteger(bundle.version) && bundle.version > 0)
 })
 
 test('bundle checks reject missing, unlinked, oversized and chained documentation', () => {
