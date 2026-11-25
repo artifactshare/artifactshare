@@ -65,3 +65,42 @@ test('a body without a match has no excerpt', () => {
   expect(excerpt(filler(20_000), 'absent')).toBe('')
   expect(excerpt(filler(20_000), '')).toBe(wholeBodyExcerpt(filler(20_000), ''))
 })
+
+// Literal excerpts for representative queries: the differential tests above
+// share their normalization with the function under test, so a change there
+// would move both sides together.
+test.each([
+  [
+    'a katakana compound split into words',
+    'フロントエンドエンジニアを募集します',
+    'エンジニア',
+    'フロントエンドエンジニアを募集します',
+  ],
+  [
+    'a term that spans a word gap in the body',
+    'フロントエンド エンジニアを募集',
+    'フロントエンドエンジニア',
+    'フロントエンド エンジニアを募集',
+  ],
+  [
+    'a case-folded Latin term',
+    'Release notes: NEEDLE in the report',
+    'needle',
+    'Release notes: NEEDLE in the report',
+  ],
+  [
+    'the earliest of several terms',
+    'gamma alpha beta delta',
+    'beta alpha',
+    'gamma alpha beta delta',
+  ],
+  ['a term that is absent', 'Release notes for the report', 'needle', ''],
+  [
+    'a match far enough in to trim both ends',
+    `${'x'.repeat(100)}エンジニアの募集${'y'.repeat(200)}`,
+    'エンジニア',
+    `…${'x'.repeat(80)}エンジニアの募集${'y'.repeat(152)}…`,
+  ],
+])('%s excerpts exactly', (_name, body, query, expected) => {
+  expect(excerpt(body, query)).toBe(expected)
+})

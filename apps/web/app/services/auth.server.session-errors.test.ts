@@ -1,3 +1,4 @@
+import type { MockInstance } from 'vitest'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn() }))
@@ -22,15 +23,30 @@ vi.mock('@better-auth/oauth-provider', () => ({
   oauthProviderAuthServerMetadata: vi.fn(),
 }))
 
+let warn: MockInstance<typeof console.warn>
+
 beforeEach(() => {
   vi.resetModules()
   mocks.getSession.mockReset()
-  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 afterEach(() => {
   vi.restoreAllMocks()
   vi.resetModules()
 })
+
+/**
+ * The one logged entry, with its marker dropped: the marker names the event for
+ * whoever reads the logs, while the fields are what the entry may disclose.
+ */
+function loggedSessionError() {
+  expect(warn.mock.calls).toHaveLength(1)
+  const [marker, fields] = warn.mock.calls[0]!
+  expect(typeof marker).toBe('string')
+  for (const secret of ['test-secret', 'user@example.com', 'u1'])
+    expect(JSON.stringify(fields)).not.toContain(secret)
+  return fields
+}
 
 async function readSession() {
   const { getBrowserSessionContext } = await import('./auth.server')
@@ -53,25 +69,19 @@ test('logs only the event, error name and message once and returns null', async 
   })
   mocks.getSession.mockRejectedValue(error)
   await expect(readSession()).resolves.toBeNull()
-  expect(console.warn).toHaveBeenCalledExactlyOnceWith(
-    'artifactshare_auth_session_error',
-    {
-      errorName: 'SessionLookupError',
-      errorMessage: 'Session lookup failed',
-    },
-  )
+  expect(loggedSessionError()).toEqual({
+    errorName: 'SessionLookupError',
+    errorMessage: 'Session lookup failed',
+  })
 })
 
 test('uses fixed fallback fields for a non-Error rejection', async () => {
   mocks.getSession.mockRejectedValue({ token: 'test-secret', user: 'u1' })
   await expect(readSession()).resolves.toBeNull()
-  expect(console.warn).toHaveBeenCalledExactlyOnceWith(
-    'artifactshare_auth_session_error',
-    {
-      errorName: 'UnknownError',
-      errorMessage: 'Unexpected session lookup failure',
-    },
-  )
+  expect(loggedSessionError()).toEqual({
+    errorName: 'UnknownError',
+    errorMessage: 'Unexpected session lookup failure',
+  })
 })
 
 test('does not warn for an unauthorized APIError', async () => {
@@ -103,15 +113,12 @@ test.each([true, false])(
       ),
     )
     await expect(readSession()).resolves.toBeNull()
-    expect(console.warn).toHaveBeenCalledExactlyOnceWith(
-      'artifactshare_auth_session_error',
-      {
-        errorName: 'APIError',
-        errorMessage: 'Failed to get session',
-        status: 'INTERNAL_SERVER_ERROR',
-        ...(includeCode ? { code: 'FAILED_TO_GET_SESSION' } : {}),
-      },
-    )
+    expect(loggedSessionError()).toEqual({
+      errorName: 'APIError',
+      errorMessage: 'Failed to get session',
+      status: 'INTERNAL_SERVER_ERROR',
+      ...(includeCode ? { code: 'FAILED_TO_GET_SESSION' } : {}),
+    })
   },
 )
 

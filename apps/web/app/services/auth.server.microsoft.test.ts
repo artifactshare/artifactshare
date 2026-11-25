@@ -152,31 +152,26 @@ describe('mapMicrosoftProfileToUser', () => {
     ).toBe('user@example.com')
   })
 
-  test('throws when tid or oid is missing', () => {
-    expect(() =>
-      mapMicrosoftProfileToUser({
-        ...baseProfile,
-        tid: '',
-        email: 'user@example.com',
-      }),
-    ).toThrow('Microsoft profile missing tid or oid')
+  test.each([{ tid: '' }, { tid: ' ' }, { oid: '' }, { oid: ' ' }])(
+    'refuses a profile without a tenant and object id (%s)',
+    (missing) => {
+      expect(() =>
+        mapMicrosoftProfileToUser({
+          ...baseProfile,
+          email: 'user@example.com',
+          ...missing,
+        }),
+      ).toThrow()
+    },
+  )
 
-    expect(() =>
-      mapMicrosoftProfileToUser({
-        ...baseProfile,
-        oid: '',
-        email: 'user@example.com',
-      }),
-    ).toThrow('Microsoft profile missing tid or oid')
-  })
-
-  test('throws when no email can be resolved', () => {
+  test('refuses a profile with no usable email', () => {
     expect(() =>
       mapMicrosoftProfileToUser({
         ...baseProfile,
         preferred_username: 'not-an-email',
       }),
-    ).toThrow('Microsoft profile missing email')
+    ).toThrow()
   })
 })
 

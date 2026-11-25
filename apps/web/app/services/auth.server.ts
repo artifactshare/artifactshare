@@ -881,7 +881,7 @@ async function initAuthLazyState(): Promise<void> {
   }
 }
 
-export const HANG = Symbol('promise hang')
+const HANG = Symbol('promise hang')
 const ANCHOR_HANG_MS = 10_000
 const GET_SESSION_HANG_MS = 3000
 const FRESH_GET_SESSION_HANG_MS = 5000
@@ -895,7 +895,7 @@ const AUTH_HANDLER_HANG_MS = 30_000
  * rejection is swallowed so an abandoned attempt cannot surface as an
  * unrelated uncaught error.
  */
-export async function raceHang<T>(
+async function raceHang<T>(
   promise: Promise<T>,
   ms: number,
 ): Promise<T | typeof HANG> {

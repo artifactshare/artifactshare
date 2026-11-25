@@ -89,6 +89,51 @@ describe('authHandlerWithHangDetection', () => {
     expect(console.warn).not.toHaveBeenCalled()
   })
 
+  test('lets a handler failure inside the window reach the caller', async () => {
+    authMocks.authQueue.push({
+      handler: () => Promise.reject(new Error('sign-in failed')),
+    })
+    const { authHandlerWithHangDetection } = await loadAuthServer()
+
+    await expect(
+      authHandlerWithHangDetection(
+        new Request('https://artifactshare.test/api/auth/sign-in'),
+      ),
+    ).rejects.toThrow('sign-in failed')
+    expect(console.warn).not.toHaveBeenCalled()
+  })
+
+  test('swallows a failure that arrives after the hang was answered', async () => {
+    vi.useFakeTimers()
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      let fail: (error: Error) => void = () => {}
+      authMocks.authQueue.push({
+        handler: () =>
+          new Promise<Response>((_resolve, reject) => {
+            fail = reject
+          }),
+      })
+      const { authHandlerWithHangDetection } = await loadAuthServer()
+
+      const responsePromise = authHandlerWithHangDetection(
+        new Request('https://artifactshare.test/api/auth/sign-in'),
+      )
+      await vi.advanceTimersByTimeAsync(30_001)
+      await expect(responsePromise).resolves.toMatchObject({ status: 503 })
+
+      vi.useRealTimers()
+      fail(new Error('late failure'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    }
+  })
+
   test('returns 503 without retrying a hung auth handler', async () => {
     vi.useFakeTimers()
     try {

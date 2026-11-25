@@ -34,12 +34,33 @@ function createSqliteKysely(sqlite: DatabaseSync): Kysely<DB> {
   })
 }
 
+function createSchemaSqlite(): DatabaseSync {
+  const sqlite = new DatabaseSyncCtor(':memory:')
+  sqlite.exec(readFileSync(SCHEMA_PATH, 'utf8'))
+  return sqlite
+}
+
+function createMigratedSqlite(): DatabaseSync {
+  const sqlite = new DatabaseSyncCtor(':memory:')
+  applyMigrations(sqlite)
+  return sqlite
+}
+
+// Both ways of reaching the current database: the checked-in schema and the
+// migrations an existing deployment replays. A constraint that only one of them
+// carries is drift, so constraint suites run against the pair.
+export const currentSchemaSources: ReadonlyArray<
+  readonly [string, () => DatabaseSync]
+> = [
+  ['schema.sql', createSchemaSqlite],
+  ['migrations', createMigratedSqlite],
+]
+
 export function createMigratedInMemoryDb(): {
   sqlite: DatabaseSync
   db: Kysely<DB>
 } {
-  const sqlite = new DatabaseSyncCtor(':memory:')
-  sqlite.exec(readFileSync(SCHEMA_PATH, 'utf8'))
+  const sqlite = createSchemaSqlite()
   return { sqlite, db: createSqliteKysely(sqlite) }
 }
 
