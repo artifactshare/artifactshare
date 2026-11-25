@@ -507,6 +507,50 @@ test('projects edit --json posts partial edits and returns project audience', as
   })
 })
 
+// A project id is a nanoid, whose alphabet includes '-', so about one id in 64
+// begins with one and would otherwise be read as an option.
+test('projects edit --json edits a project whose id begins with a dash', async () => {
+  const dashId = '-_fwUbJLUhvQ8AiXjy_D_'
+  const urls: Array<string | undefined> = []
+
+  await withServer(
+    (request, response) => {
+      urls.push(request.url)
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          project: {
+            id: dashId,
+            name: 'Launch review',
+            description: null,
+            base_visibility: 'workspace',
+            file_count: 3,
+            archived: true,
+          },
+          audience: [],
+        }),
+      )
+    },
+    async (baseUrl) => {
+      for (const argv of [
+        ['projects', 'edit', dashId, '--archive', '--base-url', baseUrl],
+        ['projects', 'edit', '--archive', '--base-url', baseUrl, dashId],
+      ]) {
+        const result = await runAsync([...argv, '--json'], {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        })
+        const payload = expectSuccess(result, 'projects edit')
+        assert.equal(payload.data.project.id, dashId)
+      }
+    },
+  )
+
+  assert.deepEqual(urls, [
+    `/api/cli/projects/${dashId}`,
+    `/api/cli/projects/${dashId}`,
+  ])
+})
+
 test('projects edit rejects conflicting archive flags before network', () => {
   const result = run(
     ['projects', 'edit', 'prj1', '--archive', '--unarchive', '--json'],

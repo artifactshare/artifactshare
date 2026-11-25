@@ -79,7 +79,7 @@ const catalog = commandOptionCatalog()
 const parser = createArgumentParser(catalog)
 
 test('every defined option spelling passes command-specific raw validation', () => {
-  for (const [command, options] of catalog) {
+  for (const [command, { options }] of catalog) {
     for (const [spelling, option] of options) {
       const argv = [
         ...command.split(' ').filter(Boolean),
@@ -150,6 +150,39 @@ test('unknown option suggestions are command-specific and never contain values',
   )
 })
 
+test('a dash-leading positional is a value, and option mistakes still fail', () => {
+  const id = '-_fwUbJLUhvQ8AiXjy_D_'
+  for (const argv of [
+    ['projects', 'edit', id, '--archive', '--json'],
+    ['projects', 'edit', '--archive', '--json', id],
+    ['--profile', 'work', 'projects', 'edit', id],
+    ['artifacts', 'delete', id, '--json'],
+    ['share', id, '--json'],
+  ]) {
+    const joined = parser.joinLeadingDashValues(argv)
+    assert.equal(
+      parser.validateRawArgs(joined, parser.commandNameFromArgv(joined)),
+      null,
+      argv.join(' '),
+    )
+  }
+  for (const [argv, command] of [
+    // The slot the id would take is already filled.
+    [['projects', 'edit', 'prj1', id], 'projects edit'],
+    [['projects', 'edit', '-json'], 'projects edit'],
+    [['projects', 'edit', '-x', id], 'projects edit'],
+    // whoami takes no positional at all.
+    [['whoami', id], 'whoami'],
+    [['share', '--visiblity=private'], 'share'],
+  ] as const) {
+    assert.equal(
+      parser.validateRawArgs([...argv], command)?.code,
+      'unknown_option',
+      argv.join(' '),
+    )
+  }
+})
+
 test('unrelated short options do not suggest short help or version flags', () => {
   const error = parser.validateRawArgs(['whoami', '-x'], 'whoami')
   assert.equal(error?.code, 'unknown_option')
@@ -157,7 +190,7 @@ test('unrelated short options do not suggest short help or version flags', () =>
 })
 
 test('every option advertised in command help is accepted by its catalog', async () => {
-  for (const [command, options] of catalog) {
+  for (const [command, { options }] of catalog) {
     const help = await generateCliHelp(command.split(' ').filter(Boolean))
     const optionLines = help.split('OPTIONS:')[1]?.split(/\n[A-Z ]+:/)[0] ?? ''
     const spellings = [...optionLines.matchAll(/^\s+(?:-\w,\s+)?(--[\w-]+)/gm)]
@@ -169,7 +202,7 @@ test('every option advertised in command help is accepted by its catalog', async
 })
 
 test('every command accepts shared flags except import-token token input', () => {
-  for (const [command, options] of catalog) {
+  for (const [command, { options }] of catalog) {
     for (const spelling of [
       '--json',
       '--base-url',
@@ -191,10 +224,13 @@ test('every command accepts shared flags except import-token token input', () =>
 })
 
 test('only artifacts get gives the long version flag a value', () => {
-  assert.equal(catalog.get('artifacts get')?.get('--version')?.boolean, false)
-  assert.equal(catalog.get('artifacts get')?.get('-v')?.boolean, true)
+  assert.equal(
+    catalog.get('artifacts get')?.options.get('--version')?.boolean,
+    false,
+  )
+  assert.equal(catalog.get('artifacts get')?.options.get('-v')?.boolean, true)
   for (const command of ['', 'open', 'update', 'download']) {
-    assert.equal(catalog.get(command)?.get('--version')?.boolean, true)
+    assert.equal(catalog.get(command)?.options.get('--version')?.boolean, true)
   }
   assert.equal(
     parser.validateRawArgs(

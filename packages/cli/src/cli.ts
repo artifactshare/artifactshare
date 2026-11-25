@@ -9,6 +9,8 @@ import { generate } from 'gunshi/generator'
 import {
   createArgumentParser,
   optionMetadata,
+  positionalCount,
+  type CommandSpec,
   type OptionDefinition,
 } from './args.js'
 import {
@@ -2050,11 +2052,11 @@ export async function runCli(argv: string[]): Promise<void> {
 
 // The same definitions drive help, parsing and local option validation.
 export function commandOptionCatalog() {
-  const catalog = new Map<string, ReturnType<typeof optionMetadata>>()
+  const catalog = new Map<string, CommandSpec>()
   const visit = (path: string, definition: OptionDefinition) => {
     const options = optionMetadata(definition, { args: commonArgs })
     if (path === 'profiles import-token') options.delete('--token')
-    catalog.set(path, options)
+    catalog.set(path, { options, positionals: positionalCount(definition) })
     for (const [name, child] of definition.subCommands instanceof Map
       ? definition.subCommands
       : Object.entries(definition.subCommands ?? {})) {
