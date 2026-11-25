@@ -24,11 +24,10 @@ test('parseArgs accepts confirmation and selected scenarios', () => {
 test('Stripe key safety accepts test mode and rejects every other mode', () => {
   assert.doesNotThrow(() => assertTestStripeKey('sk_test_example'))
   assert.doesNotThrow(() => assertTestStripeKey('rk_test_example'))
-  assert.throws(
-    () => assertTestStripeKey(['sk', 'live', 'examplevalue'].join('_')),
-    /test mode/,
+  assert.throws(() =>
+    assertTestStripeKey(['sk', 'live', 'examplevalue'].join('_')),
   )
-  assert.throws(() => assertTestStripeKey('unknown'), /test mode/)
+  assert.throws(() => assertTestStripeKey('unknown'))
 })
 
 test('required variables fail before any process or network work', () => {

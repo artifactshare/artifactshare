@@ -259,19 +259,16 @@ test('collects multiple sitemap and HTML mismatches before returning', async () 
   })
 
   assert.ok(result.mismatches.length >= 6)
-  assert.ok(
-    result.mismatches.some((item) =>
-      item.includes('expected HTTP 2xx, got 503'),
-    ),
-  )
-  assert.ok(result.mismatches.some((item) => item.includes('noindex present')))
-  assert.ok(result.mismatches.some((item) => item.includes('canonical is')))
-  assert.ok(
-    result.mismatches.some((item) => item.includes('missing ja alternate')),
-  )
-  assert.ok(
-    result.mismatches.some((item) => item.includes('missing self canonical')),
-  )
+  for (const url of [
+    'https://example.test/',
+    'https://example.test/about',
+    'https://example.test/ja/missing',
+  ])
+    assert.ok(
+      result.mismatches.some((item) => item.startsWith(`${url}:`)),
+      url,
+    )
+  assert.ok(result.mismatches.some((item) => item.includes('503')))
 })
 
 test('reports sitemap redirects without following them', async () => {

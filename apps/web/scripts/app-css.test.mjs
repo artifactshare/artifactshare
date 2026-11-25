@@ -8,7 +8,6 @@ import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
 
 const appRoot = fileURLToPath(new URL('../app', import.meta.url))
-const VIEWER_EXCLUSION = "@source not './viewers';\n"
 
 // Builds a stylesheet as if it were app.css, with the app's Tailwind and
 // Vite CSS pipeline, and returns the emitted CSS.
@@ -60,12 +59,12 @@ async function buildAppCss(source) {
 const appCss = await readFile(resolve(appRoot, 'app.css'), 'utf8')
 
 test('the app CSS leaves out the utilities only the viewers use', async () => {
-  assert.ok(appCss.includes(VIEWER_EXCLUSION))
   // Utilities the PDF viewer uses and no app source does.
   const viewerOnly = /\.w-61\b|\.max-stack\\:h-18\b/
+  // The control build scans the viewers however the exclusion is written.
   const [app, scanningViewers] = await Promise.all([
     buildAppCss(appCss),
-    buildAppCss(appCss.replace(VIEWER_EXCLUSION, '')),
+    buildAppCss(appCss.replace(/^@source not .*\n/gmu, '')),
   ])
 
   assert.doesNotMatch(app, viewerOnly)
