@@ -52,7 +52,13 @@ const INITIAL_ALIASES = {
 
 describe('TanStack syntax highlighting registry', () => {
   test('registers the explicit initial language set', () => {
-    expect(TANSTACK_HIGHLIGHT_LANGUAGES).toEqual(INITIAL_LANGUAGES)
+    // Registration order is Shiki's business; the set it registers is ours.
+    expect(new Set(TANSTACK_HIGHLIGHT_LANGUAGES)).toEqual(
+      new Set(INITIAL_LANGUAGES),
+    )
+    expect(TANSTACK_HIGHLIGHT_LANGUAGES).toHaveLength(
+      new Set(TANSTACK_HIGHLIGHT_LANGUAGES).size,
+    )
     expect(TANSTACK_HIGHLIGHT_ALIASES).toEqual(INITIAL_ALIASES)
   })
 

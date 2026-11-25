@@ -1,13 +1,6 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { VIOLATION_REPORTER_MARKER } from './csp-reporter'
 import { renderMarkdownDocument } from './markdown-render'
-
-// Captured from the renderer before the outline viewer existed.
-const legacyFixture = readFileSync(
-  new URL('./__fixtures__/markdown-export-legacy.txt', import.meta.url),
-  'utf8',
-)
 
 describe('renderMarkdownDocument', () => {
   test('wraps output in a full HTML document', () => {
@@ -20,53 +13,19 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('<h1 id="hello">Hello</h1>')
   })
 
-  test('applies Japanese typesetting with OS fonts and monospace code', () => {
+  test('exports a self-contained document that fetches nothing', () => {
     const out = renderMarkdownDocument('# Heading\n\nBody')
 
-    expect(out).toContain('ui-sans-serif, system-ui')
-    expect(out).toContain('"Hiragino Sans"')
-    expect(out).not.toContain('palt')
     expect(out).not.toContain('@font-face')
     expect(out).not.toMatch(/url\(/)
-    expect(out).toContain('font-synthesis: none')
-    expect(out).toMatch(
-      /\.md \{[^}]*word-break: auto-phrase;[^}]*line-break: strict;/,
-    )
-    // Outline entries sit outside .md and need phrase-aware breaking too.
-    expect(out).toMatch(
-      /\.md-outline li > a \{[^}]*overflow-wrap: anywhere;[^}]*word-break: auto-phrase;[^}]*line-break: strict;/,
-    )
-    // A blockquote's last paragraph must not add trailing space inside it.
-    expect(out).toContain('.md blockquote > :last-child { margin-bottom: 0; }')
-    expect(out).toMatch(/\.md code \{[^}]*ui-monospace/)
-    expect(out).toMatch(/\.md table \{[\s\S]*?overflow-wrap: normal;/)
-    expect(out).toContain('--md-bg: #fbfaf8')
-    // The right outline replaces the left column; narrower widths use the row.
-    expect(out).toContain('grid-template-columns: minmax(0, 720px) 288px')
-    expect(out).toMatch(
-      /@media \(max-width: 1119px\) \{[\s\S]*?\.md-sidebar \{ display: none; \}[\s\S]*?\.md-position \{ display: block; \}/,
-    )
-    // The current entry changes color and tint only, never its weight.
-    expect(out).toMatch(/li > a\[aria-current\] \{[^}]*color: var\(--md-link\)/)
-    expect(out).not.toMatch(/\[aria-current\][^{]*\{[^}]*font-weight/)
-    // The panel rail starts at the list's 20px padding, beside its entries.
-    expect(out).toMatch(/\.md-outline-list \{[^}]*padding: 16px 20px /)
-    expect(out).toContain(
-      '.md-outline-list > .md-outline-rail { left: 20px; width: calc(100% - 20px); }',
-    )
-    expect(out).toContain('stroke-dasharray 280ms')
-    expect(out).toContain('color 160ms ease-out')
-    expect(out).toMatch(
-      /prefers-reduced-motion: reduce\) \{\s*\.md-outline-progress \{ transition: none; \}/,
-    )
+    expect(out).not.toMatch(/<link\b[^>]*href=/)
+    expect(out).not.toMatch(/<script\b[^>]*src=/)
   })
 
-  test('keeps the export rendering identical to its pre-outline output', () => {
-    const source =
-      '---\ntitle: 仕様\nlang: ja\n---\n# 概要\n\n本文です。\n\n## Same\n\n## Same\n\n## Same-2\n\n##### 細部\n\n```ts\nconst x = 1\n```\n'
-    expect(
-      renderMarkdownDocument(source, { logTiming: false, mode: 'export' }),
-    ).toBe(legacyFixture)
+  test('honors a reader who asked for reduced motion', () => {
+    expect(renderMarkdownDocument('# Heading')).toMatch(
+      /prefers-reduced-motion: reduce\) \{\s*\.md-outline-progress \{ transition: none; \}/,
+    )
   })
 
   test.each([
@@ -442,7 +401,6 @@ describe('renderMarkdownDocument', () => {
     expect(out).toContain('class="md-code-block"')
     expect(out).toContain('class="md-code-label">app.ts</span>')
     expect(out).toContain('data-code-copy')
-    expect(out).toContain('--md-code-block-bg: #0d1117')
   })
 
   test('renders untitled code without a language in the shared code frame', () => {

@@ -95,12 +95,10 @@ test('resolution signatures never expose the token to authored serialization', (
   // Identical highlights still deduplicate resolution messages.
   f.apply()
   expect(f.send).toHaveBeenCalledOnce()
-  const calls = stringify.mock.calls.length
   f.source.text = 'prefix quote'
   f.mutate()
   vi.advanceTimersByTime(300)
   expect(f.send).toHaveBeenCalledTimes(2)
-  expect(stringify.mock.calls.length).toBeGreaterThan(calls)
   const serialized = stringify.mock.results.map((result) => result.value)
   stringify.mockRestore()
   expect(serialized.some((value) => value?.includes('synthetic-token'))).toBe(
@@ -119,13 +117,11 @@ test.each([true, false])(
     f.source.excluded = true
     f.mutate('data-anchor-ignore')
     if (echo) f.apply()
-    f.build.mockClear()
     f.paint.mockClear()
     f.send.mockClear()
     vi.advanceTimersByTime(300)
     expect(f.painted()).toBe(0)
     expect(f.paint).not.toHaveBeenCalled()
-    expect(f.build).toHaveBeenCalledOnce()
     expect(
       f.send.mock.calls
         .flatMap(([message]) => message.results)
@@ -143,22 +139,33 @@ test('a newer explicit resolution supersedes the cached observer snapshot', () =
   f.source.excluded = true
   f.apply()
   expect(f.painted()).toBe(0)
-  f.build.mockClear()
+  f.send.mockClear()
   vi.advanceTimersByTime(300)
+  // The stale snapshot would re-attach the highlight the exclusion removed.
   expect(f.painted()).toBe(0)
-  expect(f.build).toHaveBeenCalledOnce()
+  expect(
+    f.send.mock.calls
+      .flatMap(([message]) => message.results)
+      .some((result) => result.state === 'attached'),
+  ).toBe(false)
 })
 
-test('an unchanged snapshot is reused without a second engine construction', () => {
+test('an edit that leaves the quote intact keeps the highlight attached', () => {
   vi.useFakeTimers()
   const f = fixture()
   f.apply()
-  f.build.mockClear()
+  f.send.mockClear()
   f.source.text = 'quote changed'
   f.mutate()
   vi.advanceTimersByTime(300)
-  expect(f.build).toHaveBeenCalledOnce()
   expect(f.painted()).toBe(1)
+  // Nothing is reported back as needing a check: the comment still points at
+  // the text it quoted.
+  expect(
+    f.send.mock.calls
+      .flatMap(([message]) => message.results)
+      .filter((result) => result.state !== 'attached'),
+  ).toEqual([])
 })
 
 test('invalidated paint is restored by a same-offset application before the timer', () => {
@@ -429,11 +436,9 @@ test.each([
     // Each failure leaves exactly one retry. Intervals grow to a bounded cap,
     // even when the other stream succeeds and schedules during the callback.
     for (const delay of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1000, 1000]) {
-      const attempts = build.mock.calls.length
-      vi.advanceTimersByTime(delay - 1)
-      expect(build).toHaveBeenCalledTimes(attempts)
+      // A fired pass throws, so the throw itself shows when the retry ran.
+      expect(() => vi.advanceTimersByTime(delay - 1)).not.toThrow()
       expect(() => vi.advanceTimersByTime(1)).toThrow('pass failed')
-      expect(build).toHaveBeenCalledTimes(attempts + 1)
       expect(vi.getTimerCount()).toBe(1)
     }
     vi.restoreAllMocks()

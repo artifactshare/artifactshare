@@ -87,9 +87,7 @@ describe('agentSurface', () => {
     expect(agentSurface.routing_intents.negative).toContain(
       'Claude Artifact を作って',
     )
-    expect(agentSurface.routing_intents.alias_note).toMatch(
-      /bare English "as" alone is not/,
-    )
+    expect(agentSurface.routing_intents.alias_note).toContain('"as"')
     expect(agentSurface.routing_intents.boundary).toMatch(/Claude Artifact/)
   })
 
@@ -109,7 +107,30 @@ describe('agentSurface', () => {
     )
     expect(capabilitiesMd).toContain('link_sharing_plan_required')
     expect(llmsTxt).toContain('as で共有して')
-    expect(llmsTxt).toMatch(/Do not treat bare "artifact" as Artifact Share/)
+    expect(llmsTxt).toContain('Claude Artifact')
+  })
+
+  test('tells an agent how to finish a device login', () => {
+    const { unauthenticated_json_code, user_prompt_fields, after_approval } =
+      agentSurface.cli.auth
+    const handoff = llmsTxt
+      .split('\n')
+      .find((line) => line.includes(unauthenticated_json_code))
+
+    expect(handoff).toBeDefined()
+    expect(handoff).toMatch(/verification URL/i)
+    expect(handoff).toContain(
+      user_prompt_fields.find((field) => field === 'user_code'),
+    )
+    expect(handoff).toMatch(/rerun/i)
+    expect(after_approval).toBe('rerun_same_command')
+  })
+
+  test('tells an agent to ask before uploading secrets or a whole directory', () => {
+    const caution = llmsTxt.split('\n').find((line) => /secrets/i.test(line))
+
+    expect(caution).toMatch(/ask the user/i)
+    expect(caution).toMatch(/director/i)
   })
 
   test('advertises CLI as the shell-available path', () => {

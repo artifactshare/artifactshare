@@ -72,7 +72,13 @@ describe('PublicFooter', () => {
     )
     expect(html).toContain('tabler-icon-brand-github')
     expect(html).toContain('target="_blank"')
-    expect(html).toContain('rel="noreferrer"')
+    // A new tab must not hand the opener or the referrer to the other site.
+    const external = html.match(
+      /<a[^>]*href="https:\/\/www\.techtalk\.jp"[^>]*>/,
+    )![0]
+    expect(new Set(external.match(/rel="([^"]*)"/)![1].split(/\s+/))).toContain(
+      'noreferrer',
+    )
     expect(html).toMatch(/<a[^>]*aria-label="[^"]*"[^>]*href="\/"/)
   })
 

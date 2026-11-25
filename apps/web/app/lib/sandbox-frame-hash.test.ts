@@ -6,6 +6,7 @@ import {
   restoreViewerHash,
   viewerReturnPath,
   VIEWER_FRAME_BOOTSTRAP_SCRIPT,
+  VIEWER_HASH_WRITE_DELAY_MS as DELAY,
 } from './viewer-hash'
 
 const original = window.location.href
@@ -60,11 +61,11 @@ test('rapid reports coalesce, expose the latest value for recovery, and retain t
   for (let i = 0; i < 250; i++) sync.accept('#step=' + i)
   expect(sync.latest()).toBe('#step=249')
   expect(replace).not.toHaveBeenCalled()
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(replace).toHaveBeenCalledTimes(1)
   expect(window.location.hash).toBe('#step=249')
   sync.accept('')
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(
     window.location.pathname + window.location.search + window.location.hash,
   ).toBe('/?keep=1')
@@ -80,7 +81,7 @@ test.each(['#accepted', ''])(
     const sync = createViewerHashSync()
     const replace = vi.spyOn(window.history, 'replaceState')
     sync.accept(hash)
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(DELAY - 1)
     expect(replace).not.toHaveBeenCalled()
     sync.flush()
     expect(window.location.hash).toBe(hash)
@@ -89,13 +90,13 @@ test.each(['#accepted', ''])(
     expect(window.history.length).toBe(length)
     expect(replace).toHaveBeenCalledTimes(1)
     sync.accept('#next-document')
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(DELAY - 1)
     expect(replace).toHaveBeenCalledTimes(1)
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(1)
     expect(window.location.hash).toBe('#next-document')
     expect(replace).toHaveBeenCalledTimes(2)
     sync.flush()
-    vi.advanceTimersByTime(200)
+    vi.advanceTimersByTime(DELAY)
     expect(replace).toHaveBeenCalledTimes(2)
   },
 )
@@ -107,11 +108,11 @@ test('deduplicates against the last pending report and cancels stale documents',
   const replace = vi.spyOn(window.history, 'replaceState')
   sync.accept('#new')
   sync.accept('#old')
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(replace).not.toHaveBeenCalled()
   sync.accept('#stale')
   sync.clear()
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(replace).not.toHaveBeenCalled()
 })
 
@@ -132,13 +133,13 @@ test.each(['#final', ''])(
     const dispatch = vi.spyOn(window, 'dispatchEvent')
     sync.accept(hash)
     for (let attempt = 1; attempt <= 2; attempt++) {
-      expect(() => vi.advanceTimersByTime(200)).not.toThrow()
+      expect(() => vi.advanceTimersByTime(DELAY)).not.toThrow()
       expect(replace).toHaveBeenCalledTimes(attempt)
       expect(window.location.hash).toBe('#old')
       expect(sync.latest()).toBe(hash)
       expect(dispatch).toHaveBeenCalledTimes(1)
     }
-    vi.advanceTimersByTime(199)
+    vi.advanceTimersByTime(DELAY - 1)
     expect(replace).toHaveBeenCalledTimes(2)
     vi.advanceTimersByTime(1)
     expect(window.location.hash).toBe(hash)
@@ -147,7 +148,7 @@ test.each(['#final', ''])(
     expect(window.history.length).toBe(length)
     expect(dispatch).toHaveBeenCalledTimes(2)
     expect(dispatch.mock.calls[0][0].type).toBe('artifactshare:hash-changed')
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(DELAY * 5)
     expect(replace).toHaveBeenCalledTimes(3)
   },
 )
@@ -163,17 +164,17 @@ test('new reports supersede a failed write and document cleanup cancels retries'
     .spyOn(window.history, 'replaceState')
     .mockImplementationOnce(deny)
   sync.accept('#failed')
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   sync.accept('#latest')
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(window.location.hash).toBe('#latest')
   expect(replace).toHaveBeenCalledTimes(2)
   replace.mockImplementationOnce(deny)
   sync.accept('#stale')
-  vi.advanceTimersByTime(200)
+  vi.advanceTimersByTime(DELAY)
   expect(sync.latest()).toBe('#stale')
   sync.clear()
-  vi.advanceTimersByTime(1000)
+  vi.advanceTimersByTime(DELAY * 5)
   expect(replace).toHaveBeenCalledTimes(3)
   expect(window.location.hash).toBe('#latest')
   expect(sync.latest()).toBe('#latest')
@@ -227,7 +228,7 @@ test.each(['/other?keep=1', '/a/abc123def4?keep=2'])(
     window.history.replaceState({ next: true }, '', destination + '#new-route')
     expect(latestViewerHash()).toBe('#new-route')
     const replace = vi.spyOn(window.history, 'replaceState')
-    vi.advanceTimersByTime(1000)
+    vi.advanceTimersByTime(DELAY * 5)
     expect(replace).not.toHaveBeenCalled()
     expect(window.location.hash).toBe('#new-route')
     expect(window.history.state).toEqual({ next: true })

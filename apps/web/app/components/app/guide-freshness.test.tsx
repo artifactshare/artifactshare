@@ -8,15 +8,14 @@ import {
 } from '~/lib/public-guide-freshness'
 
 describe('GuideFreshness', () => {
-  test('keeps an independent verified date for each public guide', () => {
-    expect(PUBLIC_GUIDE_VERIFIED_DATES).toEqual({
-      connect: '2026-07-18',
-      'workspace-owner': '2026-07-18',
-      'workspace-admin': '2026-07-18',
-      'link-sharing': '2026-09-09',
-      search: '2026-11-17',
-      'private-mobile-design-handoff': '2026-07-21',
-    })
+  test('keeps a verified date of its own for each public guide', () => {
+    expect(Object.keys(PUBLIC_GUIDE_VERIFIED_DATES).sort()).toEqual(
+      Object.values(PUBLIC_GUIDE_KEYS).sort(),
+    )
+    for (const key of Object.values(PUBLIC_GUIDE_KEYS))
+      expect(getPublicGuideVerifiedDate(key), key).toMatch(
+        /^\d{4}-\d{2}-\d{2}$/,
+      )
   })
 
   test('renders verified guide metadata in English and Japanese', () => {
@@ -30,7 +29,11 @@ describe('GuideFreshness', () => {
           note="Web only."
         />,
       ),
-    ).toContain('Last verified: 2026-07-18 · Target UI: ChatGPT Web')
+    ).toContain(
+      `Last verified: ${getPublicGuideVerifiedDate(
+        PUBLIC_GUIDE_KEYS.connect,
+      )} · Target UI: ChatGPT Web`,
+    )
     expect(
       renderToStaticMarkup(
         <GuideFreshness
@@ -53,7 +56,11 @@ describe('GuideFreshness', () => {
           )}
         />,
       ),
-    ).toContain('最終確認日: 2026-07-18')
+    ).toContain(
+      `最終確認日: ${getPublicGuideVerifiedDate(
+        PUBLIC_GUIDE_KEYS.workspaceAdmin,
+      )}`,
+    )
   })
 
   test('renders CLI metadata from supplied generated values', () => {

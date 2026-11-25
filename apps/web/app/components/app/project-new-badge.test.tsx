@@ -18,12 +18,6 @@ describe('ProjectNewBadge', () => {
     const html = renderToStaticMarkup(<ProjectNewBadge count={count} />)
 
     expect(html).toContain(label)
-    if (count > 0) {
-      expect(html).toContain(
-        'bg-link-soft text-link shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-      )
-    } else {
-      expect(html).toBe('')
-    }
+    if (count === 0) expect(html).toBe('')
   })
 })

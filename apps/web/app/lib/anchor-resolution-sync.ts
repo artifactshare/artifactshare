@@ -2,6 +2,11 @@ import type { AnchorResolutionMessage } from './csp-reporter'
 
 type Result = AnchorResolutionMessage['results'][number]
 
+/** Delay before the first retry of a failed position write; each later
+ * attempt doubles it, up to ANCHOR_RETRY_LIMIT attempts. */
+export const ANCHOR_RETRY_DELAY_MS = 250
+export const ANCHOR_RETRY_LIMIT = 4
+
 /** One displayed frame's UI snapshot and independently acknowledged write queue. */
 export function createAnchorResolutionSync(
   url: string,
@@ -74,10 +79,10 @@ export function createAnchorResolutionSync(
       if (!signal.aborted) failures++
     } finally {
       sending = false
-      if (!disposed && pending().length && failures < 4)
+      if (!disposed && pending().length && failures < ANCHOR_RETRY_LIMIT)
         timer = setTimeout(
           () => void flush(),
-          failures ? 250 * 2 ** (failures - 1) : 0,
+          failures ? ANCHOR_RETRY_DELAY_MS * 2 ** (failures - 1) : 0,
         )
     }
   }
@@ -120,7 +125,7 @@ export function createAnchorResolutionSync(
       current = message
       for (const result of message.results) latest.set(result.threadId, result)
       apply([...latest.values()])
-      if (!sending && failures < 4) {
+      if (!sending && failures < ANCHOR_RETRY_LIMIT) {
         clearTimeout(timer)
         timer = undefined
         void flush()

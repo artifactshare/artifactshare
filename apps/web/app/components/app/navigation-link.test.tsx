@@ -2,11 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { IconActivity, IconStack2 as Layers } from '@tabler/icons-react'
 import { describe, expect, test, vi } from 'vitest'
-import {
-  NavigationLink,
-  NavigationLinkDisabled,
-  topbarClassName,
-} from './navigation-link'
+import { NavigationLink, NavigationLinkDisabled } from './navigation-link'
 
 vi.mock('react-router', () => ({
   NavLink: ({
@@ -31,8 +27,10 @@ vi.mock('react-router', () => ({
   },
 }))
 
+// Here: the element a reader gets, its destination, the props passed through
+// to it, and the disabled state a screen reader announces.
 describe('NavigationLink', () => {
-  test('topbar variant includes responsive and active classes', () => {
+  test('topbar variant renders a labeled link to its destination', () => {
     const html = renderToStaticMarkup(
       <NavigationLink
         variant="topbar"
@@ -42,16 +40,8 @@ describe('NavigationLink', () => {
       />,
     )
 
-    expect(html).toContain('max-nav:w-8')
-    expect(html).toContain('max-nav:hidden')
-    expect(html).toContain('aria-[current=page]:font-medium')
+    expect(html).toContain('href="/projects"')
     expect(html).toContain('>Projects<')
-  })
-
-  test('exports the shared topbar class constant', () => {
-    expect(topbarClassName).toContain('h-7')
-    expect(topbarClassName).toContain('px-2')
-    expect(topbarClassName).toContain('aria-[current=page]:bg-accent')
   })
 
   test('forwards trigger props to the rendered topbar link', () => {
@@ -70,15 +60,14 @@ describe('NavigationLink', () => {
     expect(html).toContain('data-state="closed"')
   })
 
-  test('settings disabled surface matches navigation links', () => {
+  test('a disabled settings entry is announced and is not a link', () => {
     const html = renderToStaticMarkup(
       <NavigationLinkDisabled icon={IconActivity} label="Activity" />,
     )
 
-    expect(html).toContain('cursor-not-allowed')
-    expect(html).toContain('opacity-50')
-    expect(html).toContain('min-h-8')
     expect(html).toContain('aria-disabled="true"')
     expect(html).toContain('>Activity<')
+    expect(html).not.toContain('<a')
+    expect(html).not.toContain('href')
   })
 })

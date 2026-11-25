@@ -10,26 +10,29 @@ import { Stack } from './stack'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+// The utilities these props emit belong to the visual suite. Here: the
+// element rendered, its data-slot, asChild composition, and that each prop
+// reaches the markup.
 describe('Stack', () => {
-  test('renders a vertical flex container with the requested gap', () => {
-    const html = renderToStaticMarkup(
-      <Stack gap="3">
+  const stack = (props: React.ComponentProps<typeof Stack>) =>
+    renderToStaticMarkup(
+      <Stack {...props}>
         <span>one</span>
-        <span>two</span>
       </Stack>,
     )
+
+  test('renders a slotted container around its children', () => {
+    const html = stack({ gap: '3' })
+    expect(html.startsWith('<div')).toBe(true)
     expect(html).toContain('data-slot="stack"')
-    expect(html).toContain('flex flex-col gap-3')
+    expect(html).toContain('<span>one</span>')
   })
 
-  test('applies alignment and justify props', () => {
-    const html = renderToStaticMarkup(
-      <Stack gap="2" align="center" justify="between">
-        <span>one</span>
-      </Stack>,
-    )
-    expect(html).toContain('items-center')
-    expect(html).toContain('justify-between')
+  test('each layout prop changes what is rendered', () => {
+    const plain = stack({ gap: '3' })
+    expect(stack({ gap: '4' })).not.toBe(plain)
+    expect(stack({ gap: '3', align: 'center' })).not.toBe(plain)
+    expect(stack({ gap: '3', justify: 'between' })).not.toBe(plain)
   })
 
   test('asChild merges layout classes onto the child element', () => {
@@ -41,26 +44,28 @@ describe('Stack', () => {
       </Stack>,
     )
     expect(html).toContain('<ul')
-    expect(html).toContain('flex flex-col gap-4')
     expect(html).toContain('max-w-md')
+    expect(html).toContain('<li>one</li>')
     expect(html).not.toContain('<div')
   })
 })
 
 describe('Inline', () => {
-  test('renders a horizontal flex container with wrap enabled', () => {
-    const html = renderToStaticMarkup(
-      <Inline gap="2" wrap align="center" justify="end">
+  test('renders a slotted container around its children', () => {
+    const plain = renderToStaticMarkup(
+      <Inline gap="2">
         <span>one</span>
-        <span>two</span>
       </Inline>,
     )
-    expect(html).toContain('data-slot="inline"')
-    expect(html).toContain('flex flex-row')
-    expect(html).toContain('gap-2')
-    expect(html).toContain('flex-wrap')
-    expect(html).toContain('items-center')
-    expect(html).toContain('justify-end')
+    expect(plain).toContain('data-slot="inline"')
+    expect(plain).toContain('<span>one</span>')
+    expect(
+      renderToStaticMarkup(
+        <Inline gap="2" wrap>
+          <span>one</span>
+        </Inline>,
+      ),
+    ).not.toBe(plain)
   })
 
   test('asChild preserves button semantics', () => {
@@ -73,7 +78,8 @@ describe('Inline', () => {
     )
     expect(html).toContain('<button')
     expect(html).toContain('type="button"')
-    expect(html).toContain('flex flex-row gap-1')
+    expect(html).toContain('Action')
+    expect(html).not.toContain('<div')
   })
 
   test('asChild merges refs and runs child handlers before wrapper handlers', async () => {

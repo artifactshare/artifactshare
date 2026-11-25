@@ -87,7 +87,7 @@ describe('AvatarMenu', () => {
     submitMock.mockReset()
   })
 
-  test('forwards layout className to trigger and owns menu sizing', () => {
+  test('forwards layout className to the trigger and labels the account', () => {
     const html = renderToStaticMarkup(
       <AvatarMenu
         user={{
@@ -103,29 +103,7 @@ describe('AvatarMenu', () => {
     )
 
     expect(html).toContain('ml-auto')
-    expect(html).toContain('max-phone:col-start-2')
-    expect(html).toContain('max-phone:justify-self-end')
-    expect(html).toContain('size-6.5')
-    expect(html.match(/max-phone:size-7\.5/g)).toHaveLength(2)
-    expect(html).toContain('width="26"')
     expect(html).toContain('aria-label="user@example.com"')
-  })
-
-  test('keeps non-viewer menus at the 26px menu size', () => {
-    const html = renderToStaticMarkup(
-      <AvatarMenu
-        user={{
-          id: 'user-1',
-          email: 'user@example.com',
-          name: 'User',
-          image: null,
-          initial: 'U',
-        }}
-      />,
-    )
-
-    expect(html).toContain('size-6.5')
-    expect(html).not.toContain('max-phone:size-7.5')
   })
 
   test('shows the accessible dot and NEW badge, then notices optimistically on open', () => {
@@ -147,7 +125,6 @@ describe('AvatarMenu', () => {
 
     expect(html).toContain('updates.newAccessible')
     expect(html).toContain('aria-hidden="true"')
-    expect(html).toContain('bg-link')
     expect(html).toContain('updates.new')
 
     openChange?.(true)

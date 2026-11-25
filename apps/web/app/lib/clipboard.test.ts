@@ -106,8 +106,8 @@ describe('copyShareUrl analytics', () => {
       expect.objectContaining({
         duration: Infinity,
         closeButton: true,
-        className:
-          'select-text [&_[data-title]]:whitespace-pre-line [&_[data-title]]:wrap-anywhere',
+        // The reader has to be able to select the link and copy it by hand.
+        className: expect.stringContaining('select-text'),
       }),
     )
     expect(toastMock.error.mock.calls[0]?.[1].action).toBeUndefined()

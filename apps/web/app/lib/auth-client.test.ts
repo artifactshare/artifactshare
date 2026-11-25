@@ -39,10 +39,13 @@ describe('loadDeviceAgentApproval', () => {
     await expect(loadDeviceAgentApproval('ABCD EFGH')).resolves.toEqual(
       approval,
     )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/cli/device-approval?user_code=ABCD%20EFGH',
-      { headers: { accept: 'application/json' } },
-    )
+    const [target, init] = vi.mocked(fetch).mock.calls[0] ?? []
+    const requested = new URL(String(target), 'https://artifactshare.com')
+    expect(requested.pathname).toBe('/api/cli/device-approval')
+    expect(requested.searchParams.get('user_code')).toBe('ABCD EFGH')
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(init?.body ?? null).toBeNull()
+    expect(new Headers(init?.headers).get('accept')).toBe('application/json')
   })
 
   it('normalizes names and strips unknown fields like the contract', async () => {
