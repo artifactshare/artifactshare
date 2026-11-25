@@ -209,9 +209,12 @@ describe('AvatarMenu access requests', () => {
 
       if (width > 820) {
         const topbar = document.querySelector('#viewer-topbar')
-        expect(sheet.getBoundingClientRect().top).toBe(
-          topbar?.getBoundingClientRect().bottom,
-        )
+        const rect = sheet.getBoundingClientRect()
+        expect(rect.top).toBe(topbar?.getBoundingClientRect().bottom)
+        // The sheet slides in from the right, so it only sits flush against
+        // that edge once the animation has run; mid-slide it is still off
+        // screen. The top edge never moves, so it alone cannot see this.
+        expect(rect.right).toBe(document.documentElement.clientWidth)
       }
       expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull()
       expect(sheet.contains(document.activeElement)).toBe(true)
