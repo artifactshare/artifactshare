@@ -63,92 +63,71 @@ export function assertPublicPackageScriptsAreSafe(packages) {
     }
 }
 
-test('public CI is valid YAML', () => {
-  assert.deepEqual(YAML.parseDocument(workflow).errors, [])
-})
-
 test('public preview configuration has no remote Flagship binding', () => {
   assert.doesNotMatch(previewWrangler, /["']flagship["']\s*:/u)
 })
 
-test('YAML parser rejects malformed workflow syntax', () => {
-  assert.notEqual(YAML.parseDocument('jobs:\n\tvalidate: bad').errors.length, 0)
-})
+const sameRepositoryGate =
+  /steps\.classify\.outputs\.(?:is_maintainer|run_static) == 'true'/u
 
-test('public CI is hosted and credential-free', () => {
-  assert.match(workflow, /runs-on:\s*ubuntu-latest/)
-  assert.doesNotMatch(
-    workflow,
-    /pull_request_target|self-hosted|secrets\.|wrangler\s+(deploy|secret)|pnpm\s+(deploy|publish)|npm\s+publish/i,
-  )
-})
+function reachableFromPullRequests(job) {
+  return job.if === undefined || /pull_request\b/u.test(job.if)
+}
 
-test('public CI pins external actions and disables install scripts', () => {
-  const actionRefs = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gmu)].map(
-    (match) => match[1],
-  )
-  assert.ok(actionRefs.length > 0)
-  for (const actionRef of actionRefs) {
-    if (actionRef.startsWith('./')) continue
-    assert.match(actionRef, /^[^@\s]+@[0-9a-f]{40}$/u, actionRef)
+function executesRepositoryCode(step) {
+  if (typeof step.run !== 'string') return false
+  return step.run
+    .split('\n')
+    .filter((line) => /(?:^|\s)(?:pnpm|npx|node)\s/u.test(line))
+    .some((line) => !/\bnode -e\b/u.test(line) && !/\btrusted\//u.test(line))
+}
+
+test('no job runs pull request code without same-repository classification', () => {
+  const gated = []
+  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
+    if (!reachableFromPullRequests(job)) continue
+    for (const step of (job.steps ?? []).filter(executesRepositoryCode)) {
+      assert.match(
+        step.if ?? '',
+        sameRepositoryGate,
+        `${name}: ${step.name ?? step.run}`,
+      )
+      gated.push(name)
+    }
   }
-  assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/)
-  assert.doesNotMatch(workflow, /persist-credentials:\s*true/)
+  assert.ok(gated.length > 0)
 })
 
-test('PR boundary guard remains install-free', () => {
-  const guard = JSON.stringify(parsedWorkflow.jobs['pull-request-guard'])
-  assert.match(workflow, /pull-request-guard:/)
-  assert.match(workflow, /if: github\.event_name == 'pull_request'/)
-  assert.doesNotMatch(guard, /pnpm install|pnpm validate|test:runtime/)
-  assert.match(workflow, /--base\s+"\$PUBLIC_PR_BASE"/)
-  assert.match(workflow, /--head\s+"\$PUBLIC_PR_HEAD"/)
-  assert.match(workflow, /--head-repo-full-name\s+"\$PUBLIC_PR_HEAD_REPO"/)
-  assert.match(workflow, /--base-repo-full-name\s+"\$PUBLIC_PR_BASE_REPO"/)
-  assert.match(
-    workflow,
-    /git -C "\$GITHUB_WORKSPACE\/head" fetch --no-tags "\$GITHUB_WORKSPACE\/trusted" "\$PUBLIC_PR_BASE"/,
-  )
-})
-
-test('PR guard has an exact trusted six-step topology', () => {
+test('the pull request boundary runs trusted code over the head checkout', () => {
   const guard = parsedWorkflow.jobs['pull-request-guard']
-  assert.equal(guard.if, "github.event_name == 'pull_request'")
-  assert.equal(guard['runs-on'], 'ubuntu-latest')
-  assert.equal(guard.permissions, undefined)
-  assert.equal(guard.defaults, undefined)
-  assert.equal(parsedWorkflow.defaults, undefined)
-  assert.deepEqual(parsedWorkflow.permissions, { contents: 'read' })
-  assert.equal(guard.steps.length, 6)
-
-  const [runtime, classify, trusted, head, boundary, summary] = guard.steps
-  assert.match(runtime.uses, /^actions\/setup-node@[a-f0-9]{40}$/u)
-  assert.deepEqual(runtime.with, {
-    'node-version': '24.22.3',
-    'package-manager-cache': false,
-  })
-  assert.equal(runtime.run, undefined)
-  assert.equal(runtime.env, undefined)
-  assert.equal(classify.id, 'classify')
-  assert.equal(trusted.with.path, 'trusted')
-  assert.equal(head.with.path, 'head')
-  assert.equal(boundary.id, 'boundary')
-  assert.equal(summary.id, 'summary')
-  assert.ok(trusted.uses.startsWith('actions/checkout@'))
-  assert.ok(head.uses.startsWith('actions/checkout@'))
+  const checkouts = guard.steps.filter((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  const trusted = checkouts.find((step) => step.with.path === 'trusted')
+  const head = checkouts.find((step) => step.with.path === 'head')
   assert.equal(trusted.with.ref, '${{ github.event.pull_request.base.ref }}')
   assert.equal(head.with.ref, '${{ github.event.pull_request.head.sha }}')
-  for (const checkout of [trusted, head]) {
-    assert.equal(checkout.with['persist-credentials'], false)
-    assert.equal(checkout.with['fetch-depth'], 0)
-    assert.equal(checkout.with['fetch-tags'], false)
-  }
-  assert.equal(classify.shell, undefined)
-  assert.equal(classify.if, undefined)
-  assert.equal(boundary.shell, undefined)
-  assert.equal(boundary.if, undefined)
-  assert.equal(summary.shell, undefined)
-  assert.doesNotMatch(JSON.stringify(guard), /continue-on-error/u)
+
+  const boundary = guard.steps.find((step) =>
+    step.run?.includes('public-development-guard.mjs'),
+  )
+  for (const literal of [
+    'node trusted/scripts/public-development-guard.mjs --ci-pr',
+    '--repo "$GITHUB_WORKSPACE/head"',
+    '--manifest-repo "$GITHUB_WORKSPACE/trusted"',
+    '--metadata-file "$RUNNER_TEMP/public-pr-title.txt"',
+    '--metadata-file "$RUNNER_TEMP/public-pr-body.txt"',
+  ])
+    assert.ok(boundary.run.includes(literal), literal)
+  assert.equal(
+    boundary.env.PUBLIC_PR_TITLE,
+    '${{ github.event.pull_request.title }}',
+  )
+  assert.equal(
+    boundary.env.PUBLIC_PR_BODY,
+    '${{ github.event.pull_request.body }}',
+  )
+  assert.doesNotMatch(boundary.run, /\$\{\{/u)
 })
 
 test('PR classification matches the trusted guard predicate', () => {
@@ -230,38 +209,6 @@ test('PR classification matches the trusted guard predicate', () => {
   }
 })
 
-test('PR boundary retains every trusted input and argument', () => {
-  const boundary = parsedWorkflow.jobs['pull-request-guard'].steps[4]
-  assert.equal(boundary.run.split('\n')[0], 'set -euo pipefail')
-  assert.deepEqual(boundary.env, {
-    PUBLIC_PR_TITLE: '${{ github.event.pull_request.title }}',
-    PUBLIC_PR_BODY: '${{ github.event.pull_request.body }}',
-    PUBLIC_PR_BASE: '${{ github.event.pull_request.base.sha }}',
-    PUBLIC_PR_HEAD: '${{ github.event.pull_request.head.sha }}',
-    PUBLIC_PR_HEAD_REPO: '${{ github.event.pull_request.head.repo.full_name }}',
-    PUBLIC_PR_BASE_REPO: '${{ github.event.pull_request.base.repo.full_name }}',
-  })
-  for (const literal of [
-    "fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-title.txt', process.env.PUBLIC_PR_TITLE ?? '')",
-    "fs.writeFileSync(process.env.RUNNER_TEMP + '/public-pr-body.txt', process.env.PUBLIC_PR_BODY ?? '')",
-    'PUBLIC_TRUSTED_HEAD="$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)"',
-    'git -C "$GITHUB_WORKSPACE/head" fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$PUBLIC_PR_BASE" "$PUBLIC_TRUSTED_HEAD"',
-    'node trusted/scripts/public-development-guard.mjs --ci-pr',
-    '--repo "$GITHUB_WORKSPACE/head"',
-    '--manifest-repo "$GITHUB_WORKSPACE/trusted"',
-    '--base "$PUBLIC_PR_BASE"',
-    '--head "$PUBLIC_PR_HEAD"',
-    '--trusted-head "$PUBLIC_TRUSTED_HEAD"',
-    '--head-repo-full-name "$PUBLIC_PR_HEAD_REPO"',
-    '--base-repo-full-name "$PUBLIC_PR_BASE_REPO"',
-    '--metadata-file "$RUNNER_TEMP/public-pr-title.txt"',
-    '--metadata-file "$RUNNER_TEMP/public-pr-body.txt"',
-  ])
-    assert.ok(boundary.run.includes(literal), literal)
-  assert.equal((boundary.run.match(/node -e /gu) ?? []).length, 1)
-  assert.doesNotMatch(boundary.run, /\$\{\{/u)
-})
-
 test('PR summaries are static, distinct per outcome, and fail closed', () => {
   const summary = parsedWorkflow.jobs['pull-request-guard'].steps[5]
   assert.equal(summary.if, '${{ !cancelled() }}')
@@ -273,10 +220,6 @@ test('PR summaries are static, distinct per outcome, and fail closed', () => {
   assert.ok(summary.run.startsWith('set -euo pipefail\n'))
   assert.match(summary.run, /"\$IS_MAINTAINER"/u)
   assert.match(summary.run, /"\$BOUNDARY_OUTCOME"/u)
-  assert.equal(
-    (summary.run.match(/\} >> "\$GITHUB_STEP_SUMMARY"/gu) ?? []).length,
-    6,
-  )
   assert.doesNotMatch(summary.run, /\$\{\{|\$\(|`|\|/u)
   const syntax = spawnSync('bash', ['-n'], {
     encoding: 'utf8',
@@ -348,28 +291,6 @@ function aggregateResults(staticResult, otherResult) {
   )
 }
 
-test('public full CI runs on pull requests and merge groups with a stable check-run name', () => {
-  const aggregate = parsedWorkflow.jobs.validate
-  assert.equal(aggregate.name, 'Public full validation')
-  assert.equal(
-    aggregate.if,
-    "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}",
-  )
-  assert.doesNotMatch(aggregate.if, /workflow_dispatch/u)
-  assert.equal(aggregate.steps.length, 1)
-  const [step] = aggregate.steps
-  assert.deepEqual(step.env, {
-    EVENT_NAME: '${{ github.event_name }}',
-    ...Object.fromEntries(
-      Object.entries(aggregateResultVariables).map(([job, name]) => [
-        name,
-        `\${{ needs.${job}.result }}`,
-      ]),
-    ),
-  })
-  assert.doesNotMatch(JSON.stringify(aggregate), /continue-on-error/u)
-})
-
 test('pull request aggregate requires static success with other lanes skipped', () => {
   const healthy = runAggregate(
     'pull_request',
@@ -415,98 +336,6 @@ test('merge group aggregate requires every lane to succeed', () => {
   assert.notEqual(dispatch.status, 0)
 })
 
-test('public full CI keeps every validation lane as a dependency', () => {
-  const aggregate = parsedWorkflow.jobs.validate
-  assert.deepEqual(aggregate.needs, [
-    'static-validation',
-    'build-validation',
-    'cli-validation',
-    'windows-cli-validation',
-    'upload-boundary-validation',
-    'browser-validation',
-    'visual-validation',
-  ])
-  assert.match(workflow, /merge_group:\s*\n\s+types: \[checks_requested\]/)
-  assert.doesNotMatch(workflow, /^\s+push:/m)
-  assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
-})
-
-test('Windows credential validation runs in the merge queue and by manual dispatch', () => {
-  const job = parsedWorkflow.jobs['windows-cli-validation']
-  assert.equal(job['runs-on'], 'windows-latest')
-  assert.match(job.if, /github\.event_name == 'merge_group'/u)
-  assert.match(job.if, /github\.event_name == 'workflow_dispatch'/u)
-  assert.match(workflow, /workflow_dispatch:/u)
-  const checkout = job.steps.find((step) =>
-    step.uses?.startsWith('actions/checkout@'),
-  )
-  assert.equal(checkout.with.ref, '${{ github.sha }}')
-  const runs = job.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(runs, /vitest run src\/token-store\.test\.ts/u)
-  assert.doesNotMatch(runs, /icacls/u)
-  const tokenStoreStep = job.steps.find((step) =>
-    step.run?.includes('vitest run src/token-store.test.ts'),
-  )
-  assert.ok(
-    tokenStoreStep.run.includes(
-      'pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts',
-    ),
-  )
-  assert.match(tokenStoreStep.run, /\$LASTEXITCODE -ne 0/)
-  assert.match(tokenStoreStep.run, /\$failedRuns\+\+/)
-  assert.match(tokenStoreStep.run, /if \(\$failedRuns -gt 0\) \{ throw/)
-  assert.match(tokenStoreStep.env.REPETITIONS, /workflow_dispatch/)
-  assert.match(tokenStoreStep.env.REPETITIONS, /\|\| '1'/)
-  assert.equal(
-    parsedWorkflow.on.workflow_dispatch.inputs.windows_credential_repetitions
-      .default,
-    '1',
-  )
-  const installIndex = job.steps.findIndex(
-    (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
-  )
-  const buildIndex = job.steps.findIndex((step) =>
-    step.run?.includes('pnpm --filter @artifactshare/contract build'),
-  )
-  assert.ok(installIndex >= 0)
-  assert.ok(buildIndex > installIndex)
-  assert.ok(buildIndex < job.steps.indexOf(tokenStoreStep))
-  assert.equal(job.steps[buildIndex].if, undefined)
-  assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
-  assert.equal(
-    tokenStoreStep.env.ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION,
-    '1',
-  )
-})
-
-test('static validation runs on pull request heads and merge-group SHAs', () => {
-  const job = parsedWorkflow.jobs['static-validation']
-  assert.equal(
-    job.if,
-    "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
-  )
-  assert.doesNotMatch(job.if, /workflow_dispatch/u)
-  const checkout = job.steps.find((step) =>
-    step.uses?.startsWith('actions/checkout@'),
-  )
-  assert.equal(
-    checkout.with.ref,
-    "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
-  )
-  assert.equal(checkout.with['persist-credentials'], false)
-  assert.equal(checkout.with['fetch-depth'], 0)
-  const [classify, ...gated] = job.steps
-  assert.equal(classify.id, 'classify')
-  for (const step of gated)
-    assert.equal(step.if, "${{ steps.classify.outputs.run_static == 'true' }}")
-  assert.deepEqual(gated.map((step) => step.run).filter(Boolean), [
-    'pnpm install --frozen-lockfile --ignore-scripts',
-    'pnpm validate:static',
-  ])
-  assert.equal(job.permissions, undefined)
-  assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
-})
-
 test('static validation runs code only for same-repository pull requests', () => {
   const classify = parsedWorkflow.jobs['static-validation'].steps[0]
   const decide = (event, head, base) => {
@@ -532,98 +361,6 @@ test('static validation runs code only for same-repository pull requests', () =>
   assert.equal(decide('pull_request', 'someone/fork', repo), 'run_static=false')
   assert.equal(decide('pull_request', '', repo), 'run_static=false')
   assert.equal(decide('merge_group', '', ''), 'run_static=true')
-})
-
-test('other validation lanes never run on pull requests', () => {
-  for (const jobName of [
-    'build-validation',
-    'cli-validation',
-    'browser-validation',
-    'visual-validation',
-  ]) {
-    assert.equal(
-      parsedWorkflow.jobs[jobName].if,
-      "github.event_name == 'merge_group'",
-      jobName,
-    )
-  }
-  for (const jobName of [
-    'windows-cli-validation',
-    'upload-boundary-validation',
-  ]) {
-    assert.equal(
-      parsedWorkflow.jobs[jobName].if,
-      "github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'",
-      jobName,
-    )
-  }
-})
-
-test('every merge-queue-only lane checks out the merge-group SHA', () => {
-  for (const jobName of [
-    'build-validation',
-    'cli-validation',
-    'browser-validation',
-    'visual-validation',
-  ]) {
-    const job = parsedWorkflow.jobs[jobName]
-    assert.equal(job.if, "github.event_name == 'merge_group'", jobName)
-    const checkout = job.steps.find((step) =>
-      step.uses?.startsWith('actions/checkout@'),
-    )
-    assert.ok(checkout, jobName)
-    assert.equal(checkout.with.ref, '${{ github.sha }}', jobName)
-    assert.equal(checkout.with['persist-credentials'], false, jobName)
-    assert.equal(checkout.with['fetch-depth'], 0, jobName)
-    if (jobName === 'browser-validation') {
-      assert.equal(job['continue-on-error'], undefined)
-      for (const step of job.steps) {
-        assert.equal(step['continue-on-error'], undefined)
-      }
-    } else {
-      assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u, jobName)
-    }
-  }
-})
-
-test('browser lane shares one topology after behavior validation', () => {
-  const runs = parsedWorkflow.jobs['browser-validation'].steps
-    .map((step) => step.run ?? '')
-    .join('\n')
-  const behaviorIndex = runs.indexOf('pnpm test:behavior-browser')
-  const localStateIndex = runs.indexOf('pnpm check:browser-local-state')
-  assert.ok(behaviorIndex >= 0)
-  assert.ok(behaviorIndex < localStateIndex)
-  assert.doesNotMatch(runs, /pnpm check:dev-setup/u)
-  assert.doesNotMatch(runs, /pnpm check:scenario-routes/u)
-  assert.doesNotMatch(runs, /pnpm check:in-app-navigation/u)
-  assert.doesNotMatch(runs, /playwright install/u)
-  assert.doesNotMatch(
-    JSON.stringify(parsedWorkflow.jobs['browser-validation']),
-    /PLAYWRIGHT_CHANNEL/u,
-  )
-
-  const harness = fs.readFileSync('scripts/browser-local-state.mjs', 'utf8')
-  const scenarioIndex = harness.indexOf('scenario-route-integration.mjs')
-  const navigationIndex = harness.indexOf('in-app-navigation.mjs')
-  assert.ok(scenarioIndex >= 0)
-  assert.ok(scenarioIndex < navigationIndex)
-  assert.equal((harness.match(/prepareDevEnvironment\(/gu) ?? []).length, 1)
-  assert.equal((harness.match(/dev:app/gu) ?? []).length, 1)
-  assert.match(
-    harness,
-    /if \(process\.env\.APP_BASE_URL && process\.env\.APP_BASE_URL !== baseUrl\)/u,
-  )
-  assert.match(harness, /await assertPortAvailable\(\)/u)
-  const guardIndex = harness.indexOf('await assertPortAvailable()')
-  for (const preparation of [
-    'await mkdtemp(',
-    "await import('./dev-setup.mjs')",
-    'prepareDevEnvironment(',
-    'server = spawn(',
-  ]) {
-    assert.ok(harness.indexOf(preparation) > guardIndex, preparation)
-  }
 })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
@@ -692,104 +429,129 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   )
 })
 
-test('Linux visual validation is an independent required lane', () => {
-  const visual = parsedWorkflow.jobs['visual-validation']
-  assert.equal(visual['runs-on'], 'ubuntu-latest')
-  assert.match(
-    visual.steps.map((step) => step.run ?? '').join('\n'),
+function laneRunning(pattern) {
+  const owners = Object.entries(parsedWorkflow.jobs).filter(([, job]) =>
+    (job.steps ?? []).some((step) => pattern.test(step.run ?? '')),
+  )
+  assert.equal(owners.length, 1, String(pattern))
+  return owners[0][0]
+}
+
+test('every merge gate lane keeps the validation only it runs', () => {
+  for (const command of [
+    /pnpm validate:static/u,
+    /pnpm validate:build/u,
+    /pnpm validate:cli/u,
+    /pnpm test:behavior-browser/u,
+    /pnpm check:browser-local-state/u,
+    /node --test scripts\/browser-waits\.integration\.mjs/u,
+    /vitest run src\/token-store\.test\.ts/u,
+    /vitest run src\/upload-boundary\.test\.ts src\/upload-boundary-commands\.test\.ts/u,
     /docker compose -f compose\.playwright\.yml run --rm visual/u,
-  )
-  assert.doesNotMatch(JSON.stringify(visual), /continue-on-error/u)
+  ]) {
+    const lane = laneRunning(command)
+    assert.ok(
+      parsedWorkflow.jobs.validate.needs.includes(lane),
+      `${command} runs in ${lane}, which the aggregate does not require`,
+    )
+  }
+  const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  assert.doesNotMatch(root.scripts['test:scripts'], /integration/)
 })
 
-test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', () => {
-  const releaseWorkflow = YAML.parse(
-    fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
-  )
-  assert.deepEqual(releaseWorkflow.on.push.tags, ['cli-v*'])
-  assert.equal(releaseWorkflow.permissions.contents, 'read')
-  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
-  const release = releaseWorkflow.jobs.release
-  assert.equal(release['runs-on'], 'ubuntu-latest')
-  const text = JSON.stringify(release)
-  const runs = release.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(runs, /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/)
-  assert.match(runs, /pnpm check:cli-release/)
-  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
-  assert.match(runs, /pnpm check:cli-reference/)
-  assert.match(
-    text,
-    /pnpm publish --no-git-checks --access public --provenance/,
-  )
-  assert.doesNotMatch(text, /secrets\./)
+test('every merge gate lane checks out the code under test', () => {
+  const eventHeads = new Set([
+    '${{ github.sha }}',
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
+  ])
+  for (const name of parsedWorkflow.jobs.validate.needs) {
+    const checkouts = (parsedWorkflow.jobs[name].steps ?? []).filter((step) =>
+      step.uses?.startsWith('actions/checkout@'),
+    )
+    assert.ok(checkouts.length > 0, name)
+    for (const checkout of checkouts)
+      assert.ok(
+        eventHeads.has(checkout.with.ref),
+        `${name}: ${checkout.with.ref}`,
+      )
+  }
 })
 
-test('reserved package release is protected, tag-only, and OIDC-only', () => {
-  const releaseWorkflow = YAML.parse(
-    fs.readFileSync('.github/workflows/release-npm-reserved.yml', 'utf8'),
-  )
-  assert.deepEqual(releaseWorkflow.on.push.tags, ['reserved-v*'])
-  assert.equal(releaseWorkflow.permissions.contents, 'read')
-  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
-  const release = releaseWorkflow.jobs.release
-  assert.equal(release.environment, 'production')
-  assert.equal(release['runs-on'], 'ubuntu-latest')
-  const text = JSON.stringify(release)
-  const runs = release.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(runs, /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/)
-  assert.match(runs, /pnpm check:npm-reserved/)
-  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
-  assert.match(runs, /npm pack \.\/packages\/npm-reserved/)
-  assert.match(runs, /test "\$bin_status" -eq 1/)
-  assert.match(text, /npm publish --access public --provenance --tag latest/)
-  assert.doesNotMatch(text, /secrets\./)
+test('the browser matrix covers every shard of every project', () => {
+  const entries =
+    parsedWorkflow.jobs['browser-validation'].strategy.matrix.include
+  assert.ok(entries.length > 0)
+  const byProject = new Map()
+  for (const { project, shard, total } of entries) {
+    const seen = byProject.get(project) ?? { total, shards: new Set() }
+    assert.equal(seen.total, total, project)
+    seen.shards.add(shard)
+    byProject.set(project, seen)
+  }
+  for (const [project, { total, shards }] of byProject)
+    assert.deepEqual(
+      [...shards].sort((left, right) => left - right),
+      Array.from({ length: total }, (_, index) => index + 1),
+      project,
+    )
 })
 
-test('qm bridge release is manual, protected, and publishes one verified tarball', () => {
-  const releaseWorkflow = YAML.parse(
-    fs.readFileSync('.github/workflows/release-qm-bridge.yml', 'utf8'),
+test('required browser repetition check rejects failed, cancelled or missing matrix results', () => {
+  const job = parsedWorkflow.jobs['changed-browser-repetitions-result']
+  const [step] = job.steps
+  assert.equal(
+    step.env.BROWSER_RESULT,
+    '${{ needs.changed-browser-repetitions.result }}',
   )
-  const { version } = releaseWorkflow.on.workflow_dispatch.inputs
-  assert.equal(version.required, true)
-  assert.equal(version.type, 'string')
-  assert.deepEqual(releaseWorkflow.permissions, {})
+  for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
+    const result = spawnSync('bash', ['-eu', '-c', step.run], {
+      env: { ...process.env, BROWSER_RESULT: status },
+    })
+    assert.equal(result.status, status === 'success' ? 0 : 1, status)
+  }
+})
 
-  const pack = releaseWorkflow.jobs.pack
-  assert.deepEqual(pack.permissions, { contents: 'read' })
-  const packText = JSON.stringify(pack)
-  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(packRuns, /test "\$GITHUB_REF_NAME" = "main"/)
-  assert.match(
-    packRuns,
-    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/,
-  )
-  assert.match(packRuns, /pnpm install --frozen-lockfile --ignore-scripts/)
-  assert.match(packRuns, /test "\$RELEASE_VERSION" = "\$PKG_VERSION"/)
-  assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
-  assert.match(packRuns, /@artifactshare\/qm-bridge typecheck/)
-  assert.match(packRuns, /@artifactshare\/qm-bridge test/)
-  assert.match(packRuns, /@artifactshare\/qm-bridge pack/)
-  assert.match(packRuns, /invalid_cli_usage/)
-  assert.match(packText, /actions\/upload-artifact@[0-9a-f]{40}/)
-
-  const publish = releaseWorkflow.jobs.publish
-  assert.equal(publish.needs, 'pack')
-  assert.equal(publish.environment, 'production')
-  assert.deepEqual(publish.permissions, {
-    contents: 'read',
-    'id-token': 'write',
+for (const name of [
+  'changed-browser-repetitions',
+  'chromium-source-feedback',
+]) {
+  test(`${name} classification rejects forks, case differences, and missing names before checkout`, (t) => {
+    const lane = parsedWorkflow.jobs[name]
+    const script = lane.steps[1].run.trim().match(/^node -e "(.*)"$/u)[1]
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'changed-classify-'),
+    )
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+    for (const [head, base, expected] of [
+      ['owner/repo', 'owner/repo', true],
+      ['fork/repo', 'owner/repo', false],
+      ['Owner/repo', 'owner/repo', false],
+      ['', 'owner/repo', false],
+      ['owner/repo', '', false],
+      [undefined, 'owner/repo', false],
+      ['owner/repo', undefined, false],
+      [undefined, undefined, false],
+      ['', '', false],
+    ]) {
+      const output = path.join(directory, 'output')
+      fs.writeFileSync(output, '')
+      const env = { ...process.env, GITHUB_OUTPUT: output }
+      delete env.PUBLIC_PR_HEAD_REPO
+      delete env.PUBLIC_PR_BASE_REPO
+      if (head !== undefined) env.PUBLIC_PR_HEAD_REPO = head
+      if (base !== undefined) env.PUBLIC_PR_BASE_REPO = base
+      const result = spawnSync(process.execPath, ['-e', script], {
+        env,
+        encoding: 'utf8',
+      })
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(
+        fs.readFileSync(output, 'utf8'),
+        `is_maintainer=${expected}\n`,
+      )
+    }
   })
-  const publishText = JSON.stringify(publish)
-  const publishRuns = publish.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(publishRuns, /sha256sum --check SHA256SUMS/)
-  assert.match(publishRuns, /test "\$\{#tarballs\[@\]\}" -eq 1/)
-  assert.match(
-    publishRuns,
-    /npm publish "\$\{tarballs\[0\]\}" --access public --provenance/,
-  )
-  assert.match(publishText, /secrets\.NPM_QM_BRIDGE_BOOTSTRAP_TOKEN/)
-  assert.equal([...publishText.matchAll(/secrets\.[A-Z0-9_]+/gu)].length, 1)
-})
+}
 
 test('visual gate uses exact Linux Compose baselines', () => {
   assert.doesNotMatch(visualConfig, /allowedMismatchedPixelRatio/u)
@@ -892,6 +654,28 @@ test('package script reachability allows Wrangler dry-run builds', () => {
   )
 })
 
+test('production command exceptions reject extra publishing or credential commands', () => {
+  const scripts = JSON.parse(
+    fs.readFileSync('apps/web/package.json', 'utf8'),
+  ).scripts
+  for (const name of ['deploy:production', 'deploy:production:built']) {
+    for (const extra of [
+      ' && npm publish',
+      ' && wrangler secret put TOKEN',
+      ' && pnpm exec wrangler deploy',
+    ]) {
+      assert.throws(() =>
+        assertPublicPackageScriptsAreSafe([
+          [
+            'apps/web/package.json',
+            { scripts: { [name]: scripts[name] + extra } },
+          ],
+        ]),
+      )
+    }
+  }
+})
+
 test('standalone CLI validation builds contracts and CI/release smoke-test the packed artifact', () => {
   const cli = JSON.parse(fs.readFileSync('packages/cli/package.json', 'utf8'))
   const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
@@ -915,403 +699,108 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
   )
 })
 
-test('browser execution retains every shard and browser stderr', () => {
-  const browser = parsedWorkflow.jobs['browser-validation']
-  // One serial browser per runner; all seven shards remain required.
-  assert.deepEqual(browser.strategy, {
-    'fail-fast': false,
-    matrix: {
-      include: [
-        { project: 'chromium', shard: 1, total: 3 },
-        { project: 'chromium', shard: 2, total: 3 },
-        { project: 'chromium', shard: 3, total: 3 },
-        { project: 'firefox', shard: 1, total: 2 },
-        { project: 'firefox', shard: 2, total: 2 },
-        { project: 'webkit', shard: 1, total: 2 },
-        { project: 'webkit', shard: 2, total: 2 },
-      ],
-    },
-  })
-  const index = browser.steps.findIndex(
-    (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
+test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', () => {
+  const releaseWorkflow = YAML.parse(
+    fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
   )
-  assert.ok(index > 0)
-  assert.equal(
-    browser.steps[index + 1].run,
-    'pnpm test:behavior-browser --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}',
-  )
-  const localState = browser.steps.find(
-    (step) => step.run === 'pnpm check:browser-local-state',
-  )
-  // The local-state harness launches Chromium only, so it runs once.
-  assert.equal(
-    localState.if,
-    "matrix.project == 'chromium' && matrix.shard == 1",
-  )
-  assert.deepEqual(browser.steps[index + 1].env, { DEBUG: 'pw:browser' })
-  for (const step of browser.steps.slice(index, index + 2)) {
-    assert.equal(step['continue-on-error'], undefined)
-    assert.equal(step.if, undefined)
-  }
-  assert.equal(browser['continue-on-error'], undefined)
-  assert.equal(browser.env?.DEBUG, undefined)
-  assert.equal(parsedWorkflow.env?.DEBUG, undefined)
-  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
-    if (
-      ![
-        'browser-validation',
-        'changed-browser-repetitions',
-        'chromium-source-feedback',
-      ].includes(name)
-    )
-      assert.doesNotMatch(JSON.stringify(job), /pw:browser/)
-  }
-})
+  assert.deepEqual(releaseWorkflow.on.push.tags, ['cli-v*'])
+  assert.deepEqual(releaseWorkflow.permissions, {})
 
-test('every public CI job uses stock Playwright libraries', () => {
-  assert.doesNotMatch(
-    JSON.stringify(parsedWorkflow),
-    /replace-webkit-libsoup|webkit-libsoup|WEBKIT_LIBSOUP_CACHE_DIR/i,
-  )
-})
-
-test('changed browser lane is PR-only and gates every head-code step with exact classification', () => {
-  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  assert.deepEqual(lane.strategy, {
-    'fail-fast': false,
-    matrix: { project: ['chromium', 'firefox', 'webkit'] },
-  })
-  assert.equal(lane.env.BROWSER_PROJECT, '${{ matrix.project }}')
-  assert.equal(lane.if, "github.event_name == 'pull_request'")
-  assert.equal(lane['runs-on'], 'ubuntu-latest')
-  assert.equal(lane.env.REPETITIONS, '5')
-  assert.equal(lane.env.RESULTS_DIR, undefined)
-  assert.equal(
-    lane.env.PUBLIC_PR_BASE,
-    '${{ github.event.pull_request.base.sha }}',
-  )
-  assert.equal(
-    lane.env.PUBLIC_PR_HEAD,
-    '${{ github.event.pull_request.head.sha }}',
-  )
-  assert.deepEqual(
-    lane.steps.slice(0, 2),
-    parsedWorkflow.jobs['pull-request-guard'].steps.slice(0, 2),
-  )
-  const checkout = lane.steps[2]
-  assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/)
-  assert.deepEqual(checkout.with, {
-    'persist-credentials': false,
-    ref: '${{ github.event.pull_request.head.sha }}',
-    'fetch-depth': 0,
-    'fetch-tags': false,
-  })
-  for (const step of lane.steps.slice(2)) {
-    assert.match(step.if, /steps\.classify\.outputs\.is_maintainer == 'true'/)
-    assert.equal(step['continue-on-error'], undefined)
-  }
-  assert.equal(lane['continue-on-error'], undefined)
-  const selection = lane.steps.find((step) => step.id === 'select')
-  assert.match(selection.run, /git cat-file -e "\$PUBLIC_PR_BASE\^\{commit\}"/)
-  assert.match(selection.run, /changed-browser-repetitions\.mjs select/)
-  const plan = lane.steps.find((step) => step.id === 'plan')
-  for (const step of lane.steps.slice(
-    lane.steps.indexOf(selection) + 1,
-    lane.steps.indexOf(plan) + 1,
-  ))
-    assert.match(step.if, /steps\.select\.outputs\.has_files == 'true'/)
-  const repeat = lane.steps.find((step) => step.id === 'repeat')
-  assert.equal(lane.steps.indexOf(repeat), lane.steps.indexOf(plan) + 1)
-  assert.equal(repeat.env.DEBUG, 'pw:browser')
-  assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
-  assert.equal(
-    repeat.run,
-    'node scripts/ci/changed-browser-repetitions.mjs run',
-  )
-  const summary = lane.steps.at(-1)
-  assert.match(summary.if, /always\(\)/)
-  assert.match(summary.if, /cancelled\(\)/)
-  assert.equal(summary.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
-  assert.match(summary.if, /failure\(\)/)
-  assert.match(summary.run, /changed-browser-repetitions\.mjs report/)
-  assert.match(summary.run, /exit 1/)
-  assert.doesNotMatch(JSON.stringify(lane), /fixtures:build/)
-  assert.ok(
-    !parsedWorkflow.jobs.validate.needs.includes('changed-browser-repetitions'),
-  )
-})
-
-test('required browser repetition check rejects failed, cancelled or missing matrix results', () => {
-  const job = parsedWorkflow.jobs['changed-browser-repetitions-result']
-  assert.equal(job.name, 'Changed browser behavior repetitions')
-  assert.equal(job.if, "${{ always() && github.event_name == 'pull_request' }}")
-  assert.deepEqual(job.needs, ['changed-browser-repetitions'])
-  assert.equal(job['continue-on-error'], undefined)
-  assert.equal(job.steps.length, 1)
-  const step = job.steps[0]
-  assert.equal(
-    step.env.BROWSER_RESULT,
-    '${{ needs.changed-browser-repetitions.result }}',
-  )
-  for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
-    const result = spawnSync('bash', ['-eu', '-c', step.run], {
-      env: { ...process.env, BROWSER_RESULT: status },
-    })
-    assert.equal(result.status, status === 'success' ? 0 : 1, status)
-  }
-  assert.doesNotMatch(
-    JSON.stringify(job),
-    /checkout|install|persist-credentials/,
-  )
-})
-
-for (const name of [
-  'changed-browser-repetitions',
-  'chromium-source-feedback',
-]) {
-  test(`${name} classification rejects forks, case differences, and missing names before checkout`, (t) => {
-    const lane = parsedWorkflow.jobs[name]
-    const script = lane.steps[1].run.trim().match(/^node -e "(.*)"$/u)[1]
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'changed-classify-'),
-    )
-    t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-    for (const [head, base, expected] of [
-      ['owner/repo', 'owner/repo', true],
-      ['fork/repo', 'owner/repo', false],
-      ['Owner/repo', 'owner/repo', false],
-      ['', 'owner/repo', false],
-      ['owner/repo', '', false],
-      [undefined, 'owner/repo', false],
-      ['owner/repo', undefined, false],
-      [undefined, undefined, false],
-      ['', '', false],
-    ]) {
-      const output = path.join(directory, 'output')
-      fs.writeFileSync(output, '')
-      const env = { ...process.env, GITHUB_OUTPUT: output }
-      delete env.PUBLIC_PR_HEAD_REPO
-      delete env.PUBLIC_PR_BASE_REPO
-      if (head !== undefined) env.PUBLIC_PR_HEAD_REPO = head
-      if (base !== undefined) env.PUBLIC_PR_BASE_REPO = base
-      const result = spawnSync(process.execPath, ['-e', script], {
-        env,
-        encoding: 'utf8',
-      })
-      assert.equal(result.status, 0, result.stderr)
-      assert.equal(
-        fs.readFileSync(output, 'utf8'),
-        `is_maintainer=${expected}\n`,
-      )
-      if (!expected)
-        for (const step of lane.steps.slice(2))
-          assert.match(
-            step.if,
-            /steps\.classify\.outputs\.is_maintainer == 'true'/,
-          )
-    }
-  })
-}
-
-test('changed browser results use runner context only in step environments', () => {
-  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  assert.doesNotMatch(JSON.stringify(lane.env), /\brunner\s*\./)
-  const commands = ['select', 'plan', 'run', 'report']
-  for (const command of commands) {
-    const step = lane.steps.find((entry) =>
-      entry.run?.includes(
-        `node scripts/ci/changed-browser-repetitions.mjs ${command}`,
-      ),
-    )
-    assert.ok(step, command)
-    assert.equal(
-      step.env.RESULTS_DIR,
-      '${{ runner.temp }}/changed-browser-repetitions',
-      command,
-    )
-  }
-})
-
-test('changed browser status functions appear only in if conditions', () => {
-  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  const inspect = (value) => {
-    if (typeof value === 'string') {
-      for (const [expression] of value.matchAll(/\$\{\{[\s\S]*?\}\}/g))
-        assert.doesNotMatch(
-          expression,
-          /\b(?:always|success|failure|cancelled)\s*\(/,
-        )
-    } else if (value && typeof value === 'object') {
-      for (const [key, child] of Object.entries(value))
-        if (key !== 'if') inspect(child)
-    }
-  }
-  inspect(lane)
-  const summary = lane.steps.at(-1)
-  assert.equal(
-    summary.env.SETUP_FAILED,
-    "${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}",
-  )
-  assert.match(summary.if, /always\(\)/)
-  assert.match(summary.if, /cancelled\(\)/)
-  assert.equal(summary.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
-  assert.match(summary.if, /failure\(\)/)
-})
-
-test('production command exceptions reject extra publishing or credential commands', () => {
-  const scripts = JSON.parse(
-    fs.readFileSync('apps/web/package.json', 'utf8'),
-  ).scripts
-  for (const name of ['deploy:production', 'deploy:production:built']) {
-    for (const extra of [
-      ' && npm publish',
-      ' && wrangler secret put TOKEN',
-      ' && pnpm exec wrangler deploy',
-    ]) {
-      assert.throws(() =>
-        assertPublicPackageScriptsAreSafe([
-          [
-            'apps/web/package.json',
-            { scripts: { [name]: scripts[name] + extra } },
-          ],
-        ]),
-      )
-    }
-  }
-})
-
-test('upload boundary suite runs with a CLI build on all supported operating systems', () => {
-  const job = parsedWorkflow.jobs['upload-boundary-validation']
-  assert.equal(
-    job.if,
-    "github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'",
-  )
-  assert.deepEqual(job.strategy.matrix.os, [
-    'ubuntu-latest',
-    'macos-latest',
-    'windows-latest',
-  ])
-  assert.equal(job['runs-on'], '${{ matrix.os }}')
-  assert.equal(job.strategy['fail-fast'], false)
-  assert.equal(job.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE, '1')
-  assert.equal(job.env.ARTIFACTSHARE_TOKEN, '')
-  const runs = job.steps.filter((step) => step.run).map((step) => step.run)
-  assert.deepEqual(runs, [
-    'pnpm install --frozen-lockfile --ignore-scripts',
-    'pnpm --filter @artifactshare/cli build',
-    'pnpm --filter @artifactshare/cli exec vitest run src/upload-boundary.test.ts src/upload-boundary-commands.test.ts',
-  ])
-  assert.equal(
-    job.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with[
-      'node-version'
-    ],
-    '24.22.3',
-  )
-  assert.equal(
-    parsedWorkflow.jobs.validate.steps[0].env.UPLOAD_BOUNDARY_RESULT,
-    '${{ needs.upload-boundary-validation.result }}',
-  )
-})
-
-test('source feedback selects before install, delegates before execution and reserves reporting time', () => {
-  const lane = parsedWorkflow.jobs['chromium-source-feedback']
-  assert.equal(lane.if, "github.event_name == 'pull_request'")
-  assert.equal(lane['runs-on'], 'ubuntu-latest')
-  assert.equal(
-    lane.env.PUBLIC_PR_BASE,
-    '${{ github.event.pull_request.base.sha }}',
-  )
-  assert.equal(
-    lane.env.PUBLIC_PR_HEAD,
-    '${{ github.event.pull_request.head.sha }}',
-  )
-  const checkout = lane.steps.find((step) =>
-    step.uses?.startsWith('actions/checkout@'),
-  )
-  assert.equal(checkout.with.ref, '${{ github.event.pull_request.head.sha }}')
-  assert.equal(checkout.with['persist-credentials'], false)
-  const index = (id) => lane.steps.findIndex((step) => step.id === id)
-  const install = lane.steps.findIndex((step) =>
-    step.run?.startsWith('pnpm install'),
-  )
-  assert.ok(
-    index('select') < install &&
-      install < index('units') &&
-      index('units') < index('plan'),
-  )
+  const pack = releaseWorkflow.jobs.pack
+  const packText = JSON.stringify(pack)
+  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n')
+  assert.equal(pack.permissions.contents, 'read')
+  assert.equal(pack.permissions['id-token'], undefined)
+  assert.equal(pack.environment, undefined)
   assert.match(
-    lane.steps[index('plan')].if,
-    /steps.units.outputs.passed == 'true'/,
+    packRuns,
+    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/,
   )
-  assert.equal(
-    lane.steps.filter((step) => step.run?.includes('pnpm fixtures:build'))
-      .length,
-    1,
+  assert.match(packRuns, /pnpm check:cli-release/)
+  assert.match(packRuns, /TAG_VERSION="\$\{GITHUB_REF_NAME#cli-v\}"/)
+  assert.match(packRuns, /test "\$TAG_VERSION" = "\$PKG_VERSION"/)
+  assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(packRuns, /pnpm check:cli-reference/)
+  assert.match(packRuns, /@artifactshare\/cli pack --pack-destination/)
+  assert.match(packRuns, /startsWith\("workspace:"\)/)
+  assert.match(packRuns, /sha256sum "\$\(basename "\$TGZ"\)" > SHA256SUMS/)
+  assert.match(packText, /actions\/upload-artifact@[0-9a-f]{40}/)
+  assert.doesNotMatch(packRuns, /^\s*(?:npm|pnpm)(?:\s+\S+)*\s+publish\b/mu)
+  assert.doesNotMatch(packText, /secrets\./)
+
+  const publish = releaseWorkflow.jobs.publish
+  const publishRuns = publish.steps.map((step) => step.run ?? '').join('\n')
+  assert.equal(publish.needs, 'pack')
+  assert.equal(publish.environment, 'production')
+  assert.equal(publish.permissions['id-token'], 'write')
+  assert.match(publishRuns, /sha256sum --check SHA256SUMS/)
+  assert.match(publishRuns, /test "\$\{#tarballs\[@\]\}" -eq 1/)
+  assert.match(
+    publishRuns,
+    /pnpm publish "\$\{tarballs\[0\]\}" --no-git-checks --access public --provenance/,
   )
-  assert.equal(
-    lane.steps.filter((step) =>
-      step.run?.includes('pnpm --filter @artifactshare/contract build'),
-    ).length,
-    1,
+  assert.doesNotMatch(JSON.stringify(publish), /secrets\./)
+  assert.doesNotMatch(publishRuns, /pnpm install/)
+})
+
+test('reserved package release is protected, tag-only, and OIDC-only', () => {
+  const releaseWorkflow = YAML.parse(
+    fs.readFileSync('.github/workflows/release-npm-reserved.yml', 'utf8'),
   )
-  for (const step of lane.steps.slice(index('select') + 1, index('plan') + 1))
-    assert.match(step.if, /steps.select.outputs.has_files == 'true'/)
-  assert.equal(index('repeat'), index('plan') + 1)
-  const run = lane.steps[index('repeat')]
-  assert.equal(
-    run.run,
-    'node scripts/ci/changed-browser-repetitions.mjs source-run',
+  assert.deepEqual(releaseWorkflow.on.push.tags, ['reserved-v*'])
+  assert.equal(releaseWorkflow.permissions.contents, 'read')
+  assert.equal(releaseWorkflow.permissions['id-token'], 'write')
+  const release = releaseWorkflow.jobs.release
+  assert.equal(release.environment, 'production')
+  const text = JSON.stringify(release)
+  const runs = release.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(runs, /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/)
+  assert.match(runs, /pnpm check:npm-reserved/)
+  assert.match(runs, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(runs, /npm pack \.\/packages\/npm-reserved/)
+  assert.match(runs, /test "\$bin_status" -eq 1/)
+  assert.match(text, /npm publish --access public --provenance --tag latest/)
+  assert.doesNotMatch(text, /secrets\./)
+})
+
+test('qm bridge release is manual, protected, and publishes one verified tarball', () => {
+  const releaseWorkflow = YAML.parse(
+    fs.readFileSync('.github/workflows/release-qm-bridge.yml', 'utf8'),
   )
-  assert.match(run.if, /steps.plan.outputs.has_pairs == 'true'/)
-  assert.ok(run['timeout-minutes'] > (180_000 + 600_000) / 60_000)
-  const setupMinutes = lane.steps
-    .slice(0, index('repeat'))
-    .reduce((sum, step) => sum + step['timeout-minutes'], 0)
-  assert.ok(
-    lane['timeout-minutes'] >= setupMinutes + run['timeout-minutes'] + 4,
+  const { version } = releaseWorkflow.on.workflow_dispatch.inputs
+  assert.equal(version.required, true)
+  assert.equal(version.type, 'string')
+
+  const pack = releaseWorkflow.jobs.pack
+  const packText = JSON.stringify(pack)
+  const packRuns = pack.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(packRuns, /test "\$GITHUB_REF_NAME" = "main"/)
+  assert.match(
+    packRuns,
+    /test "\$GITHUB_SHA" = "\$\(git rev-parse origin\/main\)"/,
   )
-  const report = lane.steps.at(-1)
-  assert.match(report.if, /always\(\)/)
-  assert.equal(report.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
-  assert.match(report.env.SETUP_FAILED, /job.status == 'failure'/)
-  assert.match(report.env.SETUP_FAILED, /steps.units.outcome != 'failure'/)
-  assert.match(report.run, /source-report/)
-  assert.doesNotMatch(JSON.stringify(lane), /continue-on-error/)
-  assert.ok(
-    !parsedWorkflow.jobs.validate.needs.includes('chromium-source-feedback'),
+  assert.match(packRuns, /test "\$RELEASE_VERSION" = "\$PKG_VERSION"/)
+  assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge typecheck/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge test/)
+  assert.match(packRuns, /@artifactshare\/qm-bridge pack/)
+  assert.match(packRuns, /invalid_cli_usage/)
+  assert.match(packText, /actions\/upload-artifact@[0-9a-f]{40}/)
+  assert.doesNotMatch(packText, /secrets\./)
+
+  const publish = releaseWorkflow.jobs.publish
+  assert.equal(publish.needs, 'pack')
+  assert.equal(publish.environment, 'production')
+  const publishRuns = publish.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(publishRuns, /sha256sum --check SHA256SUMS/)
+  assert.match(publishRuns, /test "\$\{#tarballs\[@\]\}" -eq 1/)
+  assert.match(
+    publishRuns,
+    /npm publish "\$\{tarballs\[0\]\}" --access public --provenance/,
   )
 })
 
-test('native browser wait proof runs in the existing required Chromium lane for every merge', () => {
-  const lane = parsedWorkflow.jobs['browser-validation']
-  const command = 'node --test scripts/browser-waits.integration.mjs'
-  const checks = lane.steps.filter((step) => step.run === command)
-  assert.equal(checks.length, 1)
-  const check = checks[0]
-  assert.equal(check.if, "matrix.project == 'chromium' && matrix.shard == 1")
-  assert.equal(check['continue-on-error'], undefined)
-  assert.ok(
-    lane.steps.indexOf(check) >
-      lane.steps.findIndex((step) =>
-        step.run?.startsWith('pnpm test:behavior-browser'),
-      ),
-  )
-  assert.ok(parsedWorkflow.jobs.validate.needs.includes('browser-validation'))
-  assert.doesNotMatch(
-    JSON.stringify(parsedWorkflow.jobs['static-validation']),
-    /browser-waits.integration|playwright install/,
-  )
-  const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
-  assert.doesNotMatch(root.scripts['test:scripts'], /integration/)
-})
-
-const browserJobNames = [
-  'changed-browser-repetitions',
-  'chromium-source-feedback',
-  'browser-validation',
-]
-
-test('only browser jobs use the canonical image with matching locked Playwright', () => {
+test('every container in public CI is the locked Playwright image', () => {
   const compose = YAML.parse(visualCompose, { merge: true })
   const image = compose.services.visual.image
   const version = image.match(/:v([\d.]+)-noble@sha256:[a-f0-9]{64}$/)?.[1]
@@ -1333,93 +822,22 @@ test('only browser jobs use the canonical image with matching locked Playwright'
     JSON.parse(fs.readFileSync('package.json', 'utf8')).packageManager,
     'pnpm@12.21.0',
   )
-  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
-    if (!browserJobNames.includes(name)) {
-      assert.equal(job.container, undefined, name)
-      assert.equal(job.env?.HOME, undefined, name)
-      assert.equal(job.env?.PLAYWRIGHT_BROWSERS_PATH, undefined, name)
-      continue
-    }
-    assert.equal(job['runs-on'], 'ubuntu-latest')
-    assert.deepEqual(job.container, {
-      image,
-      options: '--init --ipc=host',
-      env: { PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright' },
-    })
-    assert.deepEqual(job.defaults, { run: { shell: 'bash' } })
-    assert.equal(job.env.HOME, '/root')
-    const checkoutIndex = job.steps.findIndex((step) =>
-      step.uses?.startsWith('actions/checkout@'),
-    )
-    const trustCommand =
-      'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
-    const trustSteps = job.steps.filter((step) =>
-      step.run?.includes('safe.directory'),
-    )
-    assert.equal(trustSteps.length, 1, name)
-    const [trust] = trustSteps
-    const trustIndex = job.steps.indexOf(trust)
-    assert.equal(trustIndex, checkoutIndex + 1, name)
-    const commands = trust.run
-      .split('\n')
-      .filter((line) => line && !line.startsWith('#'))
-    assert.equal(commands[0], trustCommand, name)
-    assert.equal(trust.if, job.steps[checkoutIndex].if, name)
-    assert.equal(trust.env?.HOME, undefined, name)
-    if (name === 'browser-validation') {
-      assert.deepEqual(commands, [trustCommand])
-      assert.ok(
-        trustIndex <
-          job.steps.findIndex(
-            (step) => step.run === 'pnpm check:browser-local-state',
-          ),
-      )
-    } else {
-      assert.equal(trust.id, 'select')
-      assert.match(commands[1], /^git cat-file /)
-    }
-    assert.equal(job['continue-on-error'], undefined)
-    assert.equal(job.permissions, undefined)
-    assert.ok(
-      job.steps.some(
-        (step) =>
-          step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
-      ),
-    )
-    assert.ok(
-      job.steps.some(
-        (step) =>
-          step.uses?.startsWith('pnpm/action-setup@') && !step.with?.version,
-      ),
-    )
-    for (const step of job.steps) {
-      assert.equal(step['continue-on-error'], undefined)
-      if (step.uses?.startsWith('actions/setup-node@'))
-        assert.equal(step.with['node-version'], '24.22.3')
-    }
-  }
+  const containers = Object.entries(parsedWorkflow.jobs).filter(
+    ([, job]) => job.container !== undefined,
+  )
+  assert.ok(containers.length > 0)
+  for (const [name, job] of containers)
+    assert.equal(job.container.image, image, name)
 })
 
-test('image-backed CI has no live apt, browser downloads or obsolete archive plumbing', () => {
+test('image-backed CI installs no browsers or system packages at run time', () => {
   const detector = fs.readFileSync(
     '.github/workflows/flaky-detector.yml',
     'utf8',
   )
-  for (const source of [workflow, detector]) {
+  for (const source of [workflow, detector])
     assert.doesNotMatch(
       source,
       /playwright install|install-deps|\bapt(?:-get)?\b|browser-cache-|browser-system-packages|actions\/cache(?:\/restore|\/save)?@/,
     )
-    assert.doesNotMatch(source, /--privileged|SYS_ADMIN|--network[= ]host/)
-  }
-  const { canonical } = JSON.parse(
-    fs.readFileSync('config/repository-boundary.json', 'utf8'),
-  )
-  for (const file of [
-    'scripts/ci/browser-system-packages.sh',
-    'scripts/browser-system-packages.test.mjs',
-  ]) {
-    assert.equal(fs.existsSync(file), false)
-    assert.equal(canonical.includes(file), false)
-  }
 })

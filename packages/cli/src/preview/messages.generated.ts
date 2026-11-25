@@ -166,24 +166,24 @@ export const PREVIEW_MESSAGES = {
   },
   ja: {
     'preview.annotationSaveFailed':
-      '保存の応答を確認できませんでした。入力した内容は残っています。保存済みのコメントを確認してから、もう一度追加してください。',
+      '保存できたか確認できませんでした。入力内容は残っています。保存済みのコメントを確認してからもう一度追加してください。',
     'preview.annotationSaveUnknown':
-      '保存の応答と保存済みのコメントを確認できませんでした。入力した内容は残っています。再度追加する前に保存状況を確認してください。',
+      '保存結果と保存済みコメントを確認できませんでした。入力内容は残っています。もう一度追加する前に保存状況を確認してください。',
     'preview.annotationAlreadySaved':
-      '同じ内容のコメントが保存されています。入力した内容は残っています。キャンセルで入力欄を閉じても、保存済みのコメントは削除されません。',
+      '同じ内容のコメントがすでに保存されています。入力内容は残っています。キャンセルで閉じても、保存済みのコメントは消えません。',
     'preview.savePending': '保存結果を確認中…',
     'preview.checkSave': '保存状況を確認',
     'preview.submitUnconfirmed':
-      'コメントは保存されていますが、エージェントへの引き渡しを確認できませんでした。エージェントに preview next を実行して保存済みのコメントを取得するよう依頼してください。',
+      'コメントは保存しましたが、エージェントへの引き渡しを確認できませんでした。エージェントに preview next を実行してコメントを取得するよう頼んでください。',
     'preview.isolationNotice':
-      'プレビューのスクリプトは隔離されたフレームで実行されます。localStorage、IndexedDB など、同一オリジンを必要とする機能は使えません。この隔離は解除できません。',
+      'プレビューのスクリプトは隔離されたフレーム内で動きます。localStorage や IndexedDB など同一オリジンが必要な機能は使えません（この隔離は解除できません）。',
     'preview.localBadge': 'ローカルプレビュー',
     'preview.watching': '変更を監視中',
     'preview.share': '共有する',
     'preview.annotateMode': 'コメントモード',
     'preview.panelTitle': 'コメント',
     'preview.emptyHint':
-      '気になる要素をクリックしてコメントできます。リンクを操作したいときは、右下のトグルでコメントモードをオフにしてください',
+      '気になる要素をクリックしてコメントできます。ページ内のリンクを操作したいときは、右下のトグルでコメントモードをオフにしてください',
     'preview.requestFixesOne': '修正を依頼する（{n} 件）',
     'preview.requestFixesOther': '修正を依頼する（{n} 件）',
     'preview.discardDrafts': '下書きを破棄',
@@ -196,107 +196,107 @@ export const PREVIEW_MESSAGES = {
     'preview.delete': '削除',
     'preview.reopen': '下書きに戻す',
     'preview.reopenNote':
-      '下書きに戻したコメントは、再度依頼するまでエージェントには届きません',
+      '下書きに戻したコメントは、もう一度依頼するまでエージェントには届きません',
     'preview.batchWorkingOne': 'エージェントが {n} 件を修正中',
     'preview.batchWorkingOther': 'エージェントが {n} 件を修正中',
     'preview.batchQueuedOne':
-      'エージェントへ通知済みです。エージェントが {n} 件を受け取るのを待っています。この状態が続く場合は preview next の実行を依頼してください',
+      'エージェントへ通知しました。{n} 件を受け取るのを待っています。このまま進まないときは preview next の実行を依頼してください',
     'preview.batchQueuedOther':
-      'エージェントへ通知済みです。エージェントが {n} 件を受け取るのを待っています。この状態が続く場合は preview next の実行を依頼してください',
+      'エージェントへ通知しました。{n} 件を受け取るのを待っています。このまま進まないときは preview next の実行を依頼してください',
     'preview.batchQueuedCodexOne':
-      'Codexへ通知済みです。Codex が {n} 件を受け取るのを待っています。この状態が続く場合は codex resume でセッションを再開してください',
+      'Codex へ通知しました。{n} 件を受け取るのを待っています。このまま進まないときは codex resume でセッションを再開してください',
     'preview.batchQueuedCodexOther':
-      'Codexへ通知済みです。Codex が {n} 件を受け取るのを待っています。この状態が続く場合は codex resume でセッションを再開してください',
+      'Codex へ通知しました。{n} 件を受け取るのを待っています。このまま進まないときは codex resume でセッションを再開してください',
     'preview.batchQueuedClaudeOne':
-      'Claude Codeが依頼を確認しました。Claude Code が {n} 件を受け取るのを待っています',
+      'Claude Code が依頼を受け付けました。{n} 件の取り込みを待っています',
     'preview.batchQueuedClaudeOther':
-      'Claude Codeが依頼を確認しました。Claude Code が {n} 件を受け取るのを待っています',
+      'Claude Code が依頼を受け付けました。{n} 件の取り込みを待っています',
     'preview.batchQueuedCursorOne':
-      '管理対象のCursorセッションへ通知済みです。Cursor が {n} 件を受け取るのを待っています',
+      '管理対象の Cursor セッションへ通知しました。{n} 件を受け取るのを待っています',
     'preview.batchQueuedCursorOther':
-      '管理対象のCursorセッションへ通知済みです。Cursor が {n} 件を受け取るのを待っています',
+      '管理対象の Cursor セッションへ通知しました。{n} 件を受け取るのを待っています',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualClaudeOne':
-      '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
+      '{n} 件を保存しました。Claude Code を開き、preview next の実行を依頼してください',
     'preview.batchManualClaudeOther':
-      '{n} 件を保存しました。Claude Codeを開き、preview next の実行を依頼してください',
+      '{n} 件を保存しました。Claude Code を開き、preview next の実行を依頼してください',
     'preview.batchManualCursorOne':
-      '{n} 件を保存しました。Cursorを開き、preview next の実行を依頼してください',
+      '{n} 件を保存しました。Cursor を開き、preview next の実行を依頼してください',
     'preview.batchManualCursorOther':
-      '{n} 件を保存しました。Cursorを開き、preview next の実行を依頼してください',
+      '{n} 件を保存しました。Cursor を開き、preview next の実行を依頼してください',
     'preview.batchFailedOne':
-      'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
+      'エージェントへ通知できませんでした。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedOther':
-      'エージェントへの通知に失敗しました。{n} 件は保存済みです。preview next の実行を依頼してください',
+      'エージェントへ通知できませんでした。{n} 件は保存済みです。preview next の実行を依頼してください',
     'preview.batchFailedCodexOne':
-      'Codexへの通知を完了できませんでした。{n} 件は保存済みです。Codexのセッションを開き、preview next の実行を依頼してください',
+      'Codex へ通知できませんでした。{n} 件は保存済みです。Codex のセッションを開き、preview next の実行を依頼してください',
     'preview.batchFailedCodexOther':
-      'Codexへの通知を完了できませんでした。{n} 件は保存済みです。Codexのセッションを開き、preview next の実行を依頼してください',
+      'Codex へ通知できませんでした。{n} 件は保存済みです。Codex のセッションを開き、preview next の実行を依頼してください',
     'preview.batchFailedClaudeOne':
-      'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+      'Claude Code が依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.batchFailedClaudeOther':
-      'Claude Codeが依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+      'Claude Code が依頼を確認できませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.batchFailedCursorOne':
-      'Cursorセッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+      'Cursor セッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.batchFailedCursorOther':
-      'Cursorセッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
+      'Cursor セッションが依頼を受け付けませんでした。{n} 件は保存済みです。セッションを開き、preview next を実行してください',
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':
-      'ページが大きく変わったため、{n} 件のコメントの対象箇所が見つからなくなりました',
+      'ページが大きく変わったため、{n} 件のコメントの該当箇所が見つからなくなりました',
     'preview.orphanNoticeOther':
-      'ページが大きく変わったため、{n} 件のコメントの対象箇所が見つからなくなりました',
+      'ページが大きく変わったため、{n} 件のコメントの該当箇所が見つからなくなりました',
     'preview.orphanDiscard': 'まとめて破棄',
     'preview.positionChecking': 'コメントの位置を確認しています…',
-    'preview.positionNeedsCheck': '引用した文がこの版に見つかりません',
+    'preview.positionNeedsCheck': '引用した文がこのバージョンに見つかりません',
     'preview.rewriteLabel': '文言（書き換えるときはここを直す）',
     'preview.commentOptional': 'コメント（任意）',
-    'preview.inlineHint': 'ページで編集中・そこで Enter を押すと追加',
+    'preview.inlineHint': 'ページ上で編集中・Enter で追加',
     'preview.rewriteHeading': '書き換え',
     'preview.rewriteRemoved': '（この文を削除）',
-    'preview.modeHint': 'Alt（Option）+クリックでページを操作',
+    'preview.modeHint': 'Alt（Option）+ クリックでページを操作',
     'preview.positionOtherScreen': '別の画面のコメントです。その画面へ移動',
     'preview.orphanKeep': '残す',
     'preview.you': 'あなた',
     'preview.agentName': 'エージェント',
     'preview.editorLabel': 'コメント',
     'preview.entryBlocked':
-      '別の対象を選ぶには、このコメントを追加するかキャンセルしてください。',
+      '別の箇所を選ぶには、このコメントを追加するかキャンセルしてください。',
     'preview.updateQueued':
-      '文書が更新されました。このコメントを追加するかキャンセルすると、最新版を読み込みます。',
+      'ファイルが更新されました。このコメントを追加するかキャンセルすると最新版を読み込みます。',
     'preview.operationFailed':
-      '操作の完了を確認できませんでした。コメントを確認して、もう一度お試しください。',
+      '操作が完了したか確認できませんでした。コメントの状態を確かめて、もう一度お試しください。',
     'preview.ended.unsaved':
-      'このコメントの保存は確認できていません。ページを閉じる前にコピーしてください。再開するには次を実行します。{command}',
-    'preview.canvasLabel': '文書の背景',
+      'このコメントの保存を確認できていません。ページを閉じる前にコピーしてください。再開するには次を実行します。{command}',
+    'preview.canvasLabel': 'ページの背景',
     'preview.canvasLight': '明るい',
     'preview.canvasDark': '暗い',
     'preview.canvasHelp':
-      '透明な部分のローカル背景だけを変更します。文書の配色やテーマ判定は変わりません。',
-    'preview.inputPlaceholder': 'どう直してほしい？',
+      '透明な部分のローカル背景だけを切り替えます。ファイルの配色やテーマ判定は変わりません。',
+    'preview.inputPlaceholder': 'どう直してほしいですか？',
     'preview.cancel': 'キャンセル',
     'preview.add': '追加',
     'preview.corruptNotice':
-      '保存済みのコメントの一部を読み込めませんでした。壊れたファイルは退避済みです',
-    'preview.ended.title': 'プレビューは終了しました',
+      '保存済みコメントの一部を読み込めませんでした。壊れたファイルは退避しています',
+    'preview.ended.title': 'プレビューを終了しました',
     'preview.ended.body':
       'コメントは保存済みです。次のコマンドで再開できます。{command}',
     'preview.shareDialog.title': '共有する',
     'preview.shareDialog.destination': '宛先',
     'preview.shareDialog.visibility': '共有範囲',
     'preview.shareDialog.notCarried':
-      'ローカルのコメントは共有先には引き継がれません。共有後は共有先で新しくコメントできます',
+      'ローカルのコメントは共有先へ引き継がれません。共有後は共有ページで新しくコメントできます',
     'preview.shareDialog.privateDefault':
-      'このアカウントでは「社内全員」に共有できないため、ホームの既定は「個別共有」です。リンクを知っている人全員に共有するときだけ、「リンクを知っている全員」を選んでください',
+      'このアカウントでは「社内全員」を選べないため、ホームの既定は「個別共有」です。リンクを知っている人全員に見せたいときだけ「リンクを知っている全員」を選んでください',
     'preview.shareDialog.snapshotNote':
       '{time} 時点の内容です。それ以降の変更は含まれません',
     'preview.shareDialog.confirm': '共有する',
     'preview.shareDialog.cancel': 'キャンセル',
     'preview.shareDialog.authRequired':
-      '共有にはログインが必要です。下のリンクを開いてこの端末を承認してください',
+      '共有するにはログインが必要です。下のリンクを開いてこの端末を承認してください',
     'preview.shareDialog.authWaiting': '承認を待っています…',
     'preview.shareDialog.done': '共有しました',
     'preview.shareDialog.copy': 'コピー',
@@ -304,9 +304,9 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.finish': '完了',
     'preview.shareDialog.continue': 'プレビューを続ける',
     'preview.shareDialog.visibilityUnknown':
-      '設定から共有範囲を判定できなかったため、共有できません。設定を直してから、このダイアログを開き直してください。',
+      '設定から共有範囲を判定できなかったため共有できません。設定を見直してから、このダイアログを開き直してください。',
     'preview.shareDialog.visibilityAdjusted':
-      '選択した範囲ではなく {visibility} の共有範囲で共有されました。',
+      '選んだ範囲ではなく {visibility} で共有されました。',
     'preview.shareDialog.confirmDestination':
       'ログインしました。宛先と共有範囲を確認してから共有してください。',
     'preview.shareDialog.visibilityPrivate': '個別共有',
@@ -314,19 +314,19 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.visibilityLink': 'リンクを知っている全員',
     'preview.shareDialog.visibilityProject': '関係者のみ',
     'preview.shareDialog.shareFailed':
-      '共有に失敗しました。少し時間をおいて再試行してください。',
+      '共有できませんでした。少し時間をおいてもう一度お試しください。',
     'preview.shareDialog.errorTokenInvalid':
-      '保存された認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。',
+      '保存済みの認証情報が無効になりました。ログインし直してから、このダイアログを開き直してください。',
     'preview.shareDialog.errorTokenInvalidExplicit':
       'このプレビューに渡されたトークンが無効か期限切れです。プレビューを終了し、有効なトークンで起動し直してください。',
     'preview.shareDialog.errorSelfUploadDisabled':
-      'このアカウントではファイルをアップロードできません。Google または Microsoft でログインして共有してください。',
+      'このアカウントではファイルをアップロードできません。Google または Microsoft でログインしてから共有してください。',
     'preview.shareDialog.errorWorkspaceAccessRevoked':
-      'このアカウントはそのワークスペースにアクセスできなくなりました。',
+      'このアカウントは対象のワークスペースへアクセスできなくなりました。',
     'preview.shareDialog.errorStorageLimit':
-      'ワークスペースの保存容量の上限に達しています。',
+      'ワークスペースの保存容量が上限に達しています。',
     'preview.shareDialog.snapshotFailed':
-      'ファイルを読み込めないため、共有できません。ファイルを確認してから再試行してください。',
+      'ファイルを読み込めないため共有できません。ファイルを確認してからもう一度お試しください。',
     'preview.shareDialog.retrySnapshot': '読み込みを再試行',
   },
 } as const

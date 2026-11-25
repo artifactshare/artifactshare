@@ -96,14 +96,14 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.transferOwner': 'オーナーを移譲',
           'team.members.menu': 'メンバー操作メニュー',
           'team.members.remove': '削除',
-          'team.members.revokeCliSessions': 'CLIセッションを失効',
+          'team.members.revokeCliSessions': 'CLI セッションを失効',
           'team.members.revokeCliSessionsConfirm.title': `${vars?.name ?? ''} のCLIセッションを失効させますか？`,
           'team.members.revokeCliSessionsConfirm.body':
             '再ログインが必要です。',
           'team.members.empty': 'メンバーはまだいません。',
           'team.guides.title': '役割別ガイド',
           'team.guides.body':
-            'ワークスペースの役割に合ったガイドを確認できます。',
+            'ワークスペース内の役割に合わせたガイドをご覧いただけます。',
           'team.guides.admin': '管理者ガイド',
           'team.guides.admin.primary': '管理者ガイド — 日常のメンバー管理',
           'team.guides.owner': 'オーナーガイド',
@@ -111,7 +111,7 @@ vi.mock('~/hooks/use-t', () => ({
             'オーナーガイド — オーナーだけの手続き',
           'team.members.transferOwnerConfirm.title': `${vars?.name ?? ''} にオーナーを移譲しますか？`,
           'team.members.transferOwnerConfirm.body':
-            '移譲後、あなた自身は管理者になります。オーナーではなくなります。',
+            '移譲すると、あなたはオーナーから管理者へ切り替わります。',
           'team.members.transferOwnerConfirm.action': 'オーナーを移譲',
           'confirm.cancel': 'キャンセル',
           'team.removedMembers': '削除済みメンバー',
@@ -461,7 +461,7 @@ describe('/settings rendered member management', () => {
 describe('ownership transfer confirmation', () => {
   test.each([
     ['en', 'You will become an admin after this transfer.'],
-    ['ja', '移譲後、あなた自身は管理者になります。'],
+    ['ja', '移譲すると、あなたはオーナーから管理者へ切り替わります。'],
   ] as const)('renders the %s ownership consequence', (locale, copy) => {
     pageState.locale = locale
     const html = renderToStaticMarkup(

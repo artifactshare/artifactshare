@@ -318,7 +318,10 @@ export function PdfViewerApp({
           ref={containerRef}
           id="viewer-container"
           lang=""
-          // A scrollable region the keyboard can reach and page through.
+          // A scrollable region the keyboard can reach and page through. It
+          // needs the role: assistive technology drops the name of an
+          // element that has none.
+          role="region"
           tabIndex={0}
           aria-label={text('pdfViewer.content')}
           className="focus-visible:outline-ring absolute inset-0 overflow-auto overscroll-contain focus-visible:outline-2 focus-visible:-outline-offset-2"

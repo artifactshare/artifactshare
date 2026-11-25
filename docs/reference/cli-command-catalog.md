@@ -4,57 +4,57 @@
 
 関連文書:
 
-- `packages/cli/README.md` — CLI の利用者向け導入と command 例
-- `packages/cli/skills/artifactshare/SKILL.md` — agent が使う CLI workflow
+- `packages/cli/README.md` — CLI の利用者向けセットアップとコマンド例
+- `packages/cli/skills/artifactshare/SKILL.md` — エージェントが使う CLI ワークフロー
 
 ## 現状
 
-CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧、読み戻し、ローカル保存、共有 URL の初回入口、コメント読み書き、プロファイル、ローカル認証情報の削除、プロジェクト作成、既存成果物の移動、Skill 導入または更新まで対応した。command を追加するたびに対象指定、主要 flag、成功 / 失敗 JSON、終了コード、命名、ページング、非対話時の挙動を個別に決めると、利用者とエージェントの双方にとって覚えにくい CLI になりやすい。
+CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧、読み戻し、ローカル保存、共有 URL の初回入口、コメント読み書き、プロファイル管理、ローカル認証情報の削除、プロジェクト作成、既存成果物の移動、Skill の導入・更新まで対応している。コマンドを追加するたびに対象指定、主要フラグ、成功・失敗 JSON、終了コード、命名、ページング、非対話時の挙動を個別に決めると、利用者とエージェントの双方にとって覚えにくい CLI になってしまう。
 
-この文書は、CLI command の利用者向け説明と成功 `data` / 失敗 `error.code` の参照である。command の能力対応、surface の所有、MCP と agent の対応は `packages/contract/src/capability-matrix.json` を正本にする。新しい CLI command の要否、命名、主要 flag はこの文書と共有契約を同じ変更で更新してから実装する。
+この文書は、CLI コマンドの利用者向け説明と、成功時の `data`・失敗時の `error.code` をまとめたリファレンスである。コマンドごとの機能対応、公開面の担当、MCP とエージェントの対応関係は `packages/contract/src/capability-matrix.json` で一元管理する。新しい CLI コマンドの要否、命名、主要フラグは、この文書と共有契約を同じ変更で更新してから実装する。
 
 
 ## 文書の扱い
 
-能力表 `apps/web/app/lib/cli-capability-matrix.json` は `packages/contract/src/capability-matrix.json` から生成され、CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は共有契約を更新して `pnpm check:contract-surfaces` を実行する。
+能力表 `apps/web/app/lib/cli-capability-matrix.json` は `packages/contract/src/capability-matrix.json` から自動生成されるファイルで、CLI・MCP・エージェントの機能と各公開面の対応・参照関係を機械検査するための基準になる。この文書の一覧と `cli-reference-surface.generated.json` は、CLI コマンドの説明とビルド済みヘルプのスナップショットを保持する参照文書であり、能力表の生成元ではない。実体を変更したら共有契約を更新し、`pnpm check:contract-surfaces` を実行する。
 
-- この文書を CLI command の一覧、追加判断、未実装管理の正本にする。
-- 実装済み command の細かい制約は実装と自動テストで固定する。
-- 古い CLI 実装 spec と調査記録は整理済みであり、新しい command の正本にしない。
-- command の最新契約は実装とこの文書を優先する。
+- CLI コマンドの一覧、追加の判断、未実装管理はこの文書を基準にする。
+- 実装済みコマンドの細かい制約は、実装コードと自動テストで固定する。
+- 古い CLI 実装仕様と調査記録は整理済みであり、新しいコマンド設計の基準には使わない。
+- コマンドの最新仕様は実装とこの文書を優先する。
 
 ## 全体方針
 
-- 出力契約は、成功・失敗とも最上位に `schema_version`（整数、現行値 2）、`ok`、`command` を持ち、成功は `data`、失敗は `error` を持つ。
-- 成功 JSON は標準出力、失敗 JSON は標準エラーへ出し、失敗時の標準出力は空にする。
-- 終了コードは成功 `0`、失敗 `1`、利用者中断 `130` の 3 つに絞る。失敗種別は終了コードではなく `error.code` で分ける。
-- 端末で対話できる場合は人間向け出力を既定にし、非対話・パイプ・`CI=true` では JSON を既定にする。明示的な `--json` は常に JSON にする。
-- 主要 command は Artifact Share の仕事単位に合わせて命名する。MCP ツール名や内部 API 名を主要 command 名にしない。
-- 認可、容量、共有範囲、プロジェクト検証の正本はサービス層に置く。CLI は薄い変換に留める。
-- 未認証の `share` / `update` / `download` は、対話できる端末では device login へ進み、完了後に元の操作を再実行する。非対話では `auth_required` を返して失敗する。
-- 保存済み profile 由来の `kind: "session"` token が、Artifact Share API を呼ぶ認証付き command の API 401 で拒否された場合は、保存済みの更新用資格情報で session token を更新し、元の操作を一度だけ再試行する。更新できない場合だけ `auth_required` を返す。`share` / `update` / `download` / `artifacts get` の JSON 出力では既存の pending device 認証導線へ進む。
-- `ARTIFACTSHARE_TOKEN` / `--token` / `profiles import-token` 由来の `kind: "api_token"` profile の API 401 は `token_invalid` のままで、device 認証や自動更新へ切り替えない。
-- 旧 raw token 形式の保存済み profile は認証済みとして扱わず、再度 `login` または `profiles import-token` で作り直す。
-- 出力契約の唯一の例外は `preview`（`preview start`）である。終わらないプロセスとして ready JSON を 1 行だけ標準出力へ出し、その後はセッション終了までサーバとして動き続ける。1 実行 = 1 envelope の既存契約はこの command だけが破り、他の `preview next` / `preview done` / `preview reply` / `preview stop` を含む全 command は従来どおり単一 envelope で終了する。
+- 出力形式は、成功・失敗とも最上位に `schema_version`（整数、現行値 2）、`ok`、`command` を置き、成功時は `data`、失敗時は `error` を返す。
+- 成功時の JSON は標準出力へ、失敗時の JSON は標準エラー出力へ出し、失敗時の標準出力は空にする。
+- 終了コードは成功 `0`、失敗 `1`、利用者中断 `130` の 3 種類に絞る。失敗の種別は終了コードではなく `error.code` で表す。
+- 対話可能な端末では人間向けの出力を既定とし、非対話・パイプ・`CI=true` の環境では JSON 出力を既定とする。`--json` を明示したときは常に JSON で出力する。
+- 主要コマンドは Artifact Share の仕事単位に合わせて名付ける。MCP ツール名や内部 API 名をそのままコマンド名にしない。
+- 認可、容量、共有範囲、プロジェクト検証のルールはサービス層に集約し、CLI は薄い変換にとどめる。
+- 未認証のまま `share` / `update` / `download` を実行した場合、対話可能な端末では device login へ進み、完了後に元の操作を再実行する。非対話環境では `auth_required` を返して終了する。
+- 保存済みプロファイル由来の `kind: "session"` トークンが認証付きコマンドで API 401 を返した場合、保存済みの更新用資格情報でセッショントークンを更新し、元の操作を 1 回だけ再試行する。更新できない場合のみ `auth_required` を返す。`share` / `update` / `download` / `artifacts get` の JSON 出力では、既存の pending device 認証導線へ進む。
+- `ARTIFACTSHARE_TOKEN`・`--token`・`profiles import-token` 由来の `kind: "api_token"` プロファイルで API 401 が返った場合は `token_invalid` のままとし、device 認証や自動更新へ切り替えない。
+- 旧 raw token 形式の保存済みプロファイルは認証済みとして扱わず、改めて `login` または `profiles import-token` で作り直す。
+- 出力形式の唯一の例外は `preview`（`preview start`）である。常駐プロセスとして ready JSON を 1 行だけ標準出力へ出したあと、セッション終了までローカルサーバーとして動き続ける。1 実行につき 1 つの出力オブジェクトを返す原則を外れるのはこのコマンドだけで、`preview next` / `preview done` / `preview reply` / `preview stop` を含むほかの全コマンドは従来どおり単一の JSON で終了する。
 
-## 共通 flag
+## 共通フラグ
 
-各 command は次の共通 flag を受け取る。例外として、`profiles import-token` は token を標準入力だけで受けるため `--token` を `unknown_option` で拒否する。`skills *` はローカルファイル操作だけなので認証 flag を受け取っても API 呼び出しには使わない。
+各コマンドは次の共通フラグを受け取る。例外として、`profiles import-token` はトークンを標準入力からのみ受け取るため `--token` を `unknown_option` で拒否する。また `skills *` はローカルファイル操作だけを行うため、認証フラグを渡されても API 呼び出しには使わない。
 
 | flag                            | 既定                                                        | 役割                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `--json`                        | 非対話時は自動で有効                                        | 安定した JSON 出力にする                                                                                        |
-| `--base-url <url>`              | `ARTIFACTSHARE_BASE_URL` または `https://artifactshare.com` | 接続先を変える                                                                                                  |
-| `--token <token>`               | `ARTIFACTSHARE_TOKEN`                                       | Bearer token を渡す                                                                                             |
-| `--profile <name>`              | 既定プロファイルまたは作業ディレクトリ設定                  | 保存済み CLI 認証情報を選ぶ                                                                                     |
-| `--allow-plaintext-token-store` | 無効                                                        | OS の credential store が使えない POSIX 環境で 0600 の平文 token store 書き込みを許す。Windows では利用できない |
-| `--insecure-localhost`          | 無効                                                        | localhost の HTTPS dev サーバの自己署名証明書だけ許す                                                           |
+| `--json`                        | 非対話時は自動で有効                                        | 安定した JSON 形式で出力する                                                                                    |
+| `--base-url <url>`              | `ARTIFACTSHARE_BASE_URL` または `https://artifactshare.com` | 接続先を切り替える                                                                                              |
+| `--token <token>`               | `ARTIFACTSHARE_TOKEN`                                       | Bearer トークンを渡す                                                                                           |
+| `--profile <name>`              | 既定プロファイルまたは作業ディレクトリ設定                  | 保存済みの CLI 認証情報を選ぶ                                                                                   |
+| `--allow-plaintext-token-store` | 無効                                                        | OS の credential store が使えない POSIX 環境で、パーミッション 0600 の平文トークン保存を許す（Windows では利用不可） |
+| `--insecure-localhost`          | 無効                                                        | localhost の HTTPS 開発サーバーの自己署名証明書のみ許可する                                                     |
 
-## 正本と surface snapshot の同期
+## 共有契約とスナップショットの同期
 
-command の存在、usage、option 名の正本は `packages/cli/src/index.ts` の定義と build 済み CLI の実 help である。`packages/contract/generate-surfaces.mjs` は top-level と入れ子の `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json`、能力表、OpenAPI、同梱 Skill の command table を一つの共有契約から生成する。
+コマンドの存在、使い方、オプション名の基準は `packages/cli/src/index.ts` の定義とビルド済み CLI の実ヘルプである。`packages/contract/generate-surfaces.mjs` はトップレベルとサブコマンドの `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json`、能力表、OpenAPI、同梱 Skill のコマンド一覧を 1 つの共有契約からまとめて生成する。
 
-CLI の command または option を変更したときは、CLI を build して `pnpm generate:contract-surfaces` を実行し、README と同梱 Skill の実例が snapshot と一致することを確認する。`pnpm check:cli-reference` は fresh build の help と commit 済み JSON、および文書中の command 例を検査する。内部 reference は成功・失敗 JSON の詳細、README と同梱 Skill は利用者向けの手順を担い、説明文を snapshot へ重複させない。
+CLI のコマンドやオプションを変更したら、CLI をビルドして `pnpm generate:contract-surfaces` を実行し、README と同梱 Skill のコマンド例がスナップショットと一致することを確認する。`pnpm check:cli-reference` は最新のビルド済みヘルプ、コミット済み JSON、文書中のコマンド例の整合性を検査する。この内部リファレンスは成功・失敗 JSON の詳細を、README と同梱 Skill は利用者向けの手順をそれぞれ担い、説明文をスナップショットへ重複させない。
 
 ## command 一覧
 

@@ -282,12 +282,12 @@ const EN: ConnectContent = {
 const JA: ConnectContent = {
   title: 'AI に Artifact Share を接続する',
   intro:
-    'Artifact Share は、AI が作った HTML をブラウザで開けるリンクにするサービスです。Markdown、フォルダ、静的サイトにも対応し、同じ URL のままの差し替え、履歴、コメント、プロジェクト整理を使えます。',
+    'Artifact Share は、AI が作った HTML をブラウザで開けるリンクにするサービスです。Markdown、フォルダ、静的サイトにも対応しており、同じ URL のまま更新したり、履歴やコメント、プロジェクトで整理したりできます。',
   capabilities:
-    'Codex、Claude Code、Cursor Agent では CLI を使います。Claude、ChatGPT、Cursor のチャット、Claude Cowork では remote MCP で接続します。',
+    'Codex、Claude Code、Cursor Agent では CLI を使います。Claude、ChatGPT、Cursor のチャット、Claude Cowork ではリモート MCP で接続します。',
   guideFreshness: {
     targetUi: 'ChatGPT Web',
-    note: 'ChatGPT の MCP アプリは ChatGPT Web でのみ動作し、モバイルには対応していません。',
+    note: 'ChatGPT の MCP アプリは ChatGPT Web のみ対応しており、モバイル版では使えません。',
   },
   choiceHeading: '接続方法を選ぶ',
   choices: [
@@ -301,7 +301,7 @@ const JA: ConnectContent = {
     {
       label: 'チャットの AI',
       badge: 'MCP',
-      body: 'Claude、ChatGPT、Cursor のチャットに Artifact Share の MCP サーバを接続します。会話で作ったものを、手軽に共有したいときに便利です。',
+      body: 'Claude、ChatGPT、Cursor のチャットに Artifact Share の MCP サーバーを接続します。会話の中で作ったものを手軽に共有したいときに便利です。',
       href: '#claude',
       linkLabel: 'MCP から始める',
     },
@@ -369,8 +369,8 @@ const JA: ConnectContent = {
       steps: [
         'Claude のサイドメニューから「カスタマイズ」を開き、「コネクタ」を選びます。',
         '「＋」から「カスタムコネクタを追加」を選びます。',
-        '名前を「Artifact Share」にし、この MCP サーバ URL を貼り付けてから「追加」を選びます。',
-        'コネクタの「接続」を選び、求められたら Google ログインします。',
+        '名前を「Artifact Share」にし、この MCP サーバー URL を貼り付けてから「追加」を選びます。',
+        'コネクタの「接続」を選び、求められたら Google でログインします。',
         'チャットでは入力欄の「＋」から「コネクタ」を開き、Artifact Share を有効にします。',
       ],
       urlStep: 3,
@@ -390,11 +390,11 @@ const JA: ConnectContent = {
             'Enterprise / Edu: 利用を許可されたユーザーは、「設定」>「Apps」>「Advanced settings」で「Developer mode」を有効にしてから、「Apps」>「Create」を開きます。',
           ],
         },
-        '名前に Artifact Share を入力し、MCP server endpoint にこの MCP サーバ URL を設定します。',
+        '名前に Artifact Share を入力し、MCP server endpoint にこの MCP サーバー URL を設定します。',
         '認証方式に OAuth を選びます。',
         '「Scan Tools」を選び、検出されたツールを確認します。',
         '「Create」を選びます。',
-        '求められたら Google にログインします。',
+        '求められたら Google でログインします。',
       ],
       urlStep: 3,
     },
@@ -406,14 +406,14 @@ const JA: ConnectContent = {
         label: 'Artifact Share を Cursor に追加',
         href: CURSOR_INSTALL_URL,
         dialog:
-          'Cursor で名前と URL が入った「Install MCP Server」のダイアログが開くので、「Install」を選びます。求められたら Google ログインします。',
+          'Cursor で名前と URL が入った「Install MCP Server」のダイアログが開くので、「Install」を選びます。求められたら Google でログインします。',
         fallbackLead: 'リンクで Cursor が開かない場合は、手動で追加します。',
       },
       steps: [
         'Cursor の設定で「Tools & MCP」を開きます。',
         '「New MCP Server」を選ぶか、~/.cursor/mcp.json を直接編集します。',
-        'この MCP サーバ URL を「Artifact Share」という名前のリモートサーバとして登録します。',
-        '保存すると Cursor が接続を試み、成功すると緑の印が付きます。求められたら Google ログインします。',
+        'この MCP サーバー URL を「Artifact Share」という名前のリモートサーバーとして登録します。',
+        '保存すると Cursor が接続を試み、成功すると緑の印が付きます。求められたら Google でログインします。',
       ],
       urlStep: 3,
       codeBlock: cursorMcpJson,

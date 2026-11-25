@@ -232,6 +232,12 @@ test('edit rejects --title without a value before auth', () => {
   expectFailure(result, { command: 'edit', code: 'validation_failed' })
 })
 
+function genericForbiddenHint() {
+  return mapApiError(403, {
+    error: { code: 'unrecognized-policy-error', message: 'No access.' },
+  }).hint
+}
+
 test.each([
   [
     'link-sharing-plan-required',
@@ -285,6 +291,12 @@ test.each([
     })
     assert.equal(mapped.code, code)
     for (const option of hintOptions) assert.ok(mapped.hint.includes(option))
+    // None of these recoveries carries a command, so the hint is the only
+    // place the caller is told how to get out of the refusal. The catch-all
+    // refusal says nothing about a link policy, so answering a link policy
+    // with it, or with nothing, leaves the caller without a way out.
+    assert.ok(mapped.hint.length > 0)
+    assert.notEqual(mapped.hint, genericForbiddenHint())
     assert.equal(mapped.requires_human, requiresHuman)
     assert.equal(mapped.agent_recoverable, agentRecoverable)
     assert.deepEqual(mapped.recovery, { kind: recoveryKind })

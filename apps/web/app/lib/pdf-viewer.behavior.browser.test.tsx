@@ -1,5 +1,23 @@
 import { describe, expect, test, vi } from 'vitest'
 import { server } from 'vitest/browser'
+import { bindI18n } from '~/lib/i18n'
+
+const enText = bindI18n('en')
+const jaText = bindI18n('ja')
+
+// The parts the driver finds by the name the catalogue gives them, so a
+// complete list means the viewer published every one of them in the
+// language the app asked for.
+const NAMED_PARTS = [
+  'toolbar',
+  'pages',
+  'previous',
+  'pageNumber',
+  'next',
+  'settings',
+  'searchToggle',
+  'content',
+]
 
 // Each scenario starts the sandbox Worker; the feature walks take longer than
 // the default on slower engines and CI machines.
@@ -24,13 +42,13 @@ type Layout = NonNullable<
 // handle over the frame's top-right corner.
 function expectOneToolbarRow(layout: Layout, width: number) {
   const { controls, frameWidth } = layout
-  expect(controls.map(({ id }) => id)).toEqual([
+  expect(controls.map(({ control }) => control)).toEqual([
     'pages',
     'previous',
-    'page-number',
+    'pageNumber',
     'next',
-    'fit',
-    'search-toggle',
+    'settings',
+    'searchToggle',
     // The narrowest phones leave the download to the page list.
     ...(width > 360 ? ['download'] : []),
   ])
@@ -186,8 +204,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(list.opened).toEqual({
       open: true,
       modal: true,
-      heading: 'Pages',
-      current: [{ page: 40, marker: 'page', label: 'Go to page 40' }],
+      current: [{ page: 40, marker: 'page' }],
       focusedPage: '40',
       currentVisible: true,
       thumbnailWidth: 240,
@@ -209,7 +226,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(list.whileHidden.drawn).not.toContain(1)
     expect(list.resumed).toBe(true)
     expect(list.lastDrawn).toBe(true)
-    const closed = { open: false, focusedId: 'pages' }
+    const closed = { open: false, focusedControl: 'pages' }
     expect(list.afterEscape).toEqual(closed)
     if (width >= 780) expect(list.afterBackdrop).toEqual(closed)
     expect(list.afterCloseButton).toEqual(closed)
@@ -223,50 +240,52 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     const result = await server.commands.pdfViewerScenario('search', width)
     const search = result.search!
 
+    const matches = (current: number) =>
+      enText.t('pdfViewer.matches', { current, total: 3 })
     expect(search.closed.open).toBe(false)
     expect(search.openedByShortcut).toMatchObject({
       open: true,
       expanded: 'true',
-      focusedId: 'search-query',
+      focusedControl: 'searchQuery',
     })
     // The search bar takes its row from the document area.
     expect(search.openedByShortcut.containerHeight).toBe(
       search.closed.containerHeight - 52,
     )
-    expect(search.first).toMatchObject({ results: '1 of 3', page: 2 })
+    expect(search.first).toMatchObject({ results: matches(1), page: 2 })
     expect(search.highlighted.highlights).toBeGreaterThan(0)
-    expect(search.second).toMatchObject({ results: '2 of 3', page: 4 })
-    expect(search.third).toMatchObject({ results: '3 of 3', page: 6 })
-    expect(search.back).toMatchObject({ results: '2 of 3', page: 4 })
-    expect(search.nextButton).toMatchObject({ results: '3 of 3', page: 6 })
+    expect(search.second).toMatchObject({ results: matches(2), page: 4 })
+    expect(search.third).toMatchObject({ results: matches(3), page: 6 })
+    expect(search.back).toMatchObject({ results: matches(2), page: 4 })
+    expect(search.nextButton).toMatchObject({ results: matches(3), page: 6 })
     expect(search.previousButton).toMatchObject({
-      results: '2 of 3',
+      results: matches(2),
       page: 4,
     })
-    expect(search.absent.results).toBe('No results')
+    expect(search.absent.results).toBe(enText.t('pdfViewer.noResults'))
     expect(search.emptied).toMatchObject({ results: '', highlights: 0 })
     expect(search.emptiedWhileSearching).toMatchObject({
       results: '',
       highlights: 0,
     })
-    expect(search.resumed).toMatchObject({ results: '2 of 3', page: 4 })
+    expect(search.resumed).toMatchObject({ results: matches(2), page: 4 })
     expect(search.closedByEscape).toMatchObject({
       open: false,
       expanded: 'false',
-      focusedId: 'search-toggle',
+      focusedControl: 'searchToggle',
       highlights: 0,
       results: '',
     })
     // Closing ends the search: it reopens with an empty field.
     expect(search.reopened).toMatchObject({
       open: true,
-      focusedId: 'search-query',
+      focusedControl: 'searchQuery',
       query: '',
       results: '',
     })
     expect(search.closedByButton).toMatchObject({
       open: false,
-      focusedId: 'search-toggle',
+      focusedControl: 'searchToggle',
     })
     expect(result.offOrigin).toEqual([])
     expect(result.violations).toEqual([])
@@ -341,7 +360,10 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     atScale(flow.afterResize.pageWidth, 2)
     expect(flow.afterNext).toMatchObject({ page: 4, size: '2' })
     atScale(flow.afterNext.pageWidth, 2)
-    expect(flow.afterEscape).toMatchObject({ open: false, focusedId: 'fit' })
+    expect(flow.afterEscape).toMatchObject({
+      open: false,
+      focusedControl: 'settings',
+    })
     expect(flow.keyboardOpened).toMatchObject({
       open: true,
       focusedCheckedLayout: true,
@@ -356,18 +378,18 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(flow.keyboardToSize).toBe('auto')
     expect(flow.keyboardEscape).toMatchObject({
       open: false,
-      focusedId: 'fit',
+      focusedControl: 'settings',
     })
     expect(flow.afterOutsideClick.open).toBe(false)
     expect(flow.settingsToSearch).toMatchObject({
       open: false,
       searchOpen: true,
-      focusedId: 'search-query',
+      focusedControl: 'searchQuery',
     })
     expect(flow.shortcutToSearch).toMatchObject({
       open: false,
       searchOpen: true,
-      focusedId: 'search-query',
+      focusedControl: 'searchQuery',
     })
     expect(flow.searchToSettings).toMatchObject({
       open: true,
@@ -384,7 +406,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     })
     expect(flow.pagesClosed).toMatchObject({
       dialogOpen: false,
-      focusedId: 'pages',
+      focusedControl: 'pages',
     })
     // A swipe turns the page only while one page fits the width.
     expect(flow.fittedSwipe).toBe(3)
@@ -465,7 +487,7 @@ describe('PDF search messages', () => {
   test('says a PDF without a text layer has no searchable text', async () => {
     const result = await server.commands.pdfViewerScenario('image-only', 1440)
 
-    expect(result.searchOnce!.results).toBe('This PDF has no searchable text')
+    expect(result.searchOnce!.results).toBe(enText.t('pdfViewer.noText'))
   })
 
   test('keeps the search field usable when the Japanese no-text message shows on a 320px phone', async () => {
@@ -473,9 +495,7 @@ describe('PDF search messages', () => {
       app: { locale: 'ja', theme: 'system' },
     })
 
-    expect(result.searchOnce!.results).toBe(
-      'このPDFには検索できる文字がありません',
-    )
+    expect(result.searchOnce!.results).toBe(jaText.t('pdfViewer.noText'))
     expect(result.searchOnce!.inputWidth).toBeGreaterThanOrEqual(96)
     expect(result.searchOnce!.barOverflow).toBeLessThanOrEqual(0)
   })
@@ -483,7 +503,10 @@ describe('PDF search messages', () => {
   test('finds text on a later page after a page without text', async () => {
     const result = await server.commands.pdfViewerScenario('late-text', 1440)
 
-    expect(result.searchOnce).toMatchObject({ results: '1 of 1', page: 2 })
+    expect(result.searchOnce).toMatchObject({
+      results: enText.t('pdfViewer.matches', { current: 1, total: 1 }),
+      page: 2,
+    })
   })
 })
 
@@ -495,6 +518,8 @@ describe('PDF viewer in the app language', () => {
     app: { locale: 'ja', theme: 'system' },
   } as const
 
+  // Every page-list query uses the Japanese name of its item, so finding
+  // page 40 at all is the proof that the labels followed the language.
   test('labels the page list items and fits the row on a phone', async () => {
     const result = await server.commands.pdfViewerScenario('pages', 390, {
       ...ja,
@@ -503,16 +528,14 @@ describe('PDF viewer in the app language', () => {
 
     expect(result.labels).toEqual({
       lang: 'ja',
-      toolbar: 'PDFの操作',
-      pages: 'ページ一覧を開く',
-      content: 'PDFの内容',
       // The PDF content keeps its own language for text measurement.
       contentLang: '',
+      named: NAMED_PARTS,
     })
     expectOneToolbarRow(result.initial!, 390)
     expect(result.pageListOpened!.opened).toMatchObject({
-      heading: 'ページ一覧',
-      current: [{ page: 40, marker: 'page', label: '40ページへ移動' }],
+      current: [{ page: 40, marker: 'page' }],
+      thumbnailWidth: 240,
     })
   })
 
@@ -525,22 +548,25 @@ describe('PDF viewer in the app language', () => {
       ja,
     )
 
-    expect(search.first.results).toBe('1 / 3件')
-    expect(search.back.results).toBe('2 / 3件')
-    expect(search.resumed).toMatchObject({ results: '2 / 3件', page: 4 })
-    expect(search.absent.results).toBe('見つかりません')
-    expect(imageOnly.searchOnce!.results).toBe(
-      'このPDFには検索できる文字がありません',
+    expect(search.first.results).toBe(
+      jaText.t('pdfViewer.matches', { current: 1, total: 3 }),
     )
+    expect(search.back.results).toBe(
+      jaText.t('pdfViewer.matches', { current: 2, total: 3 }),
+    )
+    expect(search.resumed).toMatchObject({
+      results: jaText.t('pdfViewer.matches', { current: 2, total: 3 }),
+      page: 4,
+    })
+    expect(search.absent.results).toBe(jaText.t('pdfViewer.noResults'))
+    expect(imageOnly.searchOnce!.results).toBe(jaText.t('pdfViewer.noText'))
   })
 
   test('reports a failure in the app language', async () => {
     const result = await server.commands.pdfViewerScenario('corrupt', 1440, ja)
 
     expect(result.state).toBe('corrupt')
-    expect(result.message).toBe(
-      'このPDFは壊れているか、PDFとして読み込めませんでした。',
-    )
+    expect(result.message).toBe(jaText.t('pdfViewer.corrupt'))
     expect(result.downloadOffered).toBe(true)
   })
 
@@ -550,12 +576,8 @@ describe('PDF viewer in the app language', () => {
       app: { locale: 'en', theme: 'system' },
     })
 
-    expect(result.labels).toMatchObject({
-      lang: 'en',
-      toolbar: 'PDF controls',
-      pages: 'Open the page list',
-    })
-    expect(result.searchOnce!.results).toBe('This PDF has no searchable text')
+    expect(result.labels).toMatchObject({ lang: 'en', named: NAMED_PARTS })
+    expect(result.searchOnce!.results).toBe(enText.t('pdfViewer.noText'))
   })
 
   test('opens unframed in the browser language until the app says otherwise', async () => {
@@ -568,11 +590,8 @@ describe('PDF viewer in the app language', () => {
     )
     const english = await server.commands.pdfViewerScenario('image-only', 1440)
 
-    expect(japanese.labels).toMatchObject({ lang: 'ja', toolbar: 'PDFの操作' })
-    expect(english.labels).toMatchObject({
-      lang: 'en',
-      toolbar: 'PDF controls',
-    })
+    expect(japanese.labels).toMatchObject({ lang: 'ja', named: NAMED_PARTS })
+    expect(english.labels).toMatchObject({ lang: 'en', named: NAMED_PARTS })
   })
 
   test('follows late and changed app preferences without reloading the PDF', async () => {
@@ -599,7 +618,9 @@ describe('PDF viewer in the app language', () => {
       theme: 'light',
       // Native controls follow the app's light theme over the dark browser.
       colorScheme: 'light',
-      toolbar: 'PDFの操作',
+      // Found under their Japanese names.
+      toolbarNamed: true,
+      contentNamed: true,
       background: light,
       contentLang: '',
       ...reading,
@@ -608,7 +629,8 @@ describe('PDF viewer in the app language', () => {
     // The browser now prefers light.
     expect(flow.dark).toMatchObject({
       lang: 'en',
-      toolbar: 'PDF controls',
+      toolbarNamed: true,
+      contentNamed: true,
       background: dark,
       ...reading,
     })
@@ -626,7 +648,7 @@ describe('PDF viewer in the app language', () => {
     expect(flow.replaced).toMatchObject({
       lang: 'ja',
       theme: 'dark',
-      toolbar: 'PDFの操作',
+      toolbarNamed: true,
       background: dark,
       page: 1,
       layout: 'page',
@@ -688,7 +710,7 @@ describe('PDF viewer terminal states', () => {
 
     expect(result.initialState).toBe('loading')
     expect(result.state).toBe('transport')
-    expect(result.message).toMatch(/could not be loaded.*Reload/)
+    expect(result.message).toBe(enText.t('pdfViewer.transport'))
     expect(result.downloadOffered).toBe(false)
   })
 
@@ -696,7 +718,7 @@ describe('PDF viewer terminal states', () => {
     const result = await server.commands.pdfViewerScenario('password', 1440)
 
     expect(result.state).toBe('password')
-    expect(result.message).toMatch(/password-protected.*can’t be opened here/)
+    expect(result.message).toBe(enText.t('pdfViewer.password'))
     expect(result.downloadOffered).toBe(true)
     expect(result.downloadHref).toBe('/__as_pdf/original.pdf?download=1')
   })
@@ -705,7 +727,7 @@ describe('PDF viewer terminal states', () => {
     const result = await server.commands.pdfViewerScenario('corrupt', 1440)
 
     expect(result.state).toBe('corrupt')
-    expect(result.message).toMatch(/damaged/)
+    expect(result.message).toBe(enText.t('pdfViewer.corrupt'))
     expect(result.downloadOffered).toBe(true)
   })
 
@@ -715,8 +737,7 @@ describe('PDF viewer terminal states', () => {
 
     expect(failed).toEqual({
       state: 'page-error',
-      message:
-        'This page could not be displayed. Download the original PDF to view it.',
+      message: enText.t('pdfViewer.pageFailed'),
       downloadOffered: true,
       page: 4,
     })
@@ -743,7 +764,7 @@ describe('PDF viewer terminal states', () => {
     const result = await server.commands.pdfViewerScenario('unsupported', 1440)
 
     expect(result.state).toBe('unsupported')
-    expect(result.message).toMatch(/can’t be displayed in this browser/)
+    expect(result.message).toBe(enText.t('pdfViewer.unsupported'))
     expect(result.downloadOffered).toBe(true)
   })
 })

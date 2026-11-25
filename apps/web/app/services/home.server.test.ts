@@ -1175,7 +1175,7 @@ describe('listRecentArtifactsLimited unread counts', () => {
   })
 
   test('correlates last_viewed_at per row, not globally', async () => {
-    // 2 件目は同じ published 版より後に見ているので未読 0。相関が行ごとでないと
+    // 2 件目は同じ published バージョンより後に見ているので未読 0。相関が行ごとでないと
     // 1 件目の last_viewed_at を拾って 1 になる
     await db
       .insertInto('shareables')

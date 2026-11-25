@@ -102,9 +102,20 @@ const viewer: SessionUser = {
 const healthyEstimate = {
   kind: 'ok' as const,
   currency: 'usd' as const,
-  prorationAmount: 12,
   nextInvoiceAt: null,
 }
+/** A distinct proration per change, so the amount in the dialog says which
+ * change was previewed. The plan downgrade credits, the longer interval
+ * charges. */
+const prorationFor = { 'plus-monthly': -16.5, 'team-yearly': 261 }
+type Change = keyof typeof prorationFor
+const prorationText = (change: Change) =>
+  t(
+    prorationFor[change] < 0
+      ? 'billing.confirm.prorationCredit'
+      : 'billing.confirm.prorationCharge',
+    { amount: formatPrice('usd', Math.abs(prorationFor[change])) },
+  )
 
 let session: SessionUser | null = viewer
 let held: Promise<void> | null = null
@@ -116,7 +127,18 @@ beforeEach(() => {
     recipients: [{ id: 'robin', name: 'Robin', email: 'robin@example.test' }],
     total: 1,
   })
-  services.preview.mockResolvedValue(healthyEstimate)
+  services.preview.mockImplementation(
+    async (
+      _stripe: unknown,
+      _env: unknown,
+      _workspace: unknown,
+      plan: string,
+      interval: string,
+    ) => ({
+      ...healthyEstimate,
+      prorationAmount: prorationFor[`${plan}-${interval}` as Change] ?? 0,
+    }),
+  )
 })
 afterEach(() => {
   auth.social.mockClear()
@@ -435,13 +457,25 @@ async function mount(start: string) {
   }
 }
 
-async function pressPlanChange(container: HTMLElement) {
+/** The copy each change's button leads with; the interval button follows its
+ * label with a saving note. */
+const changeLabel: Record<Change, string> = {
+  'plus-monthly': t('billing.change.plan.downgrade'),
+  'team-yearly': t('billing.change.interval.toYearly'),
+}
+
+async function pressChange(container: HTMLElement, change: Change) {
   await dom.press(
     await dom.find(() =>
-      container.querySelector<HTMLElement>('#billing-change-plus-monthly'),
+      dom.byRole(container, 'button', (name) =>
+        name.startsWith(changeLabel[change]),
+      ),
     ),
   )
 }
+
+const pressPlanChange = (container: HTMLElement) =>
+  pressChange(container, 'plus-monthly')
 
 async function openPlanChange(container: HTMLElement) {
   await pressPlanChange(container)
@@ -483,9 +517,7 @@ describe('a valid session', () => {
     try {
       const dialog = await openRemoval(screen.container)
       await dom.find(() =>
-        [...dialog.querySelectorAll('label')].find((label) =>
-          label.textContent?.includes('Robin'),
-        ),
+        dom.byRole(dialog, 'radio', (name) => name.includes('Robin')),
       )
       expect(screen.where()).toBe(membersPage)
     } finally {
@@ -493,64 +525,21 @@ describe('a valid session', () => {
     }
   })
 
-  test('a configured estimate shows its proration in the open dialog', async () => {
-    const screen = await mount(billingPage)
-    try {
-      const dialog = await openPlanChange(screen.container)
-      await vi.waitFor(() =>
-        expect(dialog.textContent).toContain(
-          t('billing.confirm.prorationCharge', {
-            amount: formatPrice('usd', 12),
-          }),
-        ),
-      )
-      expect(screen.where()).toBe(billingPage)
-    } finally {
-      screen.unmount()
-    }
-  })
-
-  test.each([
-    ['plan', 'plus', 'monthly', -16.5],
-    ['interval', 'team', 'yearly', 261],
-  ] as const)(
-    'opening the %s change previews that change and shows its proration',
-    async (_, plan, interval, amount) => {
-      services.preview.mockClear()
-      services.preview.mockResolvedValue({
-        ...healthyEstimate,
-        prorationAmount: amount,
-      })
+  // The estimate answers per plan and interval, so the amount in the dialog is
+  // the one for the change the user opened, not for another one.
+  test.each(['plus-monthly', 'team-yearly'] as const)(
+    'opening the %s change shows that change in its own proration',
+    async (change) => {
       const screen = await mount(billingPage)
       try {
-        await dom.press(
-          await dom.find(() =>
-            screen.container.querySelector<HTMLElement>(
-              `#billing-change-${plan}-${interval}`,
-            ),
-          ),
-        )
+        await pressChange(screen.container, change)
         const dialog = await dom.find(() =>
           dom.byRole(document.body, 'alertdialog'),
         )
         await vi.waitFor(() =>
-          expect(dialog.textContent).toContain(
-            t(
-              amount < 0
-                ? 'billing.confirm.prorationCredit'
-                : 'billing.confirm.prorationCharge',
-              { amount: formatPrice('usd', Math.abs(amount)) },
-            ),
-          ),
+          expect(dialog.textContent).toContain(prorationText(change)),
         )
-        expect(services.preview).toHaveBeenCalledOnce()
-        expect(services.preview).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.anything(),
-          workspaceRow,
-          plan,
-          interval,
-        )
+        expect(screen.where()).toBe(billingPage)
       } finally {
         screen.unmount()
       }
@@ -626,11 +615,7 @@ describe('an expired session during a confirmation', () => {
       held = null
       release()
       await vi.waitFor(() =>
-        expect(reopened.textContent).toContain(
-          t('billing.confirm.prorationCharge', {
-            amount: formatPrice('usd', 12),
-          }),
-        ),
+        expect(reopened.textContent).toContain(prorationText('plus-monthly')),
       )
       expect(screen.where()).toBe(billingPage)
     } finally {
@@ -717,11 +702,10 @@ describe('an expired session during a confirmation', () => {
       try {
         // Google: the provider returns to the callback the landing supplies.
         await dom.press(
-          await dom.find(
-            () =>
-              [...screen.container.querySelectorAll('button')].find((button) =>
-                button.textContent?.includes(t('lp.cta')),
-              ) ?? null,
+          await dom.find(() =>
+            dom.byRole(screen.container, 'button', (name) =>
+              name.includes(t('lp.cta')),
+            ),
           ),
         )
         expect(auth.social).toHaveBeenCalledWith(
@@ -730,7 +714,9 @@ describe('an expired session during a confirmation', () => {
         // Email: the code page navigates to `next` after a verified code.
         await dom.press(
           await dom.find(() =>
-            screen.container.querySelector<HTMLElement>('a[href^="/sign-in"]'),
+            dom.byRole(screen.container, 'link', (name) =>
+              name.startsWith(t('signin.email.toggle')),
+            ),
           ),
         )
         await vi.waitFor(() =>
@@ -738,7 +724,11 @@ describe('an expired session during a confirmation', () => {
         )
         await dom.fill(
           await dom.find(() =>
-            screen.container.querySelector<HTMLElement>('input[type="email"]'),
+            dom.byRole(
+              screen.container,
+              'textbox',
+              t('signin.email.placeholder'),
+            ),
           ),
           'owner@example.test',
         )
@@ -749,7 +739,11 @@ describe('an expired session during a confirmation', () => {
         )
         await dom.fill(
           await dom.find(() =>
-            screen.container.querySelector<HTMLElement>('#signin-code'),
+            dom.byRole(
+              screen.container,
+              'textbox',
+              t('signin.otp.placeholder'),
+            ),
           ),
           '123456',
         )

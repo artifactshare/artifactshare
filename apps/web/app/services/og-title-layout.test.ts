@@ -80,7 +80,7 @@ describe('layoutOgTitle', () => {
 
   test('stops shrinking at 48px and truncates overlong text', () => {
     const result = layoutOgTitle(
-      '共有した成果物を同じURLで何度でも更新しながら、コメントを受け取り、公開範囲を管理し、チーム全員で内容を確認して次の版へ進めるための、とても長いタイトルです',
+      '共有した成果物を同じURLで何度でも更新しながら、コメントを受け取り、公開範囲を管理し、チーム全員で内容を確認して次のバージョンへ進めるための、とても長いタイトルです',
     )
     expect(result.fontSize).toBe(48)
     expect(result.text).toMatch(/…$/u)
