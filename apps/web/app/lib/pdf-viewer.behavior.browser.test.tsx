@@ -474,7 +474,7 @@ describe('PDF search messages', () => {
     })
 
     expect(result.searchOnce!.results).toBe(
-      'このPDFには検索できる文字がありません',
+      'この PDF には検索できる文字がありません',
     )
     expect(result.searchOnce!.inputWidth).toBeGreaterThanOrEqual(96)
     expect(result.searchOnce!.barOverflow).toBeLessThanOrEqual(0)
@@ -503,16 +503,16 @@ describe('PDF viewer in the app language', () => {
 
     expect(result.labels).toEqual({
       lang: 'ja',
-      toolbar: 'PDFの操作',
+      toolbar: 'PDF の操作',
       pages: 'ページ一覧を開く',
-      content: 'PDFの内容',
+      content: 'PDF の内容',
       // The PDF content keeps its own language for text measurement.
       contentLang: '',
     })
     expectOneToolbarRow(result.initial!, 390)
     expect(result.pageListOpened!.opened).toMatchObject({
       heading: 'ページ一覧',
-      current: [{ page: 40, marker: 'page', label: '40ページへ移動' }],
+      current: [{ page: 40, marker: 'page', label: '40 ページへ移動' }],
     })
   })
 
@@ -525,12 +525,12 @@ describe('PDF viewer in the app language', () => {
       ja,
     )
 
-    expect(search.first.results).toBe('1 / 3件')
-    expect(search.back.results).toBe('2 / 3件')
-    expect(search.resumed).toMatchObject({ results: '2 / 3件', page: 4 })
+    expect(search.first.results).toBe('1 / 3 件')
+    expect(search.back.results).toBe('2 / 3 件')
+    expect(search.resumed).toMatchObject({ results: '2 / 3 件', page: 4 })
     expect(search.absent.results).toBe('見つかりません')
     expect(imageOnly.searchOnce!.results).toBe(
-      'このPDFには検索できる文字がありません',
+      'この PDF には検索できる文字がありません',
     )
   })
 
@@ -539,7 +539,7 @@ describe('PDF viewer in the app language', () => {
 
     expect(result.state).toBe('corrupt')
     expect(result.message).toBe(
-      'このPDFは壊れているか、PDFとして読み込めませんでした。',
+      'この PDF は壊れているか、PDF として読み込めませんでした。',
     )
     expect(result.downloadOffered).toBe(true)
   })
@@ -568,7 +568,7 @@ describe('PDF viewer in the app language', () => {
     )
     const english = await server.commands.pdfViewerScenario('image-only', 1440)
 
-    expect(japanese.labels).toMatchObject({ lang: 'ja', toolbar: 'PDFの操作' })
+    expect(japanese.labels).toMatchObject({ lang: 'ja', toolbar: 'PDF の操作' })
     expect(english.labels).toMatchObject({
       lang: 'en',
       toolbar: 'PDF controls',
@@ -599,7 +599,7 @@ describe('PDF viewer in the app language', () => {
       theme: 'light',
       // Native controls follow the app's light theme over the dark browser.
       colorScheme: 'light',
-      toolbar: 'PDFの操作',
+      toolbar: 'PDF の操作',
       background: light,
       contentLang: '',
       ...reading,
@@ -626,7 +626,7 @@ describe('PDF viewer in the app language', () => {
     expect(flow.replaced).toMatchObject({
       lang: 'ja',
       theme: 'dark',
-      toolbar: 'PDFの操作',
+      toolbar: 'PDF の操作',
       background: dark,
       page: 1,
       layout: 'page',

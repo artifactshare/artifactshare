@@ -415,7 +415,7 @@ async function seedUnreadColumns(db: Kysely<DB>) {
       r2_key: 'v-flag',
       size_bytes: 1,
       sha256: 'v-flag',
-      // 未読は他者の動きなので、閲覧者 (u-owner) 以外が出した版にする
+      // 未読は他者の動きなので、閲覧者 (u-owner) 以外が出したバージョンにする
       created_by_id: 'u-other',
       created_at: '2026-06-16T00:00:00.000Z',
       published_at: '2026-06-16T00:00:00.000Z',

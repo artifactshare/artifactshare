@@ -355,11 +355,11 @@ for (const locale of ['en', 'ja'] as const)
                   'Sign in again on every CLI device and publisher client to restore access.',
               }
             : {
-                revoke: `「${tokenName}」を使った API リクエストは認証に失敗します。`,
+                revoke: `「${tokenName}」を使った API リクエストは認証できなくなります。`,
                 'revoke-cli-family':
-                  'このセッションを失効させると、その端末または投稿用クライアントで再ログインが必要になります。',
+                  'このセッションを失効させると、対象の端末や投稿用クライアントでログインし直す必要があります。',
                 'revoke-all-cli-families':
-                  '再び利用するには、すべての CLI 端末と投稿用クライアントでログインし直してください。',
+                  'もう一度使うには、すべての CLI 端末と投稿用クライアントでログインし直す必要があります。',
               }
         const consequence = consequences[intent]
         if (intent === 'revoke-all-cli-families') {
@@ -454,7 +454,7 @@ for (const locale of ['en', 'ja'] as const)
             .toHaveTextContent(
               locale === 'en'
                 ? 'This token is unavailable.'
-                : 'このトークンは利用できません。',
+                : 'このトークンは使えません。',
             )
           const close = dialog.getByRole('button', {
             name: copy['common.close'],

@@ -48,9 +48,9 @@ describe('private mobile design handoff guide routes', () => {
         title: 'モバイルの設計文書を非公開のまま PC へ引き継ぐ',
         ogTitle: 'モバイルの設計文書を非公開のまま PC へ引き継ぐ',
         description:
-          'モバイルのエージェントから設計文書を自分だけに見える状態で共有し、PC で続きをする方法を案内します。共有コマンドに --visibility private を付けるだけで完結します。',
+          'モバイルのエージェントから設計文書を自分だけに見える状態で共有し、PC で作業を続ける手順を説明します。共有コマンドに --visibility private を付けるだけで完結します。',
         ogDescription:
-          'モバイルのエージェントから設計文書を非公開で共有し、PC で続きをする方法です。共有コマンド 1 つで完結します。',
+          'モバイルのエージェントから設計文書を非公開で共有し、PC で作業を続ける手順です。共有コマンド 1 つで完結します。',
         canonical: PRIVATE_HANDOFF_JA_CANONICAL,
         locale: 'ja_JP',
         alternateLocale: 'en_US',

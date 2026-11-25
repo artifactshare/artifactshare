@@ -187,7 +187,7 @@ export const componentCatalog: ComponentCatalogEntry[] = [
     name: 'SegmentedControlGroup',
     purpose: '排他的な選択肢を連結した一つの操作群として扱う。',
     variants: [],
-    upstreamDiff: 'Artifact Share 固有の余白監査境界を所有。',
+    upstreamDiff: 'Artifact Share 固有の余白監査境界を定義する。',
   },
   {
     file: 'ui/label',
@@ -294,14 +294,14 @@ export const componentCatalog: ComponentCatalogEntry[] = [
     file: 'form/inline-fields',
     name: 'InlineFields',
     purpose:
-      '入力 + ボタンの横並び。gap-inline を所有し、stack 境界以下で縦積みにする。',
+      '入力 + ボタンの横並び。要素間の gap-inline を指定し、stack 境界以下で縦積みにする。',
     variants: [],
     upstreamDiff: null,
   },
   {
     file: 'app/page-breadcrumb',
     name: 'PageBreadcrumb',
-    purpose: '一覧ページのパンくずと見出しへの縦リズムを所有する。',
+    purpose: '一覧ページのパンくずと見出しの縦間隔を統一する。',
     variants: [],
     upstreamDiff:
       'shadcn Breadcrumb に見出しとの間隔 mb-2 を追加する薄い wrapper。',
@@ -316,7 +316,7 @@ export const componentCatalog: ComponentCatalogEntry[] = [
   {
     file: 'form/settings-page',
     name: 'SettingsPage',
-    purpose: 'セクションの縦積み。gap-section を所有する。',
+    purpose: 'セクションの縦積み。セクション間の gap-section を指定する。',
     variants: [],
     upstreamDiff: null,
   },
@@ -324,7 +324,7 @@ export const componentCatalog: ComponentCatalogEntry[] = [
     file: 'form/settings-section',
     name: 'SettingsSection',
     purpose:
-      'h2 + 説明 + 読み取り専用の理由（任意） + 右端 actions + 内容。内容の gap-field を所有する。',
+      'h2 + 説明 + 読み取り専用の理由（任意） + 右端 actions + 内容。内容の gap-field を指定する。',
     variants: [],
     upstreamDiff: null,
   },

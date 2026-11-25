@@ -30,7 +30,7 @@ const LINK_SHARING_FEATURE = {
 } as const
 const TEAM_LINK_SHARING_FEATURE = {
   en: 'Link sharing with expiration settings and workspace controls',
-  ja: '認証なしのリンク共有（期限設定・組織管理付き）',
+  ja: '認証なしのリンク共有（期限設定・ワークスペース管理付き）',
 } as const
 export type PricingCopy = {
   title: string
@@ -97,23 +97,23 @@ const commonFeatures = {
   ja: {
     free: [
       `保存容量 ${PLAN_DISPLAY.free.storage}`,
-      `プロジェクト ${PLAN_DISPLAY.free.projects}件`,
+      `プロジェクト ${PLAN_DISPLAY.free.projects} 件`,
       '投稿者・閲覧者・コメント参加者の人数による追加料金なし',
       LINK_SHARING_FEATURE.ja,
-      'CLI・MCPサーバーからAIで直接投稿',
+      'CLI・MCP サーバーから AI で直接投稿',
       'HTML、Markdown、静的サイトの共有',
-      'コメントと版更新',
+      'コメントとバージョン更新',
     ],
     plus: [
       `保存容量 ${PLAN_DISPLAY.plus.storage}`,
-      `プロジェクト ${PLAN_DISPLAY.plus.projects}件`,
+      `プロジェクト ${PLAN_DISPLAY.plus.projects} 件`,
       '投稿者・閲覧者・コメント参加者の人数による追加料金なし',
       LINK_SHARING_FEATURE.ja,
       EXTERNAL_POSTING_FEATURE.ja,
-      `${PLAN_DISPLAY.plus.storage}を超えても継続利用可能`,
-      'CLI・MCPサーバーからAIで直接投稿',
+      `${PLAN_DISPLAY.plus.storage} を超えても継続利用可能`,
+      'CLI・MCP サーバーから AI で直接投稿',
       'HTML、Markdown、静的サイトの共有',
-      'コメントと版更新',
+      'コメントとバージョン更新',
     ],
     team: [
       `保存容量 ${PLAN_DISPLAY.team.storage}`,
@@ -122,10 +122,10 @@ const commonFeatures = {
       TEAM_LINK_SHARING_FEATURE.ja,
       EXTERNAL_POSTING_FEATURE.ja,
       '投稿者と保存容量の運用管理',
-      `${PLAN_DISPLAY.team.storage}を超えても継続利用可能`,
-      'CLI・MCPサーバーからAIで直接投稿',
+      `${PLAN_DISPLAY.team.storage} を超えても継続利用可能`,
+      'CLI・MCP サーバーから AI で直接投稿',
       'HTML、Markdown、静的サイトの共有',
-      'コメントと版更新',
+      'コメントとバージョン更新',
     ],
   },
 } as const
@@ -145,19 +145,19 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
     ? {
         title: '料金プラン | Artifact Share',
         description:
-          'Artifact ShareのFree、Plus、Teamを比較できます。月払い・年払い、JPY・USD、保存容量、容量超過料金を確認して、ワークスペースに合うプランを選べます。',
+          'Artifact Share の Free、Plus、Team を比較できます。月払い・年払い、JPY・USD、保存容量、容量超過料金を確認して、ワークスペースに合うプランを選べます。',
         eyebrow: '料金プラン',
-        hero: 'AIが作った成果物を、チームの仕事に。',
-        body: 'HTML、Markdown、静的サイトを共有し、コメントと版更新をひとつの場所で続けられます。人数による追加料金はありません。',
+        hero: 'AI が作ったファイルを、チームの仕事に。',
+        body: 'HTML、Markdown、静的サイトを共有し、コメントとバージョン更新をひとつの場所で続けられます。人数による追加料金はありません。',
         billingInterval: '支払い周期',
         monthly: '月払い',
         yearly: '年払い',
-        save: '2か月分お得',
+        save: '2 か月分お得',
         currency: '通貨',
         compare: 'プランの違い',
         faq: 'よくある質問',
         billedMonthly: '毎月請求・税抜',
-        billedYearly: '1年分をまとめて請求・税抜',
+        billedYearly: '1 年分をまとめて請求・税抜',
         period: { month: '月', year: '年' },
         homeLabel: 'Artifact Share ホーム',
         howTo: '使い方',
@@ -165,8 +165,8 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
         comparisonFeature: '機能',
         choose: {
           free: '無料で始める',
-          plus: 'Plusを選ぶ',
-          team: 'Teamを選ぶ',
+          plus: 'Plus を選ぶ',
+          team: 'Team を選ぶ',
         },
         recommended: '社内利用におすすめ',
         plans: {
@@ -174,20 +174,20 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
             description: '小さな社内試用や単発の共有から始める',
             priceNote: 'クレジットカード不要',
             features: commonFeatures.ja.free,
-            note: `保存容量が${PLAN_DISPLAY.free.storage}に達すると、新しいアップロードは停止します。社外メンバーからの投稿はPlusプランとTeamプランで利用できます。`,
+            note: `保存容量が ${PLAN_DISPLAY.free.storage} に達すると、新しいアップロードは停止します。社外メンバーからの投稿は Plus プランと Team プランで利用できます。`,
           },
           plus: {
             description: 'ひとりから少人数で、案件やプロジェクトに継続して使う',
             priceNote: '',
             features: commonFeatures.ja.plus,
-            note: `${PLAN_DISPLAY.plus.storage}を超えた保存容量には、JPYで${overage.jpy} / GB・月、USDで${overage.usd} / GB・月の容量超過料金がかかります。契約中は上限なくアップロードを続けられます。`,
+            note: `${PLAN_DISPLAY.plus.storage} を超えた保存容量には、JPY で ${overage.jpy} / GB・月、USD で ${overage.usd} / GB・月の容量超過料金がかかります。契約中は上限なくアップロードを続けられます。`,
           },
           team: {
             description: '部署や会社で、投稿者と保存容量を管理しながら運用する',
             priceNote: '',
-            yearlyTaxNote: `消費税込み${teamYearlyWithTax}`,
+            yearlyTaxNote: `消費税込み ${teamYearlyWithTax}`,
             features: commonFeatures.ja.team,
-            note: `ワークスペース単位の定額です。${PLAN_DISPLAY.team.storage}を超えた保存容量には、JPYで${overage.jpy} / GB・月、USDで${overage.usd} / GB・月の容量超過料金がかかります。契約中は上限なくアップロードを続けられます。`,
+            note: `ワークスペース単位の定額です。${PLAN_DISPLAY.team.storage} を超えた保存容量には、JPY で ${overage.jpy} / GB・月、USD で ${overage.usd} / GB・月の容量超過料金がかかります。契約中は上限なくアップロードを続けられます。`,
           },
         },
         comparison: [
@@ -198,8 +198,8 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
           {
             label: 'プロジェクト',
             values: [
-              `${PLAN_DISPLAY.free.projects}件`,
-              `${PLAN_DISPLAY.plus.projects}件`,
+              `${PLAN_DISPLAY.free.projects} 件`,
+              `${PLAN_DISPLAY.plus.projects} 件`,
               '無制限',
             ],
           },
@@ -208,12 +208,16 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
             values: ['なし', 'なし', 'なし'],
           },
           {
-            label: 'CLI・MCPサーバーからの投稿',
+            label: 'CLI・MCP サーバーからの投稿',
             values: ['あり', 'あり', 'あり'],
           },
           {
             label: '認証なしのリンク共有',
-            values: ['期限設定付き', '期限設定付き', '期限設定・組織管理付き'],
+            values: [
+              '期限設定付き',
+              '期限設定付き',
+              '期限設定・ワークスペース管理付き',
+            ],
           },
           { label: '社外メンバーからの投稿', values: ['—', 'あり', 'あり'] },
           { label: '投稿者と保存容量の運用管理', values: ['—', '—', 'あり'] },
@@ -232,30 +236,30 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
         faqs: [
           {
             question: '表示価格に税は含まれていますか？',
-            answer: `有料プランの表示価格は税抜です。国内でJPYを選ぶと、申込時に消費税が加算されます。Teamの年払いは税抜${teamYearlyBeforeTax}、消費税込み${teamYearlyWithTax}です。適用される税額と最終的な請求額は、決済画面(Checkout)で確認できます。`,
+            answer: `有料プランの表示価格は税抜です。国内で JPY を選ぶと、申込時に消費税が加算されます。Team の年払いは税抜 ${teamYearlyBeforeTax}、消費税込み ${teamYearlyWithTax} です。適用される税額と最終的な請求額は、決済画面（Checkout）で確認できます。`,
           },
           {
             question: '年払いはどのように請求されますか？',
             answer:
-              '申込時に1年分をまとめて請求します。PlusもTeamも月払いを12か月続ける場合と比べて2か月分お得です。年払いを選ぶと、年額と月あたりの換算額をあわせて表示します。',
+              '申込時に 1 年分をまとめて請求します。Plus も Team も月払いを 12 か月続ける場合より 2 か月分お得です。年払いを選ぶと、年額と月あたりの換算額をあわせて表示します。',
           },
           {
             question: '保存容量を超えるとどうなりますか？',
-            answer: `Freeでは、保存容量が${PLAN_DISPLAY.free.storage}に達すると、新しいファイルをアップロードできなくなります。Plus（${PLAN_DISPLAY.plus.storage}）とTeam（${PLAN_DISPLAY.team.storage}）では上限なくアップロードを続けられ、超過分には同じ容量超過料金がかかります。`,
+            answer: `Free では、保存容量が ${PLAN_DISPLAY.free.storage} に達すると新しいファイルをアップロードできなくなります。Plus（${PLAN_DISPLAY.plus.storage}）と Team（${PLAN_DISPLAY.team.storage}）では上限なくアップロードを続けられ、超過分には同じ容量超過料金がかかります。`,
           },
           {
-            question: 'PlusからTeamへ変更する目安はありますか？',
-            answer: `無制限のプロジェクトや、投稿者と保存容量を管理するための運用機能が必要な場合は、Teamが適しています。保存容量が${PLAN_DISPLAY.plus.storage}を超えても、契約中のPlusをそのまま利用できます。`,
+            question: 'Plus から Team へ変更する目安はありますか？',
+            answer: `無制限のプロジェクトや、投稿者と保存容量を管理するための運用機能が必要な場合は Team が合います。保存容量が ${PLAN_DISPLAY.plus.storage} を超えても、契約中の Plus をそのまま使い続けられます。`,
           },
           {
             question: '利用人数が増えると料金も上がりますか？',
             answer:
-              'いいえ。投稿、閲覧、コメントに参加する人が増えても、人数による追加料金はかかりません。Teamもワークスペース単位の定額です。',
+              'いいえ。投稿、閲覧、コメントに参加する人が増えても、人数による追加料金はかかりません。Team もワークスペース単位の定額です。',
           },
           {
             question: '支払い通貨は選べますか？',
             answer:
-              'はい。お申し込み前に料金ページで日本円（JPY）または米ドル（USD）を選べます。選択した通貨の固定価格が適用されます。',
+              'はい。お申し込み前に料金ページで日本円（JPY）か米ドル（USD）を選べます。選んだ通貨の固定価格が適用されます。',
           },
           {
             question: 'プランの変更や解約はできますか？',

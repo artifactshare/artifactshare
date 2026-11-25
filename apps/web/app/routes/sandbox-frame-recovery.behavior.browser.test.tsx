@@ -65,7 +65,7 @@ describe('SandboxFrame recovery', () => {
     ],
     [
       'ja',
-      'コンテンツを更新しています',
+      '内容を更新しています',
       '少し待ってから、このページを再読み込みしてください。',
       '再読み込み',
     ],
@@ -1043,7 +1043,7 @@ test.each([false, true])(
 
 test.each([
   ['en', 'Open 7 unresolved comments on this text: Selected words'],
-  ['ja', 'この箇所の未解決コメント7件を開く: Selected words'],
+  ['ja', 'この箇所の未解決コメント 7 件を開く: Selected words'],
 ] as const)(
   'inline totals stay stable as older replies load (%s)',
   async (locale, label) => {

@@ -809,7 +809,7 @@ test.each(['en', 'ja'] as const)(
       expect(reason.textContent).toBe(
         locale === 'en'
           ? 'Choose a project and click “Add destination” to set the primary destination.'
-          : 'プロジェクトを選び、「投稿先を追加」を押して既定の投稿先を設定してください。',
+          : 'プロジェクトを選び、「投稿先を追加」を押して既定の投稿先を決めてください。',
       )
       await dialog
         .getByRole('button', {

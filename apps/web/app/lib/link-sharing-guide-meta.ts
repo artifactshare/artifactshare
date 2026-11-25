@@ -9,7 +9,7 @@ export function linkSharingGuideMeta(locale: Locale) {
   const title = locale === 'ja' ? 'リンク共有ガイド' : 'Link sharing guide'
   const description =
     locale === 'ja'
-      ? 'リンク共有の設定、期限切れ、Free・Plus・Teamの違い、Web・CLI・MCPでの使い方を説明します。'
+      ? 'リンク共有の設定、期限切れ、Free・Plus・Team の違い、Web・CLI・MCP での使い方を説明します。'
       : 'How link sharing works, how expiration is managed, and how to use it on the web, CLI, and MCP across Free, Plus, and Team.'
   return [
     { title },

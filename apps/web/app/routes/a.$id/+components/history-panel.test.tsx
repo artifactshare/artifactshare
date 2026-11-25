@@ -374,7 +374,11 @@ test.each([
   { locale: 'en', retainVersions: 24, note: 'Keeping the latest 24 versions' },
   { locale: 'en', retainVersions: null, note: null },
   { locale: 'ja', retainVersions: 1, note: '最新版だけを残しています' },
-  { locale: 'ja', retainVersions: 24, note: '最新24件の版を残しています' },
+  {
+    locale: 'ja',
+    retainVersions: 24,
+    note: '最新24件のバージョンを残しています',
+  },
   { locale: 'ja', retainVersions: null, note: null },
 ] as const)(
   '$locale nonmanager history withholds configured retention $retainVersions',
@@ -528,7 +532,7 @@ test.each(['en', 'ja'] as const)(
       const protection =
         locale === 'en'
           ? 'All versions people added are kept.'
-          : '人が追加した版はすべて残します。'
+          : '人が追加したバージョンはすべて残します。'
       expect(html).not.toContain(protection)
       expect(html).not.toContain(
         locale === 'en'
@@ -536,8 +540,8 @@ test.each(['en', 'ja'] as const)(
             ? 'Keeping the latest 2 scheduled versions.'
             : 'Keeping the latest 2 versions'
           : publisherManaged
-            ? '最新2件の定期更新の版'
-            : '最新2件の版',
+            ? '最新2件の定期更新のバージョン'
+            : '最新2件のバージョン',
       )
     }
   },
@@ -602,7 +606,7 @@ test.each(['en', 'ja'] as const)(
             expect(html).toContain('v2')
             if (locale === 'ja' && editable && managed) {
               expect(html).toContain(
-                'ファイルの現在の版に設定されている古い定期更新の版も残しています。',
+                '現在のバージョンに設定されている古い定期更新のバージョンも残しています。',
               )
               expect(html).not.toContain('現在表示している')
             }

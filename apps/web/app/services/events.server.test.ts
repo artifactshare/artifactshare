@@ -776,7 +776,7 @@ describe('events helpers', () => {
     // 自分の shareable への他者閲覧と匿名閲覧 (含む)
     await insertView(db, 'view-auth', '2026-01-02T11:00:00Z', 'u2')
     await insertView(db, 'view-anon', '2026-01-02T11:30:00Z', null)
-    // 閲覧履歴にある他人の shareable の版更新 (含む)
+    // 閲覧履歴にある他人の shareable のバージョン更新 (含む)
     await db
       .insertInto('shareable_viewer_recency')
       .values({

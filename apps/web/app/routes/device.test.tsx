@@ -556,7 +556,7 @@ describe('/device', () => {
             ]
           : [
               '端末に表示されたコードと一致することを確認してください。',
-              'CLI で投稿するには Google または Microsoft でログインしてください。',
+              'CLI から投稿するには Google または Microsoft でログインしてください。',
               'メールコードでのログインは、共有ファイルの閲覧とコメント用です。',
             ]
       for (const sentence of expected) expect(html).toContain(sentence)
@@ -1192,7 +1192,7 @@ test.each([
   [
     'ja',
     ja,
-    '確認、ダウンロード、更新、削除、古い版の削除',
+    '確認、ダウンロード、更新、削除、古いバージョンの削除',
     '同じワークスペース内で共有や移動をしたあとも',
   ],
 ] as const)(
