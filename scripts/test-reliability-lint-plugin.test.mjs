@@ -62,6 +62,11 @@ test('real Oxlint rejects dangerous waits and interactions, accepts capability, 
       optional: 'host.querySelector("button")?.click()',
       optionalMethod: 'button.click?.()',
       sleep: 'await page.waitForTimeout(100)',
+      promiseSleep: 'await new Promise((resolve) => setTimeout(resolve, 500))',
+      windowSleep:
+        'await new Promise((resolve) => { window.setTimeout(resolve, 500) })',
+      variableSleep:
+        'await new Promise((resolve) => setTimeout(resolve, delay))',
     }
     const rejected = lint(
       Object.fromEntries(
@@ -108,6 +113,15 @@ async function elapsed() {
 }
 // test-wait: elapsed-time — verify the absence of a late delivery.
 const expired = await page.waitForTimeout(100)
+// test-wait: elapsed-time — verify the absence of a late delivery.
+await new Promise((resolve) => setTimeout(resolve, 500))
+await new Promise((resolve) => setTimeout(resolve, 0))
+await Promise.race([
+  reader.read(),
+  new Promise((resolve) => setTimeout(() => resolve(null), 200)),
+])
+const slowLoader = () => new Promise((resolve) => setTimeout(resolve, 150))
+await new Promise((resolve) => queueMicrotask(resolve))
 `,
       'production.ts': 'button?.click()',
     })

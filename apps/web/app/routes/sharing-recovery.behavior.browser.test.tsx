@@ -186,6 +186,7 @@ describe('sharing recovery browser behavior', () => {
       '[data-sonner-toast]',
     )
     await vi.waitFor(() => expect(recoveryToast?.dataset.mounted).toBe('true'))
+    // test-wait: elapsed-time — the toast entry animation must finish before its text is selected.
     await new Promise((resolve) => window.setTimeout(resolve, 450))
     expect(recoveryToast?.textContent).toContain(failedUrl.toString())
     expect(getComputedStyle(recoveryToast!).userSelect).toBe('text')

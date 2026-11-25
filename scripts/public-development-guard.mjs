@@ -6,6 +6,19 @@ import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
+// Boundary verdicts carry the code and the path they are about, so callers and
+// tests can tell one refusal from another without reading the sentence. Option
+// parsing keeps plain Errors: those are command-line misuse, not verdicts.
+export class BoundaryError extends Error {
+  constructor(code, subject, detail) {
+    super(subject === undefined ? code : `${code}: ${subject}`)
+    this.name = 'BoundaryError'
+    this.code = code
+    this.subject = subject
+    if (detail !== undefined) Object.assign(this, detail)
+  }
+}
+
 export function loadBoundaryManifest(repo = process.cwd()) {
   return parseBoundaryManifest(
     fs.readFileSync(path.join(repo, 'config/repository-boundary.json'), 'utf8'),
@@ -25,7 +38,7 @@ export function loadBoundaryManifestAt(git, commit) {
 function parseBoundaryManifest(source) {
   const boundary = JSON.parse(source)
   if (boundary.schema_version !== 1)
-    throw new Error('unsupported boundary schema')
+    throw new BoundaryError('unsupported-boundary-schema')
   const prefixes = (boundary.canonical_prefixes ?? []).map((prefix) => ({
     path: prefix,
     classification: 'canonical',
@@ -49,7 +62,7 @@ function parseBoundaryManifest(source) {
   ])
   for (const prefix of Object.keys(boundary.canonical_prefix_exclusions ?? {}))
     if (!knownPrefixes.has(prefix))
-      throw new Error(`exclusion for unknown boundary prefix: ${prefix}`)
+      throw new BoundaryError('unknown-prefix-exclusion', prefix)
   const classifications = Object.fromEntries(
     Object.entries(boundary.classifications ?? {}).map(([key, values]) => [
       key,
@@ -61,7 +74,7 @@ function parseBoundaryManifest(source) {
     ...(classifications.canonical ?? []),
   ]
   if (prefixes.some(({ path: prefix }) => !prefix.endsWith('/')))
-    throw new Error('boundary prefix must end with /')
+    throw new BoundaryError('unterminated-boundary-prefix')
   const exported = Object.values(classifications).flat()
   return { ...boundary, exported, prefixes, classifications }
 }
@@ -85,7 +98,7 @@ export function checkStandalone(repo = root) {
 export function validateBoundaryManifest(manifest) {
   const allowed = new Set(manifest.exported)
   if (allowed.size !== manifest.exported.length)
-    throw new Error('duplicate exported path')
+    throw new BoundaryError('duplicate-exported-path')
   const classified = new Map()
   const classifiedPrefixes = (manifest.prefixes ?? []).map((prefix) =>
     typeof prefix === 'string'
@@ -98,16 +111,16 @@ export function validateBoundaryManifest(manifest) {
     if (
       !['canonical', 'private-overlay', 'public-only'].includes(classification)
     )
-      throw new Error(`invalid classification: ${classification}`)
+      throw new BoundaryError('invalid-classification', classification)
     for (const file of paths) {
       if (file.endsWith('/')) {
         if (classifiedPrefixes.some(({ path: prefix }) => prefix === file))
-          throw new Error(`duplicate boundary prefix: ${file}`)
+          throw new BoundaryError('duplicate-boundary-prefix', file)
         classifiedPrefixes.push({ path: file, classification })
         continue
       }
       if (classified.has(file))
-        throw new Error(`duplicate boundary path: ${file}`)
+        throw new BoundaryError('duplicate-boundary-path', file)
       classified.set(file, classification)
     }
   }
@@ -116,14 +129,14 @@ export function validateBoundaryManifest(manifest) {
       !allowed.has(file) &&
       !classifiedPrefixes.some(({ path: prefix }) => file.startsWith(prefix))
     )
-      throw new Error(`boundary path is not exported: ${file}`)
+      throw new BoundaryError('unexported-boundary-path', file)
   }
   for (const file of allowed) {
     if (
       !classified.has(file) &&
       !classifiedPrefixes.some(({ path: prefix }) => file.startsWith(prefix))
     )
-      throw new Error(`unclassified exported path: ${file}`)
+      throw new BoundaryError('unclassified-exported-path', file)
   }
   for (let i = 0; i < classifiedPrefixes.length; i++)
     for (let j = i + 1; j < classifiedPrefixes.length; j++)
@@ -131,13 +144,14 @@ export function validateBoundaryManifest(manifest) {
         classifiedPrefixes[i].path.startsWith(classifiedPrefixes[j].path) ||
         classifiedPrefixes[j].path.startsWith(classifiedPrefixes[i].path)
       )
-        throw new Error(
-          `ambiguous boundary prefix: ${classifiedPrefixes[i].path}`,
+        throw new BoundaryError(
+          'ambiguous-boundary-prefix',
+          classifiedPrefixes[i].path,
         )
   for (const { path: prefix, exclusions } of classifiedPrefixes)
     for (const excluded of exclusions)
       if (!excluded.startsWith(prefix) || excluded === prefix)
-        throw new Error(`invalid boundary exclusion: ${excluded}`)
+        throw new BoundaryError('invalid-boundary-exclusion', excluded)
   for (const file of classified.keys()) {
     const matches = classifiedPrefixes.filter(({ path: prefix }) =>
       file.startsWith(prefix),
@@ -148,7 +162,7 @@ export function validateBoundaryManifest(manifest) {
         ({ classification }) => classification !== classified.get(file),
       )
     )
-      throw new Error(`ambiguous boundary path: ${file}`)
+      throw new BoundaryError('ambiguous-boundary-path', file)
   }
   return { exact: classified, prefixes: classifiedPrefixes }
 }
@@ -165,8 +179,9 @@ export function inspectTree(entries, manifest) {
         ({ path: prefix, exclusions }) =>
           file.startsWith(prefix) && !exclusions.includes(file),
       )?.classification
-    if (!classification) throw new Error(`manifest outside path: ${file}`)
-    if (mode !== 'file') throw new Error(`unsafe tree entry: ${mode} ${file}`)
+    if (!classification) throw new BoundaryError('outside-manifest', file)
+    if (mode !== 'file')
+      throw new BoundaryError('unsafe-tree-entry', file, { mode })
     rows.push({ path: file, classification })
   }
   return rows
@@ -179,7 +194,7 @@ export function parseTree(output) {
     .filter(Boolean)
     .map((line) => {
       const match = line.match(/^(\d+) \w+ [0-9a-f]+\t(.+)$/u)
-      if (!match) throw new Error(`invalid tree entry: ${line}`)
+      if (!match) throw new BoundaryError('invalid-tree-entry', line)
       return {
         mode:
           match[1] === '100644' || match[1] === '100755'
@@ -317,9 +332,7 @@ export function assertProposalOnly(changed) {
     changed[0].status !== 'A' ||
     !/^proposals\/[^/]+\.(?:md|txt)$/u.test(changed[0].path)
   )
-    throw new Error(
-      'external pull requests may add exactly one proposal document',
-    )
+    throw new BoundaryError('proposal-document-only')
 }
 
 function classificationsFor(entries, manifest) {
@@ -345,9 +358,7 @@ export function assertManifestEvolution({
         reclassified.push(file)
         continue
       }
-      throw new Error(
-        `boundary classification changed outside a manifest-only PR: ${file}`,
-      )
+      throw new BoundaryError('reclassified-outside-manifest-pr', file)
     }
   }
   return reclassified
@@ -370,7 +381,9 @@ export function inspectChangedContent({ git, head, changed, configRepo }) {
     if (value.includes('\0')) continue
     const finding = scanValue(value, file, compiled)[0]
     if (finding)
-      throw new Error(`changed content contains ${finding.category}: ${file}`)
+      throw new BoundaryError('changed-content-finding', file, {
+        category: finding.category,
+      })
   }
 }
 
@@ -402,9 +415,7 @@ export function inspectMetadata(value, label = 'metadata') {
     .filter(({ pattern }) => pattern.test(value))
     .map(({ id }) => id)
   if (violations.length)
-    throw new Error(
-      `${label} contains forbidden metadata: ${violations.join(', ')}`,
-    )
+    throw new BoundaryError('forbidden-metadata', label, { violations })
   return true
 }
 

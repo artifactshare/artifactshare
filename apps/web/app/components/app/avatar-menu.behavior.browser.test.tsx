@@ -107,6 +107,7 @@ describe('AvatarMenu access requests', () => {
         '未対応のリクエストはありません。',
       ),
     )
+    // test-wait: elapsed-time — the sheet opening animation must settle before the layout is measured.
     await new Promise((resolve) => window.setTimeout(resolve, 600))
 
     const sheet = document.querySelector<HTMLElement>(
@@ -190,6 +191,7 @@ describe('AvatarMenu access requests', () => {
           '未対応のリクエストはありません。',
         ),
       )
+      // test-wait: elapsed-time — the sheet opening animation must settle before the layout is measured.
       await new Promise((resolve) => window.setTimeout(resolve, 600))
 
       const sheet = document.querySelector('[data-slot="sheet-content"]')

@@ -90,7 +90,7 @@ export function findViolations({
         const entry =
           typeof rawEntry === 'string' ? { word: rawEntry } : rawEntry
         const word = entry.word
-        const allowed = allow.json?.[`${locale}.${key}`]?.includes(word)
+        const allowed = allow.copy?.[value]?.includes(word)
         if (
           (!entry.locale || entry.locale === locale) &&
           (!entry.surface || entry.surface === 'ui') &&
@@ -111,15 +111,12 @@ export function findViolations({
       for (const rawEntry of deny.filter((entry) => !entry.surface)) {
         const entry =
           typeof rawEntry === 'string' ? { word: rawEntry } : rawEntry
-        const word = entry.word
-        const lineNumber = index + 1
-        const allowed = allow.legal?.[file]?.[lineNumber]?.includes(word)
         if (
           (!entry.locale || entry.locale === file.split('.')[1]) &&
           matches(line, entry) &&
-          !allowed
+          !allow.copy?.[line.trim()]?.includes(entry.word)
         )
-          violations.push({ file, line: lineNumber, word })
+          violations.push({ file, line: index + 1, word: entry.word })
       }
     })
   }
@@ -204,83 +201,116 @@ export function extractTypeScriptCopy(source, locale) {
     .join('\n')
 }
 
+// Copy that the owner approved although it uses a glossary term. Keyed by the
+// copy itself, so renaming an i18n key or moving a string keeps the exception,
+// while rewriting the sentence asks for the decision again.
 export const COPY_GLOSSARY_ALLOW = {
-  json: {
+  copy: {
     // Private visibility is distinct from the action of publishing.
-    'ja.table.visibilityOnlyMe': ['公開'],
+    非公開: ['公開'],
     // Owner-specified publisher consent sentence uses the API resource name.
-    'en.device.publisher.capability': ['artifacts'],
-    'ja.footer.connect': ['ツール'],
+    'This client can create private files and static sites in your home. It can read, download and update files and sites it created or you assigned to it, and permanently delete them or their older versions. Access continues after you share or move them within this workspace, while you remain the owner.':
+      ['artifacts'],
+    'AI ツールと接続': ['ツール'],
     // Owner-approved name for personal AI connections.
-    'ja.settings.connections': ['ツール'],
-    'ja.settings.connections.body': ['ツール'],
-    'ja.team.members': ['メンバー'],
-    'ja.team.members.body': ['メンバー'],
-    'ja.team.members.empty': ['メンバー'],
-    'ja.team.members.role.member': ['メンバー'],
-    'ja.team.members.search.label': ['メンバー'],
-    'ja.team.members.noMatches': ['メンバー'],
-    'ja.team.members.removeAdmin': ['メンバー', '外す'],
-    'ja.team.members.menu': ['メンバー'],
-    'ja.team.members.assetTransfer.noResults': ['メンバー'],
-    'ja.team.guides.admin.primary': ['メンバー'],
-    'ja.team.removedMembers': ['メンバー'],
-    'ja.team.removedMembers.body': ['メンバー'],
-    'ja.team.removedMembers.transferConfirm.body': ['メンバー'],
-    'ja.team.inventory.location': ['場所'],
-    'ja.team.usage.pricingLink': ['公開'],
-    'ja.team.activity.action.member.remove': ['メンバー'],
-    'ja.team.activity.action.member.restore': ['メンバー'],
-    'ja.team.status.removed': ['メンバー'],
-    'ja.team.status.removedTransferFailed': ['メンバー'],
-    'ja.team.status.restoreUnavailable': ['メンバー'],
-    'ja.oa.consent.app': ['アプリ'],
-    'ja.externalAccess.plan.plus': ['公開', '組織'],
-    'ja.externalAccess.plan.team': ['公開', '組織'],
-    'ja.externalAccess.linkSharing.team': ['公開', '組織'],
-    'ja.externalAccess.externalPosting.team': ['組織'],
-    'ja.billing.downgrade.admin': ['メンバー'],
-    'ja.billing.checkout.submit.plus': ['申し込む'],
-    'ja.billing.checkout.submit.team': ['申し込む'],
-    'ja.billing.pricingLink': ['公開'],
-    'ja.upload.drop.bundleHelp': ['フォルダ'],
-    'ja.upload.error.dropReadFailed': ['フォルダ'],
-    'ja.upload.error.pathTooDeep': ['フォルダ'],
-    'ja.comments.clearSelection': ['外す'],
-    'ja.visibilityDialog.link.expired': ['公開'],
-    'ja.visibilityDialog.link.republishSuccess': ['公開'],
-    'ja.visibilityDialog.link.republishError': ['公開'],
+    'AI ツールと CLI': ['ツール'],
+    'AI ツールや CLI、自動化の処理からの接続を管理します。': ['ツール'],
+    メンバー: ['メンバー'],
+    'ワークスペースのメンバーを管理します。': ['メンバー'],
+    'メンバーはいません。': ['メンバー'],
+    メンバーを検索: ['メンバー'],
+    '検索条件に一致するメンバーがいません。': ['メンバー'],
+    管理者から外す: ['メンバー', '外す'],
+    メンバー操作メニュー: ['メンバー'],
+    '該当するメンバーがいません。': ['メンバー'],
+    '管理者ガイド — 日常のメンバー管理': ['メンバー'],
+    ワークスペースから削除したメンバー: ['メンバー'],
+    'ワークスペースから削除したメンバーのファイルを引き継いだり、メンバーを復帰させたりできます。':
+      ['メンバー'],
+    'この人が所有するすべてのファイルを、選択したメンバーへ引き継ぎます。': [
+      'メンバー',
+    ],
+    場所: ['場所'],
+    公開価格表を見る: ['公開'],
+    メンバーを削除: ['メンバー'],
+    メンバーを復帰: ['メンバー'],
+    'メンバーを削除しました。': ['メンバー'],
+    'メンバーはワークスペースから削除されましたが、ファイルは引き継げませんでした。「ワークスペースから削除したメンバー」の一覧からもう一度実行してください。':
+      ['メンバー'],
+    'このメンバーは別の人と同じワークスペースを利用しているため復帰できません。':
+      ['メンバー'],
+    アプリ: ['アプリ'],
+    'Plus プランではリンク共有を利用できます。組織全体での有効/無効の設定はプランで決まります。':
+      ['公開', '組織'],
+    'Team プランでは、ワークスペースの管理者が組織全体の外部アクセスを管理できます。':
+      ['公開', '組織'],
+    'Team プランでは、ワークスペース管理者が組織全体のリンク共有を有効/無効にできます。':
+      ['公開', '組織'],
+    'Team プランでは、ワークスペース管理者が組織全体の外部投稿を有効/無効にできます。':
+      ['組織'],
+    'メンバー管理などの Team 向け管理機能が使えなくなります': ['メンバー'],
+    Plusを申し込む: ['申し込む'],
+    Teamを申し込む: ['申し込む'],
+    公開価格表でプランを詳しく比較する: ['公開'],
+    'React SPA や静的書き出しは、ビルド済みフォルダーを選択': ['フォルダ'],
+    'ドロップしたフォルダーを読み取れませんでした。フォルダー選択からもう一度お試しください。':
+      ['フォルダ'],
+    'フォルダー階層が深すぎます。': ['フォルダ'],
+    選択を外す: ['外す'],
+    'このリンクは期限切れです。新しい期限を設定して保存すると、再公開できます。':
+      ['公開'],
+    'リンクを再公開しました。': ['公開'],
+    'リンクを再公開できませんでした。もう一度お試しください。': ['公開'],
     // Client identity registration, not publishing a file.
-    'ja.device.publisher.nameHelp': ['登録'],
-    'ja.toast.pickNotRegistered': ['登録'],
-    'ja.toast.repairConflict': ['登録'],
-    'ja.sourceMissing.repair': ['差し替える'],
-    'ja.openErr.body': ['再アップロード'],
-    'ja.lp.hero.cliPrompt': ['セットアップ'],
-    'ja.lp.loop.s2.body': ['ツール'],
-    'ja.lp.uc.title': ['チーム'],
-    'ja.lp.uc.mock.mini.title': ['メンバー'],
-    'ja.lp.uc.research.mini.title': ['バージョン'],
-    'ja.lp.quote.text': ['チーム'],
-    'ja.lp.quote.attr': ['チーム'],
-    'ja.lp.trust.c1.body': ['チーム'],
-    'ja.about.official.audience': ['チーム'],
-    'ja.about.hero.intro': ['チーム'],
-    'ja.about.flow.title': ['チーム'],
-    'ja.about.flow.intro': ['チーム'],
-    'ja.about.official.formats': ['フォルダ'],
-    'ja.about.official.plans': ['参加者'],
-    'ja.oa.signin.sub': ['アプリ'],
-    'ja.signin.error.admin_consent': ['アプリ', '組織'],
-    'ja.signin.error.account_not_linked': ['登録'],
-    'ja.oa.consent.sub': ['アプリ'],
-    'ja.project.emptyBody': ['場所'],
-    'ja.project.sharedProjectsNote': ['組織'],
-    'ja.slack.kind.workspace_app': ['アプリ'],
+    '別のクライアントとして登録するには、別の名前でログインをやり直してください。作成済み・割り当て済みのファイルや静的サイトを引き続き管理するには、既存のクライアントを使い続けてください。':
+      ['登録'],
+    'ファイルを登録中です。少し待ってから、もう一度追加してください。': [
+      '登録',
+    ],
+    'そのファイルはすでに別のファイルとして登録されています。先に古いほうを削除してください。':
+      ['登録'],
+    差し替える: ['差し替える'],
+    '少し時間をおいてから、もう一度お試しください。またはファイルを再アップロードしてください。':
+      ['再アップロード'],
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare init でセットアップして':
+      ['セットアップ'],
+    'ページ上の該当箇所にピンでコメント。見る人に AI ツールやアカウント準備は要りません。ブラウザだけで参加できます。':
+      ['ツール'],
+    'AI の下書きを、チームで決められる文書に。': ['チーム'],
+    メンバー招待: ['メンバー'],
+    コンバージョン計測レポート: ['バージョン'],
+    '「無料で人数制限もなく、すぐ使い始められました。気づいたらチームの共有は全部 URL になっていて、『最新版どれ?』も聞かなくなりました。」':
+      ['チーム'],
+    'EC 企業・プロダクト開発チーム EM': ['チーム'],
+    '投稿直後の共有範囲は社内だけ。チーム内なら設定なしで安全です。': [
+      'チーム',
+    ],
+    'AIでHTMLやMarkdownを作り、社内、顧客、プロジェクト関係者への共有と更新を続けたいチーム':
+      ['チーム'],
+    'AIでHTMLやMarkdownを作り、社内やプロジェクト関係者と共有するチーム向けのサービスです。作ったものを安全に見せ、反応を集めながら、更新を続けられます。共有ページからこのページに来た方が見ていたファイルは、Artifact Shareに投稿されたものです。':
+      ['チーム'],
+    '叩き台が、チームの判断材料になるまで': ['チーム'],
+    '投稿、コメント、更新を重ねるうちに、共有ページの内容がチームで検討できる形に整っていきます。':
+      ['チーム'],
+    'HTML、Markdown、フォルダ、静的サイト': ['フォルダ'],
+    'Free、Plus、Team。投稿者・閲覧者・コメント参加者の人数による追加料金なし':
+      ['参加者'],
+    'アプリが Artifact Share への接続を求めています。続けるにはログインしてください。':
+      ['アプリ'],
+    'あなたの組織では、管理者がこのアプリを承認する必要があります。組織の IT 管理者に、Artifact Share の利用承認を依頼してください。':
+      ['アプリ', '組織'],
+    'このメールアドレスは登録済みです。下の欄にメールアドレスを入れて、コードでログインしてください。':
+      ['登録'],
+    '接続すると、アプリがあなたの権限で、あなたのワークスペース内の Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理できます。':
+      ['アプリ'],
+    '同じ仕事のファイルをまとめる場所を作れます。': ['場所'],
+    '他のワークスペースから関係者として共有されたプロジェクトです。': ['組織'],
     // The reader's own PDF app, not the service.
-    'ja.pdfViewer.password': ['アプリ'],
+    'このPDFはパスワードで保護されているため、ここでは開けません。ダウンロードして、お使いのPDFアプリで開いてください。':
+      ['アプリ'],
     // The reader's own video app, not the service.
-    'ja.videoViewer.unsupported': ['アプリ'],
+    'この動画はここでは再生できません。壊れているか、このブラウザーが対応していない形式の可能性があります。元のファイルをダウンロードして、お使いの動画アプリで開いてください。':
+      ['アプリ'],
   },
 }
 

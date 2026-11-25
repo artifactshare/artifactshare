@@ -208,6 +208,7 @@ test('late rendering, same-text replacement, immediate invalidation and bounded 
   doc.querySelector('#late')!.textContent = 'delayed words'
   await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
   const count = messages.length
+  // test-wait: elapsed-time — bounds the late reports that may still arrive after the anchor attaches.
   await new Promise((resolve) => setTimeout(resolve, 400))
   expect(messages.length - count).toBeLessThan(5)
   send('comment-highlights', { highlights: [] })
@@ -240,6 +241,7 @@ test.each(['#selected', '#section', 'main'])(
     const initialGeneration = results()!.generation
     const walk = vi.spyOn(doc, 'createTreeWalker')
     element.setAttribute('data-anchor-ignore', '')
+    // test-wait: elapsed-time — an ignored element must not trigger a later resolver pass.
     await new Promise((resolve) => setTimeout(resolve, 350))
     expect(walk).not.toHaveBeenCalled()
     expect(results()!.generation).toBe(initialGeneration)
@@ -451,6 +453,7 @@ test('live counter preserves unrelated paint without hash-only messages', async 
   }, 100)
   try {
     for (let index = 0; index < 15; index++) {
+      // test-wait: elapsed-time — a counter mutating outside the root must not rebuild the registry.
       await new Promise((resolve) => setTimeout(resolve, 110))
       expect(registry(doc).size).toBe(1)
     }
@@ -464,6 +467,7 @@ test('style animations and pages without comments do not rebuild text snapshots'
   const doc = await fixture('<p id="words">Stable selected words</p>')
   const walk = vi.spyOn(doc, 'createTreeWalker')
   doc.querySelector('#words')!.textContent = 'Stable selected words'
+  // test-wait: elapsed-time — rewriting identical text must not trigger a later snapshot rebuild.
   await new Promise((resolve) => setTimeout(resolve, 50))
   expect(walk).not.toHaveBeenCalled()
   send('comment-highlights', {
@@ -481,6 +485,7 @@ test('style animations and pages without comments do not rebuild text snapshots'
   for (let index = 0; index < 5; index++) {
     doc.querySelector<HTMLElement>('#words')!.style.transform =
       `translateX(${index}px)`
+    // test-wait: elapsed-time — style-only mutations must not trigger a later snapshot rebuild.
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   expect(walk).not.toHaveBeenCalled()
@@ -635,6 +640,7 @@ test('class toggles cause no text rebuild or resolution message', async () => {
     doc.querySelector('#words')!.className = `class-${index}`
     await new Promise<void>((resolve) => queueMicrotask(resolve))
   }
+  // test-wait: elapsed-time — class-only mutations must not trigger a later rebuild or message.
   await new Promise((resolve) => setTimeout(resolve, 100))
   expect(walk).not.toHaveBeenCalled()
   expect(
@@ -703,6 +709,7 @@ test('identical tab panels retain ranges in A through every visibility switch', 
   for (const hidden of [true, false, true, false]) {
     doc.querySelector<HTMLElement>('#a')!.hidden = hidden
     doc.querySelector<HTMLElement>('#b')!.hidden = !hidden
+    // test-wait: elapsed-time — the badge must follow a visibility change without a rebuild.
     await new Promise((resolve) => setTimeout(resolve, 350))
     expect(
       doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!.style
@@ -808,6 +815,7 @@ test('hash-only changes do not post another resolution, but shifted hints do', a
   await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
   const initial = results()!.generation
   doc.querySelector('#counter')!.textContent = '1'
+  // test-wait: elapsed-time — text outside the selected root must not raise the generation.
   await new Promise((resolve) => setTimeout(resolve, 500))
   expect(results()!.generation).toBe(initial)
   expect(registry(doc).size).toBe(1)
@@ -907,6 +915,7 @@ test('outside-root mutations do not scan content or rebuild paint', async () => 
     // A child-list mutation on the root's parent is also unrelated unless the
     // selected root itself changes.
     doc.body.appendChild(doc.createElement('aside'))
+    // test-wait: elapsed-time — a child-list change outside the selected root must change nothing.
     await new Promise((resolve) => setTimeout(resolve, 350))
     expect(walk).not.toHaveBeenCalled()
     expect([...registry(doc).values()][0]).toBe(paint)
@@ -1112,6 +1121,7 @@ test('mutation debounce reuses the last observer snapshot for paint and verifica
     expect(
       walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
     ).toHaveLength(1)
+    // test-wait: elapsed-time — one resolver pass per root must not be followed by another.
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(
       walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
@@ -1166,6 +1176,7 @@ test('count and metadata echoes retain highlights and unchanged SVG geometry wri
       badge.dispatchEvent(
         new PointerEvent('pointerup', { pointerId: 1, clientX: 10 }),
       )
+      // test-wait: elapsed-time — pointer events without a geometry change must not write to the overlay.
       await new Promise((resolve) => setTimeout(resolve, 40))
     }
     expect(writes).toEqual([])
@@ -1205,6 +1216,7 @@ test.each([
       expect(results()?.results[0]?.state).toBe('checking'),
     )
     const rejectedAt = messages.length
+    // test-wait: elapsed-time — a rejected anchor must stay in checking and send nothing further.
     await new Promise((resolve) => setTimeout(resolve, 450))
     expect(registry(doc).size).toBe(0)
     expect(doc.querySelector('button.ash-comment-highlight-badge')).toBeNull()
@@ -1272,6 +1284,7 @@ test.each([
       expect(includes).not.toHaveBeenCalled()
       expect(map).not.toHaveBeenCalled()
       expect(join).not.toHaveBeenCalled()
+      // test-wait: elapsed-time — the oversized fixture must stay in checking without another pass.
       await new Promise((resolve) => setTimeout(resolve, 450))
       expect(results()?.results[0]?.state).toBe('checking')
       expect(registry(doc).size).toBe(0)
@@ -2159,6 +2172,7 @@ test.each([24, 25, 26, 16000, 16001, 1_100_001])(
         : '😀'.repeat(Math.floor(length / 2)) + (length % 2 ? 'z' : '')
     const doc = await fixture(`<p id="picked">${text}</p>`)
     send('annotate-mode', { enabled: true })
+    // test-wait: elapsed-time — annotate mode must reach the frame before the click.
     await new Promise((resolve) => setTimeout(resolve, 30))
     const encoder = vi.spyOn(
       (frame.contentWindow as unknown as { TextEncoder: typeof TextEncoder })
@@ -2249,6 +2263,7 @@ test('legacy element text preserves identity while textless peers remain selecto
     `<p id="raw">${digestLooking}</p><p id="empty"></p><p></p><p id="normalized"> spaced   words </p><div>before</div><p id="duplicate">same</p><div>after</div><p>same</p>`,
   )
   send('annotate-mode', { enabled: true })
+  // test-wait: elapsed-time — annotate mode must reach the frame before the click.
   await new Promise((resolve) => setTimeout(resolve, 30))
   doc.querySelector<HTMLElement>('#empty')!.click()
   await vi.waitFor(() =>
@@ -2311,6 +2326,7 @@ test('oversized duplicate elements use context and never the reader excerpt to m
     `<div>before</div><p id="picked">${text}</p><div>after</div><p>${text}</p>`,
   )
   send('annotate-mode', { enabled: true })
+  // test-wait: elapsed-time — annotate mode must reach the frame before the click.
   await new Promise((resolve) => setTimeout(resolve, 30))
   doc.querySelector<HTMLElement>('#picked')!.click()
   await vi.waitFor(() =>

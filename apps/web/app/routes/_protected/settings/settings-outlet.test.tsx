@@ -69,6 +69,7 @@ test('a Checkout return notice leaves history even when the user moves on before
     expect(container.textContent).toContain('General')
     await act(async () => {
       router.navigate(-1)
+      // test-wait: elapsed-time — Back must settle before the entry parameters are read.
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
     // The entry Back returns to no longer carries the return parameter.
@@ -125,6 +126,7 @@ test('a Checkout return notice stays on its own entry when the user opens Billin
     expect(container.querySelector('[data-settings-status]')).toBeNull()
     await act(async () => {
       router.navigate(-1)
+      // test-wait: elapsed-time — Back must settle before the entry parameters are read.
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
     expect(window.location.search).toBe('')

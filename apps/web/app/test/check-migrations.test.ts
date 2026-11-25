@@ -1,21 +1,29 @@
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, test } from 'vitest'
 
+type Problem = {
+  file: string
+  code: string
+  operation?: string
+  table?: string
+}
+
+// The gate is the artifact under test, so each case runs it and reads the
+// problems it reports as data.
+function check(name: string, sql: string): Problem[] {
+  return runMigrationCheck({ [name]: sql }).problems
+}
+
 describe('migration SQL guard', () => {
   test('blocks disabling foreign keys in new migrations', () => {
-    const result = runMigrationCheck({
-      '9999_bad_foreign_keys.sql': 'PRAGMA foreign_keys = OFF;',
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_bad_foreign_keys.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
-    })
+    expect(
+      check('9999_bad_foreign_keys.sql', 'PRAGMA foreign_keys = OFF;'),
+    ).toEqual([
+      { file: '9999_bad_foreign_keys.sql', code: 'foreign-keys-setter' },
+    ])
   })
 
   test.each([
@@ -24,48 +32,40 @@ describe('migration SQL guard', () => {
     'PRAGMA "foreign_keys" = OFF;',
     'EXPLAIN PRAGMA foreign_keys = OFF;',
   ])('blocks foreign-key setter syntax: %s', (sql) => {
-    expect(runMigrationCheck({ '9999_bad_foreign_keys.sql': sql })).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_bad_foreign_keys.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
-    })
+    expect(check('9999_bad_foreign_keys.sql', sql)).toEqual([
+      { file: '9999_bad_foreign_keys.sql', code: 'foreign-keys-setter' },
+    ])
   })
 
   test('ignores PRAGMA-like text inside comments and string literals', () => {
     expect(
-      runMigrationCheck({
-        '9999_pragma_text.sql': `
+      check(
+        '9999_pragma_text.sql',
+        `
           -- PRAGMA foreign_keys = OFF;
           INSERT INTO notes (body) VALUES ('PRAGMA foreign_keys = OFF;');
         `,
-      }),
-    ).toEqual({ ok: true, stderr: '' })
+      ),
+    ).toEqual([])
   })
 
   test('keeps the explicit legacy foreign-key exceptions narrow', () => {
     expect(
-      runMigrationCheck({
-        '0014_shareables_managed_columns_not_null.sql':
-          'PRAGMA main.foreign_keys = 0;',
-      }),
-    ).toEqual({ ok: true, stderr: '' })
-
+      check(
+        '0014_shareables_managed_columns_not_null.sql',
+        'PRAGMA main.foreign_keys = 0;',
+      ),
+    ).toEqual([])
     expect(
-      runMigrationCheck({
-        '0015_not_legacy.sql': 'PRAGMA main.foreign_keys = 0;',
-      }),
-    ).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 0015_not_legacy.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n',
-    })
+      check('0015_not_legacy.sql', 'PRAGMA main.foreign_keys = 0;'),
+    ).toEqual([{ file: '0015_not_legacy.sql', code: 'foreign-keys-setter' }])
   })
 
   test('blocks protected parent table drops even when foreign keys are disabled', () => {
-    const result = runMigrationCheck({
-      '9999_bad_rebuild.sql': `
+    expect(
+      check(
+        '9999_bad_rebuild.sql',
+        `
         PRAGMA foreign_keys = OFF;
         ALTER TABLE shareables RENAME TO shareables_old;
         CREATE TABLE shareables (id TEXT PRIMARY KEY);
@@ -73,150 +73,203 @@ describe('migration SQL guard', () => {
         DROP TABLE shareables_old;
         DROP TABLE shareables;
       `,
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_bad_rebuild.sql: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild\n' +
-        '- 9999_bad_rebuild.sql: DROP TABLE shareables_old is not in the explicit migration allowlist\n' +
-        '- 9999_bad_rebuild.sql: DROP TABLE shareables is blocked because the table is protected\n' +
-        '- 9999_bad_rebuild.sql: ALTER TABLE RENAME shareables is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      { file: '9999_bad_rebuild.sql', code: 'foreign-keys-setter' },
+      {
+        file: '9999_bad_rebuild.sql',
+        code: 'unlisted-drop',
+        operation: 'DROP TABLE',
+        table: 'shareables_old',
+      },
+      {
+        file: '9999_bad_rebuild.sql',
+        code: 'protected-table',
+        operation: 'DROP TABLE',
+        table: 'shareables',
+      },
+      {
+        file: '9999_bad_rebuild.sql',
+        code: 'protected-table',
+        operation: 'ALTER TABLE RENAME',
+        table: 'shareables',
+      },
+    ])
   })
 
   test('allows explicit legacy table drops', () => {
-    const result = runMigrationCheck({
-      '0030_drop_legacy_shareable_container_columns.sql':
+    expect(
+      check(
+        '0030_drop_legacy_shareable_container_columns.sql',
         'DROP TABLE shareable_container_cleanup_assertions;',
-    })
-
-    expect(result).toEqual({ ok: true, stderr: '' })
+      ),
+    ).toEqual([])
   })
 
   test('allows legacy membership table drops in contract migration', () => {
-    const result = runMigrationCheck({
-      '0061_drop_legacy_membership_tables.sql': `
+    expect(
+      check(
+        '0061_drop_legacy_membership_tables.sql',
+        `
         DROP TABLE IF EXISTS shareable_delete_events;
         DROP TABLE IF EXISTS workspace_contributors;
         DROP TABLE IF EXISTS workspace_admins;
       `,
-    })
-
-    expect(result).toEqual({ ok: true, stderr: '' })
+      ),
+    ).toEqual([])
   })
 
   test('blocks protected deletes unless the migration is explicitly allowed', () => {
-    const blocked = runMigrationCheck({
-      '9999_bad_delete.sql':
+    expect(
+      check(
+        '9999_bad_delete.sql',
         'DELETE FROM versions WHERE shareable_id IS NOT NULL;',
-    })
-    expect(blocked).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_bad_delete.sql: DELETE FROM versions is blocked because the table is protected\n',
-    })
-
-    const allowed = runMigrationCheck({
-      '0020_wipe_shareables_for_dns_safe_ids.sql': 'DELETE FROM versions;',
-    })
-    expect(allowed).toEqual({ ok: true, stderr: '' })
+      ),
+    ).toEqual([
+      {
+        file: '9999_bad_delete.sql',
+        code: 'protected-table',
+        operation: 'DELETE FROM',
+        table: 'versions',
+      },
+    ])
+    expect(
+      check(
+        '0020_wipe_shareables_for_dns_safe_ids.sql',
+        'DELETE FROM versions;',
+      ),
+    ).toEqual([])
   })
 
   test('blocks protected replace, rename destination, and compact quoted drops', () => {
-    const result = runMigrationCheck({
-      '9999_compact.sql': `
+    expect(
+      check(
+        '9999_compact.sql',
+        `
         REPLACE INTO shareables (id) VALUES ('s1');
         ALTER TABLE scratch_shareables RENAME TO shareables;
         DROP TABLE"versions";
       `,
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_compact.sql: DROP TABLE versions is blocked because the table is protected\n' +
-        '- 9999_compact.sql: REPLACE INTO shareables is blocked because the table is protected\n' +
-        '- 9999_compact.sql: ALTER TABLE RENAME TO shareables is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      {
+        file: '9999_compact.sql',
+        code: 'protected-table',
+        operation: 'DROP TABLE',
+        table: 'versions',
+      },
+      {
+        file: '9999_compact.sql',
+        code: 'protected-table',
+        operation: 'REPLACE INTO',
+        table: 'shareables',
+      },
+      {
+        file: '9999_compact.sql',
+        code: 'protected-table',
+        operation: 'ALTER TABLE RENAME TO',
+        table: 'shareables',
+      },
+    ])
   })
 
   test('does not let string literal comments hide destructive SQL', () => {
-    const result = runMigrationCheck({
-      '9999_string_comment.sql':
+    expect(
+      check(
+        '9999_string_comment.sql',
         "UPDATE notes SET body = 'literal -- marker'; DROP TABLE versions;",
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_string_comment.sql: DROP TABLE versions is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      {
+        file: '9999_string_comment.sql',
+        code: 'protected-table',
+        operation: 'DROP TABLE',
+        table: 'versions',
+      },
+    ])
   })
 
   test('does not let quoted identifier apostrophes hide destructive SQL', () => {
-    const result = runMigrationCheck({
-      '9999_quoted_identifier.sql':
+    expect(
+      check(
+        '9999_quoted_identifier.sql',
         'ALTER TABLE notes ADD COLUMN "o\'brien" TEXT; DROP TABLE versions;',
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_quoted_identifier.sql: DROP TABLE versions is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      {
+        file: '9999_quoted_identifier.sql',
+        code: 'protected-table',
+        operation: 'DROP TABLE',
+        table: 'versions',
+      },
+    ])
   })
 
   test('blocks replace even in a migration with a protected drop allowlist', () => {
-    const result = runMigrationCheck({
-      '0017_drive_folder_rebase.sql':
+    expect(
+      check(
+        '0017_drive_folder_rebase.sql',
         "REPLACE INTO shareables (id) VALUES ('s1');",
-    })
-
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 0017_drive_folder_rebase.sql: REPLACE INTO shareables is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      {
+        file: '0017_drive_folder_rebase.sql',
+        code: 'protected-table',
+        operation: 'REPLACE INTO',
+        table: 'shareables',
+      },
+    ])
   })
 
   test('allows only explicit protected rename destination pairs', () => {
     expect(
-      runMigrationCheck({
-        '0014_shareables_managed_columns_not_null.sql':
-          'ALTER TABLE shareables_new RENAME TO shareables;',
-      }),
-    ).toEqual({ ok: true, stderr: '' })
-
-    const blocked = runMigrationCheck({
-      '0014_shareables_managed_columns_not_null.sql':
+      check(
+        '0014_shareables_managed_columns_not_null.sql',
+        'ALTER TABLE shareables_new RENAME TO shareables;',
+      ),
+    ).toEqual([])
+    expect(
+      check(
+        '0014_shareables_managed_columns_not_null.sql',
         'ALTER TABLE scratch_shareables RENAME TO shareables;',
-    })
-    expect(blocked).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 0014_shareables_managed_columns_not_null.sql: ALTER TABLE RENAME TO shareables is blocked because the table is protected\n',
-    })
+      ),
+    ).toEqual([
+      {
+        file: '0014_shareables_managed_columns_not_null.sql',
+        code: 'protected-table',
+        operation: 'ALTER TABLE RENAME TO',
+        table: 'shareables',
+      },
+    ])
   })
 
   test('blocks protected drop column without the optional column keyword', () => {
-    const result = runMigrationCheck({
-      '9999_drop_column.sql': 'ALTER TABLE shareables DROP project_id;',
-    })
+    expect(
+      check('9999_drop_column.sql', 'ALTER TABLE shareables DROP project_id;'),
+    ).toEqual([
+      {
+        file: '9999_drop_column.sql',
+        code: 'protected-table',
+        operation: 'ALTER TABLE DROP COLUMN',
+        table: 'shareables',
+      },
+    ])
+  })
+})
 
-    expect(result).toEqual({
-      ok: false,
-      stderr:
-        'Unsafe migration SQL detected:\n' +
-        '- 9999_drop_column.sql: ALTER TABLE DROP COLUMN shareables is blocked because the table is protected\n',
+describe('check:migrations gate', () => {
+  test('exits non-zero and names the refused file and table', () => {
+    const clean = runMigrationCheck({
+      '9999_safe.sql': 'CREATE TABLE notes (id TEXT PRIMARY KEY);',
     })
+    expect(clean.ok).toBe(true)
+
+    const blocked = runMigrationCheck({
+      '9999_drop_protected.sql': 'DROP TABLE versions;',
+    })
+    expect(blocked.ok).toBe(false)
+    expect(blocked.stderr).toContain('9999_drop_protected.sql')
+    expect(blocked.stderr).toContain('DROP TABLE versions')
   })
 })
 
@@ -226,19 +279,15 @@ function runMigrationCheck(files: Record<string, string>) {
     for (const [name, sql] of Object.entries(files)) {
       writeFileSync(join(dir, name), sql)
     }
-    execFileSync(process.execPath, ['check-migrations.mjs', dir], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    return { ok: true, stderr: '' }
-  } catch (error) {
+    const result = spawnSync(
+      process.execPath,
+      ['check-migrations.mjs', dir, '--json'],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    )
     return {
-      ok: false,
-      stderr:
-        error instanceof Error && 'stderr' in error
-          ? String(error.stderr)
-          : String(error),
+      ok: result.status === 0,
+      problems: JSON.parse(result.stdout) as Problem[],
+      stderr: result.stderr,
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })

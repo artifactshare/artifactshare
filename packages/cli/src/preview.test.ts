@@ -410,6 +410,7 @@ test('a competing preview wait returns retry guidance', async () => {
     },
   )
   try {
+    // test-wait: elapsed-time — the first wait must own the session before the competing command.
     await new Promise((resolve) => setTimeout(resolve, 200))
     const competing = run(
       ['preview', 'next', filePath, '--wait', '10', '--json'],

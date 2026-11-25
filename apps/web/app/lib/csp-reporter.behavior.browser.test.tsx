@@ -1143,10 +1143,12 @@ describe('CSP reporter runtime behavior', () => {
     )!
     badge.focus()
     doc.querySelector('#counter')!.textContent = '1'
+    // test-wait: elapsed-time — unrelated text must not replace the badge or move focus.
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
     expect(doc.activeElement).toBe(badge)
     doc.querySelector('#target')!.textContent = 'Highlighted text'
+    // test-wait: elapsed-time — reattaching must keep the same badge element and its focus.
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
     expect(doc.activeElement).toBe(badge)
@@ -1961,6 +1963,7 @@ test('reports fragments only after ready, then tracks anchors and both history m
   )
   const win = frame!.contentWindow!
   win.location.hash = '#before-ready'
+  // test-wait: elapsed-time — a hash set before the reporter is ready must not be reported.
   await new Promise((resolve) => setTimeout(resolve, 30))
   expect(messages.filter((m) => m.kind === 'hash-changed')).toHaveLength(0)
   await probeReporter()

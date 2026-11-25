@@ -417,6 +417,7 @@ async function preferencesFlow(
       entered = true
     }
     document.getElementById('fullscreen')!.click()
+    // test-wait: elapsed-time — the fullscreen request must be handled before the notice is read.
     await new Promise((resolve) => setTimeout(resolve, 100))
     delete (player as { requestFullscreen?: unknown }).requestFullscreen
     delete player.webkitRequestFullscreen
@@ -561,6 +562,7 @@ export const videoViewerScenario = defineBrowserCommand(
             return
           }
           if (scenario === 'transport') {
+            // test-wait: elapsed-time — the stub holds the response to act as a slow transport failure.
             await new Promise((resolve) => setTimeout(resolve, 1000))
             response.writeHead(500).end()
             return

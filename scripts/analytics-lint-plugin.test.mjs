@@ -71,6 +71,11 @@ const aliasEvents = [
   `const first = window.gtag; const emit = first; emit('event', 'page_view')`,
   `const emit = window.gtag; function send() { emit('event', 'page_view') }`,
   `const emit = (window.gtag)!; emit?.('event', 'page_view')`,
+  `const emit = (window as unknown as { gtag: (...args: unknown[]) => void }).gtag; emit('event', 'share_clicked')`,
+]
+const castEvents = [
+  `(window as unknown as { gtag: (...args: unknown[]) => void }).gtag('event', 'share_clicked')`,
+  `(window as unknown as { dataLayer: unknown[] }).dataLayer.push({ event: 'share_clicked' })`,
 ]
 const allowedAliases = [
   `const emit = window.gtag; emit('consent', 'update', {})`,
@@ -102,10 +107,11 @@ function violations(file, text) {
   return reports
 }
 
-test('rejects direct events and dataLayer sends including receivers and embedded snippets', () => {
+test('rejects cast senders, dataLayer sends, receivers, and embedded snippets', () => {
   for (const text of [
     ...memberEvents,
     ...parenthesizedEvents,
+    ...castEvents,
     `gtag('event', 'page_view')`,
     `window.gtag('event', 'page_view')`,
     `globalThis.gtag('event', 'page_view')`,
@@ -127,10 +133,8 @@ test('rejects direct events and dataLayer sends including receivers and embedded
   }
 })
 
-test('preserves app TS/TSX scan scope, exact allowlist, and test exclusions', () => {
+test('preserves app TS/TSX scan scope and test exclusions', () => {
   for (const file of [
-    'apps/web/app/root.tsx',
-    'apps/web/app/lib/analytics/track.client.ts',
     'apps/web/app/routes/example.test.ts',
     'apps/web/app/routes/example.test.tsx',
     'apps/web/app/routes/example.js',
@@ -163,10 +167,19 @@ test('supported lint configuration executes the rule for member access and paren
     join(root, 'apps/web/app/analytics-lint-fixture-'),
   )
   try {
-    const rejected = [...memberEvents, ...parenthesizedEvents, ...aliasEvents]
+    const rejected = [
+      ...memberEvents,
+      ...parenthesizedEvents,
+      ...aliasEvents,
+      ...castEvents,
+    ]
     const valid = [
       ...allowedCommands,
       ...allowedAliases.map((text) => `{ ${text} }`),
+      ...castEvents.map(
+        (text) =>
+          `// oxlint-disable-next-line analytics/typed-sender -- owns the sender\n${text}`,
+      ),
     ].join('\n')
     const results = lintCases(directory, '.oxlintrc.json', [
       ...rejected.map((text) => ({ text, name: 'example.ts' })),
