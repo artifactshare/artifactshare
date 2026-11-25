@@ -1,6 +1,5 @@
-import { fileURLToPath } from 'node:url'
-import { createTestHarness } from 'wrangler'
-import { afterAll, beforeAll, expect, test, vi } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { beforeAll, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: { BUCKET: {} } }))
 vi.mock('~/services/storage.server', () => ({
@@ -9,32 +8,28 @@ vi.mock('~/services/storage.server', () => ({
   deleteArtifactsByPrefix: vi.fn().mockResolvedValue(undefined),
   deleteArtifacts: vi.fn().mockResolvedValue(undefined),
 }))
-import { createDb } from '../services/db.server'
-import { adoptPublisherArtifact } from '../services/publisher-adoption.server'
-import { saveRetention } from '../services/retention-settings.server'
+import { createDb } from '~/services/db.server'
+import { adoptPublisherArtifact } from '~/services/publisher-adoption.server'
+import { saveRetention } from '~/services/retention-settings.server'
 import {
   beginStaticSiteBundleUploadSession,
   beginStaticSiteBundleVersionUploadSession,
   deleteShareable,
-} from '../services/shareables.server'
-import { publisherArtifactSql } from '../services/publisher-scope.server'
+} from '~/services/shareables.server'
+import { publisherArtifactSql } from '~/services/publisher-scope.server'
+import { d1OnSqlite } from '~/test/d1-on-sqlite'
+import { applyMigrations } from '~/test/sqlite-fixture'
 
-const server = createTestHarness({
-  root: fileURLToPath(new URL('../..', import.meta.url)),
-  workers: [{ configPath: './wrangler.sandbox.jsonc' }],
-})
-const worker = server.getWorker<{ DB: D1Database }>()
 let database: D1Database
-beforeAll(async () => {
-  await server.listen()
-  await worker.applyD1Migrations('DB')
-  database = (await worker.getEnv()).DB
-})
-afterAll(async () => {
-  await server.close()
+beforeAll(() => {
+  const sqlite = new DatabaseSync(':memory:')
+  // These inserts carry users.google_sub, which the migrations keep NOT NULL
+  // and schema.sql does not declare.
+  applyMigrations(sqlite)
+  database = d1OnSqlite(sqlite)
 })
 
-test('D1 enforces publisher provenance, current ownership and revocation at the write boundary', async () => {
+test('enforces publisher provenance, current ownership and revocation at the write boundary', async () => {
   await database.batch([
     database.prepare(
       "INSERT INTO workspaces (id, name, created_at) VALUES ('publisher-ws', 'Workspace', '2026-01-01')",
@@ -120,7 +115,7 @@ test('D1 enforces publisher provenance, current ownership and revocation at the 
   }
 })
 
-test('D1 publisher bundle, assignment, guarded retention and delete batches', async () => {
+test('publisher bundle, assignment, guarded retention and delete batches', async () => {
   await database.batch([
     database.prepare(
       "INSERT INTO workspaces (id, name, created_at) VALUES ('workspace1', 'Workspace', '2026-01-01')",

@@ -1,28 +1,26 @@
 import { getArtifactVersions } from '~/services/artifact-versions.server'
-import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 import { Kysely } from 'kysely'
 import { D1Dialect } from 'kysely-d1'
-import { createTestHarness } from 'wrangler'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { listAgentReadableArtifacts } from '~/services/cli-artifacts.server'
+import { d1OnSqlite } from '~/test/d1-on-sqlite'
+import { applyMigrations } from '~/test/sqlite-fixture'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
-const server = createTestHarness({
-  root: fileURLToPath(new URL('../..', import.meta.url)),
-  workers: [{ configPath: './wrangler.sandbox.jsonc' }],
-})
-const worker = server.getWorker<{ DB: D1Database }>()
 let binding: D1Database
 let db: Kysely<DB>
 
-beforeAll(async () => {
-  await server.listen()
-  await worker.applyD1Migrations('DB')
-  binding = (await worker.getEnv()).DB
+beforeAll(() => {
+  const sqlite = new DatabaseSync(':memory:')
+  // These inserts carry users.google_sub, which the migrations keep NOT NULL
+  // and schema.sql does not declare.
+  applyMigrations(sqlite)
+  binding = d1OnSqlite(sqlite)
   db = new Kysely<DB>({
     dialect: new D1Dialect({ database: binding }),
     plugins: [d1CompatibilityPlugin],
@@ -31,10 +29,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db?.destroy()
-  await server.close()
 })
 
-it('runs the viewer snapshot and paginated outer join on D1', async () => {
+it('pages the viewer snapshot and the agent artifact list', async () => {
   await binding.batch([
     binding.prepare(
       "INSERT INTO workspaces (id, name, created_at) VALUES ('ws1', 'One', '2026-01-01'), ('ws2', 'Two', '2026-01-01')",
