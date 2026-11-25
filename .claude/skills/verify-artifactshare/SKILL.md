@@ -54,6 +54,7 @@ Two harnesses, both through `scripts/harness.mjs`:
   - The signed-in top bar shows a button named after the persona email (`dev-<persona>@artifactshare.local`). `signIn` waits for it.
   - `launchBrowser()` opens a context with no cookies, for a signed-out visitor. For a second viewer of the same session (another locale, a phone viewport, scripting off), open a context from `browser.newContext({ storageState: await context.storageState(), … })`.
   - `stableBox(locator)` returns the box once it stops moving, for an assertion about where something sits: panels and toasts slide in, so a box read right after `waitFor` can be a frame of the animation. To ask what a user can see at a point, `page.evaluate` with `document.elementFromPoint` and `element.contains`.
+  - `actUntil(page, act, settled)` runs `act` once the network is idle and runs it again if `settled` never appears. Use it for the first interaction after a load: React can discard the server HTML and re-render, and a click in that window is lost, so a longer timeout alone never finds the dialog.
   - `uiText(locale, key, vars)` and `countedLabel(locale, stem, n)` read the app's own catalog. Assert a value the app renders (a count, a state label) through them, so rewritten copy does not fail a journey, and keep literal English for the role names the feature files list as handles.
 - **CLI**: `runCli(run, feature, name, args, { token, cwd })` runs `packages/cli/dist/index.js` with `ARTIFACTSHARE_BASE_URL=<run app origin>`, `--insecure-localhost`, a throwaway `HOME` and `ARTIFACTSHARE_CONFIG_HOME` under the run, and the native token store disabled. It never reads the developer's saved production credentials. Get the token the way a user does: `createApiToken(page, run, name)` creates it in Settings › AI tools and CLI and reads the value shown once.
   - The run serves HTTPS with the development certificate, so `runCli` passes `--insecure-localhost`. Pass `insecureLocalhost: false` to see what happens without it. `--json` prints a failure to stderr, and `result.json` is parsed from whichever stream holds it.
@@ -80,6 +81,7 @@ Everything goes to `.verify-artifactshare/runs/<id>/evidence/<feature>/`:
 
 - `NN-<step>.png` + `NN-<step>.aria.yml` (first line is the page URL) from `capture(run, feature, name, page)`.
 - `NN-<step>.cli.json` from `runCli`, containing the exact command, base URL, exit code, stdout, and stderr.
+- No API token: `capture` masks any `ast_…` on screen out of the image and rewrites it out of the aria text, and `runCli` rewrites it out of the recorded command and streams. A red nightly run uploads this directory, so keep every new secret out of it the same way.
 - `steps.json`, which lists each step the journey passed (written even when it fails, so a failure shows how far it got).
 
 Proof standards:
@@ -104,7 +106,7 @@ Check that the ports are free afterwards: `lsof -nP -iTCP:<app port>,<sandbox po
 | Script | Invocation |
 | --- | --- |
 | `scripts/stack.mjs` | `node .claude/skills/verify-artifactshare/scripts/stack.mjs up\|doctor\|down [--run <id>]` |
-| `scripts/harness.mjs` | `import { openRun, signIn, launchBrowser, capture, countedLabel, createApiToken, runCli, evidenceDir, stableBox, uiText } from '../harness.mjs'` |
+| `scripts/harness.mjs` | `import { openRun, signIn, launchBrowser, actUntil, capture, countedLabel, createApiToken, runCli, evidenceDir, stableBox, uiText } from '../harness.mjs'` |
 | `scripts/journeys/cli-share-view.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/cli-share-view.mjs [--run <id>]` |
 | `scripts/journeys/home-upload.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/home-upload.mjs [--run <id>]` |
 | `scripts/journeys/comments.mjs` | `node .claude/skills/verify-artifactshare/scripts/journeys/comments.mjs [--run <id>]` |

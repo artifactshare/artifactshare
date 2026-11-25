@@ -130,11 +130,32 @@ export async function stableBox(locator, { tries = 40, interval = 100 } = {}) {
   throw new Error(`the element never settled: ${previous ?? 'no box'}`)
 }
 
-/** Save `<name>.png` and `<name>.aria.yml` for the page (or a locator). */
+// An API token is shown in full exactly once, on the Settings page, and a red
+// nightly run uploads this evidence where anyone can read it, so no capture may
+// carry a usable credential. The pattern is the whole token: `ast_` and the
+// base64url of its 32 random bytes.
+const API_TOKEN = /ast_[A-Za-z0-9_-]+/u
+const API_TOKENS = new RegExp(API_TOKEN, 'gu')
+const REDACTED = '[redacted api token]'
+
+function redactSecrets(text) {
+  return text.replaceAll(API_TOKENS, REDACTED)
+}
+
+/**
+ * Save `<name>.png` and `<name>.aria.yml` for the page (or a locator), with any
+ * API token on screen masked out of the image and rewritten out of the text.
+ */
 export async function capture(run, feature, name, page, locator) {
   const dir = evidenceDir(run, feature)
-  await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true })
-  const aria = await (locator ?? page.locator('body')).ariaSnapshot()
+  await page.screenshot({
+    path: join(dir, `${name}.png`),
+    fullPage: true,
+    mask: [page.getByText(API_TOKEN)],
+  })
+  const aria = redactSecrets(
+    await (locator ?? page.locator('body')).ariaSnapshot(),
+  )
   writeFileSync(
     join(dir, `${name}.aria.yml`),
     `# ${page.url()}\n${aria}\n`,
@@ -143,28 +164,47 @@ export async function capture(run, feature, name, page, locator) {
 }
 
 /**
+ * Run `act`, then wait for `settled`. A page that renders server times or
+ * hydrates late can discard the server HTML and re-render right after load, and
+ * a click in that window is lost with no trace, so a longer wait alone never
+ * finds the dialog. Waiting for the network to go idle closes most of the
+ * window; the second attempt covers the rest.
+ */
+export async function actUntil(
+  page,
+  act,
+  settled,
+  { attempts = 2, timeout = 10_000 } = {},
+) {
+  await page.waitForLoadState('networkidle')
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await act()
+    try {
+      await settled.waitFor({ timeout })
+      return
+    } catch (error) {
+      if (attempt === attempts) throw error
+    }
+  }
+}
+
+/**
  * Create an API token from Settings > AI tools and CLI, the way a user does
  * for non-interactive CLI use. Returns the token value shown once on screen.
  */
 export async function createApiToken(page, run, name) {
   await page.goto(`${run.appOrigin}/settings/tokens`)
-  // This page prints relative times from the server, so React can discard the
-  // server HTML and re-render right after load, and a click in that window is
-  // lost. Let the page settle, then submit again if nothing came back.
-  await page.waitForLoadState('networkidle')
   const created = page
     .getByRole('status')
     .filter({ has: page.getByRole('heading', { name: `Token created: ${name}` }) })
-  for (const attempt of [1, 2]) {
-    await page.getByRole('textbox', { name: 'Name' }).fill(name)
-    await page.getByRole('button', { name: 'Create token' }).click()
-    try {
-      await created.waitFor({ timeout: 10_000 })
-      break
-    } catch (error) {
-      if (attempt === 2) throw error
-    }
-  }
+  await actUntil(
+    page,
+    async () => {
+      await page.getByRole('textbox', { name: 'Name' }).fill(name)
+      await page.getByRole('button', { name: 'Create token' }).click()
+    },
+    created,
+  )
   const token = (await created.locator('code').innerText()).trim()
   if (!token.startsWith('ast_')) throw new Error(`Unexpected token text: ${token}`)
   return token
@@ -224,11 +264,11 @@ export function runCli(
     encoding: 'utf8',
   })
   const record = {
-    command: `artifactshare ${argv.join(' ')}`,
+    command: redactSecrets(`artifactshare ${argv.join(' ')}`),
     baseUrl: run.appOrigin,
     exitCode: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: redactSecrets(result.stdout),
+    stderr: redactSecrets(result.stderr),
   }
   writeFileSync(
     join(evidenceDir(run, feature), `${name}.cli.json`),
