@@ -37,7 +37,9 @@ describe('d1CompatibilityPlugin', () => {
       query = query.unionAll(db.selectFrom('users').select('id'))
     }
 
-    expect(() => query.compile()).toThrow(/^D1 compatibility:.*compound/)
+    expect(() => query.compile()).toThrow(
+      'compound SELECTs may contain at most five terms',
+    )
   })
 
   test('rejects a nested compound SELECT that compiles to six terms', () => {
@@ -48,7 +50,9 @@ describe('d1CompatibilityPlugin', () => {
     }
     const query = db.selectFrom('users').select('id').unionAll(right)
 
-    expect(() => query.compile()).toThrow(/^D1 compatibility:.*compound/)
+    expect(() => query.compile()).toThrow(
+      'compound SELECTs may contain at most five terms',
+    )
   })
 
   test('allows a five-term compound SELECT inside EXISTS', () => {
@@ -102,6 +106,6 @@ describe('d1CompatibilityPlugin', () => {
 
     expect(() =>
       db!.selectFrom('users').select('id').where('id', 'in', values).compile(),
-    ).toThrow(/^D1 compatibility:.*(parameters|bound)/)
+    ).toThrow('queries may bind at most 100 parameters')
   })
 })
