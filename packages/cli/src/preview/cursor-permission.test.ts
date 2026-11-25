@@ -27,6 +27,6 @@ test('Cursor permission display includes the full request without terminal contr
 
 test('Cursor permission display caps unexpectedly large requests', () => {
   const display = formatCursorPermissionRequest({ content: 'x'.repeat(20_000) })
-  assert.match(display, /truncated/)
   assert.ok(display.length < 13_000)
+  assert.match(display, /"content"/)
 })

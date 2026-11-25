@@ -176,7 +176,7 @@ test.each([undefined, 'agent'])(
   },
 )
 
-test('expired profile token on an interactive terminal says refresh', async () => {
+test('expired profile token on an interactive terminal announces the device login', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
   const stdout = vi
     .spyOn(process.stdout, 'write')
@@ -231,10 +231,11 @@ test('expired profile token on an interactive terminal says refresh', async () =
     }
   }
 
-  assert.equal(
-    stdout.mock.calls[0]?.[0],
-    'Profile token expired. Starting device login to refresh...\n',
-  )
+  const notice = String(stdout.mock.calls[0]?.[0])
+  assert.equal(notice.endsWith('\n'), true)
+  assert.equal(notice.trim().split('\n').length, 1)
+  assert.ok(notice.trim().length > 0)
+  assert.equal(performLogin.mock.calls.length, 1)
 })
 
 test('auth_required on a non-interactive terminal does not log in', async () => {

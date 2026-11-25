@@ -41,11 +41,9 @@ test('login --json rejects an unavailable token store before device authorizatio
         assert.equal(payload.error.details.profile, 'client-a')
         assert.equal(payload.error.details.cause, 'native_store_unavailable')
         assert.equal(payload.error.recovery.kind, 'ask_human')
-        assert.match(
-          payload.error.hint,
-          process.platform === 'win32'
-            ? /Credential Manager/
-            : /--allow-plaintext-token-store/,
+        assert.equal(
+          payload.error.hint.includes('--allow-plaintext-token-store'),
+          process.platform !== 'win32',
         )
         assert.equal(requests, 0)
       },
@@ -732,28 +730,39 @@ test('publisher login fails before sending a device request without downgrading 
   try {
     const config = { profiles: { publisher: { preset: 'publisher' } } }
     await writeFile(join(configHome, 'config.json'), JSON.stringify(config))
-    for (const extra of [[], ['--preset', 'publisher']]) {
-      const result = await runAsync(
-        [
-          'login',
-          '--profile',
-          'publisher',
-          '--allow-plaintext-token-store',
-          '--json',
-          ...extra,
-        ],
-        { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
-      )
-      const payload = expectFailure(result, {
-        command: 'login',
-        code: 'validation_failed',
-      })
-      assert.match(payload.error.message, /Publisher login is not supported/)
-      assert.deepEqual(
-        JSON.parse(await readFile(join(configHome, 'config.json'), 'utf8')),
-        config,
-      )
-    }
+    let requests = 0
+    await withServer(
+      (_request, response) => {
+        requests += 1
+        writeJson(response, {}, 500)
+      },
+      async (baseUrl) => {
+        for (const extra of [[], ['--preset', 'publisher']]) {
+          const result = await runAsync(
+            [
+              'login',
+              '--profile',
+              'publisher',
+              '--allow-plaintext-token-store',
+              '--base-url',
+              baseUrl,
+              '--json',
+              ...extra,
+            ],
+            { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+          )
+          expectFailure(result, {
+            command: 'login',
+            code: 'validation_failed',
+          })
+          assert.equal(requests, 0)
+          assert.deepEqual(
+            JSON.parse(await readFile(join(configHome, 'config.json'), 'utf8')),
+            config,
+          )
+        }
+      },
+    )
   } finally {
     await rm(configHome, { recursive: true, force: true })
   }

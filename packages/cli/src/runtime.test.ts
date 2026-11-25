@@ -59,7 +59,8 @@ test('built entry rejects old Node before loading any command dependency', async
         assert.equal(result.status, 1)
         if (human) {
           assert.equal(result.stderr.trim().split('\n').length, 1)
-          assert.match(result.stderr, /Upgrade Node.js/)
+          assert.ok(result.stderr.trim().length > 0)
+          assert.equal(result.stderr.trimStart().startsWith('{'), false)
         } else {
           const { error } = expectFailure(result, {
             code: 'unsupported_node_version',

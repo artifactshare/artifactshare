@@ -472,30 +472,31 @@ test('doctor reports cursor project and user skill targets', async () => {
   assert.equal(cursorUser.managed, true)
 }, 15_000)
 
-test('skill auto-update human output reports updated and recommended targets', () => {
-  assert.equal(
-    skillAutoUpdateHumanOutput({
-      skills: {
-        auto_update: {
-          targets: [
-            { tool: 'codex', scope: 'user', action: 'updated' },
-            {
-              tool: 'claude',
-              scope: 'user',
-              action: 'update_recommended',
-              update_command:
-                'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json',
-            },
-          ],
-        },
+test('skill auto-update human output names each target and its update command', () => {
+  const updateCommand =
+    'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json'
+  const output = skillAutoUpdateHumanOutput({
+    skills: {
+      auto_update: {
+        targets: [
+          { tool: 'codex', scope: 'user', action: 'updated' },
+          {
+            tool: 'claude',
+            scope: 'user',
+            action: 'update_recommended',
+            update_command: updateCommand,
+          },
+        ],
       },
-    }),
-    [
-      'Skill updated: codex:user',
-      'Skill update recommended: claude:user (npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json)',
-      '',
-    ].join('\n'),
-  )
+    },
+  })
+  const lines = output.split('\n').filter(Boolean)
+  assert.equal(lines.length, 2)
+  assert.match(lines[0]!, /codex:user/)
+  assert.doesNotMatch(lines[0]!, /claude/)
+  assert.match(lines[1]!, /claude:user/)
+  assert.ok(lines[1]!.includes(updateCommand))
+  assert.equal(output.endsWith('\n'), true)
 })
 
 for (const value of ['custom', '', ' \t ']) {
