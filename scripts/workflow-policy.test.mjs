@@ -6,21 +6,24 @@ import YAML from 'yaml'
 
 const workflowDirectory = '.github/workflows'
 
-const allowedSecretNames = new Set([
-  'CLOUDFLARE_API_TOKEN',
-  'NPM_QM_BRIDGE_BOOTSTRAP_TOKEN',
+const secretOwners = new Map([
+  [
+    'CLOUDFLARE_API_TOKEN',
+    ['deploy-production.yml', 'observability-token-probe.yml'],
+  ],
+  ['NPM_QM_BRIDGE_BOOTSTRAP_TOKEN', ['release-qm-bridge.yml']],
 ])
 
-// npm provenance needs an OIDC token; every other scope stays read-only.
+// npm provenance needs an OIDC token, and only in the job that publishes.
 const writableScopes = new Set(['id-token'])
 
-const hostedRunner = /^(?:ubuntu|windows|macos)-[0-9a-z.-]+$/u
+const hostedRunner =
+  /^(?:ubuntu|windows|macos)-(?:latest|\d+(?:\.\d+)?)(?:-arm)?(?:-(?:large|xlarge))?$/u
 
-const productionWrites = [
-  /\bwrangler\s+(?:deploy|secret|d1)\b/u,
-  /\bdb:apply:remote/u,
-  /\bdeploy:production/u,
-]
+const readOnlyWrangler =
+  /^(?:whoami|dev|docs|types|login|logout|--version|-v\b|versions\s+(?:list|view)|deployments\s+list|d1\s+(?:list|info))/u
+
+const remoteWrites = [/\bdb:apply:remote/u, /\bdeploy:production/u]
 
 const installCommand =
   /(?:^|[\s&|;(])(pnpm|npm|yarn)\s+(?:install|add|ci|i)(?![\w:-])/u
@@ -29,9 +32,35 @@ const unisolatedContainer =
   /--privileged|--cap-add|SYS_ADMIN|--(?:network|pid|uts)[= ]host|docker\.sock/iu
 
 function secretNames(value) {
-  return [...String(value).matchAll(/secrets\.([A-Za-z0-9_-]+)/gu)].map(
-    (match) => match[1],
+  return [
+    ...String(value).matchAll(
+      /secrets(?:\.([A-Za-z0-9_-]+)|\[\s*['"]([A-Za-z0-9_-]+)['"]\s*\])/gu,
+    ),
+  ].map((match) => match[1] ?? match[2])
+}
+
+function writesToProduction(segment) {
+  if (remoteWrites.some((pattern) => pattern.test(segment))) return true
+  const wrangler = segment.match(/\bwrangler\s+(\S.*)$/u)
+  if (!wrangler) return false
+  if (/--dry-run\b/u.test(segment)) return false
+  return !readOnlyWrangler.test(wrangler[1].trim())
+}
+
+function publishesWithProvenance(job) {
+  return (job.steps ?? []).some((step) =>
+    commandSegments(step.run).some(
+      (segment) =>
+        /\b(?:npm|pnpm)\s+publish\b/u.test(segment) &&
+        /--provenance\b/u.test(segment),
+    ),
   )
+}
+
+function oidcLevel(permissions) {
+  return typeof permissions === 'object' && permissions !== null
+    ? permissions['id-token']
+    : undefined
 }
 
 function environmentName(job) {
@@ -132,8 +161,12 @@ export function inspectWorkflow({ file, text, data }) {
       detail,
     })
 
-  for (const name of new Set(secretNames(text)))
-    if (!allowedSecretNames.has(name)) report('secret-allowlist', '', name)
+  for (const name of new Set(secretNames(text))) {
+    const owners = secretOwners.get(name)
+    if (!owners) report('secret-allowlist', '', `${name} is on no allowlist`)
+    else if (!owners.includes(path.basename(file)))
+      report('secret-allowlist', '', `${name} belongs to ${owners.join(', ')}`)
+  }
 
   if (Object.keys(data.on ?? {}).includes('pull_request_target'))
     report('untrusted-trigger', '', 'pull_request_target')
@@ -142,11 +175,23 @@ export function inspectWorkflow({ file, text, data }) {
     report('secret-environment', 'workflow env', 'outside any environment')
 
   checkPermissions(data.permissions, '', report, { required: true })
+  const inheritsOidc = oidcLevel(data.permissions) === 'write'
 
   for (const [jobName, job] of Object.entries(data.jobs ?? {})) {
     const where = `job ${jobName}`
     checkPermissions(job.permissions, where, report, { required: false })
     checkFailureVisibility(job, where, report)
+
+    const grantsOidc =
+      job.permissions === undefined
+        ? inheritsOidc
+        : oidcLevel(job.permissions) === 'write'
+    if (grantsOidc && !publishesWithProvenance(job))
+      report(
+        'read-only-permissions',
+        where,
+        'id-token: write without a provenance publish',
+      )
 
     for (const options of containerOptions(job))
       if (unisolatedContainer.test(options))
@@ -206,10 +251,7 @@ export function inspectWorkflow({ file, text, data }) {
           )
             report('install-scripts', stepWhere, segment.trim())
         }
-        if (
-          productionWrites.some((pattern) => pattern.test(segment)) &&
-          environment !== 'production'
-        )
+        if (writesToProduction(segment) && environment !== 'production')
           report('production-write-environment', stepWhere, segment.trim())
       }
     }
@@ -218,26 +260,18 @@ export function inspectWorkflow({ file, text, data }) {
   return violations
 }
 
-export function summarize(workflows) {
-  const counts = {
-    workflows: workflows.length,
-    jobs: 0,
-    steps: 0,
-    uses: 0,
-    installs: 0,
-    checkouts: 0,
-  }
-  for (const { data } of workflows)
-    for (const job of Object.values(data.jobs ?? {})) {
-      counts.jobs += 1
-      for (const step of job.steps ?? []) {
-        counts.steps += 1
-        if (step.uses) counts.uses += 1
-        if (step.uses?.startsWith('actions/checkout@')) counts.checkouts += 1
-        if (commandSegments(step.run).some((part) => installCommand.test(part)))
-          counts.installs += 1
-      }
+export function summarize({ file, data }) {
+  const counts = { file, jobs: 0, steps: 0, uses: 0, installs: 0, checkouts: 0 }
+  for (const job of Object.values(data.jobs ?? {})) {
+    counts.jobs += 1
+    for (const step of job.steps ?? []) {
+      counts.steps += 1
+      if (step.uses) counts.uses += 1
+      if (step.uses?.startsWith('actions/checkout@')) counts.checkouts += 1
+      if (commandSegments(step.run).some((part) => installCommand.test(part)))
+        counts.installs += 1
     }
+  }
   return counts
 }
 
@@ -263,21 +297,24 @@ function offenders(policy) {
     .map((violation) => `${violation.where}: ${violation.detail}`)
 }
 
-test('the scan parses every workflow and reaches their jobs and steps', () => {
+test('the scan parses every workflow and reaches each one of them', () => {
   assert.ok(workflows.length > 0)
-  for (const { file, document } of workflows)
-    assert.deepEqual(document.errors, [], file)
   assert.notEqual(YAML.parseDocument('jobs:\n\tbad: value').errors.length, 0)
-  const counts = summarize(workflows)
-  const detail = JSON.stringify(counts)
-  assert.ok(counts.jobs > 0, detail)
-  assert.ok(counts.steps > 0, detail)
-  assert.ok(counts.uses > 0, detail)
-  assert.ok(counts.installs > 0, detail)
-  assert.ok(counts.checkouts > 0, detail)
+  let installs = 0
+  for (const workflow of workflows) {
+    assert.deepEqual(workflow.document.errors, [], workflow.file)
+    const counts = summarize(workflow)
+    const detail = JSON.stringify(counts)
+    assert.ok(counts.jobs > 0, detail)
+    assert.ok(counts.steps > 0, detail)
+    assert.ok(counts.uses > 0, detail)
+    assert.ok(counts.checkouts > 0, detail)
+    installs += counts.installs
+  }
+  assert.ok(installs > 0)
 })
 
-test('every secret name is on the allowlist', () => {
+test('every secret is allowlisted and used only by the workflow that owns it', () => {
   assert.deepEqual(offenders('secret-allowlist'), [])
 })
 
@@ -340,18 +377,14 @@ function withJob(overrides) {
   }
 }
 
-function policiesOf(overrides) {
+function policiesOf(overrides, file = 'fixture.yml') {
   const data = {
     on: { push: { branches: ['main'] } },
     permissions: { contents: 'read' },
     ...withJob({}),
     ...overrides,
   }
-  const found = inspectWorkflow({
-    file: 'fixture.yml',
-    text: YAML.stringify(data),
-    data,
-  })
+  const found = inspectWorkflow({ file, text: YAML.stringify(data), data })
   return [...new Set(found.map((violation) => violation.policy))].sort()
 }
 
@@ -360,18 +393,50 @@ const secretStep = (name) => ({
   env: { TOKEN: `\${{ secrets.${name} }}` },
 })
 
-for (const [name, overrides, expected] of [
+const publishStep = {
+  run: 'npm publish --access public --provenance',
+}
+
+for (const [name, overrides, expected, file] of [
   ['accepts a compliant workflow', {}, []],
   [
-    'accepts an OIDC publishing token',
-    { permissions: { contents: 'read', 'id-token': 'write' } },
+    'accepts an OIDC token in the job that publishes with provenance',
+    {
+      permissions: { contents: 'read', 'id-token': 'write' },
+      ...withJob({ steps: [checkoutStep, installStep, publishStep] }),
+    },
     [],
+  ],
+  [
+    'rejects an OIDC token in a job that publishes nothing',
+    { permissions: { contents: 'read', 'id-token': 'write' } },
+    ['read-only-permissions'],
+  ],
+  [
+    'rejects an OIDC token granted to one job that publishes nothing',
+    withJob({ permissions: { contents: 'read', 'id-token': 'write' } }),
+    ['read-only-permissions'],
   ],
   [
     'accepts a production write inside the environment',
     withJob({
       environment: 'production',
       steps: [checkoutStep, { run: 'pnpm exec wrangler deploy' }],
+    }),
+    [],
+  ],
+  [
+    'accepts a read-only Wrangler command',
+    withJob({ steps: [checkoutStep, { run: 'pnpm exec wrangler whoami' }] }),
+    [],
+  ],
+  [
+    'accepts a Wrangler dry run',
+    withJob({
+      steps: [
+        checkoutStep,
+        { run: 'pnpm exec wrangler deploy -c w.jsonc --dry-run' },
+      ],
     }),
     [],
   ],
@@ -384,9 +449,40 @@ for (const [name, overrides, expected] of [
     ['secret-allowlist'],
   ],
   [
+    'rejects a secret the bracket form hides',
+    withJob({
+      environment: 'production',
+      steps: [
+        checkoutStep,
+        {
+          run: 'node scripts/probe.mjs',
+          env: { TOKEN: "${{ secrets['MYSTERY_TOKEN'] }}" },
+        },
+      ],
+    }),
+    ['secret-allowlist'],
+  ],
+  [
+    'rejects a secret another workflow owns',
+    withJob({
+      environment: 'production',
+      steps: [checkoutStep, secretStep('CLOUDFLARE_API_TOKEN')],
+    }),
+    ['secret-allowlist'],
+    'release-qm-bridge.yml',
+  ],
+  [
     'rejects a secret outside the production environment',
     withJob({ steps: [checkoutStep, secretStep('CLOUDFLARE_API_TOKEN')] }),
     ['secret-environment'],
+    'deploy-production.yml',
+  ],
+  [
+    'rejects a Wrangler command that is not read-only',
+    withJob({
+      steps: [checkoutStep, { run: 'pnpm exec wrangler kv key put a b' }],
+    }),
+    ['production-write-environment'],
   ],
   [
     'rejects a production write outside the environment',
@@ -409,6 +505,16 @@ for (const [name, overrides, expected] of [
     'rejects a self-hosted runner',
     withJob({ 'runs-on': 'self-hosted' }),
     ['hosted-runner'],
+  ],
+  [
+    'rejects a runner label that only looks hosted',
+    withJob({ 'runs-on': 'ubuntu-internal' }),
+    ['hosted-runner'],
+  ],
+  [
+    'accepts a dated hosted runner image',
+    withJob({ 'runs-on': 'ubuntu-24.04' }),
+    [],
   ],
   [
     'rejects a self-hosted runner group',
@@ -594,6 +700,6 @@ for (const [name, overrides, expected] of [
   ],
 ]) {
   test(`policy scan ${name}`, () => {
-    assert.deepEqual(policiesOf(overrides), expected)
+    assert.deepEqual(policiesOf(overrides, file), expected)
   })
 }
