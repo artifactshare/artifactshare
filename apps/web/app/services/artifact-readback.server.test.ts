@@ -35,48 +35,64 @@ const thread: CommentThreadView = {
   messages: [message],
   canResolve: true,
 }
-const messageJson =
-  '{"message_id":"message-a","author_name":"Owner","author_email":"owner@example.com","agent":null,"body":"Reply","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}'
-const threadJson =
-  '{"id":"thread-a","message_count":1,"reply_count":0,"older_cursor":null,"status":"open","resolved_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","anchor":{"kind":"artifact","quoted_text":null,"state":null},"messages":[' +
-  messageJson +
-  ']}'
+const messageFields = {
+  message_id: 'message-a',
+  author_name: 'Owner',
+  author_email: 'owner@example.com',
+  agent: null,
+  body: 'Reply',
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+}
+const threadFields = {
+  id: 'thread-a',
+  message_count: 1,
+  reply_count: 0,
+  older_cursor: null,
+  status: 'open',
+  resolved_at: null,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+  anchor: { kind: 'artifact', quoted_text: null, state: null },
+  messages: [messageFields],
+}
 
-test('ordinary mutation serialization retains field order and changed messages regardless of unrelated properties', () => {
+test('a mutation reports the thread, the changed message and the refresh flag, and nothing else', () => {
+  // An unrelated property must not change the reported fields.
   const result = {
     thread,
     changedMessage: message,
     refreshRequired: true,
     deleted: false,
   }
-  expect(JSON.stringify(agentCommentMutationFields(result))).toBe(
-    `{"thread":${threadJson},"changed_message":${messageJson},"refresh_required":true}`,
-  )
-  expect(JSON.stringify(agentCommentMutationFields({ thread }))).toBe(
-    `{"thread":${threadJson}}`,
-  )
-  expect(
-    JSON.stringify(agentCommentMutationFields({ changedMessage: message })),
-  ).toBe(`{"changed_message":${messageJson}}`)
-  expect(
-    JSON.stringify(agentCommentMutationFields({ refreshRequired: true })),
-  ).toBe('{"refresh_required":true}')
-  expect(JSON.stringify(agentCommentMutationFields({}))).toBe('{}')
+  expect(agentCommentMutationFields(result)).toEqual({
+    thread: threadFields,
+    changed_message: messageFields,
+    refresh_required: true,
+  })
+  expect(agentCommentMutationFields({ thread })).toEqual({
+    thread: threadFields,
+  })
+  expect(agentCommentMutationFields({ changedMessage: message })).toEqual({
+    changed_message: messageFields,
+  })
+  expect(agentCommentMutationFields({ refreshRequired: true })).toEqual({
+    refresh_required: true,
+  })
+  expect(agentCommentMutationFields({})).toEqual({})
 })
 
-test('deletion serialization preserves refresh then surviving thread and omitted fields', () => {
-  expect(
-    JSON.stringify(
-      agentCommentDeletionFields({ thread, refreshRequired: true }),
-    ),
-  ).toBe(`{"refresh_required":true,"thread":${threadJson}}`)
-  expect(JSON.stringify(agentCommentDeletionFields({ thread }))).toBe(
-    `{"thread":${threadJson}}`,
+test('a deletion reports the surviving thread and omits absent fields', () => {
+  expect(agentCommentDeletionFields({ thread, refreshRequired: true })).toEqual(
+    { refresh_required: true, thread: threadFields },
   )
-  expect(
-    JSON.stringify(agentCommentDeletionFields({ refreshRequired: true })),
-  ).toBe('{"refresh_required":true}')
-  expect(JSON.stringify(agentCommentDeletionFields({}))).toBe('{}')
+  expect(agentCommentDeletionFields({ thread })).toEqual({
+    thread: threadFields,
+  })
+  expect(agentCommentDeletionFields({ refreshRequired: true })).toEqual({
+    refresh_required: true,
+  })
+  expect(agentCommentDeletionFields({})).toEqual({})
 })
 
 for (const selectorFormat of ['normalized-v1', 'quote-v1', null] as const) {

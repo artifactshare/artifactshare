@@ -30,25 +30,43 @@ describe('video download names', () => {
   })
 })
 
+/** A tag's attributes, so the order they are written in is free. */
+function attributesOf(html: string, tag: string) {
+  const match = html.match(new RegExp(`<${tag}\\b([^>]*)>`, 'u'))
+  expect(match, tag).not.toBeNull()
+  return Object.fromEntries(
+    [...match![1]!.matchAll(/([a-zA-Z-]+)(?:="([^"]*)")?/gu)].map(
+      (attribute) => [attribute[1]!, attribute[2] ?? true],
+    ),
+  )
+}
+
 describe('video player page', () => {
   test('never puts markup from the file name in the page and never autoplays', () => {
     const html = videoPlayerDocument('/a<b>&"c.mp4')
     expect(html).toContain('<title>a_b_c.mp4</title>')
-    expect(html).toContain('data-file-name="a_b_c.mp4"')
+    expect(attributesOf(html, 'div')['data-file-name']).toBe('a_b_c.mp4')
     expect(html).not.toContain('<b>')
-    expect(html).toContain('preload="metadata"')
     expect(html).not.toMatch(/\bautoplay\b/)
   })
 
   test('plays and downloads with native controls until the player script takes over', () => {
     const html = videoPlayerDocument('/demo.mp4')
-    expect(html).toContain(
-      '<video id="video" controls playsinline preload="metadata" src="/__as_video/original.mp4">',
-    )
-    expect(html).toContain(
-      '<a href="/__as_video/original.mp4?download=1" download="demo.mp4">',
-    )
-    expect(html).toContain('<html lang="en" data-theme="system"')
+    expect(attributesOf(html, 'video')).toEqual({
+      id: 'video',
+      controls: true,
+      playsinline: true,
+      preload: 'metadata',
+      src: '/__as_video/original.mp4',
+    })
+    expect(attributesOf(html, 'a')).toEqual({
+      href: '/__as_video/original.mp4?download=1',
+      download: 'demo.mp4',
+    })
+    expect(attributesOf(html, 'html')).toMatchObject({
+      lang: 'en',
+      'data-theme': 'system',
+    })
   })
 
   test('offers playback speeds from 0.5× to 2×', () => {

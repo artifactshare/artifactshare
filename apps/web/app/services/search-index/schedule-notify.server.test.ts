@@ -32,7 +32,8 @@ test('a failed sync is logged without failing the caller', async () => {
   }
   const pending: Promise<unknown>[] = []
   scheduleWorkspaceSearch('ws-a', (promise) => pending.push(promise))
-  await Promise.all(pending)
-  expect(error).toHaveBeenCalledWith('workspace_search_notification_failed')
+  await expect(Promise.all(pending)).resolves.toHaveLength(1)
+  // One marker and nothing else: the rejected value must not reach the log.
+  expect(error.mock.calls).toEqual([[expect.any(String)]])
   error.mockRestore()
 })

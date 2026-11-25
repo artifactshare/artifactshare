@@ -5,7 +5,12 @@ import { RouterContextProvider } from 'react-router'
 const getSessionUser = vi.hoisted(() => vi.fn())
 const createDb = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({ createDb }))
-const readBearerSessionToken = vi.hoisted(() => vi.fn(() => null))
+const readBearerSessionToken = vi.hoisted(() =>
+  vi.fn(
+    (request: Request) =>
+      request.headers.get('authorization')?.replace(/^Bearer /u, '') ?? null,
+  ),
+)
 vi.mock('~/services/auth.server', () => ({
   getSessionUser,
   readBearerSessionToken,
@@ -51,13 +56,19 @@ test.each(['abc123def4', 'example%ZZ', '%', '%E0%A4%A'])(
   },
 )
 
-test.each([false, true])(
-  'unrelated paths retain session handling with observation sampled=%s',
-  async (sampled) => {
+test.each([
+  [true, 'Bearer session-token', true],
+  [true, undefined, false],
+  [false, 'Bearer session-token', false],
+])(
+  'unrelated paths retain session handling (sampled %s, bearer %s)',
+  async (sampled, authorization, hasBearer) => {
     vi.spyOn(Math, 'random').mockReturnValue(sampled ? 0 : 1)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     getSessionUser.mockResolvedValue(null)
-    const request = new Request('https://example.test/settings')
+    const request = new Request('https://example.test/settings', {
+      headers: authorization ? { authorization } : {},
+    })
     const args = {
       request,
       url: new URL(request.url),
@@ -71,14 +82,16 @@ test.each([false, true])(
     )
     expect(getSessionUser).toHaveBeenCalledWith(request)
     expect(next).toHaveBeenCalledOnce()
-    expect(readBearerSessionToken).toHaveBeenCalledTimes(sampled ? 1 : 0)
-    if (sampled) {
-      expect(readBearerSessionToken).toHaveBeenCalledWith(request)
-      expect(log).toHaveBeenCalledWith(
-        expect.stringContaining('"event":"auth_session_observation"'),
-      )
-    } else {
+    if (!sampled) {
       expect(log).not.toHaveBeenCalled()
+      return
     }
+    expect(log).toHaveBeenCalledOnce()
+    expect(JSON.parse(String(log.mock.calls[0]![0]))).toMatchObject({
+      event: 'auth_session_observation',
+      routeGroup: 'page',
+      hasBearer,
+      hasSessionToken: false,
+    })
   },
 )

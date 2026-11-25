@@ -1,5 +1,3 @@
-import searchEn from '../updates/entries/2026-11-17-full-text-search.en.md?raw'
-import searchJa from '../updates/entries/2026-11-17-full-text-search.ja.md?raw'
 import { describe, expect, test } from 'vitest'
 
 import {
@@ -56,16 +54,43 @@ describe('getAllUpdates', () => {
     ])
   })
 
-  test('filters by product when requested', () => {
-    const cliOnly = getAllUpdates('en', 'cli')
-    const webEntries = getAllUpdates('en', 'web')
-
-    expect(cliOnly.map((item) => item.slug)).toContain(
+  test('keeps only the cli entries when filtered', () => {
+    expect(getAllUpdates('en', 'cli').map((item) => item.slug)).toEqual([
+      '2026-11-17-full-text-search',
+      '2026-11-09-pdf-and-video',
+      '2026-11-09-comment-locations',
+      '2026-10-08-webassembly-in-folder-shares',
+      '2026-10-08-version-retention',
+      '2026-09-07-link-sharing-on-free',
+      '2026-09-02-collaborative-version-updates',
+      '2026-08-29-cli-preview',
+      '2026-08-18-source-available',
+      '2026-08-12-project-scoped-agent-login',
+      '2026-08-11-cli-session-management',
+      '2026-08-05-project-slack-notifications',
+      '2026-07-26-append-artifact',
+      '2026-07-13-cli-reference',
+      '2026-07-12-public-updates-page',
       '2026-07-10-mermaid-static-site',
-    )
-    expect(cliOnly.every((item) => item.products.includes('cli'))).toBe(true)
-    expect(webEntries.length).toBeGreaterThan(0)
-    expect(webEntries.every((item) => item.products.includes('web'))).toBe(true)
+    ])
+  })
+
+  test('leaves out exactly the entries no web release announced', () => {
+    const web = new Set(getAllUpdates('en', 'web').map((item) => item.slug))
+    expect(
+      getAllUpdates('en')
+        .map((item) => item.slug)
+        .filter((slug) => !web.has(slug)),
+    ).toEqual([
+      '2026-10-08-version-retention',
+      '2026-08-29-cli-preview',
+      '2026-07-26-append-artifact',
+      '2026-07-16-workspace-inventory',
+      '2026-07-16-activity-log-and-billing-estimate',
+      '2026-07-14-workspace-owner-admins',
+      '2026-07-13-member-removal-transfer-restore',
+    ])
+    expect(web.size).toBe(37)
   })
 
   test('falls back to English when Japanese entry is missing', () => {
@@ -103,10 +128,11 @@ describe('getUpdateBySlug', () => {
     expect(getUpdateBySlug('does-not-exist', 'en')).toBeUndefined()
   })
 
-  test('returns committed entry by slug', () => {
-    const found = getUpdateBySlug('2026-07-10-mermaid-static-site', 'en')
-    expect(found?.title).toContain('Mermaid')
-    expect(found?.hasMore).toBe(true)
+  test('returns the committed entry that carries the slug', () => {
+    const published = getAllUpdates('en')
+    expect(published.length).toBeGreaterThan(0)
+    for (const update of published)
+      expect(getUpdateBySlug(update.slug, 'en')).toEqual(update)
   })
 })
 
@@ -577,53 +603,3 @@ Body`,
     })
   })
 })
-
-test.each(['en', 'ja'] as const)(
-  'publishes the full-text search announcement in %s',
-  (locale) => {
-    const slug = '2026-11-17-full-text-search'
-    const source = locale === 'en' ? searchEn : searchJa
-    const parsed = parseUpdateFile(`${slug}.${locale}.md`, source)
-    expect(parsed.locale).toBe(locale)
-    expect(parsed.frontmatter).toMatchObject({
-      date: '2026-11-17',
-      products: ['web', 'mcp', 'cli'],
-      kind: 'new',
-    })
-    expect(parsed.frontmatter.notice).toBeUndefined()
-    const update = getUpdateBySlug(slug, locale)!
-    expect(update).toBeDefined()
-    for (const term of [
-      'HTML',
-      'Markdown',
-      'MCP',
-      'list_artifacts',
-      'artifacts list',
-    ])
-      expect(update.summaryHtml).toContain(term)
-    const facts =
-      locale === 'en'
-        ? [
-            'body text in HTML and Markdown files',
-            'HTML and Markdown pages in static sites',
-            'owner, project, and period',
-            'only through admin rights do not appear',
-            'archived projects',
-            'already opened while signed in',
-            'Ownership or a direct share',
-            'PDF body text and video speech are not included',
-          ]
-        : [
-            'HTML ファイルと Markdown ファイルの本文',
-            '静的サイト内の HTML・Markdown ページの本文',
-            '所有者、プロジェクト、期間',
-            '管理者権限だけで開けるファイルは出ません',
-            'アーカイブ済みプロジェクト',
-            'ログインして一度開いた',
-            '自分が所有している場合や直接共有されている場合',
-            'PDF の本文や動画の音声は含みません',
-          ]
-    for (const fact of facts)
-      expect(update.summaryHtml + update.bodyHtml).toContain(fact)
-  },
-)

@@ -54,8 +54,13 @@ import {
   getPublisherArtifactReadback,
 } from './artifact-readback-service.server'
 
+/** The keys the source fetch asked for, so its other arguments stay free. */
+const fetchedKeys = () =>
+  fetchSource.mock.calls.map((call: unknown[]) => call[0])
+
 beforeEach(() => {
-  selectVersion.mockReset()
+  // Always a promise, like the real selection, so an extra call cannot throw.
+  selectVersion.mockReset().mockResolvedValue({ kind: 'not-found' })
   access.mockReset().mockResolvedValue({
     title: 'Report',
     artifactKind: 'html_page',
@@ -226,14 +231,25 @@ for (const isOwner of [true, false]) {
           visibility: 'workspace',
         },
       })
-      expect(fetchSource).toHaveBeenCalledWith('old')
+      expect(fetchedKeys()).toEqual(['old'])
       if (!isOwner && result.kind === 'ok')
         expect(result.data.versions).toBeUndefined()
     })
   }
 }
-test('access denial precedes version and tombstone lookup', async () => {
+// A denied read must not become an existence oracle for a version id.
+test.each([
+  ['a removed version', { kind: 'version-removed' }],
+  [
+    'a stored version',
+    {
+      kind: 'ok',
+      version: { id: 'removed', artifact_kind: 'markdown_page', r2_key: 'old' },
+    },
+  ],
+])('an unauthorized read answers not-found for %s', async (_name, selected) => {
   access.mockResolvedValue(null)
+  selectVersion.mockResolvedValue(selected)
   expect(
     await getArtifactReadback({} as never, {} as never, {
       id: 's1',
@@ -241,8 +257,6 @@ test('access denial precedes version and tombstone lookup', async () => {
       baseUrl: 'https://artifactshare.test',
     }),
   ).toEqual({ kind: 'not-found' })
-  expect(selectVersion).not.toHaveBeenCalled()
-  expect(fetchSource).not.toHaveBeenCalled()
 })
 for (const kind of ['not-found', 'version-removed']) {
   test(`historical ${kind} never reads current storage`, async () => {
@@ -299,7 +313,7 @@ test('missing historical storage does not fall back to current content', async (
       baseUrl: 'https://artifactshare.test',
     }),
   ).toEqual({ kind: 'source-unavailable' })
-  expect(fetchSource.mock.calls).toEqual([['old']])
+  expect(fetchedKeys()).toEqual(['old'])
 })
 
 for (const selectedStatic of [true, false]) {

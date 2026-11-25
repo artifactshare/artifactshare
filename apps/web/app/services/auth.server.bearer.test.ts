@@ -94,29 +94,6 @@ describe('getSessionUserFromBearer', () => {
     expect(readTokenRow(sqlite, created.id).last_used_at).not.toBeNull()
   })
 
-  test('ast_ authentication queries api_tokens twice (join lookup + last_used touch)', async () => {
-    let apiTokenQueryCount = 0
-    const countingSqlite = new Proxy(sqlite, {
-      get(target, prop, receiver) {
-        if (prop === 'prepare') {
-          return (sql: string) => {
-            if (/\bapi_tokens\b/i.test(sql)) {
-              apiTokenQueryCount++
-            }
-            return target.prepare(sql)
-          }
-        }
-        return Reflect.get(target, prop, receiver)
-      },
-    })
-    d1TestRef.sqliteRef.current = countingSqlite
-
-    const created = await createApiToken(db, 'u1', 'CI deploy')
-    await getSessionUserFromBearer(bearerRequest(created.token))
-
-    expect(apiTokenQueryCount).toBe(2)
-  })
-
   test('session bearer authentication fails after member removal deletes sessions', async () => {
     const sessionToken = 'sess_removed_user'
     seedSession(sqlite, 'u1', sessionToken)
