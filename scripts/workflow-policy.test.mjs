@@ -28,15 +28,23 @@ const remoteWrites = [/\bdb:apply:remote/u, /\bdeploy:production/u]
 const installCommand =
   /(?:^|[\s&|;(])(pnpm|npm|yarn)\s+(?:install|add|ci|i)(?![\w:-])/u
 
+// A publish is the command the shell runs, so the segment has to start with it.
+// Text that only mentions a publish, such as an echo, is not one.
+const publishCommand =
+  /^[\s{(]*(?:(?:then|else|do|time|exec|env|command)\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:npm|pnpm)(?:\s+(?:-{1,2}\S+|@\S+|exec|run))*\s+publish(?![\w-])/u
+
 const unisolatedContainer =
   /--privileged|--cap-add|SYS_ADMIN|--(?:network|pid|uts)[= ]host|docker\.sock/iu
 
+const secretReference =
+  /secrets(?:\.([A-Za-z0-9_-]+)|\[\s*['"]([A-Za-z0-9_-]+)['"]\s*\]|\[([^\]]*)\])/gu
+
+// A bracket index that is not a literal name hides which secret it reads, so it
+// is reported as unresolved instead of resolving to nothing.
 function secretNames(value) {
-  return [
-    ...String(value).matchAll(
-      /secrets(?:\.([A-Za-z0-9_-]+)|\[\s*['"]([A-Za-z0-9_-]+)['"]\s*\])/gu,
-    ),
-  ].map((match) => match[1] ?? match[2])
+  return [...String(value).matchAll(secretReference)].map(
+    (match) => match[1] ?? match[2] ?? `[${match[3].trim()}]`,
+  )
 }
 
 function writesToProduction(segment) {
@@ -48,13 +56,12 @@ function writesToProduction(segment) {
 }
 
 function publishesWithProvenance(job) {
-  return (job.steps ?? []).some((step) =>
-    commandSegments(step.run).some(
+  return (job.steps ?? [])
+    .flatMap((step) => commandSegments(step.run))
+    .some(
       (segment) =>
-        /\b(?:npm|pnpm)\s+publish\b/u.test(segment) &&
-        /--provenance\b/u.test(segment),
-    ),
-  )
+        publishCommand.test(segment) && /--provenance\b/u.test(segment),
+    )
 }
 
 function oidcLevel(permissions) {
@@ -162,6 +169,10 @@ export function inspectWorkflow({ file, text, data }) {
     })
 
   for (const name of new Set(secretNames(text))) {
+    if (name.startsWith('[')) {
+      report('secret-allowlist', '', `unresolved secrets${name}`)
+      continue
+    }
     const owners = secretOwners.get(name)
     if (!owners) report('secret-allowlist', '', `${name} is on no allowlist`)
     else if (!owners.includes(path.basename(file)))
@@ -256,6 +267,8 @@ export function inspectWorkflow({ file, text, data }) {
         }
         if (writesToProduction(segment) && environment !== 'production')
           report('production-write-environment', stepWhere, segment.trim())
+        if (publishCommand.test(segment) && environment !== 'production')
+          report('publish-environment', stepWhere, segment.trim())
       }
     }
   }
@@ -327,6 +340,10 @@ test('every job that reads a secret runs in the production environment', () => {
 
 test('every production write runs in the production environment', () => {
   assert.deepEqual(offenders('production-write-environment'), [])
+})
+
+test('every package publish runs in the production environment', () => {
+  assert.deepEqual(offenders('publish-environment'), [])
 })
 
 test('no workflow runs on an untrusted trigger', () => {
@@ -423,7 +440,10 @@ for (const [name, overrides, expected, file] of [
     'accepts an OIDC token in the job that publishes with provenance',
     {
       permissions: { contents: 'read', 'id-token': 'write' },
-      ...withJob({ steps: [checkoutStep, installStep, publishStep] }),
+      ...withJob({
+        environment: 'production',
+        steps: [checkoutStep, installStep, publishStep],
+      }),
     },
     [],
   ],
@@ -717,6 +737,77 @@ for (const [name, overrides, expected, file] of [
       },
     }),
     ['container-isolation'],
+  ],
+  [
+    'rejects a publish outside the production environment',
+    withJob({ steps: [checkoutStep, installStep, publishStep] }),
+    ['publish-environment'],
+  ],
+  [
+    'rejects a publish a workspace filter hides',
+    withJob({
+      steps: [
+        checkoutStep,
+        installStep,
+        { run: 'pnpm --filter @artifactshare/cli publish --provenance' },
+      ],
+    }),
+    ['publish-environment'],
+  ],
+  [
+    'rejects a publish reached through a package script',
+    withJob({ steps: [checkoutStep, installStep, { run: 'npm run publish' }] }),
+    ['publish-environment'],
+  ],
+  [
+    'accepts a publish inside the production environment',
+    withJob({
+      environment: 'production',
+      steps: [checkoutStep, installStep, publishStep],
+    }),
+    [],
+  ],
+  [
+    'rejects an OIDC token whose only publish is printed text',
+    {
+      permissions: { contents: 'read', 'id-token': 'write' },
+      ...withJob({
+        environment: 'production',
+        steps: [
+          checkoutStep,
+          installStep,
+          { run: 'echo "npm publish --access public --provenance"' },
+        ],
+      }),
+    },
+    ['read-only-permissions'],
+  ],
+  [
+    'rejects a secret index it cannot resolve',
+    withJob({
+      environment: 'production',
+      steps: [
+        checkoutStep,
+        {
+          run: 'node scripts/probe.mjs',
+          env: { TOKEN: '${{ secrets[env.NAME] }}' },
+        },
+      ],
+    }),
+    ['secret-allowlist'],
+  ],
+  [
+    'rejects an unresolved secret index outside the production environment',
+    withJob({
+      steps: [
+        checkoutStep,
+        {
+          run: 'node scripts/probe.mjs',
+          env: { TOKEN: "${{ secrets[format('NPM_{0}', inputs.name)] }}" },
+        },
+      ],
+    }),
+    ['secret-allowlist', 'secret-environment'],
   ],
 ]) {
   test(`policy scan ${name}`, () => {
