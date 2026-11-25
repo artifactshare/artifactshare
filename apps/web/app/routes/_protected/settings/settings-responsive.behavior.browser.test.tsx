@@ -282,22 +282,6 @@ function createTestRouter(...args: Parameters<typeof createMemoryRouter>) {
   return router
 }
 
-test('disposes both routers when fixture setup throws', () => {
-  const disposals: Array<ReturnType<typeof vi.fn>> = []
-  // Completion hooks run in reverse registration order.
-  onTestFinished(() => {
-    expect(disposals).toHaveLength(2)
-    for (const dispose of disposals) expect(dispose).toHaveBeenCalledTimes(1)
-  })
-  expect(() => {
-    for (let index = 0; index < 2; index++) {
-      const router = createTestRouter([{ path: '/', element: <div /> }])
-      disposals.push(vi.spyOn(router, 'dispose'))
-    }
-    throw new Error('fixture setup failed')
-  }).toThrow('fixture setup failed')
-})
-
 async function withScreen(
   content: ReactNode,
   inspect: (

@@ -15,7 +15,6 @@ export type ComponentCatalogEntry = {
  * app 部品は用途固有のため parity 対象外で、代表形を /dev/gallery の app-sections に掲載する。
  * 「何があり、いつ使い、どの variant を持ち、公式から何が違うか」を機械可読に持つ。
  * design-system.md は語彙と意図を、値は @theme / 部品コードを、部品一覧はこのカタログを正本にする。
- * 実在部品との一致は catalog.test.ts が検査する (欠け・孤児・重複・空メタ・代表差分の存在)。
  */
 export const componentCatalog: ComponentCatalogEntry[] = [
   {
