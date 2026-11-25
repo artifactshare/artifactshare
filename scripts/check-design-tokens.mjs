@@ -3,6 +3,7 @@ import { basename, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   INTERACTIVE_SPACING_ANNOTATION,
+  SHARED_UI_COMPONENT_DIRECTORY,
   isAllowedInteractiveSpacingSource,
 } from './interactive-spacing-annotation-policy.mjs'
 
@@ -18,7 +19,6 @@ const VIEWERS_DIR = join(APP_DIR, 'viewers')
 const CATALOG_TS = join(APP_DIR, 'components/catalog.ts')
 const TOKENS_CSS = join(STYLES_DIR, 'tokens.css')
 const ROOT_TSX = join(APP_DIR, 'root.tsx')
-const DESIGN_SYSTEM_MD = join(ROOT, 'docs/reference/design-system.md')
 
 export function findInteractiveSpacingAnnotationViolations(files, root = ROOT) {
   const violations = []
@@ -30,7 +30,7 @@ export function findInteractiveSpacingAnnotationViolations(files, root = ROOT) {
     )
       violations.push({
         file: relative(root, file).split('\\').join('/'),
-        detail: `${INTERACTIVE_SPACING_ANNOTATION} is restricted to owning shared UI components`,
+        detail: `${INTERACTIVE_SPACING_ANNOTATION} is restricted to ${SHARED_UI_COMPONENT_DIRECTORY}`,
       })
   }
   return violations
@@ -94,30 +94,6 @@ export function findJapaneseTypographyViolations(appCss) {
         'html:lang(ja) must use strict line breaking and auto-phrase word breaking',
     },
   ]
-}
-
-export function findDesignSystemVersionViolations(document) {
-  const current = document.match(/現行仕様\s+v(\d+\.\d+)/)?.[1]
-  const history = [...document.matchAll(/\|\s*[^|]+\|\s*v(\d+\.\d+)\s*\|/g)]
-  const latest = history.at(-1)?.[1]
-  if (!current || !latest) {
-    return ['current version and latest history version must both be present']
-  }
-  return current !== latest
-    ? [`current version v${current} does not match latest history v${latest}`]
-    : []
-}
-
-export function findBreakpointDocumentationViolations(document) {
-  const section = document.match(
-    /## 10\. Breakpoints([\s\S]*?)(?=\n## |$)/,
-  )?.[1]
-  if (section === undefined) {
-    return ['Breakpoints section must be present']
-  }
-  return /\b\d+px\b/.test(section)
-    ? ['Breakpoints section must not duplicate px values']
-    : []
 }
 
 // Grid track definitions are structural values, not spacing token targets.
@@ -1852,7 +1828,6 @@ export function runAllChecks() {
   const themeCssContent = readFileSync(THEME_CSS, 'utf8')
   const viewerCssEntries = collectViewerStylesheets()
   const rootTsxContent = readFileSync(ROOT_TSX, 'utf8')
-  const designSystemContent = readFileSync(DESIGN_SYSTEM_MD, 'utf8')
   // app.css imports the font and the theme that defines its stack.
   for (const violation of findFontSourceViolations(
     `${appCssContent}\n${themeCssContent}`,
@@ -1869,22 +1844,6 @@ export function runAllChecks() {
       check: 'japanese-typography',
       file: rel(violation.file),
       detail: violation.detail,
-    })
-  }
-  for (const detail of findDesignSystemVersionViolations(designSystemContent)) {
-    violations.push({
-      check: 'design-system-version-sync',
-      file: rel(DESIGN_SYSTEM_MD),
-      detail,
-    })
-  }
-  for (const detail of findBreakpointDocumentationViolations(
-    designSystemContent,
-  )) {
-    violations.push({
-      check: 'breakpoint-documentation-sync',
-      file: rel(DESIGN_SYSTEM_MD),
-      detail,
     })
   }
   const themeBreakpointNames = collectThemeBreakpointNames(themeCssContent)

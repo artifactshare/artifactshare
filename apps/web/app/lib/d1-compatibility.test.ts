@@ -2,7 +2,10 @@ import { type Kysely, sql } from 'kysely'
 import { afterEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
-import { ConcurrentD1Dialect } from './d1-compatibility.server'
+import {
+  ConcurrentD1Dialect,
+  D1CompatibilityError,
+} from './d1-compatibility.server'
 
 test('ConcurrentD1Dialect supports concurrent connections', () => {
   const dialect = new ConcurrentD1Dialect({ database: {} as D1Database })
@@ -14,6 +17,16 @@ describe('d1CompatibilityPlugin', () => {
 
   function createTestDb(): Kysely<DB> {
     return createMigratedInMemoryDb().db
+  }
+
+  function limitViolation(compile: () => unknown): D1CompatibilityError {
+    try {
+      compile()
+    } catch (error) {
+      if (error instanceof D1CompatibilityError) return error
+      throw error
+    }
+    throw new Error('the query compiled without crossing a D1 limit')
   }
 
   afterEach(async () => {
@@ -37,9 +50,10 @@ describe('d1CompatibilityPlugin', () => {
       query = query.unionAll(db.selectFrom('users').select('id'))
     }
 
-    expect(() => query.compile()).toThrow(
-      'compound SELECTs may contain at most five terms',
-    )
+    expect(limitViolation(() => query.compile())).toMatchObject({
+      limit: 'compound-terms',
+      max: 5,
+    })
   })
 
   test('rejects a nested compound SELECT that compiles to six terms', () => {
@@ -50,9 +64,10 @@ describe('d1CompatibilityPlugin', () => {
     }
     const query = db.selectFrom('users').select('id').unionAll(right)
 
-    expect(() => query.compile()).toThrow(
-      'compound SELECTs may contain at most five terms',
-    )
+    expect(limitViolation(() => query.compile())).toMatchObject({
+      limit: 'compound-terms',
+      max: 5,
+    })
   })
 
   test('allows a five-term compound SELECT inside EXISTS', () => {
@@ -104,8 +119,14 @@ describe('d1CompatibilityPlugin', () => {
     db = createTestDb()
     const values = Array.from({ length: 101 }, (_, index) => `user-${index}`)
 
-    expect(() =>
-      db!.selectFrom('users').select('id').where('id', 'in', values).compile(),
-    ).toThrow('queries may bind at most 100 parameters')
+    expect(
+      limitViolation(() =>
+        db!
+          .selectFrom('users')
+          .select('id')
+          .where('id', 'in', values)
+          .compile(),
+      ),
+    ).toMatchObject({ limit: 'bound-parameters', max: 100 })
   })
 })

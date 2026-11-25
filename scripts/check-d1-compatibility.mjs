@@ -77,21 +77,186 @@ function combine(left, right) {
   return left.flatMap((prefix) => right.map((suffix) => prefix + suffix))
 }
 
-function staticStrings(node) {
+const FUNCTION_TYPES = new Set([
+  'ArrowFunctionExpression',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'TSDeclareFunction',
+])
+
+function patternNames(node, names) {
+  if (!node || typeof node !== 'object') return names
+  if (Array.isArray(node)) {
+    for (const child of node) patternNames(child, names)
+    return names
+  }
+  if (node.type === 'Identifier') names.add(node.name)
+  else if (node.type === 'ObjectPattern') patternNames(node.properties, names)
+  else if (node.type === 'ArrayPattern') patternNames(node.elements, names)
+  else if (node.type === 'Property') patternNames(node.value, names)
+  else if (node.type === 'RestElement') patternNames(node.argument, names)
+  else if (node.type === 'AssignmentPattern') patternNames(node.left, names)
+  else if (node.type === 'TSParameterProperty')
+    patternNames(node.parameter, names)
+  return names
+}
+
+// `var` is function-scoped, so a `var` written in a nested block still shadows
+// a constant everywhere in the function that holds it.
+function hoistedVarNames(functionNode, names) {
+  function visit(node) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child)
+      return
+    }
+    if (FUNCTION_TYPES.has(node.type)) return
+    if (node.type === 'VariableDeclaration' && node.kind === 'var')
+      for (const declarator of node.declarations)
+        patternNames(declarator.id, names)
+    for (const [key, child] of Object.entries(node)) {
+      if (['loc', 'start', 'end', 'type'].includes(key)) continue
+      visit(child)
+    }
+  }
+  visit(functionNode.body)
+  return names
+}
+
+// The lexical scope an identifier resolves in. A scope records the names it
+// binds: a `const` with an initializer can resolve to that initializer, and
+// every other binding — parameter, `let`, `var`, catch clause, function, class,
+// import, loop variable — is opaque. A use site resolves against the nearest
+// enclosing binding of the name, so lifting a static query into a named
+// constant stays analyzable, while a parameter or local that happens to reuse a
+// constant's name does not resolve to that constant.
+function createScope(parent) {
+  const bindings = new Map()
+  const scope = { bindings, parent }
+  scope.lookup = (name) => {
+    for (let current = scope; current; current = current.parent) {
+      const binding = current.bindings.get(name)
+      if (binding) return binding
+    }
+    return undefined
+  }
+  return scope
+}
+
+// A name declared twice in one scope is ambiguous, so it stops resolving.
+function declare(scope, name, init = null) {
+  scope.bindings.set(
+    name,
+    scope.bindings.has(name) ? { init: null, scope } : { init, scope },
+  )
+}
+
+function declarePattern(scope, node) {
+  for (const name of patternNames(node, new Set())) declare(scope, name)
+}
+
+function declareStatement(scope, statement) {
+  const node = ['ExportDefaultDeclaration', 'ExportNamedDeclaration'].includes(
+    statement?.type,
+  )
+    ? statement.declaration
+    : statement
+  if (node?.type === 'VariableDeclaration') {
+    for (const declarator of node.declarations)
+      if (
+        node.kind === 'const' &&
+        declarator.id?.type === 'Identifier' &&
+        declarator.init
+      )
+        declare(scope, declarator.id.name, declarator.init)
+      else declarePattern(scope, declarator.id)
+    return
+  }
+  if (node?.type === 'ImportDeclaration')
+    for (const specifier of node.specifiers ?? [])
+      declarePattern(scope, specifier.local)
+  else if (
+    ['ClassDeclaration', 'FunctionDeclaration', 'TSDeclareFunction'].includes(
+      node?.type,
+    ) &&
+    node.id?.type === 'Identifier'
+  )
+    declare(scope, node.id.name)
+}
+
+// The scope this node's children resolve in, or the enclosing scope when the
+// node binds nothing. Each scope holds only its own declarations, so a sibling
+// block never hides a constant from a use site outside it.
+function scopeFor(node, parent) {
+  if (FUNCTION_TYPES.has(node.type)) {
+    const scope = createScope(parent)
+    declarePattern(scope, node.params)
+    if (node.id?.type === 'Identifier') declare(scope, node.id.name)
+    for (const name of hoistedVarNames(node, new Set())) declare(scope, name)
+    return scope
+  }
+  if (node.type === 'CatchClause') {
+    const scope = createScope(parent)
+    declarePattern(scope, node.param)
+    return scope
+  }
+  if (node.type === 'ClassExpression' && node.id?.type === 'Identifier') {
+    const scope = createScope(parent)
+    declare(scope, node.id.name)
+    return scope
+  }
+  if (['ForInStatement', 'ForOfStatement'].includes(node.type)) {
+    const scope = createScope(parent)
+    declareStatement(scope, node.left)
+    return scope
+  }
+  if (node.type === 'ForStatement') {
+    const scope = createScope(parent)
+    declareStatement(scope, node.init)
+    return scope
+  }
+  const statements = ['BlockStatement', 'Program', 'StaticBlock'].includes(
+    node.type,
+  )
+    ? node.body
+    : node.type === 'SwitchCase'
+      ? node.consequent
+      : undefined
+  if (!statements) return parent
+  const scope = createScope(parent)
+  for (const statement of statements) declareStatement(scope, statement)
+  return scope
+}
+
+function staticStrings(node, scope, seen = new Set()) {
   if (!node || typeof node !== 'object') return null
   if (node.type === 'Literal' && typeof node.value === 'string')
     return [node.value]
+  if (node.type === 'Identifier') {
+    const binding = scope?.lookup(node.name)
+    if (!binding?.init || seen.has(node.name)) return null
+    // The initializer is written where the constant is declared, so its own
+    // identifiers resolve in that scope rather than at this use site.
+    return staticStrings(
+      binding.init,
+      binding.scope,
+      new Set([...seen, node.name]),
+    )
+  }
   if (node.type === 'BinaryExpression' && node.operator === '+')
-    return combine(staticStrings(node.left), staticStrings(node.right))
+    return combine(
+      staticStrings(node.left, scope, seen),
+      staticStrings(node.right, scope, seen),
+    )
   if (node.type === 'ConditionalExpression') {
-    const consequent = staticStrings(node.consequent)
-    const alternate = staticStrings(node.alternate)
+    const consequent = staticStrings(node.consequent, scope, seen)
+    const alternate = staticStrings(node.alternate, scope, seen)
     return consequent && alternate ? [...consequent, ...alternate] : null
   }
   if (node.type !== 'TemplateLiteral') return null
   let values = [node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? '']
   for (const [index, expression] of node.expressions.entries()) {
-    const substitutions = staticStrings(expression)
+    const substitutions = staticStrings(expression, scope, seen)
     if (!substitutions) return null
     values = combine(values, substitutions) ?? []
     const quasi = node.quasis[index + 1]
@@ -102,11 +267,19 @@ function staticStrings(node) {
   return values
 }
 
-function templateShapes(node) {
-  const resolved = staticStrings(node)
-  if (resolved || node?.type !== 'TemplateLiteral') return resolved
+function templateShapes(node, scope) {
+  const resolved = staticStrings(node, scope)
+  if (resolved) return resolved
+  const template =
+    node?.type === 'TemplateLiteral'
+      ? node
+      : node?.type === 'Identifier' &&
+          scope?.lookup(node.name)?.init?.type === 'TemplateLiteral'
+        ? scope.lookup(node.name).init
+        : undefined
+  if (!template) return null
   return [
-    node.quasis
+    template.quasis
       .map((quasi) => quasi.value.cooked ?? quasi.value.raw ?? '')
       .join(' ? '),
   ]
@@ -169,7 +342,7 @@ function hasD1CompatibilityPlugin(options) {
   )
 }
 
-function sqlShapes(node, imports) {
+function sqlShapes(node, imports, scope) {
   if (!node || typeof node !== 'object') return null
   if (
     node.type === 'CallExpression' &&
@@ -177,7 +350,7 @@ function sqlShapes(node, imports) {
     propertyName(node.callee.property) === 'raw' &&
     isSqlTag(node.callee.object, imports)
   )
-    return staticStrings(node.arguments[0])
+    return staticStrings(node.arguments[0], scope)
   if (
     node.type === 'ConditionalExpression' ||
     node.type === 'LogicalExpression'
@@ -185,10 +358,12 @@ function sqlShapes(node, imports) {
     const left = sqlShapes(
       node.type === 'ConditionalExpression' ? node.consequent : node.left,
       imports,
+      scope,
     )
     const right = sqlShapes(
       node.type === 'ConditionalExpression' ? node.alternate : node.right,
       imports,
+      scope,
     )
     if (!left && !right) return null
     return [...(left ?? [' ? ']), ...(right ?? [' ? '])]
@@ -199,7 +374,12 @@ function sqlShapes(node, imports) {
     node.quasi.quasis[0]?.value.cooked ?? node.quasi.quasis[0]?.value.raw ?? '',
   ]
   for (const [index, expression] of node.quasi.expressions.entries()) {
-    values = combine(values, sqlShapes(expression, imports) ?? [' ? ']) ?? []
+    values =
+      combine(
+        values,
+        sqlShapes(expression, imports, scope) ??
+          staticStrings(expression, scope) ?? [' ? '],
+      ) ?? []
     const quasi = node.quasi.quasis[index + 1]
     values = values.map(
       (value) => value + (quasi?.value.cooked ?? quasi?.value.raw ?? ''),
@@ -364,10 +544,10 @@ export function analyzeD1Source(source, filename = 'source.ts') {
       )
   }
 
-  function visit(node, ancestors = []) {
+  function visit(node, ancestors = [], scope = undefined) {
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
-      for (const child of node) visit(child, ancestors)
+      for (const child of node) visit(child, ancestors, scope)
       return
     }
 
@@ -383,10 +563,14 @@ export function analyzeD1Source(source, filename = 'source.ts') {
       )
 
     if (node.type === 'TaggedTemplateExpression' && isSqlTag(node.tag, imports))
-      analyzeSql(node, sqlShapes(node, imports) ?? [''], contextFor(ancestors))
+      analyzeSql(
+        node,
+        sqlShapes(node, imports, scope) ?? [''],
+        contextFor(ancestors),
+      )
 
     if (node.type === 'Property' && propertyName(node.key) === 'sql') {
-      const alternatives = templateShapes(node.value)
+      const alternatives = templateShapes(node.value, scope)
       if (alternatives) analyzeSql(node.value, alternatives)
     }
 
@@ -396,7 +580,7 @@ export function analyzeD1Source(source, filename = 'source.ts') {
     ) {
       const method = propertyName(node.callee.property)
       if (method === 'prepare') {
-        const alternatives = templateShapes(node.arguments[0])
+        const alternatives = templateShapes(node.arguments[0], scope)
         if (alternatives)
           analyzeSql(node.arguments[0], alternatives, contextFor(ancestors))
         else if (!isCompiledSql(node.arguments[0]))
@@ -407,7 +591,7 @@ export function analyzeD1Source(source, filename = 'source.ts') {
           )
       }
       if (method === 'raw' && isSqlTag(node.callee.object, imports)) {
-        const alternatives = staticStrings(node.arguments[0])
+        const alternatives = staticStrings(node.arguments[0], scope)
         if (alternatives)
           analyzeSql(node.arguments[0], alternatives, contextFor(ancestors))
         else
@@ -422,8 +606,8 @@ export function analyzeD1Source(source, filename = 'source.ts') {
         const separatorNode = node.arguments[isSqlJoin ? 1 : 0]
         if (!(isSqlJoin && !separatorNode)) {
           const separators = isSqlJoin
-            ? sqlShapes(separatorNode, imports)
-            : staticStrings(separatorNode)
+            ? sqlShapes(separatorNode, imports, scope)
+            : staticStrings(separatorNode, scope)
           if (isSqlJoin && !separators)
             report(
               node,
@@ -445,9 +629,10 @@ export function analyzeD1Source(source, filename = 'source.ts') {
     }
 
     const nextAncestors = [...ancestors, node]
+    const nextScope = scopeFor(node, scope)
     for (const [key, child] of Object.entries(node)) {
       if (['loc', 'start', 'end', 'type'].includes(key)) continue
-      visit(child, nextAncestors)
+      visit(child, nextAncestors, nextScope)
     }
   }
 

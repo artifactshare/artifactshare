@@ -2,51 +2,15 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
+import { bindI18n, t, type Locale } from '~/lib/i18n'
 import { Landing } from './landing'
 
 const searchParams = vi.hoisted(() => ({ next: null as string | null }))
 const rootData = vi.hoisted(() => ({ maintenance: false }))
-const mockLocale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
+const mockLocale = vi.hoisted(() => ({ value: 'en' as Locale }))
 
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: mockLocale.value,
-    t: (key: string) =>
-      ({
-        'lp.hero.titleDim': 'Share HTML with your team.',
-        'lp.hero.titleMain': 'Just tell your AI.',
-        'lp.hero.ctaPrimary': 'Share your first file →',
-        'lp.hero.ctaSecondary': 'See how to use with AI',
-        'lp.hero.cliPrompt':
-          'Set up with npm exec --yes --package=@artifactshare/cli -- artifactshare init',
-        'lp.hero.prompt': 'Share the monthly report to the project with as',
-        'lp.hero.shotAlt':
-          'An Artifact Share shared page: monthly revenue report',
-        'lp.nav.login': 'Log in',
-        'lp.nav.start': 'Start for free',
-        'lp.ba.q': 'Which one is the latest?',
-        'lp.loop.title': 'You comment. AI fixes.',
-        'lp.uc.openSample': 'Open a live sample →',
-        'lp.quote.attr':
-          'Engineering manager, product development team at an e-commerce company',
-        'lp.ctaEnd.free': 'The Free plan is free up to 100MB, unlimited users.',
-        'lp.maintenanceAuth': 'Artifact Share is under maintenance.',
-        'lp.invite.title': 'Sign in to view this file',
-        'lp.invite.sub': 'Someone shared a file with you.',
-        'lp.invite.about':
-          'Share files made with AI, just within your company.',
-        'signin.title': 'Sign in',
-        'signin.sub': 'Sign in with your account to continue.',
-        'footer.about': 'About Artifact Share',
-        'footer.operatedBy': 'Operated by',
-        'footer.operatorName': 'TechTalk, Inc.',
-        'lp.pricing': 'Pricing',
-        'lp.privacy': 'Privacy',
-        'lp.terms': 'Terms',
-        'lp.tokushoho': 'Commercial Disclosure',
-        'signin.email.toggle': 'Sign in with email',
-      })[key] ?? key,
-  }),
+  useT: () => bindI18n(mockLocale.value),
 }))
 
 vi.mock('react-router', () => ({
@@ -101,27 +65,23 @@ describe('Landing', () => {
     mockLocale.value = 'en'
     const html = renderLanding()
 
-    expect(html).toContain('Share HTML with your team.')
-    expect(html).toContain('Just tell your AI.')
-    expect(html).toContain('Share your first file →')
+    expect(html).toContain(t('en', 'lp.hero.titleDim'))
+    expect(html).toContain(t('en', 'lp.hero.titleMain'))
+    expect(html).toContain(t('en', 'lp.hero.ctaPrimary'))
     expect(html).toContain('href="/start"')
     expect(html).toContain('href="/share-with-ai"')
     expect(html).toContain('href="/pricing"')
     expect(html).toContain('href="/sign-in"')
     // First-view language switch to the other locale's page.
     expect(html).toMatch(/<a[^>]*href="\/ja"[^>]*>日本語<\/a>/)
-    expect(html).toContain('You comment. AI fixes.')
-    expect(html).toContain('Which one is the latest?')
-    expect(html).toContain(
-      'Engineering manager, product development team at an e-commerce company',
-    )
-    expect(html).toContain(
-      'The Free plan is free up to 100MB, unlimited users.',
-    )
+    expect(html).toContain(t('en', 'lp.loop.title'))
+    expect(html).toContain(t('en', 'lp.ba.q'))
+    expect(html).toContain(t('en', 'lp.quote.attr'))
+    expect(html).toContain(t('en', 'lp.ctaEnd.free'))
     // EN locale gets the EN hero screenshot and EN sample links.
     expect(html).toContain('/landing/hero-share-en.webp')
     expect(html).not.toContain('/landing/hero-share-ja.webp')
-    expect(html.match(/Open a live sample →/g)).toHaveLength(4)
+    expect(html.split(t('en', 'lp.uc.openSample')).length - 1).toBe(4)
     expect(html).toContain('https://artifactshare.com/a/eio7kdav1k')
     expect(html).not.toContain('https://artifactshare.com/a/3kfkaseiki')
     // External sample links never leak referrer or opener.
@@ -129,13 +89,14 @@ describe('Landing', () => {
       /href="https:\/\/artifactshare\.com\/a\/[^"]+"(?![^>]*rel="noopener noreferrer")/,
     )
     // The hero prompt renders fully for SSR/no-JS readers.
-    expect(html).toContain('Share the monthly report to the project with as')
+    expect(html).toContain(t('en', 'lp.hero.prompt'))
     expect(html).toContain('data-slot="public-footer" data-variant="full"')
-    expect(html).toContain('About Artifact Share')
-    expect(html).toContain('TechTalk, Inc.')
+    expect(html).toContain(t('en', 'footer.about'))
+    expect(html).toContain(t('en', 'footer.operatorName'))
     // The old sign-in-on-landing hero is gone.
-    expect(html).not.toContain('Sign in to view this file')
-    expect(html).not.toContain('lp.ai.summary')
+    expect(html).not.toContain(t('en', 'lp.invite.title'))
+    // A key reaching the markup means the catalog has no copy for it.
+    expect(html).not.toMatch(/\b(?:lp|signin|footer)\.[a-zA-Z]/)
   })
 
   test('renders the Japanese landing with ja assets, links, and switch', () => {
@@ -159,7 +120,7 @@ describe('Landing', () => {
     rootData.maintenance = true
     const html = renderLanding()
 
-    expect(html).toContain('Artifact Share is under maintenance.')
+    expect(html).toContain(t('en', 'lp.maintenanceAuth'))
   })
 
   test('keeps invite mode focused on sign-in', () => {
@@ -167,8 +128,8 @@ describe('Landing', () => {
     rootData.maintenance = false
     const html = renderLanding()
 
-    expect(html).toContain('Sign in to view this file')
-    expect(html).not.toContain('Share your first file →')
+    expect(html).toContain(t('en', 'lp.invite.title'))
+    expect(html).not.toContain(t('en', 'lp.hero.ctaPrimary'))
     expect(html).not.toContain('/landing/hero-share-en.webp')
     expect(html).toContain('data-slot="public-footer" data-variant="minimal"')
   })
@@ -178,9 +139,9 @@ describe('Landing', () => {
     rootData.maintenance = false
     const html = renderLanding()
 
-    expect(html).toContain('Sign in with your account to continue.')
-    expect(html).not.toContain('Sign in to view this file')
-    expect(html).not.toContain('Share your first file →')
+    expect(html).toContain(t('en', 'signin.sub'))
+    expect(html).not.toContain(t('en', 'lp.invite.title'))
+    expect(html).not.toContain(t('en', 'lp.hero.ctaPrimary'))
   })
 
   test('disables sign-in during maintenance in invite mode', () => {
@@ -188,7 +149,7 @@ describe('Landing', () => {
     rootData.maintenance = true
     const html = renderLanding()
 
-    expect(html).toContain('Artifact Share is under maintenance.')
+    expect(html).toContain(t('en', 'lp.maintenanceAuth'))
     expect(html).toContain('disabled=""')
   })
 })

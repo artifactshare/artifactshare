@@ -1,17 +1,15 @@
 import { describe, expect, test } from 'vitest'
+import { expectLocalePair } from '~/test/locale-documents'
 import { loader, meta } from './_public/($locale)/guides.link-sharing'
 
 describe('link sharing guide', () => {
-  test('renders the canonical English and Japanese public copy', () => {
+  test('serves each locale its own document', () => {
     const en = loader({ params: {} } as never)
     const ja = loader({ params: { locale: 'ja' } } as never)
 
-    expect(en.html).toContain('Share a link that opens without sign-in')
-    expect(en.html).toContain('--link-expires-at &lt;RFC3339 UTC&gt;')
-    expect(en.html).toContain('link_expires_at')
-    expect(ja.html).toContain('ログインなしで見られるリンクを共有する')
-    expect(ja.html).toContain('--no-link-expiry')
-    expect(ja.html).toContain('Freeでも、ファイルごとにリンク共有を選べます。')
+    expect(en.locale).toBe('en')
+    expect(ja.locale).toBe('ja')
+    expectLocalePair(en.html, ja.html)
   })
 
   test('publishes canonical and alternate locale metadata', () => {

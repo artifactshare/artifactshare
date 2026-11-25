@@ -202,12 +202,29 @@ const renameTablePattern = new RegExp(
 const foreignKeysSetterPattern =
   /(?:^|;)\s*(?:explain(?:\s+query\s+plan)?\s+)?pragma\s+(?:(?:[a-zA-Z_][\w$]*|"[^"]+"|`[^`]+`|\[[^\]]+\])\s*\.\s*)?(?:foreign_keys|"foreign_keys"|`foreign_keys`|\[foreign_keys\])\s*(?:=|\()/im
 if (process.argv[1] === scriptPath) {
-  const problems = checkMigrationFiles(process.argv[2] ?? migrationsDir)
+  const args = process.argv.slice(2)
+  const problems = checkMigrationFiles(
+    args.find((argument) => !argument.startsWith('--')) ?? migrationsDir,
+  )
+  // --json reports the same problems as data, for callers that act on the
+  // operation and table rather than on the sentence.
+  if (args.includes('--json')) console.log(JSON.stringify(problems))
   if (problems.length > 0) {
     console.error('Unsafe migration SQL detected:')
-    for (const problem of problems) console.error(`- ${problem}`)
+    for (const problem of problems)
+      console.error(`- ${formatMigrationProblem(problem)}`)
     process.exit(1)
   }
+}
+
+// Each problem names the file, the operation and the table it refused, so
+// callers read those instead of the sentence built here.
+export function formatMigrationProblem({ file, code, operation, table }) {
+  if (code === 'foreign-keys-setter')
+    return `${file}: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild`
+  if (code === 'unlisted-drop')
+    return `${file}: ${operation} ${table} is not in the explicit migration allowlist`
+  return `${file}: ${operation} ${table} is blocked because the table is protected`
 }
 
 export function checkMigrationFiles(dir = migrationsDir) {
@@ -227,9 +244,7 @@ export function checkMigrationSql(name, rawSql) {
     foreignKeysSetterPattern.test(sql) &&
     !allowedLegacyForeignKeySetter.has(name)
   ) {
-    problems.push(
-      `${name}: PRAGMA foreign_keys setters are not supported in D1 migrations; use a D1-safe table rebuild`,
-    )
+    problems.push({ file: name, code: 'foreign-keys-setter' })
   }
 
   for (const match of sql.matchAll(dropTablePattern)) {
@@ -273,9 +288,12 @@ export function checkMigrationSql(name, rawSql) {
       protectedTables.has(destinationTable) &&
       !isRenameDestinationAllowed(name, sourceTable, destinationTable)
     ) {
-      problems.push(
-        `${name}: ALTER TABLE RENAME TO ${destinationTable} is blocked because the table is protected`,
-      )
+      problems.push({
+        file: name,
+        code: 'protected-table',
+        operation: 'ALTER TABLE RENAME TO',
+        table: destinationTable,
+      })
     }
   }
 
@@ -299,9 +317,12 @@ function checkStatement(
     ) {
       return
     }
-    problems.push(
-      `${migrationName}: ${operation} ${tableName} is blocked because the table is protected`,
-    )
+    problems.push({
+      file: migrationName,
+      code: 'protected-table',
+      operation,
+      table: tableName,
+    })
     return
   }
   if (
@@ -312,9 +333,12 @@ function checkStatement(
     return
   }
   if (operation === 'DROP TABLE') {
-    problems.push(
-      `${migrationName}: DROP TABLE ${tableName} is not in the explicit migration allowlist`,
-    )
+    problems.push({
+      file: migrationName,
+      code: 'unlisted-drop',
+      operation: 'DROP TABLE',
+      table: tableName,
+    })
   }
 }
 

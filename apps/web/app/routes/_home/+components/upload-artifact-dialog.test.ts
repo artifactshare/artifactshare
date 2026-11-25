@@ -97,16 +97,7 @@ describe('UploadArtifactDialog upload validation', () => {
           },
         }),
       )
-      expect(subtitle).toContain(
-        locale === 'en'
-          ? 'Viewers can sign in with Google, Microsoft, or an email code.'
-          : '閲覧時は Google、Microsoft、メールコードでログインできます。',
-      )
-      expect(subtitle).toContain(
-        locale === 'en'
-          ? 'Uploading requires Google or Microsoft.'
-          : 'アップロードには Google または Microsoft が必要です。',
-      )
+      expect(subtitle).toContain(bindI18n(locale).t('upload.hero.subtitle'))
     },
   )
 

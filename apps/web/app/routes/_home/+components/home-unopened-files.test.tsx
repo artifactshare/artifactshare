@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { FileRowData } from './file-data'
 import { HomeUnopenedFiles } from './home-unopened-files'
 
-import { bindI18n, t } from '~/lib/i18n'
+import { bindI18n, t, tPlural } from '~/lib/i18n'
 const language = vi.hoisted(() => ({ locale: 'ja' as 'en' | 'ja' }))
 afterEach(() => {
   language.locale = 'ja'
@@ -67,8 +67,8 @@ describe('HomeUnopenedFiles', () => {
   test('shows owned unopened files with the all-files link when none remain', () => {
     const html = render({ files: [file] })
 
-    expect(html).toContain('未確認のファイル')
-    expect(html).toContain('自分が作成し、まだ開いていないファイル')
+    expect(html).toContain(t('ja', 'home.unopenedTitle'))
+    expect(html).toContain(t('ja', 'home.unopenedDescription'))
     expect(html).toContain('確認するレポート')
     expect(html).toContain('採用指針')
     expect(html).toContain('href="/a/unopened-file"')
@@ -82,7 +82,7 @@ describe('HomeUnopenedFiles', () => {
   test('keeps the section error local', () => {
     const html = render({ error: true })
 
-    expect(html).toContain('未確認のファイルを読み込めませんでした。')
+    expect(html).toContain(t('ja', 'home.unopenedError'))
     expect(html).toContain('href="."')
   })
 })
@@ -103,9 +103,7 @@ test.each(['en', 'ja'] as const)(
       } else {
         expect(html).toContain('href="/files"')
         expect(html).toContain(
-          locale === 'en'
-            ? `All my files (+${total - 5} unopened)</a>`
-            : `すべて見る（ほかに未確認 ${total - 5} 件）`,
+          `${tPlural(locale, 'home.unopenedMore', total - 5)}</a>`,
         )
       }
     }

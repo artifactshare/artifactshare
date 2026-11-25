@@ -2,10 +2,6 @@ import { relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const allowed = new Set([
-  'apps/web/app/lib/analytics/track.client.ts',
-  'apps/web/app/root.tsx',
-])
 
 function unwrap(node) {
   while (
@@ -81,8 +77,7 @@ export default {
         if (
           !file.startsWith('apps/web/app/') ||
           !/\.tsx?$/.test(file) ||
-          /\.test\.tsx?$/.test(file) ||
-          allowed.has(file)
+          /\.test\.tsx?$/.test(file)
         )
           return {}
         return {

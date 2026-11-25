@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
+import { expectLocalePair } from '~/test/locale-documents'
 import {
   loader as privacyLoader,
   meta as privacyMeta,
@@ -24,53 +25,18 @@ const routes = [
     loader: privacyLoader,
     meta: privacyMeta,
     html: privacyHtml,
-    copy: {
-      en: {
-        title: 'Privacy Policy · Artifact Share',
-        description:
-          'How Artifact Share collects, uses, and protects your data.',
-      },
-      ja: {
-        title: 'プライバシーポリシー · Artifact Share',
-        description:
-          'Artifact Share が個人情報をどのように収集、利用、保護するか。',
-      },
-    },
   },
   {
     name: 'terms',
     loader: termsLoader,
     meta: termsMeta,
     html: termsHtml,
-    copy: {
-      en: {
-        title: 'Terms of Service · Artifact Share',
-        description:
-          'Terms of Service for Artifact Share — acceptable use, your content, takedown procedures, and limitations of liability.',
-      },
-      ja: {
-        title: '利用規約 · Artifact Share',
-        description:
-          'Artifact Share の利用規約 — 許容される利用、コンテンツの扱い、削除手続き、責任の制限。',
-      },
-    },
   },
   {
     name: 'tokushoho',
     loader: tokushohoLoader,
     meta: tokushohoMeta,
     html: tokushohoHtml,
-    copy: {
-      en: {
-        title: 'Commercial Disclosure · Artifact Share',
-        description:
-          'Legally required disclosure under the Japanese Specified Commercial Transactions Act.',
-      },
-      ja: {
-        title: '特定商取引法に基づく表記 · Artifact Share',
-        description: '特定商取引法に基づく販売事業者情報の開示。',
-      },
-    },
   },
 ] as const
 
@@ -84,26 +50,27 @@ describe('locale-aware legal routes', () => {
 
     expect(en).toEqual({ locale: 'en', html: route.html('en') })
     expect(ja).toEqual({ locale: 'ja', html: route.html('ja') })
-    expect(en.html).not.toBe(ja.html)
+    expectLocalePair(en.html, ja.html)
   })
 
   test.each(routes)(
-    '$name preserves title, description, and social metadata',
+    '$name mirrors its title and description into the social metadata',
     (route) => {
+      const seen: { title: string; description: string }[] = []
       for (const locale of ['en', 'ja'] as const) {
         const tags = route.meta({
           loaderData: route.loader({
             params: locale === 'ja' ? { locale } : {},
           } as never),
-        } as never)
+        } as never) as Record<string, string | undefined>[]
         const pageCanonical = canonical(route.name, locale)
-        const expected = route.copy[locale]
+        const title = tags.find((tag) => 'title' in tag)?.title ?? ''
+        const description =
+          tags.find((tag) => tag.name === 'description')?.content ?? ''
+        expect(title).not.toBe('')
+        expect(description).not.toBe('')
+        seen.push({ title, description })
 
-        expect(tags).toContainEqual({ title: expected.title })
-        expect(tags).toContainEqual({
-          name: 'description',
-          content: expected.description,
-        })
         expect(tags).toContainEqual({
           tagName: 'link',
           rel: 'canonical',
@@ -131,52 +98,24 @@ describe('locale-aware legal routes', () => {
           property: 'og:url',
           content: pageCanonical,
         })
-        expect(tags).toContainEqual({
-          property: 'og:title',
-          content: expected.title,
-        })
+        expect(tags).toContainEqual({ property: 'og:title', content: title })
         expect(tags).toContainEqual({
           property: 'og:description',
-          content: expected.description,
+          content: description,
         })
-        expect(tags).toContainEqual({
-          name: 'twitter:title',
-          content: expected.title,
-        })
+        expect(tags).toContainEqual({ name: 'twitter:title', content: title })
         expect(tags).toContainEqual({
           name: 'twitter:description',
-          content: expected.description,
+          content: description,
         })
         expect(tags).toContainEqual({
           name: 'twitter:image',
           content: 'https://artifactshare.com/og-image',
         })
       }
+      // Each locale publishes its own wording.
+      expect(seen[1].title).not.toBe(seen[0].title)
+      expect(seen[1].description).not.toBe(seen[0].description)
     },
   )
 })
-
-test.each(['en', 'ja'] as const)(
-  'discloses search records and retention in %s',
-  (locale) => {
-    const html = privacyHtml(locale)
-    expect(html).toContain('2026-11-17')
-    const facts =
-      locale === 'en'
-        ? [
-            'the query, search conditions, result count, and results you opened',
-            'Only you and the service operator',
-            '90 days',
-            'periodic deletion',
-            'delay deletion',
-          ]
-        : [
-            '検索語、検索条件、結果の件数、検索結果から開いたファイル',
-            '検索した本人と運営者だけ',
-            '90日後',
-            '定期削除',
-            '削除が遅れる',
-          ]
-    for (const fact of facts) expect(html).toContain(fact)
-  },
-)

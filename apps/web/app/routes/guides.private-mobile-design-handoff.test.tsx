@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { expectLocalePair } from '~/test/locale-documents'
 import {
   loader,
   meta,
@@ -14,10 +15,7 @@ describe('private mobile design handoff guide routes', () => {
     const ja = loader({ params: { locale: 'ja' } } as never)
     expect(en.locale).toBe('en')
     expect(ja.locale).toBe('ja')
-    expect(en.source).toContain('# Keep a mobile design document private')
-    expect(ja.source).toContain(
-      '# モバイルの設計文書を非公開のまま PC へ引き継ぐ',
-    )
+    expectLocalePair(en.source, ja.source)
     expect(en.html).toContain('<h1 id=')
     expect(en.html).toContain('<ol>')
     expect(en.source).not.toMatch(/^---/)

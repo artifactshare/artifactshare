@@ -193,6 +193,7 @@ test.each(
     )
     expect(host.querySelector('iframe')).toBe(frame)
     expect(frame.src).toBe(src)
+    // test-wait: elapsed-time — a re-render must not reload the frame and send a second first-script.
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(
       messages.filter((e) => e.data?.kind === 'first-script'),
@@ -642,6 +643,7 @@ test.each(['load', 'link'])(
       expect(window.location.hash).toBe('#accepted')
       dispatch('#stale')
     })
+    // test-wait: elapsed-time — a stale hash message must not replace the accepted hash.
     await new Promise((resolve) => setTimeout(resolve, 250))
     expect(window.location.hash).toBe('#accepted')
     expect(replace).toHaveBeenCalledTimes(2)

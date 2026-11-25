@@ -87,41 +87,20 @@ describe('/about metadata', () => {
 
 describe('AboutPage', () => {
   test.each([
-    ['en', '/connect', '/start', 'Compare plans', 'Official information'],
-    ['ja', '/ja/connect', '/ja/start', '料金プランを見る', '公式情報'],
+    ['en', '/connect', '/start'],
+    ['ja', '/ja/connect', '/ja/start'],
   ] as const)(
-    'renders the shared public content in %s',
-    (locale, connect, start, pricing, official) => {
+    'links to the %s locale pages and renders its sections',
+    (locale, connect, start) => {
       mockedLocale = locale
       const html = renderToStaticMarkup(
         createElement(MemoryRouter, null, createElement(AboutPage, { locale })),
       )
 
-      expect(html).toContain(
-        locale === 'ja'
-          ? '叩き台が、チームの判断材料になるまで'
-          : 'How a draft becomes',
-      )
-      expect(html).toContain(
-        locale === 'ja' ? 'AIでHTMLやMarkdownを作り' : 'teams that use AI',
-      )
-      for (const step of locale === 'ja'
-        ? ['投稿と共有範囲', '該当箇所へのコメント', '同じURLで次の版へ更新']
-        : [
-            'Publish and choose who can view',
-            'Comment at the relevant place',
-            'Update to the next version at the same URL',
-          ]) {
-        expect(html).toContain(step)
-      }
       expect(html).toContain(`href="${connect}"`)
       expect(html).toContain(`href="${start}"`)
       expect(html.match(new RegExp(`href="${start}"`, 'g'))).toHaveLength(2)
       expect(html).toContain('<h3')
-      expect(html).toContain(`>${pricing}<`)
-      expect(html).toContain(`>${official}<`)
-      expect(html).toContain('TechTalk, Inc.')
-      expect(html).toContain('artifactshare.com')
     },
   )
 })

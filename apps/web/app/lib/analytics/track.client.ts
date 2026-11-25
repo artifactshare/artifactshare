@@ -44,6 +44,7 @@ export function trackEvent<
   const cleaned = Object.fromEntries(
     Object.entries(params ?? {}).filter(([, value]) => value !== undefined),
   )
+  // oxlint-disable-next-line analytics/typed-sender -- this is the typed sender
   w.gtag('event', name, cleaned)
   return true
 }

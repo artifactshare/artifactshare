@@ -113,39 +113,49 @@ test('runner continues after failed and thrown children, with separate evidence'
   }
 })
 
+// Argument order is the runner's business; what each lane must run is not.
+const selection = (args) => new Set(args.filter((arg) => !arg.startsWith('-')))
+
 test('commands preserve whole-suite selection and environment', () => {
+  const laneConfigs = {
+    'behavior-browser': 'vitest.behavior.browser.config.ts',
+    d1: 'app/test/vitest.d1.config.ts',
+    'web-unit': 'vitest.config.ts',
+  }
   for (const lane of lanes) {
     const command = suiteCommand(lane, '/tmp/result.json', '/repo')
-    assert.doesNotMatch(
-      command.args.join(' '),
-      /retry|concurrency|testNamePattern/,
-    )
+    const args = command.args
+    assert.doesNotMatch(args.join(' '), /retry|concurrency|testNamePattern/)
     if (lane.suite === 'scripts') {
-      const root = JSON.parse(fs.readFileSync('package.json'))
-        .scripts['test:scripts'].split(' ')
-        .slice(2)
-      assert.deepEqual(command.args.slice(-root.length), root)
       assert.equal(command.command, process.execPath)
+      // The repetition runs the same files as the lane itself, under a
+      // per-test timeout so one hung test cannot consume the repetition.
+      const laneScript = JSON.parse(fs.readFileSync('package.json'))
+        .scripts['test:scripts'].split(' ')
+        .slice(1)
+      assert.deepEqual(selection(args), selection(laneScript))
+      assert.ok(args.includes('--test'))
+      assert.ok(args.some((arg) => /^--test-timeout=[1-9]\d*$/u.test(arg)))
     } else {
-      assert.deepEqual(command.args.slice(0, 4), [
+      assert.equal(command.command, 'pnpm')
+      for (const argument of [
         '--filter',
         '@artifactshare/web',
         'exec',
         'vitest',
+        '--run',
+        '--outputFile=/tmp/result.json',
+        laneConfigs[lane.suite],
       ])
-      assert.ok(command.args.includes('--run'))
+        assert.ok(args.includes(argument), argument)
       assert.deepEqual(
-        command.args.filter((argument) => argument.startsWith('--reporter=')),
-        [
+        new Set(args.filter((argument) => argument.startsWith('--reporter='))),
+        new Set([
           '--reporter=default',
           '--reporter=/repo/scripts/ci/vitest-flaky-reporter.mjs',
-        ],
+        ]),
       )
-      assert.equal(command.args.at(-1), '--outputFile=/tmp/result.json')
-      if (lane.project)
-        assert.ok(command.args.includes(`--project=${lane.project}`))
-      if (lane.suite === 'd1')
-        assert.ok(command.args.includes('app/test/vitest.d1.config.ts'))
+      if (lane.project) assert.ok(args.includes(`--project=${lane.project}`))
       if (lane.suite === 'web-unit')
         assert.deepEqual(command.env, { PUBLIC_TEST: '1' })
     }
@@ -484,7 +494,7 @@ test('each repetition passes its inherited ownership marker to timeout cleanup',
       [
         '-e',
         `
-      console.log(process.env.ARTIFACTSHARE_FLAKY_REPETITION)
+      console.log(JSON.stringify(process.env))
       setInterval(() => {}, 1000)
     `,
       ],
@@ -503,7 +513,9 @@ test('each repetition passes its inherited ownership marker to timeout cleanup',
     )
     assert.equal(result.timedOut, true)
     assert.ok(cleanupMarker)
-    assert.equal(output.split('\n')[0], cleanupMarker)
+    // The suite inherits the marker cleanup looks for, under whatever name.
+    const inherited = Object.values(JSON.parse(output.split('\n')[0]))
+    assert.ok(inherited.includes(cleanupMarker))
     markers.push(cleanupMarker)
   }
   assert.notEqual(markers[0], markers[1])
@@ -556,6 +568,7 @@ test('direct exit cleans inherited pipes before timeout and the next repetition'
             assert.ok(descendant > 0)
             process.kill(descendant, 'SIGKILL')
             assert.equal(afterExit, true, 'must clean up on exit, not timeout')
+            // test-wait: elapsed-time — the killed descendant must be reaped before the probe reports.
             await new Promise((resolve) => setTimeout(resolve, 30))
             cleaned = true
             return ['Remaining descendant after suite exit']

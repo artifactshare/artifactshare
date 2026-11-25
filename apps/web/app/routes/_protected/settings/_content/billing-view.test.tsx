@@ -10,7 +10,11 @@ vi.mock('~/hooks/use-t', async () => {
 })
 
 import BillingPage, { CheckoutActions, DowngradeImpact } from './billing'
-import { BILLING_PRICES, formatPrice } from '~/lib/billing-prices'
+import { BILLING_PRICES, formatPrice, PLAN_DISPLAY } from '~/lib/billing-prices'
+import { formatBytes } from '~/lib/format'
+import { t, type TKey } from '~/lib/i18n'
+import { MESSAGES } from '~/i18n/messages'
+import { EXTERNAL_POSTING_FEATURE, PRICING_COPY } from '~/lib/pricing-content'
 import type { SubscriptionContract } from '~/services/billing.server'
 
 function renderCheckout(
@@ -46,6 +50,26 @@ const teamMonthlyContract: SubscriptionContract = {
   amount: 4500,
   renewsAt: '2026-08-15T00:00:00.000Z',
   cancelAtPeriodEnd: false,
+}
+
+const teamMonthlyAmount = t('ja', 'billing.contract.amountValue', {
+  price: formatPrice('jpy', 4500),
+  interval: t('ja', 'billing.interval.monthly'),
+})
+
+const nearLimitDetails = t('ja', 'team.usage.nearLimitDetails', {
+  limit: formatBytes(100),
+  used: formatBytes(95),
+  remaining: formatBytes(5),
+})
+
+/** The copy that follows the last placeholder, to match a warning without
+ * pinning the numbers it interpolates. */
+function copyTail(key: TKey) {
+  return MESSAGES.ja[key]
+    .split(/\{\w+\}/)
+    .filter(Boolean)
+    .at(-1)!
 }
 
 function renderBillingPage(
@@ -111,11 +135,14 @@ function renderBillingPage(
 
 describe('billing plan comparison', () => {
   test('renders storage usage instead of project usage', () => {
-    const html = renderBillingPage(null)
+    const html = renderBillingPage(null, teamMonthlyContract, {
+      storageUsedBytes: 3 * 1024 * 1024,
+    })
 
-    expect(html).toContain('保存容量の使用状況')
+    expect(html).toContain(t('ja', 'billing.usage.storageTitle'))
+    expect(html).toContain(`>${t('ja', 'team.usage.storageUsed')}<`)
+    expect(html).toContain(formatBytes(3 * 1024 * 1024))
     expect(html).not.toContain('href="/settings/usage"')
-    expect(html).not.toContain('アクティブなプロジェクト')
   })
 
   test('renders both checkout forms with the selected billing values', () => {
@@ -148,16 +175,16 @@ describe('billing plan comparison', () => {
     const html = renderCheckout('team')
 
     expect(html.match(/<legend/g)).toHaveLength(2)
-    expect(html).toContain('支払い周期')
-    expect(html).toContain('2か月分お得')
-    expect(html).toContain('通貨')
+    expect(html).toContain(PRICING_COPY.ja.billingInterval)
+    expect(html).toContain(PRICING_COPY.ja.save)
+    expect(html).toContain(PRICING_COPY.ja.currency)
     expect(html).toContain('href="/ja/pricing"')
   })
 
   test('shows external posting according to the workspace policy', () => {
-    expect(renderCheckout('team')).toContain('社外メンバーからの投稿')
+    expect(renderCheckout('team')).toContain(EXTERNAL_POSTING_FEATURE.ja)
     expect(renderCheckout('team', false, false)).not.toContain(
-      '社外メンバーからの投稿',
+      EXTERNAL_POSTING_FEATURE.ja,
     )
   })
 })
@@ -166,17 +193,16 @@ describe('subscribed contract management', () => {
   test('renders the current plan card and only the two valid change options', () => {
     const html = renderBillingPage(null)
 
-    expect(html).toContain('現在のプラン')
-    expect(html).toContain('¥4,500 / 月払い')
+    expect(html).toContain(t('ja', 'billing.currentPlan'))
+    expect(html).toContain(teamMonthlyAmount)
     expect(html).toContain('2026-08-15')
-    expect(html).toContain('Plus へダウングレード')
-    expect(html).toContain('年払いに変更')
-    expect(html).not.toContain('Team へアップグレード')
-    expect(html).not.toContain('月払いに変更')
-    expect(html).toContain('カスタマーポータル')
-    expect(html.match(/カスタマーポータルを開く/g)).toHaveLength(1)
-    expect(html).not.toContain('固定料金')
-    expect(html).not.toContain('支払い周期</span>')
+    expect(html).toContain(t('ja', 'billing.change.plan.downgrade'))
+    expect(html).toContain(t('ja', 'billing.change.interval.toYearly'))
+    expect(html).not.toContain(t('ja', 'billing.change.plan.upgrade'))
+    expect(html).not.toContain(t('ja', 'billing.change.interval.toMonthly'))
+    expect(html.split(t('ja', 'billing.portal')).length - 1).toBe(1)
+    expect(html).not.toContain('value="checkout"')
+    expect(html).not.toContain(`${PRICING_COPY.ja.billingInterval}</span>`)
   })
 
   test.each([true, false])(
@@ -185,9 +211,11 @@ describe('subscribed contract management', () => {
       const html = renderBillingPage(null, teamMonthlyContract, {
         billingConfigured,
       })
-      expect(html).toContain('¥4,500 / 月払い')
-      expect(html).toContain('カスタマーポータルを開く')
-      expect(html.includes('課金機能は現在準備中です')).toBe(!billingConfigured)
+      expect(html).toContain(teamMonthlyAmount)
+      expect(html).toContain(t('ja', 'billing.portal'))
+      expect(html.includes(t('ja', 'billing.unavailable'))).toBe(
+        !billingConfigured,
+      )
     },
   )
 
@@ -207,8 +235,8 @@ describe('subscribed contract management', () => {
       renewsAt: null,
     })
 
-    expect(html).not.toContain('次回更新日')
-    expect(html).toContain('¥4,500 / 月払い')
+    expect(html).not.toContain(t('ja', 'billing.contract.renewsAt'))
+    expect(html).toContain(teamMonthlyAmount)
   })
 
   test('renders the renewal date when the contract currency is null', () => {
@@ -217,10 +245,10 @@ describe('subscribed contract management', () => {
       currency: null,
     })
 
-    expect(html).toContain('次回更新日')
+    expect(html).toContain(t('ja', 'billing.contract.renewsAt'))
     expect(html).toContain('2026-08-15')
-    expect(html).toContain('税別')
-    expect(html).not.toContain('¥4,500 / 月払い')
+    expect(html).toContain(t('ja', 'billing.contract.taxNote'))
+    expect(html).not.toContain(teamMonthlyAmount)
   })
 
   test('downgrade impact lists the lowered limits and flags exceeded usage', () => {
@@ -240,11 +268,30 @@ describe('subscribed contract management', () => {
     )
     const html = renderToStaticMarkup(<RouterProvider router={router} />)
 
-    expect(html).toContain('100 GB 込み → 10 GB 込み')
-    expect(html).toContain('無制限 → 20 件まで')
-    expect(html).toContain('管理機能が使えなくなります')
-    expect(html).toContain('10 GB を超えています')
-    expect(html).toContain('25 件あり')
+    expect(html).toContain(
+      t('ja', 'billing.downgrade.storage', {
+        team: PLAN_DISPLAY.team.storage,
+        plus: PLAN_DISPLAY.plus.storage,
+      }),
+    )
+    expect(html).toContain(
+      t('ja', 'billing.downgrade.projects', {
+        limit: PLAN_DISPLAY.plus.projects,
+      }),
+    )
+    expect(html).toContain(t('ja', 'billing.downgrade.admin'))
+    expect(html).toContain(
+      t('ja', 'billing.downgrade.overStorage', {
+        used: formatBytes(11 * 1024 * 1024 * 1024),
+        limit: PLAN_DISPLAY.plus.storage,
+      }),
+    )
+    expect(html).toContain(
+      t('ja', 'billing.downgrade.overProjects', {
+        count: 25,
+        limit: PLAN_DISPLAY.plus.projects,
+      }),
+    )
   })
 
   test('downgrade impact omits warnings when usage is within Plus limits', () => {
@@ -261,7 +308,8 @@ describe('subscribed contract management', () => {
     )
     const html = renderToStaticMarkup(<RouterProvider router={router} />)
 
-    expect(html).not.toContain('超えています')
+    expect(html).not.toContain(copyTail('billing.downgrade.overStorage'))
+    expect(html).not.toContain(copyTail('billing.downgrade.overProjects'))
   })
 })
 
@@ -274,8 +322,6 @@ test('a Team workspace without a subscription has no retired label or support pr
       storageQuotaBytes: 100,
     })
     expect(html).not.toContain('mailto:')
-    expect(html).not.toContain('Team（サブスクリプションなし）')
-    expect(html).not.toContain('サポートにお問い合わせください')
   }
 })
 
@@ -285,8 +331,8 @@ test('near-limit warning applies to capped plans while continuing subscriptions 
     storageQuotaBytes: 100,
   })
   expect(capped).toContain('role="alert"')
-  expect(capped).toContain('>容量上限<')
-  expect(capped).not.toContain('>プラン込み容量<')
+  expect(capped).toContain(`>${t('ja', 'team.usage.storageLimit')}<`)
+  expect(capped).not.toContain(`>${t('ja', 'team.usage.includedStorage')}<`)
   expect(capped).toContain('bg-warning"')
   const continuing = renderBillingPage(null, null, {
     storageUsedBytes: 95,
@@ -298,8 +344,10 @@ test('near-limit warning applies to capped plans while continuing subscriptions 
   })
   expect(continuing).not.toContain('role="alert"')
   expect(continuing).toContain('3 GB')
-  expect(continuing.match(/>プラン込み容量</g)).toHaveLength(1)
-  expect(continuing).not.toContain('>容量上限<')
+  expect(
+    continuing.split(`>${t('ja', 'team.usage.includedStorage')}<`).length - 1,
+  ).toBe(1)
+  expect(continuing).not.toContain(`>${t('ja', 'team.usage.storageLimit')}<`)
   expect(continuing).toContain('95%')
   expect(continuing).toContain('bg-link"')
   expect(continuing.match(/role="progressbar"/g)).toHaveLength(1)
@@ -325,13 +373,9 @@ test.each([true, false])(
       admin,
     )
     const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-    expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
-    expect(banner).toContain(
-      'ワークスペースのオーナーに保存容量の上限を確認してもらってください。',
-    )
-    expect(banner).not.toContain(
-      '上限を増やすには、このページのプランから選んでください。',
-    )
+    expect(banner).toContain(nearLimitDetails)
+    expect(banner).toContain(t('ja', 'team.usage.nearLimitMember'))
+    expect(banner).not.toContain(t('ja', 'team.usage.nearLimitAdmin'))
     expect(banner).not.toContain('href=')
   },
 )
@@ -342,9 +386,7 @@ test('near-limit Free owner keeps billing guidance and checkout without a self-l
     storageQuotaBytes: 100,
   })
   const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-  expect(banner).toContain(
-    '上限を増やすには、このページのプランから選んでください。',
-  )
+  expect(banner).toContain(t('ja', 'team.usage.nearLimitAdmin'))
   expect(banner).not.toContain('href=')
   expect(html).toContain('value="checkout"')
 })
@@ -365,8 +407,8 @@ test.each([
     })
     expect(html).toContain(label)
     const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-    expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
-    expect(banner).not.toContain('上限を増やすには')
+    expect(banner).toContain(nearLimitDetails)
+    expect(banner).not.toContain(t('ja', 'team.usage.nearLimitAdmin'))
     expect(html).not.toContain('value="checkout"')
     expect(html).not.toContain('data-plan="plus"')
   },
@@ -388,8 +430,8 @@ test('near-limit owner gets no billing next step when billing is unavailable', (
     billingConfigured: false,
   })
   const banner = html.match(/<div[^>]*role="alert"[^>]*>(.*?)<\/div>/)?.[1]
-  expect(banner).toContain('100 B 中 95 B を使用中です。残りは 5 B です。')
-  expect(banner).not.toContain('上限を増やすには')
+  expect(banner).toContain(nearLimitDetails)
+  expect(banner).not.toContain(t('ja', 'team.usage.nearLimitAdmin'))
   expect(banner).not.toContain('href=')
   expect(html).not.toContain('value="checkout"')
 })
@@ -414,10 +456,7 @@ test.each(purchaseVariants)(
       [...html.matchAll(/aria-pressed="true"[^>]*>([^<]+)</g)].map(
         ([, label]) => label.trim(),
       ),
-    ).toEqual([
-      interval === 'monthly' ? '月払い' : '年払い',
-      currency.toUpperCase(),
-    ])
+    ).toEqual([PRICING_COPY.ja[interval], currency.toUpperCase()])
     const cards = Object.fromEntries(
       html
         .split('data-plan="')
@@ -476,7 +515,7 @@ test.each([true, false])(
       billingConfigured,
     })
     expect(html).not.toContain('data-billing-contract-details')
-    expect(html).not.toContain('カスタマーポータルを開く')
+    expect(html).not.toContain(t('ja', 'billing.portal'))
     expect(html.includes('data-billing-unavailable')).toBe(!billingConfigured)
     const checkout = [
       ...html.matchAll(

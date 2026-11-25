@@ -25,6 +25,12 @@ export function findVersionHeadings(changelogContent) {
   return headings
 }
 
+// Each finding carries the code and the version or heading it is about. The
+// executable prints `message`; callers and tests read `code`.
+function finding(code, message, detail) {
+  return { code, message, ...detail }
+}
+
 export function validateCliChangelog(version, changelogContent) {
   const errors = []
   const headings = findVersionHeadings(changelogContent)
@@ -32,7 +38,11 @@ export function validateCliChangelog(version, changelogContent) {
   for (const heading of headings) {
     if (!heading.strict) {
       errors.push(
-        `packages/cli/CHANGELOG.md heading \`${heading.line}\` does not match \`## <version> - YYYY-MM-DD\` exactly (check the date and trailing characters).`,
+        finding(
+          'loose-heading',
+          `packages/cli/CHANGELOG.md heading \`${heading.line}\` does not match \`## <version> - YYYY-MM-DD\` exactly (check the date and trailing characters).`,
+          { version: heading.version, line: heading.line },
+        ),
       )
     }
   }
@@ -47,14 +57,22 @@ export function validateCliChangelog(version, changelogContent) {
   for (const [headingVersion, count] of countByVersion) {
     if (count > 1) {
       errors.push(
-        `packages/cli/CHANGELOG.md has ${count} headings for version ${headingVersion}; expected exactly one.`,
+        finding(
+          'duplicate-heading',
+          `packages/cli/CHANGELOG.md has ${count} headings for version ${headingVersion}; expected exactly one.`,
+          { version: headingVersion, count },
+        ),
       )
     }
   }
 
   if (!countByVersion.has(version)) {
     errors.push(
-      `packages/cli/CHANGELOG.md is missing a \`## ${version} - YYYY-MM-DD\` heading for packages/cli/package.json version ${version}.`,
+      finding(
+        'missing-heading',
+        `packages/cli/CHANGELOG.md is missing a \`## ${version} - YYYY-MM-DD\` heading for packages/cli/package.json version ${version}.`,
+        { version },
+      ),
     )
   }
 
@@ -83,18 +101,41 @@ export function validateCliRelease({ packageJson, changelog, reference }) {
   const errors = []
 
   if (packageJson.name !== EXPECTED_NAME)
-    errors.push(`CLI package name must be ${EXPECTED_NAME}.`)
+    errors.push(
+      finding('package-name', `CLI package name must be ${EXPECTED_NAME}.`),
+    )
   if (!SEMVER.test(packageJson.version ?? ''))
-    errors.push('CLI package version must be an exact x.y.z version.')
+    errors.push(
+      finding(
+        'package-version',
+        'CLI package version must be an exact x.y.z version.',
+      ),
+    )
   if (packageJson.repository?.url !== EXPECTED_REPOSITORY)
-    errors.push(`CLI repository.url must be ${EXPECTED_REPOSITORY}.`)
+    errors.push(
+      finding(
+        'repository-url',
+        `CLI repository.url must be ${EXPECTED_REPOSITORY}.`,
+      ),
+    )
   if (packageJson.repository?.directory !== EXPECTED_DIRECTORY)
-    errors.push(`CLI repository.directory must be ${EXPECTED_DIRECTORY}.`)
+    errors.push(
+      finding(
+        'repository-directory',
+        `CLI repository.directory must be ${EXPECTED_DIRECTORY}.`,
+      ),
+    )
   if (packageJson.publishConfig?.access !== 'public')
-    errors.push('CLI publishConfig.access must be public.')
+    errors.push(
+      finding('publish-access', 'CLI publishConfig.access must be public.'),
+    )
   if (reference.package_version !== packageJson.version)
     errors.push(
-      `CLI reference snapshot is for ${reference.package_version ?? 'no version'}; expected ${packageJson.version}. Run pnpm generate:contract-surfaces and format the result.`,
+      finding(
+        'reference-version',
+        `CLI reference snapshot is for ${reference.package_version ?? 'no version'}; expected ${packageJson.version}. Run pnpm generate:contract-surfaces and format the result.`,
+        { version: reference.package_version },
+      ),
     )
 
   errors.push(...validateCliChangelog(packageJson.version ?? '', changelog))
@@ -121,7 +162,7 @@ function main() {
   if (errors.length === 0) return
 
   for (const error of errors) {
-    console.error(error)
+    console.error(`[${error.code}] ${error.message}`)
   }
   process.exit(1)
 }
