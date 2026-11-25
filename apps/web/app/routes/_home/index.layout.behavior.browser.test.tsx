@@ -232,7 +232,7 @@ describe('home page shell spacing', () => {
     const rail = document.querySelector('aside')
     expect(rail).not.toBeNull()
     expect(document.querySelector('[data-testid="feed"]')).toBeNull()
-    expect(rail?.parentElement?.classList.contains('grid')).toBe(true)
+    expect(getComputedStyle(rail!.parentElement!).display).toBe('grid')
     expect(document.querySelector('[data-testid="home-tabs"]')).toBeNull()
     expect(document.querySelector('[data-testid="empty"]')).not.toBeNull()
     expect(
@@ -252,7 +252,7 @@ describe('home page shell spacing', () => {
 
     const grid = document.querySelector('aside')?.parentElement as HTMLElement
 
-    expect(grid.classList.contains('grid')).toBe(true)
+    expect(getComputedStyle(grid).display).toBe('grid')
     expect(getComputedStyle(grid).padding).toBe('0px')
     expect(homeLayout.shellPadding).not.toBe('0px')
 

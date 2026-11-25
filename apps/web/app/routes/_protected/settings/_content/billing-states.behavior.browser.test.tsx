@@ -7,9 +7,10 @@ import {
   RouterProvider,
 } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
-import { PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
+import { formatBytes } from '~/lib/format'
+import { PLAN_DISPLAY, PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
 import SettingsLayout from '../_layout'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import BillingPage, { action as billingAction } from './billing'
@@ -42,6 +43,26 @@ async function expectVisible(...selectors: string[]) {
         ),
       ).toBe(true),
     )
+}
+
+const WORKSPACE_STORAGE_USED_BYTES = 100_000_000_000
+
+// Only the confirmation dialog shows the downgrade impact, so SSR cannot see
+// whether the page hands it this workspace's usage or a placeholder.
+async function expectDowngradeNamesWorkspaceStorage() {
+  const en = bindI18n('en')
+  await page
+    .getByRole('button', { name: en.t('billing.change.plan.downgrade') })
+    .click()
+  const impact = page.getByRole('alert').filter({
+    hasText: en.t('billing.downgrade.overStorage', {
+      used: formatBytes(WORKSPACE_STORAGE_USED_BYTES),
+      limit: PLAN_DISPLAY.plus.storage,
+    }),
+  })
+  await expect.element(impact).toBeVisible()
+  await userEvent.keyboard('{Escape}')
+  await vi.waitFor(() => expect(impact.query()).toBeNull())
 }
 
 const plans = ['[data-plan="team"]', '[data-plan="plus"]']
@@ -123,7 +144,7 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
                 currentUserIsAdmin: true,
                 workspace: {
                   plan: 'team',
-                  storageUsedBytes: 100_000_000_000,
+                  storageUsedBytes: WORKSPACE_STORAGE_USED_BYTES,
                   storageQuotaBytes: 120_000_000_000,
                 },
               }}
@@ -133,6 +154,7 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
             { index: true, element: <BillingPage loaderData={data} /> },
           ],
         },
+        { path: '/settings/billing-preview', loader: () => null },
       ])
       const container = document.body.appendChild(document.createElement('div'))
       const root = createRoot(container)
@@ -144,11 +166,17 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
             '[data-billing-change="plan"]',
             '[data-billing-change="interval"]',
           ]
-          if (id === 'past-due')
-            cues.push('[data-billing-past-due][role="alert"]')
           if (id === 'continuing-near-limit')
             cues.push('#billing-estimate-overage')
           await expectVisible(selector, ...cues)
+          if (id === 'past-due')
+            await expect
+              .element(
+                page.getByRole('alert').filter({
+                  hasText: bindI18n('en').t('billing.pastDue.banner'),
+                }),
+              )
+              .toBeVisible()
           const card = document
             .querySelector(selector)
             ?.closest('[data-slot="card"]')
@@ -164,6 +192,7 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
           expect(
             container.querySelector('[data-billing-unavailable]'),
           ).toBeNull()
+          if (id === 'subscribed') await expectDowngradeNamesWorkspaceStorage()
         } else {
           expect(
             Array.from(container.querySelectorAll('p')).some(

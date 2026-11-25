@@ -28,6 +28,23 @@ const file = (overrides: Partial<FileRowData> = {}): FileRowData => ({
   ...overrides,
 })
 
+// The unread dot is decorative, so it has no name: count the painted
+// decorations instead of the class that colours them.
+function unreadDots(host: HTMLElement) {
+  return [...host.querySelectorAll<HTMLElement>('[aria-hidden="true"]')].filter(
+    (node) => {
+      const style = getComputedStyle(node)
+      const box = node.getBoundingClientRect()
+      return (
+        box.width > 0 &&
+        box.width === box.height &&
+        style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+        Number.parseFloat(style.borderTopLeftRadius) >= box.width / 2
+      )
+    },
+  )
+}
+
 let root: Root | undefined
 let router: ReturnType<typeof createMemoryRouter> | undefined
 afterEach(() => {
@@ -73,9 +90,7 @@ describe('FileRow unread browser structure', () => {
     expect(link.getAttribute('aria-label')).toBe(
       'Quarterly report with a deliberately long title for ellipsis · Unread updates',
     )
-    expect(host.querySelectorAll('[aria-hidden="true"].bg-link')).toHaveLength(
-      1,
-    )
+    expect(unreadDots(host)).toHaveLength(1)
     const desktopMotion = [...host.querySelectorAll<HTMLElement>('span')].find(
       (node) =>
         node.className.includes('max-wide:hidden') &&
@@ -110,9 +125,7 @@ describe('FileRow unread browser structure', () => {
     const host = await mount(file({ unreadCommentCount: 0 }))
     const link = host.querySelector<HTMLAnchorElement>('a[aria-label]')!
     expect(link.getAttribute('aria-label')).toBe('Quarterly report')
-    expect(host.querySelectorAll('[aria-hidden="true"].bg-link')).toHaveLength(
-      0,
-    )
+    expect(unreadDots(host)).toHaveLength(0)
     expect(host.textContent).not.toContain('new comment')
   })
 })

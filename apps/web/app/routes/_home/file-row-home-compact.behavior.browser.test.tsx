@@ -110,6 +110,10 @@ function visible(node: HTMLElement) {
   return getComputedStyle(node).display !== 'none'
 }
 
+function titleElement() {
+  return page.getByText(file.derivedTitle!, { exact: true }).element()
+}
+
 describe('home compact FileRow container behavior', () => {
   test.each([
     { viewport: 779, expectedPadding: '0px', expectedLinkReserve: 40 },
@@ -150,7 +154,7 @@ describe('home compact FileRow container behavior', () => {
   test('switches only at the owner container boundary and stays inside it', async () => {
     await page.viewport(1440, 900)
     const { host, row } = await mount(true)
-    const title = row.querySelector<HTMLElement>('.font-medium')!
+    const title = titleElement()
     const mobileMeta = row.querySelector<HTMLElement>(
       '[data-regression-responsive="mobile-only"]',
     )!
@@ -205,16 +209,31 @@ describe('home compact FileRow container behavior', () => {
       '[data-regression-responsive="mobile-only"]',
     )!
     expect(visible(mobileMeta)).toBe(true)
-    expect(row.className).toContain('max-wide:grid-cols-[minmax(0,1fr)_76px]')
-    expect(row.className).not.toContain('grid-cols-[minmax(0,1fr)_76px] @min-')
-    const title = row.querySelector<HTMLElement>('.font-medium')!
+    const columns = getComputedStyle(row).gridTemplateColumns.split(' ')
+    expect(columns).toHaveLength(2)
+    expect(columns[1]).toBe('76px')
+    const title = titleElement()
     expect(getComputedStyle(title).textOverflow).toBe('ellipsis')
+    // The row-wide link must stop short of the action column instead of
+    // covering the buttons it reserves room for.
+    const actions = [
+      ...(row.lastElementChild as HTMLElement).querySelectorAll<HTMLElement>(
+        'button',
+      ),
+    ].filter(visible)
+    expect(actions.length).toBeGreaterThan(0)
+    expect(
+      row.querySelector<HTMLElement>('a[aria-label]')!.getBoundingClientRect()
+        .right,
+    ).toBeLessThanOrEqual(
+      Math.min(...actions.map((action) => action.getBoundingClientRect().left)),
+    )
   })
 
   test('truncates a compact title to one line only when requested', async () => {
     await page.viewport(390, 844)
-    const { row } = await mount(true, file, true)
-    const title = row.querySelector<HTMLElement>('.font-medium')!
+    await mount(true, file, true)
+    const title = titleElement()
 
     expect(getComputedStyle(title).whiteSpace).toBe('nowrap')
     expect(getComputedStyle(title).textOverflow).toBe('ellipsis')

@@ -161,6 +161,10 @@ export const SANDBOX_FRAME_ALLOW =
 const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
 const AUTOMATIC_RECOVERY_ATTEMPT_LIMIT = 1
 
+// A ready-check can be lost while the frame document is still swapping. The
+// cadence only has to beat the probe below, so tests wait for it by name.
+export const FRAME_READY_CHECK_INTERVAL_MS = 250
+
 export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
   return followsAppTheme
     ? `${SANDBOX_FRAME_BASE_CLASS_NAME} bg-background [color-scheme:light_dark] dark:[color-scheme:dark] [[data-theme=light]_&]:[color-scheme:light]`
@@ -1465,7 +1469,10 @@ function useSandboxFrameController({
   useEffect(() => {
     if (loadState !== 'loading') return
     requestFrameReady()
-    const interval = window.setInterval(requestFrameReady, 250)
+    const interval = window.setInterval(
+      requestFrameReady,
+      FRAME_READY_CHECK_INTERVAL_MS,
+    )
     const generation = frameNavigationIdRef.current
     const fallback = window.setTimeout(() => {
       void probe(generation)

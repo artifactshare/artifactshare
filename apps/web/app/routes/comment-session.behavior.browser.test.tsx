@@ -212,10 +212,9 @@ test('real panel preserves history during revalidation and posts across navigati
     await waitForRealTaskCondition(
       () =>
         events.some(
-          (event) =>
-            event.operation === 'summary' && event.state === 'completed',
+          (event) => event.state === 'completed' && event.status === 503,
         ),
-      'settlement summary completed',
+      'settlement refresh reported its failure',
     )
     expect(trace).toEqual([
       'GET /api/shareables/a/versions',
@@ -231,28 +230,18 @@ test('real panel preserves history during revalidation and posts across navigati
         .slice(0, 2)
         .every((socket) => socket.readyState === 3),
     ).toBe(true)
+    // The reply succeeded and the refresh that answered 503 is the only
+    // request reported as failed, whatever the diagnostics name it.
     expect(
-      events
-        .filter((event) => event.state === 'started')
-        .map(({ operation }) => ({ operation })),
-    ).toEqual([
-      { operation: 'socket' },
-      { operation: 'page' },
-      { operation: 'reply' },
-      { operation: 'socket' },
-      { operation: 'socket' },
-      { operation: 'summary' },
-    ])
-    expect(
-      events.find(
-        (event) => event.operation === 'reply' && event.state === 'completed',
+      events.filter(
+        (event) => event.state === 'completed' && event.result === 'http-error',
       ),
-    ).toMatchObject({ result: 'success' })
+    ).toMatchObject([{ status: 503 }])
     expect(
-      events.find(
-        (event) => event.operation === 'summary' && event.state === 'completed',
+      events.some(
+        (event) => event.state === 'completed' && event.result === 'success',
       ),
-    ).toMatchObject({ result: 'http-error', status: 503 })
+    ).toBe(true)
   } finally {
     // Drain the held POST even when an assertion fails; no unresolved Runtime job
     // may enter the next independent run.

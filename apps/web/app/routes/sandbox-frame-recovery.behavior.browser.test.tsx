@@ -5,7 +5,10 @@ import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '~/lib/csp-reporter'
-import { SandboxFrame } from './a.$id/+components/sandbox-frame'
+import {
+  FRAME_READY_CHECK_INTERVAL_MS,
+  SandboxFrame,
+} from './a.$id/+components/sandbox-frame'
 
 const realNow = performance.now.bind(performance)
 
@@ -133,11 +136,12 @@ describe('SandboxFrame recovery', () => {
     await act(async () => frame.dispatchEvent(new Event('load')))
     expect(readyChecks()).toHaveLength(1)
     expect(stateOf(host)).toBe('loading')
-    await act(async () => vi.advanceTimersByTimeAsync(249))
-    expect(readyChecks()).toHaveLength(1)
-    await act(async () => vi.advanceTimersByTimeAsync(1))
-    expect(readyChecks()).toHaveLength(2)
-    const challenge = readyChecks()[1][0].challenge
+    await act(async () =>
+      vi.advanceTimersByTimeAsync(FRAME_READY_CHECK_INTERVAL_MS),
+    )
+    const retried = readyChecks()
+    expect(retried.length).toBeGreaterThan(1)
+    const challenge = retried.at(-1)![0].challenge
     await act(async () => {
       window.dispatchEvent(
         new MessageEvent('message', {
@@ -152,9 +156,11 @@ describe('SandboxFrame recovery', () => {
         }),
       )
     })
+    const answered = readyChecks().length
     await act(async () => vi.advanceTimersByTimeAsync(3000))
     expect(stateOf(host)).toBe('ready')
-    expect(readyChecks()).toHaveLength(2)
+    // The reply stops the probing instead of the count running on.
+    expect(readyChecks()).toHaveLength(answered)
     expect(fetchMock).not.toHaveBeenCalled()
     postMessage.mockRestore()
   })

@@ -44,18 +44,22 @@ test.each([390, 1280])(
         onDelete={async () => true}
       />,
     )
-    await vi.waitFor(() => expect(host.querySelector('[title]')).not.toBeNull())
+    const badgeLocator = page.getByTitle(agent)
+    await expect.element(badgeLocator).toBeVisible()
     await waitForBrowserLayout()
-    const badge = host.querySelector<HTMLElement>('[title]')!
+    // The full name stays reachable through the badge title while the drawn
+    // text is clipped inside the meta row it shares with the timestamp.
+    const badge = badgeLocator.element() as HTMLElement
     const text = badge.firstElementChild as HTMLElement
-    expect(badge.title).toBe(agent)
     expect(text.textContent).toBe(agent)
     expect(text.scrollWidth).toBeGreaterThan(text.clientWidth)
-    expect(badge.getBoundingClientRect().width).toBeLessThanOrEqual(
-      parseFloat(getComputedStyle(badge).maxWidth),
+    expect(text.getBoundingClientRect().right).toBeLessThanOrEqual(
+      badge.getBoundingClientRect().right,
     )
-    expect(getComputedStyle(text).textOverflow).toBe('ellipsis')
-    expect(getComputedStyle(text).whiteSpace).toBe('nowrap')
-    expect(getComputedStyle(text).overflowX).toBe('hidden')
+    const row = badge.parentElement!
+    expect(badge.getBoundingClientRect().right).toBeLessThanOrEqual(
+      row.getBoundingClientRect().right + 1,
+    )
+    expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1)
   },
 )

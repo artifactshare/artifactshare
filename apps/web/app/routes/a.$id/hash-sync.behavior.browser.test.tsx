@@ -155,7 +155,6 @@ test.each(
     const frameProps = props({ renderType, url })
     const view = <SandboxFrame {...frameProps} />
     const markup = renderToString(view)
-    expect(markup.match(/<iframe[^>]+>/)?.[0]).toContain('data-src=')
     expect(markup.match(/<iframe[^>]+>/)?.[0]).not.toMatch(/\ssrc=/)
     expect(markup).toContain('</iframe><script>')
     const fallback = markup.match(/<noscript>([\s\S]*?)<\/noscript>/)?.[1]

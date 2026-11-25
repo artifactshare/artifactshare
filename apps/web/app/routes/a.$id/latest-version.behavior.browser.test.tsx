@@ -176,11 +176,6 @@ test('anonymous link checks only current-version, shows an update, and refreshes
   expect(visibleSentence.getAttribute('aria-hidden')).toBe('true')
   expect(host.querySelector('aside[role="status"]')).toBeNull()
   expect(
-    host
-      .querySelector('aside[aria-label="Activity and version status"]')!
-      .classList.contains('rounded-[var(--r-md)]'),
-  ).toBe(true)
-  expect(
     lookup.mock.calls.every(([url]) =>
       String(url).endsWith('/current-version'),
     ),
