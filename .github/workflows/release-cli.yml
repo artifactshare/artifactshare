@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'cli-v*'
+  # Manual run from main, for releasing where a tag cannot be pushed (for
+  # example a cloud agent session). The workflow tags main after publishing.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact unpublished CLI version to release from current main
+        required: true
+        type: string
 
 permissions: {}
 
@@ -31,13 +39,25 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Require the current validated public main commit
         run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$GITHUB_REF_NAME" = "main"
+          fi
           git fetch --no-tags origin main
           test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm check:cli-release
       - name: Verify tag version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#cli-v}"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG_VERSION="$RELEASE_VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/cli-v$TAG_VERSION" >/dev/null; then
+              echo "cli-v$TAG_VERSION already exists" >&2
+              exit 1
+            fi
+          fi
           PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
           test "$TAG_VERSION" = "$PKG_VERSION"
       - name: Require an unpublished npm version
@@ -117,3 +137,21 @@ jobs:
           mapfile -t tarballs < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
           test "${#tarballs[@]}" -eq 1
           pnpm publish "${tarballs[0]}" --no-git-checks --access public --provenance
+
+  tag:
+    name: Tag the released commit
+    if: github.event_name == 'workflow_dispatch'
+    needs: publish
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create cli-v tag on the published commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/cli-v$RELEASE_VERSION" \
+            -f sha="$GITHUB_SHA"

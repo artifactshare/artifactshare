@@ -699,11 +699,18 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
   )
 })
 
-test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', () => {
+test('CLI release is tag or manual, current-main-only, preflighted, and OIDC-only', () => {
   const releaseWorkflow = YAML.parse(
     fs.readFileSync('.github/workflows/release-cli.yml', 'utf8'),
   )
   assert.deepEqual(releaseWorkflow.on.push.tags, ['cli-v*'])
+  assert.deepEqual(Object.keys(releaseWorkflow.on).sort(), [
+    'push',
+    'workflow_dispatch',
+  ])
+  const { version } = releaseWorkflow.on.workflow_dispatch.inputs
+  assert.equal(version.required, true)
+  assert.equal(version.type, 'string')
   assert.deepEqual(releaseWorkflow.permissions, {})
 
   const pack = releaseWorkflow.jobs.pack
@@ -719,6 +726,9 @@ test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', (
   assert.match(packRuns, /pnpm check:cli-release/)
   assert.match(packRuns, /TAG_VERSION="\$\{GITHUB_REF_NAME#cli-v\}"/)
   assert.match(packRuns, /test "\$TAG_VERSION" = "\$PKG_VERSION"/)
+  assert.match(packRuns, /test "\$GITHUB_REF_NAME" = "main"/)
+  assert.match(packRuns, /TAG_VERSION="\$RELEASE_VERSION"/)
+  assert.match(packRuns, /git ls-remote --exit-code --tags origin/)
   assert.match(packRuns, /npm view.*PKG_NAME.*PKG_VERSION.*version/)
   assert.match(packRuns, /pnpm check:cli-reference/)
   assert.match(packRuns, /@artifactshare\/cli pack --pack-destination/)
@@ -741,6 +751,16 @@ test('CLI release is tag-only, current-main-only, preflighted, and OIDC-only', (
   )
   assert.doesNotMatch(JSON.stringify(publish), /secrets\./)
   assert.doesNotMatch(publishRuns, /pnpm install/)
+
+  const tag = releaseWorkflow.jobs.tag
+  assert.equal(tag.needs, 'publish')
+  assert.equal(tag.if, "github.event_name == 'workflow_dispatch'")
+  assert.deepEqual(tag.permissions, { contents: 'write' })
+  assert.equal(tag.environment, undefined)
+  const tagRuns = tag.steps.map((step) => step.run ?? '').join('\n')
+  assert.match(tagRuns, /ref="refs\/tags\/cli-v\$RELEASE_VERSION"/)
+  assert.match(tagRuns, /sha="\$GITHUB_SHA"/)
+  assert.doesNotMatch(JSON.stringify(tag), /secrets\./)
 })
 
 test('reserved package release is protected, tag-only, and OIDC-only', () => {
