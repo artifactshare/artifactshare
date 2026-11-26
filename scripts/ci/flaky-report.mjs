@@ -381,7 +381,7 @@ export function aggregate({ results, repetitions, sha }) {
   }
 }
 
-const cell = (value) =>
+export const cell = (value) =>
   clean(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
