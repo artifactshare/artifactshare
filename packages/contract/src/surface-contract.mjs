@@ -61,6 +61,7 @@ export const CLI_QUICK_REFERENCE = [
   ],
   ['Inspect retained versions and bytes', 'artifacts versions <target> --json'],
   ['List your artifacts', 'artifacts list --json'],
+  ['Search titles and body text', "artifacts list --q '<text>' --json"],
   ['Post a comment', "comments post <target> --body '<text>' --json"],
   ['Read comments', 'comments list <target> --json'],
   [
