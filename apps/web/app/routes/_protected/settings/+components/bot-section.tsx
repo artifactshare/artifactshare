@@ -9,6 +9,7 @@ import { SettingsSection } from '~/components/form/settings-section'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
+import { Checkbox } from '~/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,7 @@ import {
 } from '~/components/ui/dialog'
 import { Field, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
+import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
 import {
   ProjectCandidatePicker,
   type ProjectCandidateOption,
@@ -496,40 +498,42 @@ function BotDestinationSelection({
           {t('team.bots.emptyDestinations')}
         </TeamMutedParagraph>
       ) : null}
-      {projects.map((project) => (
-        <div
-          key={project.id}
-          className="flex items-center justify-between gap-[var(--spacing-2)]"
-        >
-          <label className="flex items-center gap-[var(--spacing-2)]">
-            <input
-              type="radio"
-              name="bot-primary"
-              value={project.id}
-              checked={primary === project.id}
-              disabled={project.unavailable && primary !== project.id}
-              onChange={() => onPrimaryChange(project.id)}
-            />
-            {project.name}{' '}
-            {primary === project.id ? `(${t('team.bots.primary')})` : ''}
-            {project.unavailable ? ` · ${t('team.bots.unavailable')}` : ''}
-          </label>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            aria-label={t('team.bots.removeDestinationLabel', {
-              name: project.name,
-            })}
-            disabled={projects.length === 1 || primary === project.id}
-            onClick={() =>
-              onProjectsChange(projects.filter((p) => p.id !== project.id))
-            }
+      <RadioGroup
+        value={primary}
+        onValueChange={onPrimaryChange}
+        className="gap-[var(--spacing-3)]"
+      >
+        {projects.map((project) => (
+          <div
+            key={project.id}
+            className="flex items-center justify-between gap-[var(--spacing-2)]"
           >
-            {t('team.bots.removeDestination')}
-          </Button>
-        </div>
-      ))}
+            <label className="flex items-center gap-[var(--spacing-2)]">
+              <RadioGroupItem
+                value={project.id}
+                disabled={project.unavailable && primary !== project.id}
+              />
+              {project.name}{' '}
+              {primary === project.id ? `(${t('team.bots.primary')})` : ''}
+              {project.unavailable ? ` · ${t('team.bots.unavailable')}` : ''}
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label={t('team.bots.removeDestinationLabel', {
+                name: project.name,
+              })}
+              disabled={projects.length === 1 || primary === project.id}
+              onClick={() =>
+                onProjectsChange(projects.filter((p) => p.id !== project.id))
+              }
+            >
+              {t('team.bots.removeDestination')}
+            </Button>
+          </div>
+        ))}
+      </RadioGroup>
       <Field>
         <FieldLabel id="bot-add-destination-label">
           {t('team.bots.add.destinationLabel')}
@@ -857,10 +861,9 @@ export function BotTokenDialog({
             </code>
           </TeamMutedParagraph>
           <label className="flex items-center gap-[var(--spacing-2)] text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={stored}
-              onChange={(event) => setStored(event.target.checked)}
+              onCheckedChange={(checked) => setStored(checked === true)}
             />
             {t('team.bots.token.confirm')}
           </label>

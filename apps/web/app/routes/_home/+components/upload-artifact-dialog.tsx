@@ -58,6 +58,7 @@ import {
   UpgradeRequestPanel,
   type UpgradeRequestView,
 } from '~/components/app/upgrade-request-panel'
+import { Checkbox } from '~/components/ui/checkbox'
 
 const uploadDialogContentClassName =
   'max-w-[var(--breakpoint-phone)] sm:max-w-[var(--breakpoint-phone)]'
@@ -585,11 +586,10 @@ function SlackNotificationPreference({
   return (
     <Field orientation="horizontal">
       <FieldLabel>
-        <input
-          type="checkbox"
+        <Checkbox
           aria-label={t('upload.slackNotify.optOut')}
           checked={disabled}
-          onChange={(event) => onDisabledChange(event.target.checked)}
+          onCheckedChange={(checked) => onDisabledChange(checked === true)}
         />
         <FieldContent>
           <span className="text-sm font-medium">

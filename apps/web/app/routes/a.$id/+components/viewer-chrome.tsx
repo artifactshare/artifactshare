@@ -68,6 +68,7 @@ import { useEditTitle } from '../+hooks/use-edit-title'
 import { buildShareableUrl } from '~/lib/share-url'
 import { useSharingRecoverySignal } from '~/hooks/use-sharing-recovery-signal'
 import { AnonymousViewerSignInControl } from './anonymous-viewer-sign-in'
+import { Textarea } from '~/components/ui/textarea'
 
 interface ViewerPresence {
   id: string
@@ -902,14 +903,14 @@ function SuspendedLinkBanner({
       </p>
       {state !== 'sent' ? (
         <div className="flex items-end gap-2">
-          <textarea
+          <Textarea
             aria-label={t('visibilityDialog.link.appeal')}
             placeholder={t('visibilityDialog.link.appealPlaceholder')}
             value={message}
             maxLength={1000}
             rows={2}
             onChange={(event) => setMessage(event.target.value)}
-            className="bg-background border-input w-full rounded border p-2"
+            className="bg-background"
           />
           <Button
             type="button"

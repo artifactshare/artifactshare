@@ -39,6 +39,7 @@ import {
 } from './file-list-styles'
 import { TODAY, YESTERDAY, type RecentDatePresentation } from '~/lib/datetime'
 import { fileHasUnread, unreadNewCommentLabel } from './unread-motion'
+import { Checkbox } from '~/components/ui/checkbox'
 
 const rowClassName = cn(
   'group border-divider relative box-border grid min-h-15.5 items-center gap-4 border-b px-3 text-sm',
@@ -255,11 +256,10 @@ export function FileRow({
               : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
           )}
         >
-          <input
-            type="checkbox"
+          <Checkbox
             checked={selected}
-            onChange={onToggleSelect}
-            className="accent-link size-4 cursor-pointer"
+            onCheckedChange={() => onToggleSelect?.()}
+            className="cursor-pointer"
             aria-label={t('bulk.selectRow', { title })}
           />
         </label>
