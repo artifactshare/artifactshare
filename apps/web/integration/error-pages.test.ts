@@ -26,7 +26,7 @@ test('production document errors render localized root and Settings content', as
         // Read the request from the loader's arguments, so the fault does not
         // depend on which parameters the loader destructures.
         const injected = source.replace(
-          /(export async function loader\([^\n]+\) \{)/,
+          /(export async function loader\([\s\S]*?\)[^{]*\{)/,
           '$1\n' +
             `if (arguments[0].request.headers.get('x-test-error') === '${fault}') {const error=new Error('private-message-${fault}'); error.stack='private-stack-${fault}';throw error}`,
         )
