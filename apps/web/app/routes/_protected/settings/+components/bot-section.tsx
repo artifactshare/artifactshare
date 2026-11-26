@@ -34,7 +34,7 @@ import {
   TableRow,
 } from '~/components/ui/table'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { writeClipboardText } from '~/lib/clipboard'
 import type { TKey } from '~/i18n/messages'
 import type { WorkspaceBotRow } from '~/services/bot-members.server'
@@ -81,6 +81,7 @@ export function BotSection({
   bots: WorkspaceBotRow[]
   canCreate: boolean
 }) {
+  const formatRelative = useRelativeTime()
   const { t, locale } = useT()
   const [notice, setNotice] = useState<{ intent: string; text: string } | null>(
     null,

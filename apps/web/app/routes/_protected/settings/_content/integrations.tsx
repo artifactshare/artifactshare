@@ -43,7 +43,7 @@ import type { Route } from './+types/integrations'
 import type { SettingsLayoutContext } from '../_layout'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { stringValue } from '~/lib/form'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
@@ -199,6 +199,7 @@ export function SlackConnectionCard({
   canManage: boolean
   pending: boolean
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   const time = formatRelative(connection.installedAt, locale)
   const meta = connection.installedByName

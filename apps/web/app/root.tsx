@@ -41,6 +41,7 @@ import { AnalyticsGtag } from '~/components/app/analytics-gtag'
 import { AnalyticsSignupTracker } from '~/components/app/analytics-signup-tracker'
 import { AnalyticsAuthTracker } from '~/components/app/analytics-auth-tracker'
 import { ViewerTimezone } from '~/components/app/viewer-timezone'
+import { RenderClockProvider } from '~/components/app/render-clock'
 import { createDb } from '~/services/db.server'
 import { claimPendingSignup } from '~/services/signup-analytics.server'
 import { readFirstTouch } from '~/lib/analytics/first-touch.server'
@@ -150,6 +151,7 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     linkDomain,
     linkViewerPath,
     appOrigin: env.BETTER_AUTH_URL,
+    renderedAt: nowIso(),
   }
 }
 
@@ -185,7 +187,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <body>
         <AnalyticsConsentProvider>
           <TooltipProvider delayDuration={300} disableHoverableContent>
-            {children}
+            <RenderClockProvider renderedAt={data?.renderedAt ?? null}>
+              {children}
+            </RenderClockProvider>
           </TooltipProvider>
           <AnalyticsConsentBanner />
           <Toaster position="bottom-center" theme={appTheme} locale={locale} />

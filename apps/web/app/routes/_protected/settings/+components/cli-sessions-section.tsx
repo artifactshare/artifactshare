@@ -7,7 +7,7 @@ import { Button } from '~/components/ui/button'
 import { TableCell, TableRow } from '~/components/ui/table'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import type { CliRefreshCredentialFamily } from '~/services/cli-refresh-credentials.server'
 import { RevokeDialog, type RevokeTarget } from './revoke-dialog'
 
@@ -110,6 +110,7 @@ function CliFamilyRow({
   family: CliRefreshCredentialFamily
   locale: Locale
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   const name =
     family.preset === 'publisher'

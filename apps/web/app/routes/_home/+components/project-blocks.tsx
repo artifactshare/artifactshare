@@ -10,7 +10,7 @@ import {
 } from './file-list-styles'
 import { FileTypeIcon } from '~/components/app/file-type-icon'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { displayTitle } from '~/lib/display-title'
 import { cn } from '~/lib/utils'
 
@@ -44,6 +44,7 @@ export function ProjectBlocks({ blocks }: ProjectBlocksProps) {
 }
 
 function ProjectBlockCard({ block }: { block: ProjectBlock }) {
+  const formatRelative = useRelativeTime()
   const { t, tPlural, locale } = useT()
   const isInbox = block.kind === 'inbox'
   const subParts = [tPlural('home.fileCount', block.fileCount)]
@@ -96,6 +97,7 @@ function ProjectBlockCard({ block }: { block: ProjectBlock }) {
 }
 
 function MiniFileRow({ f }: { f: ProjectBlock['recentFiles'][number] }) {
+  const formatRelative = useRelativeTime()
   const { locale } = useT()
   const title = displayTitle({
     name: f.fileName,

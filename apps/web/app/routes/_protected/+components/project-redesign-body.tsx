@@ -31,7 +31,8 @@ import {
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
 import { displayTitle } from '~/lib/display-title'
-import { formatRelative, groupByDay } from '~/lib/datetime'
+import { groupByDay } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import { useT } from '~/hooks/use-t'
 import {
@@ -74,6 +75,7 @@ export function ProjectRedesignBody({
   onUpload: () => void
   homeOwnerName: string
 }) {
+  const formatRelative = useRelativeTime()
   const { t, locale } = useT()
   const { hydrated, timeZone, now: calendarNow } = useViewerCalendar()
   const fetcher = useFetcher()

@@ -52,7 +52,7 @@ import { Field, FieldGroup, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { Textarea } from '~/components/ui/textarea'
 import { displayTitle } from '~/lib/display-title'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 import { toast } from 'sonner'
 import type { TKey } from '~/lib/i18n'
@@ -675,6 +675,7 @@ type DialogKind =
   | 'slack'
 
 function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
+  const formatRelative = useRelativeTime()
   const leaveFetcher = useFetcher()
   const [openDialog, setOpenDialog] = useState<DialogKind | null>(null)
   const [editErrorVisible, setEditErrorVisible] = useState(true)
@@ -701,7 +702,7 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
   const fileUpdatedAt = files[0]?.modifiedTime ?? null
   const fileUpdated = useMemo(
     () => (fileUpdatedAt ? formatRelative(fileUpdatedAt, locale) : null),
-    [fileUpdatedAt, locale],
+    [fileUpdatedAt, locale, formatRelative],
   )
   const uploadDestination = useMemo(
     () => ({
@@ -977,6 +978,7 @@ function MemberSummaryStrip({
   fileUpdated: string | null
   createdAt: string
 }) {
+  const formatRelative = useRelativeTime()
   const { tPlural, t, locale } = useT()
   return (
     <div className={projectSummaryStripClassName}>
@@ -1024,6 +1026,7 @@ function ProjectFileTable({ files }: { files: FileRowData[] }) {
 }
 
 function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
+  const formatRelative = useRelativeTime()
   const [openDialog, setOpenDialog] = useState<
     'upload' | 'shareDefaults' | null
   >(null)
@@ -1039,7 +1042,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
   const fileUpdatedAt = files[0]?.modifiedTime ?? null
   const fileUpdated = useMemo(
     () => (fileUpdatedAt ? formatRelative(fileUpdatedAt, locale) : null),
-    [fileUpdatedAt, locale],
+    [fileUpdatedAt, locale, formatRelative],
   )
   const uploadDestination = useMemo(
     () => ({

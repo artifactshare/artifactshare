@@ -7,7 +7,7 @@ import { ProjectNewBadge } from '~/components/app/project-new-badge'
 import { ProjectScopeChip } from '~/components/app/visibility-chip'
 import { ExtTag } from '~/components/app/ext-tag'
 import { Button } from '~/components/ui/button'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
 import { AppSectionHeader } from '~/components/app/app-section-header'
@@ -40,6 +40,7 @@ function RedesignProjectRow({
   sharedFrom?: string | null
   trailing?: React.ReactNode
 }) {
+  const formatRelative = useRelativeTime()
   const { tPlural, t, locale } = useT()
   const meta = [
     row.description,

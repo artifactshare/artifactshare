@@ -33,6 +33,7 @@ import {
   countWorkspaceContributors,
   ensureWorkspaceAdmin,
   grantWorkspaceAdmin,
+  isRemovedWorkspaceMember,
   loadMembersPageData,
   loadAuditEventsPage,
   loadRemovedWorkspaceMembers,
@@ -1016,6 +1017,26 @@ describe('team-management service', () => {
       revoked_api_token_count: 0,
       revoked_oauth_token_count: 0,
     })
+  })
+
+  test('a repeated removal is refused, and the member reads as already removed', async () => {
+    seedWorkspace(sqlite, 'team')
+    seedUser(sqlite, 'u1')
+    seedUser(sqlite, 'u2')
+    seedContributor(sqlite, 'u1')
+    seedContributor(sqlite, 'u2')
+    seedOwner(sqlite, 'u1')
+
+    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u2')).toBe(false)
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'not-found',
+    })
+    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u2')).toBe(true)
+    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u1')).toBe(false)
+    expect(await isRemovedWorkspaceMember(db, 'other', 'u2')).toBe(false)
   })
 
   test('revokes all stored credentials, counts final-batch rows, and permits fresh personal tokens', async () => {

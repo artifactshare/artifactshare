@@ -67,6 +67,7 @@ function cleanedSearch({
 }) {
   const kept = new URLSearchParams(search)
   kept.delete('status')
+  if (pathname === '/settings/billing') kept.delete('session_id')
   if (pathname === '/settings/integrations') kept.delete('connected')
   const query = kept.toString()
   return query ? `?${query}` : ''

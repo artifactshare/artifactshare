@@ -1813,6 +1813,26 @@ async function loadUser(db: Kysely<DB>, userId: string): Promise<TeamMember> {
   return row
 }
 
+/** Whether a human member of this workspace has already been removed. A
+ * removal whose response was lost has committed, so a retry of that removal
+ * treats this as done and carries on with the asset transfer. */
+export async function isRemovedWorkspaceMember(
+  db: Kysely<DB>,
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('workspace_members')
+    .innerJoin('users', 'users.id', 'workspace_members.user_id')
+    .select('workspace_members.user_id')
+    .where('workspace_members.workspace_id', '=', workspaceId)
+    .where('workspace_members.user_id', '=', userId)
+    .where('workspace_members.status', '=', 'removed')
+    .where('users.kind', '=', 'human')
+    .executeTakeFirst()
+  return row !== undefined
+}
+
 export async function loadRemovedWorkspaceMembers(
   db: Kysely<DB>,
   workspaceId: string,

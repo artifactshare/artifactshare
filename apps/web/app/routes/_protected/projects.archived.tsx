@@ -23,7 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '~/components/ui/empty'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 import { requireUser } from '~/middleware/context'
 import { isTeamWorkspaceAdmin } from '~/services/access.server'
@@ -74,6 +74,7 @@ export async function loader({
 }
 
 export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
+  const formatRelative = useRelativeTime()
   const { tPlural, t, locale } = useT()
   const revalidator = useRevalidator()
   const { projects, userId, isAdmin, workspaceId, workspaceName } = loaderData

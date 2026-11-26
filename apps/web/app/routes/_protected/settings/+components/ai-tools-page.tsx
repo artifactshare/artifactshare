@@ -11,7 +11,7 @@ import { Input } from '~/components/ui/input'
 import { TableCell, TableRow } from '~/components/ui/table'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { withLang } from '~/lib/connect-link'
 import type { ApiTokenListItem } from '~/services/api-tokens.server'
 import { CredentialTable } from './credential-table'
@@ -169,6 +169,7 @@ function TokenRow({
   token: ApiTokenListItem
   locale: Locale
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   return (
     <TableRow>
