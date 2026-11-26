@@ -3,6 +3,10 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## 0.24.2 - 2026-11-27
+
+- Point the bundled skill at full-text search when looking for an artifact by its contents. `--query` matches titles only; `artifacts list --q <text>` searches titles and body text, and the quick-reference table now lists it. Update the bundled skill to version 72.
+
 ## 0.24.1 - 2026-11-26
 
 - Shorten the canonical zero-install CLI invocation from `npm exec --yes --package=@artifactshare/cli -- artifactshare` to `npx --yes @artifactshare/cli` across help text, onboarding prompts, recovery hints, README, and bundled skill guidance. Update the bundled skill to version 71.
