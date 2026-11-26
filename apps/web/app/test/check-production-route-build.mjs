@@ -8,6 +8,8 @@ const FORBIDDEN_MARKERS = [
   'routes/api.poc.slack.events',
   'routes/dev.gallery',
   'routes/dev.scenarios.$scenario',
+  'routes/dev.screens',
+  'routes/dev.settings.$state',
   'routes/dev.sign-in',
   'routes/poc.static-site',
   'Component gallery',
