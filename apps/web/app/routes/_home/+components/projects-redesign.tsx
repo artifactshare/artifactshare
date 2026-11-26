@@ -13,6 +13,7 @@ import { cn } from '~/lib/utils'
 import { AppSectionHeader } from '~/components/app/app-section-header'
 import { AppDividerList } from '~/components/app/app-divider-list'
 import { AppMoreLink } from '~/components/app/app-more-link'
+import { Checkbox } from '~/components/ui/checkbox'
 
 const SECTION_LIMIT = 10
 
@@ -264,10 +265,9 @@ export function RedesignedProjectsIndex({
       </BoundedSection>
       {archived.length > 0 || showArchived ? (
         <label className="text-muted-foreground mt-5 flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
+            onCheckedChange={(checked) => setShowArchived(checked === true)}
           />
           {t('project.showArchived', { count: archived.length })}
         </label>

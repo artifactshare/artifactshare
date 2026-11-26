@@ -6,6 +6,7 @@ import { useCopyState } from '~/hooks/use-copy-state'
 import { useT } from '~/hooks/use-t'
 import { buildShareableUrl } from '~/lib/share-url'
 import { dialogNoteWarnClassName } from './dialog-note-styles'
+import { Checkbox } from '~/components/ui/checkbox'
 
 export function VisibilityDialogActions({
   hasPendingChanges,
@@ -142,11 +143,10 @@ export function LinkVisibilitySection({
       </div>
       {showUnlimited ? (
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={unlimited}
             disabled={saving || !available}
-            onChange={(event) => onUnlimitedChange(event.currentTarget.checked)}
+            onCheckedChange={(checked) => onUnlimitedChange(checked === true)}
           />
           {t('visibilityDialog.link.unlimited')}
         </label>

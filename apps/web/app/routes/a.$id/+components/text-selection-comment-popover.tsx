@@ -14,6 +14,7 @@ import {
   withoutRect,
 } from './inline-comment-popover-utils'
 import { IconMessage, IconX } from '@tabler/icons-react'
+import { Textarea } from '~/components/ui/textarea'
 
 export function TextSelectionCommentPopover({
   shareableId,
@@ -96,9 +97,9 @@ export function TextSelectionCommentPopover({
       </div>
       <div className="bg-background grid gap-2 px-2.5 pt-2 pb-2.5">
         <CommentQuote text={anchor.quotedText} />
-        <textarea
+        <Textarea
           ref={textareaRef}
-          className="text-foreground min-h-comment-textarea-sm border-input bg-card w-full resize-y rounded-[var(--r-lg)] border p-2.5 text-sm"
+          className="text-foreground min-h-comment-textarea-sm bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
           value={body}
           maxLength={MAX_COMMENT_BODY_LENGTH}
           aria-label={t('comments.newLabel')}
