@@ -406,7 +406,11 @@ export function score({
     }
     if (recovery.kind === 'run_command') {
       const tokens = words(recovery.command ?? '')
-      const invocation = tokens?.indexOf('artifactshare') ?? -1
+      const invocation =
+        tokens?.findIndex(
+          (token) =>
+            token === 'artifactshare' || token === '@artifactshare/cli',
+        ) ?? -1
       const expected = invocation >= 0 ? tokens.slice(invocation + 1) : null
       const actual = recoveryAction(next.argv)
       recoveries.push(

@@ -2629,7 +2629,7 @@ async function uploadError(
         code: 'too-large',
         message: 'The artifact is larger than 25 MB.',
         recoverable_by: 'agent',
-        hint: `Reduce embedded images or split the content, or share large or multi-file artifacts from an AI agent with: npm exec --yes --package=@artifactshare/cli -- artifactshare share <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
+        hint: `Reduce embedded images or split the content, or share large or multi-file artifacts from an AI agent with: npx --yes @artifactshare/cli share <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
       })
     case 'invalid-path':
       return toolError({
@@ -2792,7 +2792,7 @@ function versionError(
         code: 'too-large',
         message: 'The new version is larger than 25 MB.',
         recoverable_by: 'agent',
-        hint: `Reduce embedded images or split the content, or update large or multi-file artifacts from an AI agent with: npm exec --yes --package=@artifactshare/cli -- artifactshare update <share-url> <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
+        hint: `Reduce embedded images or split the content, or update large or multi-file artifacts from an AI agent with: npx --yes @artifactshare/cli update <share-url> <path>. Setup guide: ${CONNECT_AI_AGENTS_URL}`,
       })
     case 'unsupported-type':
       return toolError({

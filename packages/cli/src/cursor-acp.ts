@@ -376,7 +376,7 @@ export async function runCursorAcp(): Promise<void> {
         return
       }
       const filePath = resolve(cwd, input)
-      const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
+      const text = `Artifact Share preview batch ready for ${JSON.stringify(filePath)}. event=preview.batch_ready preview_session_id=${event.preview_session_id} batch_id=${event.batch_id}. Run: npx --yes @artifactshare/cli preview next --session ${event.preview_session_id} --json. Fetch all comment text only with preview next.`
       const accepted = new Promise<void>((resolveAccepted, reject) => {
         promptAccepted = { resolve: resolveAccepted, reject }
       })

@@ -268,7 +268,7 @@ function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
 }
 
 export function buildPreauthCliOpenCommand(canonicalUrl: string) {
-  return `npm exec --yes --package=@artifactshare/cli -- artifactshare open ${canonicalUrl}`
+  return `npx --yes @artifactshare/cli open ${canonicalUrl}`
 }
 
 function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {

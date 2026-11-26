@@ -17,16 +17,14 @@ describe('/llms.txt route', () => {
     const body = await loader().text()
 
     for (const command of [
-      'artifactshare init --json',
-      'artifactshare open <artifact-id-or-url> --json',
-      'artifactshare share <path> --json',
-      'artifactshare update <artifact-id-or-url> <path> --json',
-      'artifactshare artifacts get <artifact-id-or-url> --json',
-      'artifactshare download <artifact-id-or-url> --output ./artifact --json',
+      'init --json',
+      'open <artifact-id-or-url> --json',
+      'share <path> --json',
+      'update <artifact-id-or-url> <path> --json',
+      'artifacts get <artifact-id-or-url> --json',
+      'download <artifact-id-or-url> --output ./artifact --json',
     ])
-      expect(body).toContain(
-        `npm exec --yes --package=@artifactshare/cli -- ${command}`,
-      )
+      expect(body).toContain(`npx --yes @artifactshare/cli ${command}`)
     for (const url of [
       'https://artifactshare.com/share-with-ai',
       'https://artifactshare.com/connect',

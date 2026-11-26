@@ -318,7 +318,7 @@ test.skipIf(rootBypassesFilePermissions)(
             'user',
             'update_recommended',
             0,
-            'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json',
+            'npx --yes @artifactshare/cli skills update --tool codex --scope user --json',
           ],
         ],
       )
@@ -474,7 +474,7 @@ test('doctor reports cursor project and user skill targets', async () => {
 
 test('skill auto-update human output names each target and its update command', () => {
   const updateCommand =
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool claude --scope user --json'
+    'npx --yes @artifactshare/cli skills update --tool claude --scope user --json'
   const output = skillAutoUpdateHumanOutput({
     skills: {
       auto_update: {

@@ -235,8 +235,7 @@ export const COPY_GLOSSARY_ALLOW = {
     'そのファイルはすでに別のファイルとして登録されています。先に古いほうを削除してください。':
       ['登録'],
     差し替える: ['差し替える'],
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare init でセットアップして':
-      ['セットアップ'],
+    'npx --yes @artifactshare/cli init でセットアップして': ['セットアップ'],
     'HTML、Markdown、フォルダ、静的サイト': ['フォルダ'],
     'Free、Plus、Team。投稿者・閲覧者・コメント参加者の人数による追加料金なし':
       ['参加者'],

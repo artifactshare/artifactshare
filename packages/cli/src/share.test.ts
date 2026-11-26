@@ -1704,7 +1704,7 @@ test('share --project with no match fails with project_not_found', async () => {
       })
       assert.match(
         failure.error.hint,
-        /npm exec --yes --package=@artifactshare\/cli -- artifactshare projects list --json/,
+        /npx --yes @artifactshare\/cli projects list --json/,
       )
       assert.equal(failure.error.recovery?.kind, 'run_command')
     },

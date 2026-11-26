@@ -84,7 +84,7 @@ test('auth guidance does not direct attended agents to API tokens', () => {
   }
   assert.equal(
     payload.error.details.agent_login_command,
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile default --preset agent',
+    'npx --yes @artifactshare/cli login --profile default --preset agent',
   )
 })
 
@@ -176,10 +176,7 @@ test('old publish and agent open commands are not aliases', () => {
       command: 'unknown',
       code: 'unknown_command',
     })
-    assert.match(
-      payload.error.hint,
-      /Run npm exec --yes --package=@artifactshare\/cli -- artifactshare --help/,
-    )
+    assert.match(payload.error.hint, /Run npx --yes @artifactshare\/cli --help/)
   }
 })
 

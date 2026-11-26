@@ -1574,8 +1574,7 @@ test('malformed shapes remain incomplete and duplicate tool completions do not c
       error: {
         recovery: {
           kind: 'run_command',
-          command:
-            'npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json',
+          command: 'npx --yes @artifactshare/cli projects list --json',
         },
       },
     }),

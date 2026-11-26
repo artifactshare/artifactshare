@@ -13,10 +13,10 @@ Posting to a project delivers to the audience defined by that project. Without
 a destination, `share` posts to home. Choose the home audience by purpose:
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --visibility private --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
+npx --yes @artifactshare/cli config set home_audience private --scope user --json
+npx --yes @artifactshare/cli config set home_audience workspace --scope repository --json
+npx --yes @artifactshare/cli share ./report.html --visibility private --json
+npx --yes @artifactshare/cli config get home_audience --scope effective --json
 ```
 
 Use the user scope for a personal safe default in this CLI environment, the
@@ -43,12 +43,12 @@ Use `edit` for post-share changes. Use `projects list/create/edit` for
 project management.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title 'New title' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility project --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --home --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --title 'New title' --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --project-id <id> --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --visibility project --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --home --json
+npx --yes @artifactshare/cli delete <artifact-id-or-url> --json
 ```
 
 - Owners with unrestricted credentials can set `edit <target> --retain-versions N`
@@ -91,11 +91,11 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   when the user explicitly asks.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Client reports' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Internal' --visibility private --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --archive --json
+npx --yes @artifactshare/cli projects list --json
+npx --yes @artifactshare/cli projects create 'Client reports' --json
+npx --yes @artifactshare/cli projects create 'Internal' --visibility private --json
+npx --yes @artifactshare/cli projects edit <id> --add-email viewer@example.com --json
+npx --yes @artifactshare/cli projects edit <id> --archive --json
 ```
 
 - `projects list` shows all currently publishable bot approvals, primary first. Administrators edit these in Settings → Bots; imported credentials stay valid. Explicitly use `--visibility project` for private-project reports. Removing an approval revokes posting but retains project audience grants and their quota usage.
