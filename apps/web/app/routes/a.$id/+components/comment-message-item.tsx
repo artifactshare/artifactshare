@@ -29,7 +29,8 @@ import {
 import { Textarea } from '~/components/ui/textarea'
 import { useT } from '~/hooks/use-t'
 import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
+import type { Locale } from '~/i18n/messages'
 import { cn } from '~/lib/utils'
 import { getOwnerInitial } from '~/lib/user'
 import type { CommentThreadView } from '~/lib/comments'
@@ -46,12 +47,13 @@ export function CommentMessageItem({
 }: {
   isNew?: boolean
   message: CommentThreadView['messages'][number]
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   pending: boolean
   className?: string
   onUpdate: (messageId: string, body: string) => Promise<boolean>
   onDelete: (messageId: string) => Promise<boolean>
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   const [editDraft, setEditDraft] = useState<string | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)

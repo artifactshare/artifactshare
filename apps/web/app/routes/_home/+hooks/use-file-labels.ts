@@ -1,5 +1,5 @@
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import type { FileRowData } from '../+components/file-data'
 
@@ -14,6 +14,7 @@ export interface FileLabels {
 }
 
 export function useFileLabels(data: FileRowData): FileLabels {
+  const formatRelative = useRelativeTime()
   const { t, tPlural, locale } = useT()
   return {
     owner: data.ownerName ?? data.ownerEmail ?? '—',

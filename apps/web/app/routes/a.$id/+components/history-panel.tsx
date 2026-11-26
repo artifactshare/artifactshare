@@ -6,7 +6,7 @@ import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import type { Locale } from '~/i18n/messages'
 import { ReplaceVersionDropzone } from './replace-version-dropzone'
 import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
@@ -152,7 +152,7 @@ export function HistoryPanelBody({
   replaceMode: 'single' | 'static_site'
   setLocalDropActive: (active: boolean) => void
   submitFiles: (files: FileList | File[] | null) => void
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   t: ReturnType<typeof useT>['t']
 }) {
   return (

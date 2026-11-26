@@ -6,7 +6,9 @@ import { IconButton } from '~/components/app/icon-button'
 import { AuthorAvatar } from '~/components/app/author-avatar'
 import { useT } from '~/hooks/use-t'
 import { useLatestRef } from '~/hooks/use-latest-ref'
-import { formatRelative, isUtcZTimestamp } from '~/lib/datetime'
+import { isUtcZTimestamp } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
+import type { Locale } from '~/i18n/messages'
 import type {
   ViewerListRowView,
   ViewerListStatus,
@@ -137,7 +139,7 @@ export function ViewerListPanelBody({
   nextCursor: string | null
   onLoadMore: () => void
   onRetry: () => void
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   t: ReturnType<typeof useT>['t']
 }) {
   return (
@@ -200,9 +202,10 @@ function ViewerListRowItem({
   t,
 }: {
   row: ViewerListRowView
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   t: ReturnType<typeof useT>['t']
 }) {
+  const formatRelative = useRelativeTime()
   const trimmedName = (row.name ?? '').trim()
   const name = trimmedName === '' ? t('home.unknownActor') : trimmedName
   // 非 canonical な日時 (オフセット付き ISO、空白区切りなど) は相対時刻に

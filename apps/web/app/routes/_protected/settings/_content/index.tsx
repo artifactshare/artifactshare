@@ -58,7 +58,7 @@ import {
 } from '~/components/ui/table'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { stringValue } from '~/lib/form'
 import {
   displayName,
@@ -450,6 +450,7 @@ function MemberRow({
   canManage: boolean
   currentUserRole: WorkspaceMemberRole
 }) {
+  const formatRelative = useRelativeTime()
   const currentUserId = currentUser.id
   const { locale, t } = useT()
   const actions = useContext(MemberActions)

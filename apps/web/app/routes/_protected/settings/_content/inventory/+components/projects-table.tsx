@@ -12,7 +12,7 @@ import {
 import { TeamMuted } from '~/components/form/team-muted'
 import { ProjectScopeChip } from '~/components/app/visibility-chip'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { formatBytes } from '~/lib/format'
 import type { InventoryProjectEntry } from '~/lib/team-management'
 import { nameCellClassName } from './inventory'
@@ -32,6 +32,7 @@ export function ProjectsTable({
   rows: InventoryProjectEntry[]
   locale: 'ja' | 'en'
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   return (
     <>
@@ -107,6 +108,7 @@ function ProjectRow({
   row: InventoryProjectEntry
   locale: 'ja' | 'en'
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   return (
     <TableRow>
