@@ -11,15 +11,8 @@ export default function InventoryLayout() {
     <SettingsPage>
       <SettingsSection title={t('team.inventory.title')}>
         <TabNav aria-label={t('team.inventory.tabs.label')}>
-          <TabNavLink
-            to="/settings/inventory/projects"
-            label={t('team.inventory.projects')}
-            end
-          />
-          <TabNavLink
-            to="/settings/inventory/artifacts"
-            label={t('team.inventory.artifacts')}
-          />
+          <TabNavLink to="projects" label={t('team.inventory.projects')} end />
+          <TabNavLink to="artifacts" label={t('team.inventory.artifacts')} />
         </TabNav>
         <Outlet context={shell} />
       </SettingsSection>

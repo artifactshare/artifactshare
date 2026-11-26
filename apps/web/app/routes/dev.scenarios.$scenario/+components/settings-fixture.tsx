@@ -1,3 +1,4 @@
+import { useResolvedPath } from 'react-router'
 import AiToolsPage from '~/routes/_protected/settings/+components/ai-tools-page'
 import { SettingsNavigation } from '~/routes/_protected/settings/+components/settings-nav'
 import { SettingsPage } from '~/components/form/settings-page'
@@ -11,6 +12,8 @@ export function SettingsFixture({
   credentials?: boolean
 }) {
   const { t } = useT()
+  // The menu resolves its items against the route that renders it.
+  const tokensPath = useResolvedPath('tokens').pathname
   return (
     <main
       data-regression-region="main"
@@ -18,7 +21,7 @@ export function SettingsFixture({
     >
       <h1 className="mb-6 text-2xl font-semibold">{t('team.settings')}</h1>
       <SettingsNavigation
-        pathname="/settings/tokens"
+        pathname={tokensPath}
         currentUserIsAdmin={role !== 'member'}
         workspaceKind={role === 'owner' ? 'upgrade' : 'team'}
       >

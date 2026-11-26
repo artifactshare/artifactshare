@@ -6,7 +6,9 @@ import {
   createRequestHandler,
   MemoryRouter,
   Outlet,
+  Route,
   RouterContextProvider,
+  Routes,
   Scripts,
   UNSAFE_decodeViaTurboStream,
   UNSAFE_withComponentProps,
@@ -537,13 +539,22 @@ test.each([
   (isAdmin, workspaceKind, listed) => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/settings/general']}>
-        <SettingsNavigation
-          pathname="/settings/general"
-          currentUserIsAdmin={isAdmin}
-          workspaceKind={workspaceKind}
-        >
-          {null}
-        </SettingsNavigation>
+        <Routes>
+          <Route
+            path="settings"
+            element={
+              <SettingsNavigation
+                pathname="/settings/general"
+                currentUserIsAdmin={isAdmin}
+                workspaceKind={workspaceKind}
+              >
+                {null}
+              </SettingsNavigation>
+            }
+          >
+            <Route path="*" element={null} />
+          </Route>
+        </Routes>
       </MemoryRouter>,
     )
     for (const page of ['bots', 'activity', 'inventory'] as const)
