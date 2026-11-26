@@ -10,7 +10,8 @@ import { expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import { formatBytes } from '~/lib/format'
-import { PLAN_DISPLAY, PLAN_STORAGE_QUOTA_BYTES } from '~/lib/billing-prices'
+import { PLAN_DISPLAY } from '~/lib/billing-prices'
+import { BILLING_STATES } from '~/routes/dev.settings.$state/+components/billing-states'
 import SettingsLayout from '../_layout'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import BillingPage, { action as billingAction } from './billing'
@@ -45,18 +46,16 @@ async function expectVisible(...selectors: string[]) {
     )
 }
 
-const WORKSPACE_STORAGE_USED_BYTES = 100_000_000_000
-
 // Only the confirmation dialog shows the downgrade impact, so SSR cannot see
 // whether the page hands it this workspace's usage or a placeholder.
-async function expectDowngradeNamesWorkspaceStorage() {
+async function expectDowngradeNamesWorkspaceStorage(usedBytes: number) {
   const en = bindI18n('en')
   await page
     .getByRole('button', { name: en.t('billing.change.plan.downgrade') })
     .click()
   const impact = page.getByRole('alert').filter({
     hasText: en.t('billing.downgrade.overStorage', {
-      used: formatBytes(WORKSPACE_STORAGE_USED_BYTES),
+      used: formatBytes(usedBytes),
       limit: PLAN_DISPLAY.plus.storage,
     }),
   })
@@ -68,6 +67,7 @@ async function expectDowngradeNamesWorkspaceStorage() {
 const plans = ['[data-plan="team"]', '[data-plan="plus"]']
 const outcomes = {
   'result-success': {
+    state: 'free',
     query: '?status=checkout-success',
     visible: [
       '[data-billing-checkout-pending]',
@@ -75,6 +75,7 @@ const outcomes = {
     ],
   },
   'result-warning': {
+    state: 'free',
     query: '?status=checkout-cancelled',
     visible: [
       ...plans,
@@ -82,6 +83,7 @@ const outcomes = {
     ],
   },
   'result-error': {
+    state: 'free',
     query: '',
     visible: [
       ...plans,
@@ -89,69 +91,29 @@ const outcomes = {
     ],
   },
   'near-limit': {
+    state: 'free-near-limit',
     query: '',
     visible: [...plans, '[role="alert"] [data-billing-upgrade-guidance]'],
   },
-}
+} as const
 
-test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
+test.each(['team-subscribed', 'team-past-due', 'team-overage'] as const)(
   '%s shows its contract controls and billing availability',
-  async (id) => {
+  async (state) => {
     const selector = 'form:has(input[value="portal"]) button:enabled'
+    const { shell, billing } = BILLING_STATES[state]
     for (const billingConfigured of [true, false]) {
-      const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
-        canManage: true,
-        stripeSubscriptionStatus: id === 'past-due' ? 'past_due' : 'active',
-        hasSubscription: true,
-        billingConfigured,
-        defaultCurrency: 'usd',
-        initialPlan: 'team',
-        initialInterval: 'monthly',
-        activeProjectCount: 1,
-        projectLimit: null,
-        entryContext: 'default',
-        externalPostingEnabled: false,
-        contract: {
-          plan: 'team',
-          interval: 'monthly',
-          currency: 'usd',
-          amount: 20,
-          renewsAt: '2030-01-01',
-          cancelAtPeriodEnd: false,
-        },
-        monthlyEstimate: {
-          currency: 'usd',
-          planAmount: 20,
-          overageAmount: 0,
-          totalAmount: 20,
-          planCharge: 'upcoming',
-          cancelAtPeriodEnd: false,
-          planDate: '2030-01-01',
-          overageGb: 0,
-          overageEnabled: true,
-        },
-        showOverageProjection: true,
-        includedBytes: 100 * 1024 ** 3,
-        overageProjection: null,
-        contributorCount: 1,
-      }
       const router = createMemoryRouter([
         {
           path: '/',
-          element: (
-            <Outlet
-              context={{
-                currentUserIsAdmin: true,
-                workspace: {
-                  plan: 'team',
-                  storageUsedBytes: WORKSPACE_STORAGE_USED_BYTES,
-                  storageQuotaBytes: 120_000_000_000,
-                },
-              }}
-            />
-          ),
+          element: <Outlet context={shell} />,
           children: [
-            { index: true, element: <BillingPage loaderData={data} /> },
+            {
+              index: true,
+              element: (
+                <BillingPage loaderData={{ ...billing, billingConfigured }} />
+              ),
+            },
           ],
         },
         { path: '/settings/billing-preview', loader: () => null },
@@ -166,10 +128,9 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
             '[data-billing-change="plan"]',
             '[data-billing-change="interval"]',
           ]
-          if (id === 'continuing-near-limit')
-            cues.push('#billing-estimate-overage')
+          if (state === 'team-overage') cues.push('#billing-estimate-overage')
           await expectVisible(selector, ...cues)
-          if (id === 'past-due')
+          if (state === 'team-past-due')
             await expect
               .element(
                 page.getByRole('alert').filter({
@@ -192,7 +153,10 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
           expect(
             container.querySelector('[data-billing-unavailable]'),
           ).toBeNull()
-          if (id === 'subscribed') await expectDowngradeNamesWorkspaceStorage()
+          if (state === 'team-subscribed')
+            await expectDowngradeNamesWorkspaceStorage(
+              shell.workspace.storageUsedBytes,
+            )
         } else {
           expect(
             Array.from(container.querySelectorAll('p')).some(
@@ -212,27 +176,8 @@ test.each(['subscribed', 'past-due', 'continuing-near-limit'])(
 test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
   '%s shows its billing outcome with Japanese billing copy',
   async (id) => {
-    const { query, visible } = outcomes[id]
-    const quota = PLAN_STORAGE_QUOTA_BYTES.free
-    const data: Parameters<typeof BillingPage>[0]['loaderData'] = {
-      canManage: true,
-      stripeSubscriptionStatus: 'none',
-      hasSubscription: false,
-      billingConfigured: true,
-      defaultCurrency: 'jpy',
-      initialPlan: 'plus',
-      initialInterval: 'monthly',
-      activeProjectCount: 0,
-      projectLimit: 5,
-      entryContext: 'default',
-      externalPostingEnabled: false,
-      contract: null,
-      monthlyEstimate: null,
-      showOverageProjection: false,
-      includedBytes: quota,
-      overageProjection: null,
-      contributorCount: null,
-    }
+    const { state, query, visible } = outcomes[id]
+    const { shell, billing } = BILLING_STATES[state]
     const createBillingRouter = (entry: string) =>
       createMemoryRouter(
         [
@@ -242,35 +187,13 @@ test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
             loader: () => ({ locale: 'ja' }),
             element: (
               <TooltipProvider>
-                <SettingsLayout
-                  loaderData={{
-                    kind: 'team',
-                    workspace: {
-                      id: 'workspace',
-                      name: 'Reports',
-                      hd: null,
-                      plan: 'free',
-                      storageUsedBytes: id === 'near-limit' ? quota * 0.95 : 0,
-                      storageQuotaBytes: quota,
-                    },
-                    currentUserIsAdmin: true,
-                    currentUserRole: 'owner',
-                    joinedProjects: [],
-                    user: {
-                      id: 'owner',
-                      name: 'Owner',
-                      email: 'owner@example.test',
-                      image: null,
-                      initial: 'O',
-                    },
-                  }}
-                />
+                <SettingsLayout loaderData={shell} />
               </TooltipProvider>
             ),
             children: [
               {
                 path: 'settings/billing',
-                element: <BillingPage loaderData={data} />,
+                element: <BillingPage loaderData={billing} />,
                 action: ({ request, params }) =>
                   billingAction({
                     request,
@@ -284,7 +207,7 @@ test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
                 path: 'unconfigured',
                 element: (
                   <BillingPage
-                    loaderData={{ ...data, billingConfigured: false }}
+                    loaderData={BILLING_STATES['free-unconfigured'].billing}
                   />
                 ),
               },
