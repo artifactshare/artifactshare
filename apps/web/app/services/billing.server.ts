@@ -201,7 +201,9 @@ export async function createCheckoutSession(
       automatic_tax: { enabled: true },
       customer_update: { address: 'auto' },
       billing_address_collection: 'required',
-      success_url: `${origin}/settings/billing?status=checkout-success`,
+      // Stripe fills in {CHECKOUT_SESSION_ID}, so the return can sync this
+      // Checkout's subscription before the page reads the plan.
+      success_url: `${origin}/settings/billing?status=checkout-success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/settings/billing?status=checkout-cancelled`,
     })
 

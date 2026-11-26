@@ -9,6 +9,7 @@ import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import {
   derivePlanFromSubscription,
+  syncReturnedCheckout,
   syncWorkspaceSubscription,
 } from './billing-sync.server'
 import { resolveStripePrices, type BillingEnv } from './billing.server'
@@ -673,6 +674,104 @@ describe('billing sync service', () => {
         }
       ).count,
     ).toBe(1)
+  })
+})
+
+describe('syncing on the return from Checkout', () => {
+  let sqlite: DatabaseSync
+  let db: Kysely<DB>
+
+  beforeEach(() => {
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqlite = fixture.sqlite
+    db = fixture.db
+    sqliteRef.current = sqlite
+    seedWorkspace(sqlite, { plan: 'free', stripeCustomerId: 'cus_ws1' })
+  })
+
+  afterEach(async () => {
+    sqliteRef.current = null
+    await db.destroy()
+  })
+
+  const completed = {
+    mode: 'subscription' as const,
+    status: 'complete' as const,
+    client_reference_id: 'ws1',
+    customer: 'cus_ws1',
+    subscription: 'sub_new',
+  }
+
+  function checkoutStripe(session: typeof completed | Record<string, unknown>) {
+    const subscriptions = {
+      retrieve: vi.fn(async () =>
+        makeSubscription({
+          id: 'sub_new',
+          status: 'active',
+          metadata: { workspace_id: 'ws1' },
+          customer: 'cus_ws1',
+          items: [{ priceId: prices.teamMonthly }],
+        }),
+      ),
+    }
+    const sessions = {
+      retrieve: vi.fn(async () => session as typeof completed),
+    }
+    return {
+      ...stripeClient({ subscriptions }),
+      subscriptions,
+      checkout: { sessions },
+    }
+  }
+
+  test('a completed Checkout of this workspace applies the plan it bought', async () => {
+    const stripe = checkoutStripe(completed)
+    expect(
+      await syncReturnedCheckout(db, stripe, env, 'ws1', 'cs_test_a1'),
+    ).toEqual({ kind: 'ok' })
+    expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_test_a1')
+    expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith('sub_new', {
+      expand: ['items.data.price'],
+    })
+    expect(readWorkspace(sqlite)).toMatchObject({
+      plan: 'team',
+      stripe_subscription_id: 'sub_new',
+      stripe_subscription_status: 'active',
+    })
+  })
+
+  test.each([
+    ['started by another workspace', { client_reference_id: 'ws2' }],
+    ['paid by another customer', { customer: 'cus_other' }],
+    ['not finished', { status: 'open' }],
+    ['not a subscription', { mode: 'payment' }],
+    ['without a subscription', { subscription: null }],
+  ])('a Checkout %s changes nothing', async (_, override) => {
+    const stripe = checkoutStripe({ ...completed, ...override })
+    expect(
+      await syncReturnedCheckout(db, stripe, env, 'ws1', 'cs_test_a1'),
+    ).toEqual({ kind: 'not-this-checkout' })
+    expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled()
+    expect(readWorkspace(sqlite).plan).toBe('free')
+  })
+
+  test('an id that is not a Checkout session is not sent to Stripe', async () => {
+    const stripe = checkoutStripe(completed)
+    expect(
+      await syncReturnedCheckout(db, stripe, env, 'ws1', '../v1/customers'),
+    ).toEqual({ kind: 'not-this-checkout' })
+    expect(stripe.checkout.sessions.retrieve).not.toHaveBeenCalled()
+  })
+
+  test('a workspace without its own Stripe customer is left to the webhook', async () => {
+    sqlite.exec(
+      `UPDATE workspaces SET stripe_customer_id = NULL WHERE id = 'ws1'`,
+    )
+    const stripe = checkoutStripe(completed)
+    expect(
+      await syncReturnedCheckout(db, stripe, env, 'ws1', 'cs_test_a1'),
+    ).toEqual({ kind: 'not-this-checkout' })
+    expect(readWorkspace(sqlite).plan).toBe('free')
   })
 })
 
