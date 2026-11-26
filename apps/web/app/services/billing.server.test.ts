@@ -96,6 +96,26 @@ describe('billing service', () => {
       ).toMatchObject({ planCharge: 'billed', totalAmount: 10.2 })
     })
 
+    test('shows a failed charge as unpaid instead of billed while past due', () => {
+      const billedContract = contract({ renewsAt: '2026-04-15T00:00:00.000Z' })
+      expect(
+        resolveMonthlyEstimate(
+          billedContract,
+          projection,
+          now,
+          true,
+          'past_due',
+        ),
+      ).toMatchObject({ planCharge: 'unpaid', totalAmount: 10.2 })
+      expect(
+        resolveMonthlyEstimate(billedContract, projection, now, true, 'active'),
+      ).toMatchObject({ planCharge: 'billed' })
+      // 更新前の月は請求がまだないので、past_due でも予定のまま。
+      expect(
+        resolveMonthlyEstimate(contract(), projection, now, true, 'past_due'),
+      ).toMatchObject({ planCharge: 'upcoming' })
+    })
+
     test('handles yearly renewal and non-renewal months', () => {
       expect(
         resolveMonthlyEstimate(

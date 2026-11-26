@@ -484,6 +484,7 @@
   "billing.estimate.title": "Estimated bill this month",
   "billing.estimate.plan": "Plan charge",
   "billing.estimate.planBilled": "Charged on {date}",
+  "billing.estimate.planUnpaid": "Unpaid: the {date} charge failed",
   "billing.estimate.planUpcoming": "Will be charged on {date}",
   "billing.estimate.noCharge": "No charge this month — next invoice {date}",
   "billing.estimate.noChargeCancel": "No charge this month — subscription ends on {date}",

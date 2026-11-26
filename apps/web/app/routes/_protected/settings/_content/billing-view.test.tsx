@@ -380,6 +380,43 @@ test.each([true, false])(
   },
 )
 
+test('near-limit warning comes before the plan cards it points to', () => {
+  const html = renderBillingPage(1, null, {
+    storageUsedBytes: 95,
+    storageQuotaBytes: 100,
+  })
+  const banner = html.indexOf('role="alert"')
+  const checkout = html.indexOf('value="checkout"')
+  expect(banner).toBeGreaterThan(-1)
+  expect(checkout).toBeGreaterThan(-1)
+  expect(banner).toBeLessThan(checkout)
+})
+
+test('past-due estimate marks the plan charge unpaid, not charged', () => {
+  const html = renderBillingPage(
+    null,
+    { ...teamMonthlyContract, currency: 'usd', amount: 29 },
+    {
+      stripeSubscriptionStatus: 'past_due',
+      monthlyEstimate: {
+        currency: 'usd',
+        planAmount: 29,
+        overageAmount: 0,
+        totalAmount: 29,
+        planCharge: 'unpaid',
+        cancelAtPeriodEnd: false,
+        planDate: '2026-11-01T00:00:00.000Z',
+        overageGb: 0,
+        overageEnabled: true,
+      },
+    },
+  )
+  const unpaidPrefix = t('ja', 'billing.estimate.planUnpaid', { date: '' })
+  const billedPrefix = t('ja', 'billing.estimate.planBilled', { date: '' })
+  expect(html).toContain(unpaidPrefix.trim())
+  expect(html).not.toContain(billedPrefix.trim())
+})
+
 test('near-limit Free owner keeps billing guidance and checkout without a self-link', () => {
   const html = renderBillingPage(1, null, {
     storageUsedBytes: 95,
