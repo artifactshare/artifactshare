@@ -14,11 +14,14 @@ const testFilePattern = /^apps\/web\/app\/.+\.behavior\.browser\.test\.tsx$/
 const maxLoad = 8
 // One repetition of the slowest browser behavior file, with a hold, on one CPU.
 const defaultTimeoutMs = 600_000
+// Everything a run writes stays here, so a rerun can clear its own directory
+// without reaching anything else, and .gitignore covers all of it.
+const resultsRoot = '.flaky-repro'
 
 export const holdPoints = (root = repositoryRoot) =>
   JSON.parse(fs.readFileSync(path.join(root, pointsFile), 'utf8'))
 
-export const usage = `pnpm test:flaky-repro -- --file <path> --project <${projects.join('|')}> [options]
+export const usage = `pnpm test:flaky-repro --file <path> --project <${projects.join('|')}> [options]
 
 Repeat one browser behavior test and report what the repetitions did. Each
 repetition is its own Vitest process, as the nightly detector and the changed
@@ -32,16 +35,19 @@ browser repetitions job run them.
                          the points. Without it, nothing is held or injected.
   --cpus <n>             Limit the container to n CPUs (docker runner only).
   --load <0-${maxLoad}>           Busy loops to run beside the repetitions.
-  --results <dir>        Where reports, captures and summary.json go.
-                         Default .flaky-repro/<timestamp>.
+  --results <dir>        Where reports, captures and summary.json go, under
+                         ${resultsRoot}/. Default ${resultsRoot}/<timestamp>.
   --timeout <ms>         Per repetition. Default ${defaultTimeoutMs}.
   --volume-prefix <name> Container volumes to reuse between runs.
   --no-docker            Run on this machine instead of the pinned image.
   --list                 Print the hold points and what each one holds.
 
+A leading -- is ignored, so the pnpm script takes the options either way.
+
 Prints the summary as JSON on stdout and progress on stderr. It exits 0 when
 the summary can be read as a result, including when repetitions failed, and 1
-when nothing can be concluded: no test ran, or a configured hold never held.`
+when nothing can be concluded: no test ran, a configured hold never held, or a
+repetition failed while holding nothing.`
 
 // Command-line misuse reads as one line in a routine's log; anything else
 // keeps its stack, because it is a defect in this runner.
@@ -65,12 +71,21 @@ const inside = (root, candidate) => {
     misuse(`Path must stay inside the repository: ${candidate}`)
   return relative
 }
+const underResults = (root, candidate) => {
+  const relative = inside(root, candidate)
+  if (!relative.startsWith(`${resultsRoot}/`))
+    misuse(`--results must name a directory under ${resultsRoot}/: ${candidate}`)
+  return relative
+}
 
 export function parseOptions(argv, { root = repositoryRoot } = {}) {
+  // `pnpm run <script> -- <options>` forwards the separator to the script on
+  // some pnpm versions, and every option after it is this runner's own.
+  const args = argv[0] === '--' ? argv.slice(1) : argv
   let values
   try {
     values = parseArgs({
-      args: argv,
+      args,
       options: {
         file: { type: 'string' },
         test: { type: 'string' },
@@ -120,6 +135,12 @@ export function parseOptions(argv, { root = repositoryRoot } = {}) {
   }
   if (!/^\d+$/u.test(values.timeout) || Number(values.timeout) <= 0)
     misuse('--timeout must be whole milliseconds')
+  // The prefix names docker volumes, which take a narrower character set than
+  // a shell argument does.
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(values['volume-prefix']))
+    misuse(
+      `--volume-prefix must be a docker volume name: ${values['volume-prefix']}`,
+    )
   const known = holdPoints(root)
   const delays = new Map()
   for (const entry of values.delay) {
@@ -144,9 +165,23 @@ export function parseOptions(argv, { root = repositoryRoot } = {}) {
     docker: !values['no-docker'],
     volumePrefix: values['volume-prefix'],
     results: values.results
-      ? inside(root, values.results)
-      : `.flaky-repro/${slug()}`,
+      ? underResults(root, values.results)
+      : `${resultsRoot}/${slug()}`,
   }
+}
+
+// A rerun into a directory a run already used must not read what the last one
+// left: a stale summary.json would be reported as this run's result, and a
+// stale holds line would satisfy the refusal that catches a hold which never
+// held. Only this runner's own files are removed.
+export function prepareResults(options, root = repositoryRoot) {
+  const directory = path.resolve(root, options.results)
+  fs.mkdirSync(directory, { recursive: true })
+  fs.rmSync(path.join(directory, 'summary.json'), { force: true })
+  for (const entry of fs.readdirSync(directory))
+    if (/^\d+$/u.test(entry))
+      fs.rmSync(path.join(directory, entry), { recursive: true, force: true })
+  return directory
 }
 
 const quote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`
@@ -361,15 +396,26 @@ export function readRun({ directory, run, options, root = repositoryRoot }) {
   }
 }
 
+// What one repetition held. Repetitions are counted apart, because a failure
+// that held nothing is not the failure a delay provokes, however much the
+// other repetitions held.
+export function heldInRun(run) {
+  const counts = {}
+  for (const recorded of run.holds ?? [])
+    for (const [point, count] of Object.entries(recorded))
+      if (typeof count === 'number')
+        counts[point] = (counts[point] ?? 0) + count
+  return counts
+}
+
 export function summarize(options, runs, { where }) {
-  const holds = Object.fromEntries(
+  const idle = Object.fromEntries(
     [...options.delays.keys()].map((point) => [point, 0]),
   )
-  for (const run of runs)
-    for (const recorded of run.holds)
-      for (const [point, count] of Object.entries(recorded))
-        if (typeof count === 'number')
-          holds[point] = (holds[point] ?? 0) + count
+  const holds = runs.map((run) => ({
+    run: run.run,
+    counts: { ...idle, ...heldInRun(run) },
+  }))
   const failed = runs.filter((run) => run.failed)
   const incomplete = runs.filter((run) => run.incomplete)
   return {
@@ -397,13 +443,25 @@ export function summarize(options, runs, { where }) {
 }
 
 // A summary nothing can be concluded from is a runner failure, not a result:
-// the test must have run, and a configured hold must have held something.
+// the test must have run, a configured hold must have held something, and a
+// repetition that failed must have failed while being held.
 export function unusable(summary) {
   if (!summary.observed)
     return `No test ran for ${summary.file} in ${summary.project}; check --file and --test`
-  const inert = Object.entries(summary.holds).filter(([, count]) => !count)
+  const points = Object.keys(summary.delays ?? {})
+  if (!points.length) return null
+  const held = (run, point) =>
+    summary.holds.find((entry) => entry.run === run)?.counts[point] ?? 0
+  const inert = points.filter(
+    (point) => !summary.holds.some((entry) => entry.counts[point]),
+  )
   if (inert.length)
-    return `Hold ${inert.map(([point]) => point).join(', ')} never ran, so the delay proved nothing`
+    return `Hold ${inert.join(', ')} never ran, so the delay proved nothing`
+  const unheld = summary.failedRuns.filter(
+    (run) => !points.some((point) => held(run, point)),
+  )
+  if (unheld.length)
+    return `Run ${unheld.join(', ')} failed while holding nothing, so that failure is not the one ${points.join(', ')} provokes`
   return null
 }
 
@@ -417,6 +475,44 @@ function startLoad(count) {
 }
 
 const note = (message) => process.stderr.write(`${message}\n`)
+
+const killContainer = (name) => {
+  try {
+    execFileSync('docker', ['kill', name], { stdio: 'ignore' })
+  } catch {
+    note(`Could not stop container ${name}`)
+  }
+}
+
+/**
+ * Run `cleanup` when this process is asked to stop, so a routine that cancels
+ * a run leaves neither busy loops nor a container behind, and return a
+ * function that takes the handlers off again.
+ */
+export function onSignals(
+  cleanup,
+  { signals = ['SIGINT', 'SIGTERM'], exit = (code) => process.exit(code) } = {},
+) {
+  const handler = (signal) => {
+    cleanup()
+    note(`Stopped by ${signal}`)
+    exit(signal === 'SIGINT' ? 130 : 143)
+  }
+  for (const signal of signals) process.on(signal, handler)
+  return () => {
+    for (const signal of signals) process.off(signal, handler)
+  }
+}
+
+// What one repetition did, from its report and from how its process ended.
+export function runOutcome({ status, durationMs, ...rest }) {
+  const result = { ...readRun(rest), durationMs, exitCode: status.exitCode }
+  // A repetition this runner had to stop reports no result of its own,
+  // whatever its half-written report says.
+  if (status.timedOut)
+    result.incomplete = `Timed out after ${rest.options.timeoutMs} ms`
+  return result
+}
 
 async function runLocally(options, root) {
   const runs = []
@@ -444,13 +540,14 @@ async function runLocally(options, root) {
       },
       (chunk) => fs.appendFileSync(log, chunk),
     )
-    const result = {
-      ...readRun({ directory, run, options, root }),
+    const result = runOutcome({
+      directory,
+      run,
+      options,
+      root,
+      status,
       durationMs: Date.now() - started,
-      exitCode: status.exitCode,
-    }
-    if (status.timedOut)
-      result.incomplete = `Timed out after ${options.timeoutMs} ms`
+    })
     runs.push(result)
     note(
       `run ${run}/${options.repeat}: ${
@@ -472,7 +569,64 @@ export const dockerSummary = (summary, options) => ({
   load: options.load,
 })
 
-async function runInDocker(options, root) {
+const canonical = (value) =>
+  value && typeof value === 'object'
+    ? JSON.stringify(Object.entries(value).sort())
+    : JSON.stringify(value ?? null)
+
+/**
+ * The first field in which a summary describes something other than what was
+ * asked for, or null. The container is handed this request and writes the
+ * summary this runner reports, so a summary describing another request is a
+ * leftover or a different run, never this one's result.
+ */
+export function mismatched(summary, options) {
+  const asked = {
+    file: options.file,
+    test: options.test,
+    project: options.project,
+    repeat: options.repeat,
+    delays: Object.fromEntries(options.delays),
+    results: options.results,
+  }
+  for (const [field, value] of Object.entries(asked))
+    if (canonical(summary?.[field]) !== canonical(value))
+      return `${field} is ${canonical(summary?.[field])}, not ${canonical(value)}`
+  return null
+}
+
+/**
+ * The summary the container wrote, once it can stand as the result of what
+ * was asked. The container exits 1 when its own summary proves nothing, which
+ * this runner reports again; any other non-zero exit means the run did not
+ * get as far as a result, so it must not be reported as one.
+ */
+export function containerSummary({ status, options, root, log }) {
+  const where = path.relative(root, log)
+  const summaryFile = path.resolve(root, options.results, 'summary.json')
+  if (!fs.existsSync(summaryFile))
+    throw new Error(`The container wrote no summary; see ${where}`)
+  let summary
+  try {
+    summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `The container's summary is unreadable (${firstLine(error.message)}); see ${where}`,
+    )
+  }
+  const mismatch = mismatched(summary, options)
+  if (mismatch)
+    throw new Error(
+      `The summary in ${options.results} is not this run's: ${mismatch}; see ${where}`,
+    )
+  if (status.exitCode !== 0 && !unusable(summary))
+    throw new Error(
+      `The container exited ${status.exitCode ?? 'without a code'} while its summary reads as a result; see ${where}`,
+    )
+  return summary
+}
+
+async function runInDocker(options, root, live) {
   const runtime = pinnedRuntime(
     fs.readFileSync(path.join(root, composeFile), 'utf8'),
   )
@@ -483,27 +637,23 @@ async function runInDocker(options, root) {
   const timeoutMs = options.timeoutMs * options.repeat + 900_000
   const log = path.resolve(root, options.results, 'docker.log')
   fs.writeFileSync(log, '')
-  const status = await execute(
-    invocation.command,
-    invocation.args,
-    { cwd: root, timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] },
-    (chunk) => {
-      fs.appendFileSync(log, chunk)
-      process.stderr.write(chunk)
-    },
-  )
-  if (status.timedOut)
-    try {
-      execFileSync('docker', ['kill', name], { stdio: 'ignore' })
-    } catch {
-      note(`Could not stop container ${name}`)
-    }
-  const summaryFile = path.resolve(root, options.results, 'summary.json')
-  if (!fs.existsSync(summaryFile))
-    throw new Error(
-      `The container wrote no summary; see ${path.relative(root, log)}`,
+  live.container = name
+  let status
+  try {
+    status = await execute(
+      invocation.command,
+      invocation.args,
+      { cwd: root, timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] },
+      (chunk) => {
+        fs.appendFileSync(log, chunk)
+        process.stderr.write(chunk)
+      },
     )
-  return JSON.parse(fs.readFileSync(summaryFile, 'utf8'))
+  } finally {
+    live.container = null
+  }
+  if (status.timedOut) killContainer(name)
+  return containerSummary({ status, options, root, log })
 }
 
 export async function main(argv, { root = repositoryRoot } = {}) {
@@ -517,18 +667,25 @@ export async function main(argv, { root = repositoryRoot } = {}) {
       process.stdout.write(`${point}\n  ${description}\n`)
     return 0
   }
-  fs.mkdirSync(path.resolve(root, options.results), { recursive: true })
+  const directory = prepareResults(options, root)
+  const live = { container: null }
   const stopLoad = startLoad(options.load)
+  const cleanup = () => {
+    stopLoad()
+    if (live.container) killContainer(live.container)
+  }
+  const detach = onSignals(cleanup)
   let summary
   try {
     summary = options.docker
-      ? dockerSummary(await runInDocker(options, root), options)
+      ? dockerSummary(await runInDocker(options, root, live), options)
       : summarize(options, await runLocally(options, root), { where: 'local' })
   } finally {
-    stopLoad()
+    detach()
+    cleanup()
   }
   fs.writeFileSync(
-    path.resolve(root, options.results, 'summary.json'),
+    path.join(directory, 'summary.json'),
     `${JSON.stringify(summary, null, 2)}\n`,
   )
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`)

@@ -120,12 +120,15 @@ repeats that one test the way the detector runs it, one Vitest process per
 repetition, and prints a JSON summary of what the repetitions did:
 
 ```sh
-pnpm test:flaky-repro -- --help
-pnpm test:flaky-repro -- --list
-pnpm test:flaky-repro -- --file apps/web/app/lib/preview-security.behavior.browser.test.tsx \
+pnpm test:flaky-repro --help
+pnpm test:flaky-repro --list
+pnpm test:flaky-repro --file apps/web/app/lib/preview-security.behavior.browser.test.tsx \
   --test 'a reader can rewrite element and selected text for the agent' \
   --project firefox --repeat 20 --cpus 1 --load 4
 ```
+
+A leading `--`, which `pnpm run` forwards to the script, is ignored, so the
+options read the same either way.
 
 It runs in the Playwright image that `compose.playwright.yml` pins, because an
 engine of another version is a different test; `--no-docker` runs it on this
@@ -144,7 +147,11 @@ normal run carries none of this.
 
 Use a hold to prove a cause, not to find one: the test must fail with the hold
 before the fix and pass with the same hold after it. The runner refuses a run
-that proves nothing, exiting non-zero when no test ran or when a configured hold
-never held a step, which is what a renamed step or a wrong point looks like.
+that proves nothing, exiting non-zero when no test ran, when a configured hold
+never held a step (which is what a renamed step or a wrong point looks like), or
+when a repetition failed while holding nothing, because that repetition failed
+of something else. `holds` in the summary counts per repetition for the same
+reason, and `incompleteRuns` with `firstIncomplete` names the repetitions that
+reported nothing at all.
 A scenario that fails writes what the page looked like, so add a collector to
 `captureReproState` in the browser command rather than a console line.
