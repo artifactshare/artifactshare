@@ -69,9 +69,10 @@ export function Topbar({
       </nav>
       <SearchPalette project={searchProject} results={results} />
       <div
-        className={
-          results ? 'max-nav:hidden flex items-center gap-1.5' : 'contents'
-        }
+        className={cn(
+          'max-nav:gap-1 nav:ml-auto flex shrink-0 items-center gap-1.5',
+          results && 'max-nav:hidden',
+        )}
       >
         <Tooltip>
           <TooltipTrigger asChild>
