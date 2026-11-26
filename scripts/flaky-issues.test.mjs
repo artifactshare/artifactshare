@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { spawnSync } from 'node:child_process'
 import {
+  createsPerRun,
   flakyLabel,
   greenRunsToClose,
   issueTitle,
@@ -63,6 +64,22 @@ const openIssue = (action, number = 41) => ({
 
 const plan = (options) => planIssueActions({ run: nightly(1), ...options })
 
+// The marker format as the issue body carries it, written here by hand so a
+// body nobody wrote this way can be fed to the parser.
+const bodyWithMarker = (text) =>
+  `<!-- flaky-detector-state: ${text} -->\n\nprose a human may have edited\n`
+const bodyWithState = (state) =>
+  bodyWithMarker(
+    JSON.stringify(state).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e'),
+  )
+
+const issuePage = (length, from) =>
+  Array.from({ length }, (unused, index) => ({
+    number: from + index,
+    title: 'row',
+    body: 'body',
+  }))
+
 test('a first sighting opens one issue for each reported row', () => {
   const failing = row({
     ...scriptsLane,
@@ -79,22 +96,27 @@ test('a first sighting opens one issue for each reported row', () => {
     actions.map((action) => action.action),
     ['create', 'create'],
   )
-  assert.deepEqual(actions[0].labels, [flakyLabel])
+  // A test that fails every run is planned before one that fails sometimes.
+  const [failingAction, flakyAction] = actions
   assert.equal(
-    actions[0].title,
-    'Flaky: interactive documents can be operated and annotated per screen (behavior-browser / firefox)',
-  )
-  assert.equal(
-    actions[1].title,
+    failingAction.title,
     'Failing every run: runs every stage (scripts)',
   )
-  assert.match(actions[0].body, /1\/20/u)
-  assert.match(actions[0].body, /locator\.waitFor: Timeout 30000ms exceeded\./u)
+  assert.deepEqual(flakyAction.labels, [flakyLabel])
+  assert.equal(
+    flakyAction.title,
+    'Flaky: interactive documents can be operated and annotated per screen (behavior-browser / firefox)',
+  )
+  assert.match(flakyAction.body, /1\/20/u)
   assert.match(
-    actions[0].body,
+    flakyAction.body,
+    /locator\.waitFor: Timeout 30000ms exceeded\./u,
+  )
+  assert.match(
+    flakyAction.body,
     new RegExp(`since the last sighting: 0 of ${greenRunsToClose}`, 'u'),
   )
-  assert.deepEqual(parseIssueState(actions[0].body).row, {
+  assert.deepEqual(parseIssueState(flakyAction.body).row, {
     suite: 'behavior-browser',
     project: 'firefox',
     file: 'apps/web/app/lib/preview-security.behavior.browser.test.tsx',
@@ -262,6 +284,84 @@ test('an issue the detector did not write is left alone', () => {
   ])
 })
 
+const stateRow = {
+  suite: 'scripts',
+  project: null,
+  file: 'scripts/verify.test.mjs',
+  testName: 'runs every stage',
+}
+
+for (const [name, body] of [
+  ['an empty marker object', bodyWithMarker('{}')],
+  ['a marker with no version', bodyWithState({ row: stateRow, greenRuns: 0 })],
+  [
+    'a marker from a later version',
+    bodyWithState({ version: 2, row: stateRow }),
+  ],
+  [
+    'a row that is not an object',
+    bodyWithState({ version: 1, row: 'behavior-browser / firefox' }),
+  ],
+  [
+    'a row that is an array',
+    bodyWithState({
+      version: 1,
+      row: [stateRow.suite, stateRow.project, stateRow.file, stateRow.testName],
+    }),
+  ],
+  [
+    'a row with no file',
+    bodyWithState({
+      version: 1,
+      row: { suite: stateRow.suite, testName: stateRow.testName },
+    }),
+  ],
+  [
+    'a row with a number for a test name',
+    bodyWithState({ version: 1, row: { ...stateRow, testName: 42 } }),
+  ],
+  ['a marker that is not JSON', bodyWithMarker('{"version": 1, "row": }')],
+  ['a marker nothing closes', '<!-- flaky-detector-state: {"version":1} '],
+])
+  test(`${name} is read as an issue the detector did not write`, () => {
+    assert.equal(parseIssueState(body), null)
+    assert.deepEqual(
+      plan({
+        report: reportOf(),
+        issues: [{ number: 9, title: 'Flaky: looks managed', body }],
+      }),
+      [{ action: 'skip', reason: 'unmanaged', issue: 9 }],
+    )
+  })
+
+test('a stored sighting that cannot be rendered is dropped, not thrown on', () => {
+  const [created] = plan({ report: reportOf({ flaky: [row()] }), issues: [] })
+  const kept = parseIssueState(created.body).sightings[0]
+  const body = bodyWithState({
+    ...parseIssueState(created.body),
+    sightingCount: 9,
+    sightings: [
+      null,
+      'a sighting as a string',
+      ['a sighting as an array'],
+      {},
+      { ...kept, date: null },
+      { ...kept, failureCount: 'one' },
+      kept,
+    ],
+  })
+  assert.deepEqual(parseIssueState(body).sightings, [kept])
+  const [action] = planIssueActions({
+    report: reportOf(),
+    issues: [{ number: 41, title: 'Flaky: still tracked', body }],
+    run: nightly(2),
+  })
+  assert.equal(action.action, 'green')
+  // The total ever seen is recorded, not counted from the rows that survived.
+  assert.match(action.body, /## Sightings \(9\)/u)
+  assert.equal(parseIssueState(action.body).sightings.length, 1)
+})
+
 test('a duplicated issue is reported, not updated twice', () => {
   const [created] = plan({ report: reportOf({ flaky: [row()] }), issues: [] })
   const actions = planIssueActions({
@@ -321,11 +421,80 @@ test('a report with nothing to track changes nothing', () => {
   assert.deepEqual(plan({ report: reportOf(), issues: [] }), [])
 })
 
+test('a long first error line is cut to 240 characters, a short one kept whole', () => {
+  const long = `Expected ${'x'.repeat(400)} to match`
+  const [created] = plan({
+    report: reportOf({ flaky: [row({ firstError: long })] }),
+    issues: [],
+  })
+  const [sighting] = parseIssueState(created.body).sightings
+  assert.equal(sighting.firstError.length, 240)
+  assert.equal(sighting.firstError, `${long.slice(0, 239)}…`)
+  assert.ok(created.body.includes(sighting.firstError))
+
+  const errors = [
+    [' Timeout\n  30000ms exceeded ', 'Timeout 30000ms exceeded'],
+    ['', 'Unknown failure'],
+  ]
+  for (const [firstError, expected] of errors) {
+    const [action] = plan({
+      report: reportOf({ flaky: [row({ firstError })] }),
+      issues: [],
+    })
+    assert.equal(parseIssueState(action.body).sightings[0].firstError, expected)
+  }
+})
+
+test(`a night with more new rows than ${createsPerRun} files that many and names the rest`, () => {
+  // The cap only protects the morning if it stays small enough to triage.
+  assert.ok(createsPerRun >= 1 && createsPerRun <= 20, `cap ${createsPerRun}`)
+  const rows = Array.from({ length: createsPerRun + 2 }, (unused, index) =>
+    row({
+      file: `apps/web/app/lib/case-${index}.test.ts`,
+      testName: `case ${index} is slow`,
+    }),
+  )
+  const [earlier] = plan({ report: reportOf({ flaky: [rows[0]] }), issues: [] })
+  const actions = planIssueActions({
+    report: reportOf({ flaky: rows }),
+    issues: [openIssue(earlier)],
+    run: nightly(2),
+  })
+  // An issue that already tracks a row is never held back by the cap.
+  assert.deepEqual(
+    actions
+      .filter((action) => action.action === 'append')
+      .map((action) => action.issue),
+    [41],
+  )
+  assert.equal(
+    actions.filter((action) => action.action === 'create').length,
+    createsPerRun,
+  )
+  const skipped = actions.filter((action) => action.reason === 'create-limit')
+  assert.deepEqual(
+    skipped.map((action) => [action.action, JSON.parse(action.key)[3]]),
+    [['skip', `case ${createsPerRun + 1} is slow`]],
+  )
+  const summary = summarizeActions({
+    mode: 'write',
+    reason: 'scheduled-default-branch',
+    actions,
+  })
+  assert.match(summary, /### Not filed this run \(1\)/u)
+  assert.ok(
+    summary.includes(
+      `- behavior-browser / firefox / apps/web/app/lib/case-${createsPerRun + 1}.test.ts / case ${createsPerRun + 1} is slow`,
+    ),
+    summary,
+  )
+})
+
 for (const [name, context, expected] of [
   [
     'a scheduled run on the default branch',
     { eventName: 'schedule', ref: 'refs/heads/main', defaultBranch: 'main' },
-    'write',
+    { mode: 'write', reason: 'scheduled-default-branch' },
   ],
   [
     'a manual run',
@@ -334,7 +503,16 @@ for (const [name, context, expected] of [
       ref: 'refs/heads/main',
       defaultBranch: 'main',
     },
-    'dry-run',
+    { mode: 'dry-run', reason: 'not-scheduled' },
+  ],
+  [
+    'a pull request on the default branch',
+    {
+      eventName: 'pull_request',
+      ref: 'refs/heads/main',
+      defaultBranch: 'main',
+    },
+    { mode: 'dry-run', reason: 'not-scheduled' },
   ],
   [
     'a scheduled run on another ref',
@@ -343,17 +521,36 @@ for (const [name, context, expected] of [
       ref: 'refs/heads/claude/experiment',
       defaultBranch: 'main',
     },
-    'dry-run',
+    { mode: 'dry-run', reason: 'other-ref' },
   ],
   [
     'a run with no default branch to compare',
     { eventName: 'schedule', ref: 'refs/heads/main', defaultBranch: '' },
-    'dry-run',
+    { mode: 'dry-run', reason: 'no-default-branch' },
   ],
 ])
-  test(`${name} syncs in ${expected} mode`, () => {
-    assert.equal(syncMode(context), expected)
+  test(`${name} syncs in ${expected.mode} mode`, () => {
+    assert.deepEqual(syncMode(context), expected)
   })
+
+test('a run that cannot tell which branch is default says so in the summary', () => {
+  const actions = plan({ report: reportOf({ flaky: [row()] }), issues: [] })
+  const warned = summarizeActions({
+    mode: 'dry-run',
+    reason: 'no-default-branch',
+    actions,
+  })
+  assert.match(warned, /Mode: dry-run \(no-default-branch\)\./u)
+  assert.match(warned, /> \[!WARNING\]/u)
+  assert.match(warned, /DEFAULT_BRANCH/u)
+  const quiet = summarizeActions({
+    mode: 'write',
+    reason: 'scheduled-default-branch',
+    actions,
+  })
+  assert.ok(!quiet.includes('[!WARNING]'))
+  assert.match(quiet, /Mode: write \(scheduled-default-branch\)\./u)
+})
 
 function githubStub({ issues = [], label = true, pages } = {}) {
   const calls = []
@@ -469,19 +666,13 @@ test('a dry run reads the issues and writes nothing', async () => {
 })
 
 test('the issue list skips pull requests and follows every page', async () => {
-  const page = (length, from) =>
-    Array.from({ length }, (unused, index) => ({
-      number: from + index,
-      title: 'row',
-      body: 'body',
-    }))
   const github = githubStub({
     pages: [
       [
-        ...page(99, 1),
+        ...issuePage(99, 1),
         { number: 500, title: 'a pull request', pull_request: {} },
       ],
-      page(2, 200),
+      issuePage(2, 200),
     ],
   })
   const issues = await listFlakyIssues({
@@ -494,6 +685,24 @@ test('the issue list skips pull requests and follows every page', async () => {
   assert.equal(github.calls.length, 2)
   assert.match(github.calls[0].search, /labels=flaky&state=open/u)
   assert.match(github.calls[1].search, /page=2/u)
+})
+
+test('an issue list past the page limit fails instead of truncating', async () => {
+  const github = githubStub({
+    pages: Array.from({ length: 12 }, (unused, index) =>
+      issuePage(100, index * 100 + 1),
+    ),
+  })
+  await assert.rejects(
+    listFlakyIssues({
+      repository: 'artifactshare/artifactshare',
+      token: 'test-token',
+      fetchImpl: github.fetchImpl,
+    }),
+    /More than 1000 open flaky issues.*truncated/su,
+  )
+  // Ten pages of a hundred, and then it stops asking.
+  assert.equal(github.calls.length, 10)
 })
 
 test('a refused GitHub request fails loudly', async () => {
