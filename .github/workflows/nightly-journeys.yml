@@ -71,6 +71,17 @@ jobs:
             echo "failed journeys: ${failed[*]}"
             exit 1
           fi
+      - name: Print the stack logs
+        if: failure()
+        # The evidence artifact holds the whole record, but a red run is read
+        # in the job log first, and the stack logs name what broke. They carry
+        # no secrets: the journeys redact the one token they ever print.
+        run: |
+          for log in ".verify-artifactshare/runs/$VERIFY_RUN"/logs/*.log; do
+            echo "::group::$log"
+            tail -n 200 "$log"
+            echo "::endgroup::"
+          done
       - name: Stop the local stack
         if: always()
         run: node .claude/skills/verify-artifactshare/scripts/stack.mjs down --run "$VERIFY_RUN"

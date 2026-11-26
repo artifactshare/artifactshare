@@ -237,7 +237,13 @@ async function up(options) {
     return child.pid
   }
   const pids = {
+    // Vite resolves `localhost` itself and listens on the one address it gets
+    // back, which is `::1` wherever the loopback has one. Node clients resolve
+    // the same name with AI_ADDRCONFIG, which drops a loopback-only IPv6
+    // address, so they reach 127.0.0.1 and nothing answers. Pin the app to the
+    // address `freePort` reserved and every client here connects to.
     app: start('app', 'pnpm', ['dev:app'], {
+      ARTIFACTSHARE_DEV_HOST: '127.0.0.1',
       ARTIFACTSHARE_DEV_PERSIST_PATH: stateDir,
       ARTIFACTSHARE_DEV_APP_PORT: String(appPort),
       ARTIFACTSHARE_DEV_SANDBOX_PORT: String(sandboxPort),

@@ -31,6 +31,10 @@ test('the nightly drives every shipped journey on one stack', () => {
 test('the nightly stops its stack and keeps the evidence of a run that failed', () => {
   const down = job.steps.find((step) => step.run?.includes('stack.mjs down'))
   assert.equal(down.if, 'always()')
+  // A red run is read in the job log before anyone opens the artifact.
+  const tail = job.steps.find((step) => step.run?.includes('logs/*.log'))
+  assert.equal(tail.if, 'failure()')
+  assert.ok(job.steps.indexOf(tail) < job.steps.indexOf(down))
   const upload = job.steps.at(-1)
   assert.match(upload.uses, /^actions\/upload-artifact@[0-9a-f]{40}$/u)
   assert.equal(upload.if, '${{ failure() || cancelled() }}')
