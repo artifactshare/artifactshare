@@ -423,9 +423,10 @@ function CopyableEmail({ email }: { email: string }) {
   const { t } = useT()
   const [copied, setCopied] = useState(false)
   return (
-    <button
+    <Button
       type="button"
-      className="text-muted-foreground w-fit max-w-full text-left text-xs [overflow-wrap:anywhere] whitespace-normal hover:underline"
+      variant="link"
+      className="text-muted-foreground h-auto w-fit max-w-full justify-start p-0 text-left text-xs font-normal [overflow-wrap:anywhere] whitespace-normal"
       title={t('team.bots.copyEmail')}
       onClick={() => {
         void writeClipboardText(email)
@@ -438,7 +439,7 @@ function CopyableEmail({ email }: { email: string }) {
       }}
     >
       {copied ? t('team.bots.emailCopied') : email}
-    </button>
+    </Button>
   )
 }
 

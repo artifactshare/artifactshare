@@ -178,9 +178,10 @@ export function VersionWidget({
             />
           </div>
           <VersionHistoryPreview retention={retention} versions={versions} />
-          <button
+          <Button
             type="button"
-            className="text-foreground hover:bg-accent h-touch-target flex cursor-pointer items-center justify-between gap-2 rounded-[var(--r-sm)] border-0 bg-transparent px-2 text-left text-sm"
+            variant="ghost"
+            className="text-foreground h-touch-target justify-between gap-2 px-2 text-left font-normal"
             onClick={() => {
               setOpen(false)
               onOpenHistory(triggerRef.current)
@@ -192,7 +193,7 @@ export function VersionWidget({
                 : 'history.viewAll',
             )}
             <IconChevronRight size={16} aria-hidden="true" />
-          </button>
+          </Button>
           {hasNewerVersion ? (
             <VersionUpdateNotice onShowLatest={onShowLatest} />
           ) : null}
@@ -269,13 +270,14 @@ function VersionUpdateNotice({
       <span aria-hidden={announceSeparately || undefined}>
         {t('history.updateAvailable')}
       </span>
-      <button
+      <Button
         type="button"
-        className="bg-primary text-primary-foreground h-control-sm cursor-pointer rounded-[var(--r-sm)] border-0 px-2 text-sm font-semibold"
+        size="sm"
+        className="font-semibold"
         onClick={onShowLatest}
       >
         {t('history.showLatest')}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -322,9 +324,11 @@ function VersionRevisitClues({
   return (
     <div className="pointer-events-none flex max-w-full flex-wrap justify-end gap-1.5">
       {showVersionClue ? (
-        <button
+        <Button
           type="button"
-          className="bg-background text-foreground border-border pointer-events-auto min-h-7 cursor-pointer rounded-[var(--r-md)] border px-2 text-sm shadow-sm"
+          variant="outline"
+          size="sm"
+          className="pointer-events-auto text-sm font-normal shadow-sm"
           onClick={onVersion}
         >
           {revisitContext?.version?.kind === 'ordinal' ? (
@@ -346,13 +350,15 @@ function VersionRevisitClues({
           ) : (
             t('vw.revisitVersionFallback')
           )}
-        </button>
+        </Button>
       ) : null}
       {showCommentClue ? (
-        <button
+        <Button
           data-revisit-comments
           type="button"
-          className="bg-background text-foreground border-border pointer-events-auto min-h-7 cursor-pointer rounded-[var(--r-md)] border px-2 text-sm whitespace-nowrap shadow-sm"
+          variant="outline"
+          size="sm"
+          className="pointer-events-auto text-sm font-normal shadow-sm"
           onClick={onComments}
         >
           {tPlural('vw.revisitComments', revisitContext!.commentCount, {
@@ -361,7 +367,7 @@ function VersionRevisitClues({
                 ? '99+'
                 : String(revisitContext!.commentCount),
           })}
-        </button>
+        </Button>
       ) : null}
     </div>
   )

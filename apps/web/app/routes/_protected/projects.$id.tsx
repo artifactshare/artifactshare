@@ -782,13 +782,14 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
                       </AppPageHeaderDescription>
                     ) : loaderData.canEditProject ? (
                       <AppPageHeaderMeta>
-                        <button
+                        <Button
                           type="button"
-                          className="text-link block cursor-pointer border-0 bg-transparent p-0 text-left text-sm hover:underline"
+                          variant="link"
+                          className="h-auto p-0 text-left text-sm"
                           onClick={() => setOpenDialog('edit')}
                         >
                           {t('project.addDescription')}
-                        </button>
+                        </Button>
                       </AppPageHeaderMeta>
                     ) : null}
                   </div>

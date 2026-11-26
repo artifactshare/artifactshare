@@ -199,13 +199,14 @@ export function InlineCommentPopover({
             />
           ) : null}
           {hiddenReplyCount > 0 ? (
-            <button
+            <Button
               type="button"
-              className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
+              variant="link"
+              className="h-auto justify-self-start p-0 text-xs font-bold"
               onClick={() => onOpenConversation(thread.id)}
             >
               {t('comments.openConversationTitle')}
-            </button>
+            </Button>
           ) : null}
           {visibleReplyMessages.length > 0 ? (
             <div className="before:top-timeline-top-sm before:left-timeline-offset relative grid gap-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]">

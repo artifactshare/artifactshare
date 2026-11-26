@@ -10,6 +10,7 @@ import {
 } from '~/lib/upload-artifact-validation'
 import { filesFromDrop } from '~/lib/upload-drop-items'
 import { hasLocalFiles } from './drag-files'
+import { Button } from '~/components/ui/button'
 
 export function ReplaceVersionDropzone({
   className,
@@ -111,14 +112,15 @@ export function ReplaceVersionDropzone({
               event.currentTarget.value = ''
             }}
           />
-          <button
+          <Button
             type="button"
-            className="bg-background text-foreground hover:bg-muted min-h-replace-button border-border hover:border-border-strong mt-2 w-full cursor-pointer rounded-[var(--r-sm)] border text-sm font-semibold disabled:cursor-default disabled:opacity-60"
+            variant="outline"
+            className="min-h-replace-button mt-2 w-full font-semibold"
             disabled={uploading}
             onClick={() => directoryInputRef.current?.click()}
           >
             {t('upload.pick.folder')}
-          </button>
+          </Button>
         </>
       ) : null}
     </div>
