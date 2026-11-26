@@ -463,6 +463,15 @@ async function runLocally(options, root) {
   return runs
 }
 
+// The container is given neither limit as an argument, so its summary takes
+// the conditions back from the invocation that applied them.
+export const dockerSummary = (summary, options) => ({
+  ...summary,
+  where: 'docker',
+  cpus: options.cpus,
+  load: options.load,
+})
+
 async function runInDocker(options, root) {
   const runtime = pinnedRuntime(
     fs.readFileSync(path.join(root, composeFile), 'utf8'),
@@ -513,7 +522,7 @@ export async function main(argv, { root = repositoryRoot } = {}) {
   let summary
   try {
     summary = options.docker
-      ? { ...(await runInDocker(options, root)), where: 'docker' }
+      ? dockerSummary(await runInDocker(options, root), options)
       : summarize(options, await runLocally(options, root), { where: 'local' })
   } finally {
     stopLoad()

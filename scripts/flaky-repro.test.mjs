@@ -7,6 +7,7 @@ import {
   UsageError,
   delayEnvironment,
   dockerInvocation,
+  dockerSummary,
   holdPoints,
   parseOptions,
   pinnedRuntime,
@@ -131,6 +132,8 @@ test('the container repeats the same run on this checkout, under its own limits'
     '20',
     '--cpus',
     '1',
+    '--load',
+    '2',
     '--delay',
     `${point}=400`,
     '--results',
@@ -148,11 +151,16 @@ test('the container repeats the same run on this checkout, under its own limits'
   assert.ok(args.includes('HTTPS_PROXY=http://127.0.0.1:1/'))
   assert.ok(!args.includes('PATH=/usr/bin'))
   const inner = args.at(-1)
+  // The container applies neither limit, so its summary must take both back.
+  assert.deepEqual(
+    dockerSummary({ where: 'local', cpus: null, load: 0 }, options),
+    { where: 'docker', cpus: '1', load: 2 },
+  )
   assert.match(inner, /node scripts\/ci\/flaky-repro\.mjs .*'--no-docker'/u)
   assert.match(inner, /'--repeat' '20'/u)
   assert.match(inner, new RegExp(`'--delay' '${point}=400'`, 'u'))
   assert.match(inner, /'--results' '\.flaky-repro\/run'/u)
-  assert.doesNotMatch(inner, /--cpus/u)
+  assert.doesNotMatch(inner, /--cpus|--load/u)
 })
 
 test('a repetition reports the failures of its own file and the state it captured', (t) => {

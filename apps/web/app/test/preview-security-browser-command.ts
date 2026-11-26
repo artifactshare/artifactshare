@@ -295,6 +295,9 @@ export const previewSecurity = defineBrowserCommand(
         },
       )
     const shell = await page.context().newPage()
+    // Collected outside the scenarios: a failed step is named by the last
+    // check that passed, and a Playwright timeout names only its own API.
+    const checks: string[] = []
     try {
       const ready = await waitReady()
       // Keep every browser request local; the test never resolves account credentials.
@@ -736,7 +739,7 @@ export const previewSecurity = defineBrowserCommand(
             .locator('.thread')
             .filter({ hasText: comment })
             .locator('button.screen-link')
-        const result = { checks: [] as string[] }
+        const result = { checks }
 
         // Comment mode shows how to use the page; Alt+click operates it.
         await shell.locator('#modeHint').waitFor()
@@ -2362,6 +2365,7 @@ export const previewSecurity = defineBrowserCommand(
         const element = await shell.locator('#artifactFrame').elementHandle()
         const previewed = await element?.contentFrame()
         return {
+          checks,
           shell: await shell.evaluate(() => ({
             hasFocus: document.hasFocus(),
             active:

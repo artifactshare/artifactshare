@@ -101,17 +101,19 @@ export async function recordReproHolds(page: Page): Promise<void> {
 
 /**
  * Write what the page looked like when a scenario failed, for the run the
- * runner is collecting. Keep collectors to element identities and states: the
- * file stays on the machine that ran it, and preview URLs carry a capability.
+ * runner is collecting. A Playwright timeout reports only its own API, never
+ * the step inside the command, so collect how far the scenario got. Keep
+ * collectors to element identities and states: the file stays on the machine
+ * that ran it, and preview URLs carry a capability.
  */
 export async function captureReproState(
   label: string,
-  state: () => Promise<unknown>,
+  state: () => Promise<Record<string, unknown>>,
 ): Promise<void> {
   const directory = runDirectory()
   if (!directory) return
-  const captured = await state().catch((error: unknown) => ({
-    uncollected: String(error),
+  const captured = await state().catch((collecting: unknown) => ({
+    uncollected: String(collecting),
   }))
   mkdirSync(directory, { recursive: true })
   writeFileSync(
