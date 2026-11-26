@@ -21,7 +21,7 @@ import {
   homeSectionClassName,
   fileDateHeadingClassName,
 } from '../+components/file-list-styles'
-import type { HomeLayoutContext } from '../_layout'
+import type { HomeLayoutContext } from '../+components/home-main'
 import { HomeListBreadcrumb } from '~/components/app/home-list-breadcrumb'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import { useT } from '~/hooks/use-t'

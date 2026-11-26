@@ -18,7 +18,6 @@ const shell: SettingsLoaderData = {
   },
   currentUserIsAdmin: true,
   currentUserRole: 'owner',
-  joinedProjects: [],
   workspace: {
     id: 'workspace',
     name: 'Example workspace',

@@ -154,6 +154,7 @@ describe('settings route ancestry', () => {
       expect(resolved).toBe(`/settings/${page}`)
       expect(layouts).toEqual([
         'routes/_protected/_layout',
+        'routes/_protected/_shell',
         `${settings}/_layout`,
       ])
     },
@@ -168,4 +169,44 @@ describe('settings route ancestry', () => {
       expect(layouts).toEqual([])
     },
   )
+})
+
+describe('app shell ancestry', () => {
+  const routes = discoveredRoutes()
+
+  test.each([
+    '/files',
+    '/recent',
+    '/projects',
+    '/activity',
+    '/search',
+    '/settings/',
+    '/settings/billing',
+    '/projects/archived',
+    '/projects/p1',
+    '/projects/p1/activity',
+    '/projects/p1/files',
+  ])('%s renders under the one signed-in shell', (url) => {
+    const { layouts, resolved } = resolve(routes, url)
+
+    expect(resolved).toBe(url)
+    expect(layouts?.slice(0, 2)).toEqual([
+      'routes/_protected/_layout',
+      'routes/_protected/_shell',
+    ])
+  })
+
+  test.each([
+    '/access-requests',
+    '/connect/slack',
+    '/integrations/slack/install',
+    '/projects/p1/slack',
+    '/projects/p1/slack/install',
+  ])('%s keeps document authentication without the shell', (url) => {
+    const { layouts, resolved } = resolve(routes, url)
+
+    expect(resolved).toBe(url)
+    expect(layouts).toContain('routes/_protected/_layout')
+    expect(layouts).not.toContain('routes/_protected/_shell')
+  })
 })

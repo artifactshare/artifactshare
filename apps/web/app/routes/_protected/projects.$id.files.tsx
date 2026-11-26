@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { Link, useFetcher } from 'react-router'
 import { IconStack2 as Layers } from '@tabler/icons-react'
 import type { Route } from './+types/projects.$id.files'
+import type { AppShellHandle } from './+components/app-shell'
 import { ProjectPageBreadcrumb } from '~/components/app/project-page-breadcrumb'
 import { Button } from '~/components/ui/button'
-import { Topbar } from '../_home/+components/topbar'
-import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
 import { FileRow } from '../_home/+components/file-row'
 import {
   FileRowDialogs,
@@ -67,6 +66,14 @@ function parseCursor(value: string | null): FilesCursor | undefined {
     // 壊れたカーソルは先頭ページとして扱う
   }
   return undefined
+}
+
+// The shared header narrows its search to this project.
+export const handle: AppShellHandle = {
+  searchProject: (data) => {
+    const { ctx } = data as LoaderData
+    return { id: ctx.projectId, name: ctx.projectName }
+  },
 }
 
 export async function loader({
@@ -176,12 +183,6 @@ export default function ProjectFiles({
   }
   return (
     <>
-      <Topbar
-        searchProject={{ id: ctx.projectId, name: ctx.projectName }}
-        workspaceName={ctx.workspaceName}
-        user={ctx.user}
-        joinedProjects={ctx.joinedNav}
-      />
       <main
         className={cn(listMainClassName, focusReturnTargetClassName)}
         tabIndex={-1}
@@ -288,7 +289,6 @@ export default function ProjectFiles({
         files={files}
         homeOwnerName={ctx.user.name ?? ctx.user.email}
       />
-      <BottomTabBar />
     </>
   )
 }

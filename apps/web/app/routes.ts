@@ -81,14 +81,53 @@ export function arrangeSettingsRoutes(routes: RouteConfigEntry[]) {
   return [...routes, ...resources]
 }
 
+const PROTECTED = 'routes/_protected/_layout'
+const HOME_LISTS = 'routes/_home/_protected/_layout'
+
+/** The signed-in pages that share the header and the bottom tab bar. */
+const APP_SHELL_PAGES = [
+  'routes/_protected/settings/_layout',
+  'routes/_protected/projects.archived',
+  'routes/_protected/projects.$id',
+  'routes/_protected/projects.$id.activity',
+  'routes/_protected/projects.$id.files',
+]
+
+/**
+ * Puts Home's lists, Settings and the project pages under one shell, so the
+ * header and its joined projects are read once for all of them and stay put
+ * while moving between them. The signed-in `/` sits in the public locale tree
+ * and renders the same shell from its own layout. Every module keeps its
+ * source path, route ID and URL.
+ */
+export function arrangeAppShellRoutes(routes: RouteConfigEntry[]) {
+  const homeLists = routes.find((route) => route.id === HOME_LISTS)
+  const protectedLayout = routes.find((route) => route.id === PROTECTED)
+  if (!homeLists || !protectedLayout) {
+    throw new Error('App shell routes are missing')
+  }
+  const pages = takeChildren(protectedLayout, APP_SHELL_PAGES)
+  protectedLayout.children = [
+    {
+      id: 'routes/_protected/_shell',
+      file: 'routes/_protected/+shell/_layout.tsx',
+      children: [homeLists, ...pages],
+    },
+    ...(protectedLayout.children ?? []),
+  ]
+  return routes.filter((route) => route !== homeLists)
+}
+
 export function discoverRoutes(includeDevelopmentRoutes: boolean) {
-  return arrangeSettingsRoutes(
-    autoRoutes({
-      ignoredRouteFiles: [
-        TEST_ROUTE_FILES,
-        ...(includeDevelopmentRoutes ? [] : DEVELOPMENT_ROUTE_FILES),
-      ],
-    }),
+  return arrangeAppShellRoutes(
+    arrangeSettingsRoutes(
+      autoRoutes({
+        ignoredRouteFiles: [
+          TEST_ROUTE_FILES,
+          ...(includeDevelopmentRoutes ? [] : DEVELOPMENT_ROUTE_FILES),
+        ],
+      }),
+    ),
   )
 }
 

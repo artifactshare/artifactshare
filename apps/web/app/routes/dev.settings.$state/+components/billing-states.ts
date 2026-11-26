@@ -48,7 +48,6 @@ function shell(
       image: null,
       initial: 'F',
     },
-    joinedProjects: [],
   }
 }
 

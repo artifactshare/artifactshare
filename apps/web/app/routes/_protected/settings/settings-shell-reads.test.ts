@@ -1,5 +1,6 @@
 // One Settings request reads the shell once: the workspace row, the viewer's
-// active role and the joined projects, whichever loaders and middleware ask.
+// active role and the joined projects, whichever loaders and middleware ask,
+// the app shell's header among them.
 // Requests run on the real request handler with the production route tree;
 // hydrated revalidations come from the router's own Single Fetch client, so
 // which loaders a request runs is decided by the framework, not by the test.
@@ -25,6 +26,7 @@ import * as billingUsage from '~/services/billing-usage.server'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import * as protectedLayout from '../_layout'
+import * as appShell from '../+shell/_layout'
 import * as settingsLayout from './_layout'
 import * as admin from './_content/+admin/_layout'
 import * as members from './_content/index'
@@ -140,6 +142,10 @@ const at = (pattern: string, args: LoaderFunctionArgs) => ({
 const modules: Record<string, RouteModule> = {
   'routes/_protected/_layout': {
     middleware: protectedLayout.middleware,
+    default: Outlet,
+  },
+  'routes/_protected/_shell': {
+    loader: (args) => appShell.loader(at('/settings', args)),
     default: Outlet,
   },
   [SHELL]: {
@@ -285,6 +291,7 @@ async function browserAt(path: string, viewer: string) {
         {
           default: Outlet,
           shouldRevalidate: {
+            'routes/_protected/_shell': appShell.shouldRevalidate,
             [SHELL]: settingsLayout.shouldRevalidate,
             [BILLING]: billing.shouldRevalidate,
           }[route.id],

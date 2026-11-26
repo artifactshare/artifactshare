@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Link, useFetcher } from 'react-router'
 import type { Route } from './+types/projects.$id.activity'
+import type { AppShellHandle } from './+components/app-shell'
 import { IconStack2 as Layers } from '@tabler/icons-react'
 import { ProjectPageBreadcrumb } from '~/components/app/project-page-breadcrumb'
-import { Topbar } from '../_home/+components/topbar'
-import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
 import { FeedList } from '../_home/+components/feed-list'
 import {
   listMainClassName,
@@ -42,6 +41,14 @@ type LoaderData = {
   timeZone: string
   now: string
   error?: boolean
+}
+
+// The shared header narrows its search to this project.
+export const handle: AppShellHandle = {
+  searchProject: (data) => {
+    const { ctx } = data as LoaderData
+    return { id: ctx.projectId, name: ctx.projectName }
+  },
 }
 
 export async function loader({
@@ -133,68 +140,59 @@ export default function ProjectActivity({
     )
   }
   return (
-    <>
-      <Topbar
-        searchProject={{ id: ctx.projectId, name: ctx.projectName }}
-        workspaceName={ctx.workspaceName}
-        user={ctx.user}
-        joinedProjects={ctx.joinedNav}
+    <main
+      className={cn(listMainClassName, focusReturnTargetClassName)}
+      tabIndex={-1}
+      aria-busy={busy}
+    >
+      <ProjectPageBreadcrumb
+        title={t('project.activityHistory')}
+        project={{ id: ctx.projectId, name: ctx.projectName }}
       />
-      <main
-        className={cn(listMainClassName, focusReturnTargetClassName)}
-        tabIndex={-1}
-        aria-busy={busy}
-      >
-        <ProjectPageBreadcrumb
-          title={t('project.activityHistory')}
-          project={{ id: ctx.projectId, name: ctx.projectName }}
-        />
-        <AppPageHeader>
-          <AppPageHeaderMain>
-            <AppPageHeaderTitleRow>
-              <Layers size={16} className="text-link" aria-hidden="true" />
-              <AppPageHeaderTitle>
-                {t('project.activityHistory')}
-              </AppPageHeaderTitle>
-            </AppPageHeaderTitleRow>
-            <AppPageHeaderMeta>{t('project.newestOrder')}</AppPageHeaderMeta>
-          </AppPageHeaderMain>
-        </AppPageHeader>
-        {error ? (
-          <p className="rounded border p-4 text-sm">
-            {t('home.feedError')}{' '}
-            <Link
-              className="underline"
-              to={`/projects/${ctx.projectId}/activity`}
-            >
-              {t('home.reload')}
-            </Link>
-          </p>
-        ) : rows.length === 0 ? (
-          <AppEmptyState
-            icon={<Layers size={16} />}
-            title={t('project.noActivity')}
-          />
-        ) : (
-          <FeedList
-            rows={rows}
-            timeZone={loaderData.timeZone}
-            now={loaderData.now}
-          />
-        )}
-        {cursor ? (
-          <AppMoreLink
-            as="button"
-            type="button"
-            className="mt-5 cursor-pointer border-0 bg-transparent p-0"
-            disabled={busy}
-            onClick={loadMore}
+      <AppPageHeader>
+        <AppPageHeaderMain>
+          <AppPageHeaderTitleRow>
+            <Layers size={16} className="text-link" aria-hidden="true" />
+            <AppPageHeaderTitle>
+              {t('project.activityHistory')}
+            </AppPageHeaderTitle>
+          </AppPageHeaderTitleRow>
+          <AppPageHeaderMeta>{t('project.newestOrder')}</AppPageHeaderMeta>
+        </AppPageHeaderMain>
+      </AppPageHeader>
+      {error ? (
+        <p className="rounded border p-4 text-sm">
+          {t('home.feedError')}{' '}
+          <Link
+            className="underline"
+            to={`/projects/${ctx.projectId}/activity`}
           >
-            {busy ? t('home.loadingActivity') : t('home.seeOlderActivity')}
-          </AppMoreLink>
-        ) : null}
-      </main>
-      <BottomTabBar />
-    </>
+            {t('home.reload')}
+          </Link>
+        </p>
+      ) : rows.length === 0 ? (
+        <AppEmptyState
+          icon={<Layers size={16} />}
+          title={t('project.noActivity')}
+        />
+      ) : (
+        <FeedList
+          rows={rows}
+          timeZone={loaderData.timeZone}
+          now={loaderData.now}
+        />
+      )}
+      {cursor ? (
+        <AppMoreLink
+          as="button"
+          type="button"
+          className="mt-5 cursor-pointer border-0 bg-transparent p-0"
+          disabled={busy}
+          onClick={loadMore}
+        >
+          {busy ? t('home.loadingActivity') : t('home.seeOlderActivity')}
+        </AppMoreLink>
+      ) : null}
+    </main>
   )
 }

@@ -15,7 +15,7 @@ import { page, userEvent, commands } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { bindI18n } from '~/lib/i18n'
-import SettingsLayout from '../_layout'
+import { SettingsUnderAppShell } from '~/test/app-shell-page'
 import SettingsContent, { ErrorBoundary } from './_layout'
 import * as admin from './+admin/_layout'
 import * as bots from './bots'
@@ -97,7 +97,7 @@ test.each(['loader', 'action', 'preview'])(
           ),
           element: (
             <TooltipProvider>
-              <SettingsLayout
+              <SettingsUnderAppShell
                 loaderData={{
                   kind: 'team',
                   workspace: {
@@ -117,7 +117,6 @@ test.each(['loader', 'action', 'preview'])(
                     initial: 'O',
                     image: null,
                   },
-                  joinedProjects: [],
                 }}
               />
             </TooltipProvider>
@@ -415,7 +414,7 @@ async function settingsFor(role: 'member' | 'admin') {
         errorElement: <div data-screen-capture-error="route-error-boundary" />,
         element: (
           <TooltipProvider>
-            <SettingsLayout
+            <SettingsUnderAppShell
               loaderData={{
                 kind: 'team',
                 workspace: {
@@ -435,7 +434,6 @@ async function settingsFor(role: 'member' | 'admin') {
                   initial: 'M',
                   image: null,
                 },
-                joinedProjects: [],
               }}
             />
           </TooltipProvider>

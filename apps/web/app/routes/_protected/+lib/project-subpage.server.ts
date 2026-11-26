@@ -11,8 +11,6 @@ import {
   defaultVisibilityFor,
 } from '~/lib/shareable-types'
 import { isOrgWorkspace, toUserInfo, type SessionUser } from '~/lib/user'
-import { listJoinedProjectsForDropdown } from '~/services/project-membership.server'
-import type { JoinedProjectNav } from '~/routes/_home/+components/primary-nav'
 import { isLinkSharingAllowedByPolicy } from '~/services/link-sharing.server'
 import {
   findSharedProjectForViewer,
@@ -74,7 +72,6 @@ export type ProjectSubpageContext = {
   projectWorkspaceId: string
   archived: boolean
   createdByEmail: string | null
-  workspaceName: string
   workspaceHd: string | null
   user: ReturnType<typeof toUserInfo>
   canUpload: boolean
@@ -82,35 +79,23 @@ export type ProjectSubpageContext = {
   availableVisibilities: ReadonlyArray<EditableVisibility>
   linkSharingAvailable: boolean
   shareDefaults: ProjectShareDefault[]
-  joinedNav: JoinedProjectNav[]
 }
 
-// サブページ共通のアクセス判定と Topbar / アップロードダイアログ用の文脈。
+// サブページ共通のアクセス判定とアップロードダイアログ用の文脈。
 // アクセス権はプロジェクト詳細と同じ判定 (member または共有された関係者)。
 export async function loadProjectSubpageContext(
   db: Kysely<DB>,
   user: SessionUser,
   projectId: string,
 ): Promise<ProjectSubpageContext> {
-  const [workspace, joinedNav, own] = await Promise.all([
+  const [workspace, own] = await Promise.all([
     db
       .selectFrom('workspaces')
-      .select(['name', 'hd'])
+      .select('hd')
       .where('id', '=', user.workspaceId)
       .executeTakeFirst(),
-    listJoinedProjectsForDropdown(db, user, 5)
-      .then((rows) =>
-        rows.map((row) => ({
-          id: row.id,
-          name: row.name,
-          newCount: row.newCount,
-          workspaceName: row.workspaceName,
-        })),
-      )
-      .catch(() => []),
     findWorkspaceProject(db, user.workspaceId, projectId, user),
   ])
-  const workspaceName = workspace?.name ?? workspace?.hd ?? 'Files'
   if (own) {
     const workspaceHd = workspace?.hd ?? user.hd
     const [linkSharingAvailable, shareDefaults, canUpload] = await Promise.all([
@@ -126,7 +111,6 @@ export async function loadProjectSubpageContext(
       projectWorkspaceId: user.workspaceId,
       archived: Boolean(own.archivedAt),
       createdByEmail: own.createdByEmail,
-      workspaceName,
       workspaceHd,
       user: toUserInfo(user),
       canUpload,
@@ -137,7 +121,6 @@ export async function loadProjectSubpageContext(
       ),
       linkSharingAvailable,
       shareDefaults,
-      joinedNav,
     }
   }
   const shared = await findSharedProjectForViewer(db, projectId, user)
@@ -160,7 +143,6 @@ export async function loadProjectSubpageContext(
     projectWorkspaceId: shared.workspaceId,
     archived: false,
     createdByEmail: shared.createdByEmail,
-    workspaceName,
     workspaceHd: sourceHd,
     user: toUserInfo(user),
     canUpload,
@@ -168,7 +150,6 @@ export async function loadProjectSubpageContext(
     availableVisibilities: ['project'],
     linkSharingAvailable: false,
     shareDefaults,
-    joinedNav,
   }
 }
 
