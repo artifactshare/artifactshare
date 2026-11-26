@@ -1,6 +1,6 @@
 import { CLI_ARTIFACT_KINDS_HEADER } from '@artifactshare/contract'
 import { DEFAULT_BASE_URL } from './constants.js'
-import type { Agent, Response } from 'undici'
+import type { Agent, EnvHttpProxyAgent, Response } from 'undici'
 import type {
   ApiErrorOptions,
   CliError,
@@ -16,6 +16,7 @@ export type ApiRawResult =
   | { error: CliError; response?: never; body?: never }
 
 let insecureLocalhostDispatcher: Agent | undefined
+let proxyDispatcher: EnvHttpProxyAgent | undefined
 let undiciModule: typeof import('undici') | undefined
 
 async function loadUndici() {
@@ -52,7 +53,7 @@ export async function cliFetch(
   init: FetchInit = {},
 ): Promise<Response | NetworkFailure> {
   const { insecureLocalhost, ...requested } = init
-  const { fetch, Agent } = await loadUndici()
+  const { fetch, Agent, EnvHttpProxyAgent } = await loadUndici()
   // Tell the server which newer artifact kinds this CLI can parse. Keep the
   // caller's headers as a plain object with their original names.
   const given = requested.headers as
@@ -69,19 +70,35 @@ export async function cliFetch(
     [CLI_ARTIFACT_KINDS_HEADER]: 'pdf, video',
   }
   const fetchInit = { ...requested, headers }
-  const requestInit = insecureLocalhost
-    ? {
-        ...fetchInit,
-        dispatcher: (insecureLocalhostDispatcher ??= new Agent({
-          connect: { rejectUnauthorized: false },
-        })),
-      }
-    : fetchInit
+  // undici's fetch ignores the proxy environment variables unless it is given
+  // a proxy-aware dispatcher. Without one, a CLI behind a corporate or sandbox
+  // proxy connects directly and fails. Only take over the dispatcher when a
+  // proxy is configured, so a global dispatcher set by the embedder still wins
+  // otherwise.
+  const dispatcher = insecureLocalhost
+    ? (insecureLocalhostDispatcher ??= new Agent({
+        connect: { rejectUnauthorized: false },
+      }))
+    : proxyConfigured()
+      ? (proxyDispatcher ??= new EnvHttpProxyAgent())
+      : undefined
+  const requestInit = dispatcher ? { ...fetchInit, dispatcher } : fetchInit
   try {
     return await fetch(input, requestInit)
   } catch (error) {
     return { networkError: error }
   }
+}
+
+const PROXY_ENV_VARS = [
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+]
+
+function proxyConfigured(): boolean {
+  return PROXY_ENV_VARS.some((name) => Boolean(process.env[name]))
 }
 
 function insecureLocalhostEnabled(options: CliOptions): boolean {

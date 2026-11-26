@@ -3,6 +3,10 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Send requests through the proxy named in `HTTPS_PROXY` or `HTTP_PROXY`, and reach hosts listed in `NO_PROXY` directly. The CLI used to connect directly even when a proxy was set, so behind a corporate or sandbox proxy every command failed with a network error or an authentication error.
+
 ## 0.24.0 - 2026-11-26
 
 - Accept an id that begins with `-` wherever a command takes one positionally, such as `projects edit <id> --archive`. About one project id in 64 begins with a dash, and those ids were rejected as an unknown option. A mistyped option still fails as one.
