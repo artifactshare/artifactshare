@@ -3,7 +3,9 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.24.1 - 2026-11-26
+
+- Shorten the canonical zero-install CLI invocation from `npm exec --yes --package=@artifactshare/cli -- artifactshare` to `npx --yes @artifactshare/cli` across help text, onboarding prompts, recovery hints, README, and bundled skill guidance. Update the bundled skill to version 71.
 
 - Send requests through the proxy named in `HTTPS_PROXY` or `HTTP_PROXY`, and reach hosts listed in `NO_PROXY` directly. The CLI used to connect directly even when a proxy was set, so behind a corporate or sandbox proxy every command failed with a network error or an authentication error.
 
