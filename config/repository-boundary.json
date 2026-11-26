@@ -50,6 +50,8 @@
     "scripts/browser-analytics.test.mjs",
     "scripts/browser-waits.integration.mjs",
     "scripts/browser-waits.test.mjs",
+    "scripts/screens.mjs",
+    "scripts/screens.test.mjs",
     "scripts/test-reliability-lint-plugin.mjs",
     "scripts/test-reliability-lint-plugin.test.mjs",
     "scripts/browser-local-state.mjs",

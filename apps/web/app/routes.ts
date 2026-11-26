@@ -9,6 +9,8 @@ export const DEVELOPMENT_ROUTE_FILES = [
   'api.poc.slack.events.tsx',
   'dev.gallery/**',
   'dev.scenarios.$scenario/**',
+  'dev.screens.tsx',
+  'dev.settings.$state/**',
   'dev.sign-in.tsx',
   'poc.static-site.tsx',
 ] as const

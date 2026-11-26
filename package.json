@@ -22,6 +22,7 @@
     "check:dev-setup": "node scripts/check-dev-setup.mjs",
     "check:in-app-navigation": "node scripts/in-app-navigation.mjs",
     "check:scenario-routes": "node scripts/scenario-route-integration.mjs",
+    "screens": "node scripts/screens.mjs",
     "billing:regression": "node scripts/billing-regression.mjs",
     "audit:ai-search": "node scripts/audit-ai-search-eligibility.mjs",
     "measure:cli-tests": "node scripts/measure-cli-tests.mjs",

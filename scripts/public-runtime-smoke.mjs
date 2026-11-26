@@ -66,6 +66,8 @@ try {
     '/api/poc/slack/events',
     '/dev/gallery',
     '/dev/scenarios/landing-default',
+    '/dev/screens',
+    '/dev/settings/team-past-due/billing',
     '/dev/sign-in',
     '/poc/static-site',
   ]

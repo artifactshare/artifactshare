@@ -90,6 +90,8 @@ describe('route discovery', () => {
     for (const url of [
       '/dev/gallery',
       '/dev/scenarios/empty-home',
+      '/dev/screens',
+      '/dev/settings/team-past-due/billing',
       '/dev/sign-in',
       '/poc/static-site',
       '/api/poc/slack/events',
@@ -105,7 +107,12 @@ describe('route discovery', () => {
     expect(
       routeIds.filter((id) => /^routes\/(?:dev|(?:api\.)?poc)\./u.test(id)),
     ).toEqual([])
-    for (const url of ['/dev/gallery', '/poc/static-site'])
+    for (const url of [
+      '/dev/gallery',
+      '/dev/screens',
+      '/dev/settings/team-past-due/billing',
+      '/poc/static-site',
+    ])
       expect(matchRoutes(routes, url), url).toBeNull()
   })
 })
