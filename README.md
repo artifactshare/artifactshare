@@ -49,7 +49,7 @@ pnpm screens billing --theme light,dark --viewport desktop,mobile --lang ja,en
 ```
 
 A filter keeps the screens whose id contains it. Billing states live in
-`apps/web/app/routes/dev.settings.$state/+components/billing-states.ts`.
+`apps/web/app/routes/dev.settings.$state/+components/settings-states.ts`.
 
 The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
 After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.

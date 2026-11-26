@@ -9,15 +9,28 @@ import type { WorkspaceMemberRole } from '~/lib/team-management'
 import type { BillingLoaderData } from '~/routes/_protected/settings/+components/billing-page'
 import type { SettingsLoaderData } from '~/routes/_protected/settings/_layout'
 
+/** What each Settings page's loader returns. */
+export interface SettingsPageData {
+  billing: BillingLoaderData
+}
+
+export type SettingsPageId = keyof SettingsPageData
+
+/** Each page's path under the Settings shell, which the dev routes mirror. */
+export const SETTINGS_PAGE_PATHS = {
+  billing: 'billing',
+} satisfies Record<SettingsPageId, string>
+
 /**
- * Billing states the local stack cannot reach on its own: they need a Stripe
- * contract or a workspace close to its storage limit. Each state holds what
- * the Settings shell and billing loaders would return for it.
+ * A workspace situation the local stack cannot reach on its own, such as a
+ * Stripe contract or a workspace close to its storage limit. It holds what
+ * the Settings shell loader would return, and what each page it covers
+ * would load.
  */
-interface BillingState {
+interface SettingsState {
   description: string
   shell: SettingsLoaderData
-  billing: BillingLoaderData
+  pages: Partial<SettingsPageData>
 }
 
 const GB = 1024 ** 3
@@ -119,97 +132,117 @@ const TEAM: BillingLoaderData = {
   contributorCount: 6,
 }
 
-export const BILLING_STATES = {
+export const SETTINGS_STATES = {
   free: {
     description: 'Free plan with room to spare',
     shell: shell('free', 12 * 1024 ** 2),
-    billing: FREE,
+    pages: { billing: FREE },
   },
   'free-near-limit': {
     description: 'Free plan at 92% of its storage',
     shell: shell('free', Math.round(PLAN_STORAGE_QUOTA_BYTES.free * 0.92)),
-    billing: FREE,
+    pages: { billing: FREE },
   },
   'free-unconfigured': {
     description: 'Free plan on a stack without Stripe values',
     shell: shell('free', 12 * 1024 ** 2),
-    billing: { ...FREE, billingConfigured: false },
+    pages: { billing: { ...FREE, billingConfigured: false } },
   },
   'team-subscribed': {
     description: 'Team monthly contract in good standing',
     shell: shell('team', 18 * GB),
-    billing: TEAM,
+    pages: { billing: TEAM },
   },
   'team-past-due': {
     description: 'Team contract whose last payment failed',
     shell: shell('team', 18 * GB),
-    billing: {
-      ...TEAM,
-      stripeSubscriptionStatus: 'past_due',
-      monthlyEstimate: {
-        ...TEAM_SUBSCRIPTION.monthlyEstimate,
-        planCharge: 'unpaid',
-        planDate: PERIOD_START,
+    pages: {
+      billing: {
+        ...TEAM,
+        stripeSubscriptionStatus: 'past_due',
+        monthlyEstimate: {
+          ...TEAM_SUBSCRIPTION.monthlyEstimate,
+          planCharge: 'unpaid',
+          planDate: PERIOD_START,
+        },
       },
     },
   },
   'team-cancel-scheduled': {
     description: 'Team contract set to end at the period end',
     shell: shell('team', 18 * GB),
-    billing: {
-      ...TEAM,
-      contract: { ...TEAM_SUBSCRIPTION.contract, cancelAtPeriodEnd: true },
-      // A contract that ends at renewal is not charged for the next period.
-      monthlyEstimate: {
-        ...TEAM_SUBSCRIPTION.monthlyEstimate,
-        planAmount: 0,
-        totalAmount: 0,
-        planCharge: 'none',
-        cancelAtPeriodEnd: true,
+    pages: {
+      billing: {
+        ...TEAM,
+        contract: { ...TEAM_SUBSCRIPTION.contract, cancelAtPeriodEnd: true },
+        // A contract that ends at renewal is not charged for the next period.
+        monthlyEstimate: {
+          ...TEAM_SUBSCRIPTION.monthlyEstimate,
+          planAmount: 0,
+          totalAmount: 0,
+          planCharge: 'none',
+          cancelAtPeriodEnd: true,
+        },
       },
     },
   },
   'team-overage': {
     description: 'Team workspace 12 GB past its included storage',
     shell: shell('team', PLAN_STORAGE_QUOTA_BYTES.team + 12 * GB),
-    billing: { ...TEAM, ...subscription('team', 12) },
+    pages: { billing: { ...TEAM, ...subscription('team', 12) } },
   },
   'team-member': {
     description: 'Team workspace seen by a member who cannot manage billing',
     shell: shell('team', 18 * GB, 'member'),
-    // Only owners load the contract, and the estimate needs it.
-    billing: {
-      ...TEAM,
-      canManage: false,
-      contract: null,
-      monthlyEstimate: null,
+    pages: {
+      // Only owners load the contract, and the estimate needs it.
+      billing: {
+        ...TEAM,
+        canManage: false,
+        contract: null,
+        monthlyEstimate: null,
+      },
     },
   },
   'plus-overage': {
     description: 'Plus workspace 2 GB past its included storage',
     shell: shell('plus', PLAN_STORAGE_QUOTA_BYTES.plus + 2 * GB),
-    billing: {
-      ...TEAM,
-      ...subscription('plus', 2),
-      activeProjectCount: 8,
-      projectLimit: 20,
-      entryContext: 'plusOverage',
-      contributorCount: null,
+    pages: {
+      billing: {
+        ...TEAM,
+        ...subscription('plus', 2),
+        activeProjectCount: 8,
+        projectLimit: 20,
+        entryContext: 'plusOverage',
+        contributorCount: null,
+      },
     },
   },
-} satisfies Record<string, BillingState>
+} satisfies Record<string, SettingsState>
 
-export type BillingStateId = keyof typeof BILLING_STATES
+export type SettingsStateId = keyof typeof SETTINGS_STATES
 
-export const BILLING_STATE_IDS = Object.keys(BILLING_STATES) as BillingStateId[]
+export const SETTINGS_STATE_IDS = Object.keys(
+  SETTINGS_STATES,
+) as SettingsStateId[]
 
-export function isBillingStateId(value: unknown): value is BillingStateId {
-  return typeof value === 'string' && Object.hasOwn(BILLING_STATES, value)
+function isSettingsStateId(value: unknown): value is SettingsStateId {
+  return typeof value === 'string' && Object.hasOwn(SETTINGS_STATES, value)
 }
 
 /** The state a dev route names; a 404 outside Vite dev or for any other. */
-export function requireBillingState(state: string | undefined): BillingState {
-  if (!isViteDev() || !isBillingStateId(state))
+export function requireSettingsState(state: string | undefined): SettingsState {
+  if (!isViteDev() || !isSettingsStateId(state))
     throw new Response(null, { status: 404 })
-  return BILLING_STATES[state]
+  return SETTINGS_STATES[state]
+}
+
+/** A page of the state a dev route names; a 404 if the state lacks it. */
+export function requireSettingsPage<P extends SettingsPageId>(
+  state: string | undefined,
+  page: P,
+): SettingsPageData[P] {
+  const data = requireSettingsState(state).pages[page]
+  if (!data) throw new Response(null, { status: 404 })
+  return data
 }
