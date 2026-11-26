@@ -180,8 +180,22 @@ test('a capture nothing can write leaves the scenario its own failure', async ()
     delays: `${held}=400`,
     directory: blocked,
   })
-  await expect(
-    captureReproState('screens', async () => ({ checks: [] })),
-  ).resolves.toBeUndefined()
-  await expect(recordReproHolds(fakePage({}).page)).resolves.toBeUndefined()
+  const written = vi
+    .spyOn(process.stderr, 'write')
+    .mockImplementation(() => true)
+  let said: string[] = []
+  try {
+    await expect(
+      captureReproState('screens', async () => ({ checks: [] })),
+    ).resolves.toBeUndefined()
+    await expect(recordReproHolds(fakePage({}).page)).resolves.toBeUndefined()
+    // `mockRestore` forgets the calls, so read them while the spy stands.
+    said = written.mock.calls.map(([line]) => String(line).split(':')[0]!)
+  } finally {
+    written.mockRestore()
+  }
+  expect(said).toEqual([
+    'Could not write the state captured for screens',
+    'Could not write the holds this run recorded',
+  ])
 })
