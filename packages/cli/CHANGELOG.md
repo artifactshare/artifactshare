@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.24.0 - 2026-11-26
 
 - Accept an id that begins with `-` wherever a command takes one positionally, such as `projects edit <id> --archive`. About one project id in 64 begins with a dash, and those ids were rejected as an unknown option. A mistyped option still fails as one.
 
