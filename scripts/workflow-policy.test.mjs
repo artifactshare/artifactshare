@@ -17,6 +17,13 @@ const secretOwners = new Map([
 // npm provenance needs an OIDC token, and only in the job that publishes.
 const writableScopes = new Set(['id-token'])
 
+// Any other writable scope belongs to one named job of one workflow, never to
+// a whole workflow: the nightly detector's report job files and closes the
+// issues that carry its reported rows.
+const scopeOwners = new Map([
+  ['issues', [{ file: 'flaky-detector.yml', job: 'report' }]],
+])
+
 const hostedRunner =
   /^(?:ubuntu|windows|macos)-(?:latest|\d+(?:\.\d+)?)(?:-arm)?(?:-(?:large|xlarge))?$/u
 
@@ -99,7 +106,13 @@ function checkPin(uses, where, report) {
     report('pinned-action', where, uses)
 }
 
-function checkPermissions(permissions, where, report, { required }) {
+function ownsScope(scope, owner) {
+  return (scopeOwners.get(scope) ?? []).some(
+    (entry) => entry.file === owner.file && entry.job === owner.job,
+  )
+}
+
+function checkPermissions(permissions, where, report, { required, owner }) {
   if (permissions === undefined) {
     if (required) report('read-only-permissions', where, 'not declared')
     return
@@ -113,7 +126,10 @@ function checkPermissions(permissions, where, report, { required }) {
     if (
       level !== 'read' &&
       level !== 'none' &&
-      !(writableScopes.has(scope) && level === 'write')
+      !(
+        level === 'write' &&
+        (writableScopes.has(scope) || ownsScope(scope, owner))
+      )
     )
       report('read-only-permissions', where, `${scope}: ${level}`)
 }
@@ -185,12 +201,19 @@ export function inspectWorkflow({ file, text, data }) {
   if (secretNames(JSON.stringify(data.env ?? {})).length > 0)
     report('secret-environment', 'workflow env', 'outside any environment')
 
-  checkPermissions(data.permissions, '', report, { required: true })
+  const workflowFile = path.basename(file)
+  checkPermissions(data.permissions, '', report, {
+    required: true,
+    owner: { file: workflowFile },
+  })
   const inheritsOidc = oidcLevel(data.permissions) === 'write'
 
   for (const [jobName, job] of Object.entries(data.jobs ?? {})) {
     const where = `job ${jobName}`
-    checkPermissions(job.permissions, where, report, { required: false })
+    checkPermissions(job.permissions, where, report, {
+      required: false,
+      owner: { file: workflowFile, job: jobName },
+    })
     checkFailureVisibility(job, where, report)
 
     if (job['timeout-minutes'] === undefined)
@@ -389,10 +412,10 @@ const checkoutStep = {
 }
 const installStep = { run: 'pnpm install --frozen-lockfile --ignore-scripts' }
 
-function withJob(overrides) {
+function withJob(overrides, name = 'check') {
   return {
     jobs: {
-      check: {
+      [name]: {
         'runs-on': 'ubuntu-latest',
         'timeout-minutes': 10,
         steps: [checkoutStep, installStep],
@@ -684,6 +707,32 @@ for (const [name, overrides, expected, file] of [
   [
     'rejects a write permission on a job',
     withJob({ permissions: { contents: 'write' } }),
+    ['read-only-permissions'],
+  ],
+  [
+    'accepts a writable scope in the job that owns it',
+    withJob({ permissions: { contents: 'read', issues: 'write' } }, 'report'),
+    [],
+    'flaky-detector.yml',
+  ],
+  [
+    'rejects a writable scope in another job of the owning workflow',
+    withJob({ permissions: { contents: 'read', issues: 'write' } }),
+    ['read-only-permissions'],
+    'flaky-detector.yml',
+  ],
+  [
+    'rejects a writable scope the owning workflow grants to every job',
+    {
+      permissions: { contents: 'read', issues: 'write' },
+      ...withJob({}, 'report'),
+    },
+    ['read-only-permissions'],
+    'flaky-detector.yml',
+  ],
+  [
+    'rejects a writable scope in a workflow that does not own it',
+    withJob({ permissions: { contents: 'read', issues: 'write' } }, 'report'),
     ['read-only-permissions'],
   ],
   [
