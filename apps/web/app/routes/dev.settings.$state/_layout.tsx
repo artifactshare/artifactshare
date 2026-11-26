@@ -1,7 +1,10 @@
 import type { Route } from './+types/_layout'
 import SettingsLayout from '~/routes/_protected/settings/+components/settings-layout'
 import { AppShell } from '~/routes/_protected/+components/app-shell'
-import { JOINED_PROJECTS, requireSettingsState } from './+components/settings-states'
+import {
+  JOINED_PROJECTS,
+  requireSettingsState,
+} from './+components/settings-states'
 
 // Development only: the real Settings shell and pages, fed fixture data, so
 // workspace situations that need Stripe, a nearly full workspace or a team's
