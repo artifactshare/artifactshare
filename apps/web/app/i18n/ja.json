@@ -1070,7 +1070,7 @@
   "lp.hero.bodyTail": "に。コメントも修正も、同じ URL のまま更新できます。",
   "lp.hero.ctaPrimary": "無料で始める",
   "lp.hero.ctaSecondary": "実物サンプルを見る",
-  "lp.hero.toolsNote": "Claude Code · Codex · Gemini · Cursor · ChatGPT · ブラウザ対応",
+  "lp.hero.toolsNote": "Claude Code · Codex · Cursor · Claude · ChatGPT · ブラウザ（Gemini 等も対応）",
   "lp.hero.tabCliHint": "Claude Code・Codex などのエージェントに貼るだけ",
   "lp.hero.tabMcpHint": "チャット AI には MCP サーバーを接続",
   "lp.hero.cliPrompt": "npx --yes @artifactshare/cli init を実行して",
