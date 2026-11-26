@@ -462,7 +462,7 @@ describe('billing service', () => {
       customer_update: { address: 'auto' },
       billing_address_collection: 'required',
       success_url:
-        'https://artifactshare.test/settings/billing?status=checkout-success',
+        'https://artifactshare.test/settings/billing?status=checkout-success&session_id={CHECKOUT_SESSION_ID}',
       cancel_url:
         'https://artifactshare.test/settings/billing?status=checkout-cancelled',
     })
