@@ -4,7 +4,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { z } from 'zod'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  onTestFinished,
+  test,
+  vi,
+} from 'vitest'
 import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 
@@ -3681,6 +3689,13 @@ describe('headless publish wiring', () => {
   })
 
   test('MCP shares the service posting allowance and exposes retry timing', async () => {
+    // The allowance is a fixed UTC minute window. Start at the top of a minute
+    // so the 20 admissions cannot straddle a boundary and reset the count.
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'))
     const { sessionUser, id } = await publishOwnerDoc()
     const access = await loadCommentAccess(db, sessionUser, id)
     if (!access) throw new Error('expected access')
