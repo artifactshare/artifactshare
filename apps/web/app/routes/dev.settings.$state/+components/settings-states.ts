@@ -129,13 +129,15 @@ function shell(
     currentUserIsAdmin: role !== 'member',
     currentUserRole: role,
     user: { ...user, image: null, initial: user.name.charAt(0) },
-    joinedProjects: [
-      { id: 'project-website', name: 'Website redesign', newCount: 3 },
-      { id: 'project-launch', name: 'Q4 launch campaign', newCount: 0 },
-      { id: 'project-research', name: 'User research 2026', newCount: 1 },
-    ],
   }
 }
+
+/** The projects the header's project menu lists for every state. */
+export const JOINED_PROJECTS = [
+  { id: 'project-website', name: 'Website redesign', newCount: 3 },
+  { id: 'project-launch', name: 'Q4 launch campaign', newCount: 0 },
+  { id: 'project-research', name: 'User research 2026', newCount: 1 },
+]
 
 /** A monthly JPY contract renewing this month, with this projected overage. */
 function subscription(plan: 'plus' | 'team', overageGb: number) {

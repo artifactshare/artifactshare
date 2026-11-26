@@ -24,6 +24,7 @@ import { discoverRoutes } from '~/routes'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import * as protectedLayout from '../_layout'
+import * as appShell from '../+shell/_layout'
 import * as settingsLayout from './_layout'
 import * as content from './_content/_layout'
 import * as admin from './_content/+admin/_layout'
@@ -55,11 +56,6 @@ vi.mock('~/services/bot-members.server', () => ({
 vi.mock('~/services/project-membership.server', () => ({
   listJoinedProjectsForDropdown: async () => [],
 }))
-// The shared chrome is not what this checks.
-vi.mock('../../_home/+components/topbar', () => ({ Topbar: () => null }))
-vi.mock('../../_home/+components/bottom-tab-bar', () => ({
-  BottomTabBar: () => null,
-}))
 
 const fixture = createMigratedInMemoryDb()
 
@@ -80,6 +76,11 @@ const modules: Record<string, RouteModule> = {
   'routes/_protected/_layout': {
     middleware: protectedLayout.middleware,
     default: asPage(protectedLayout.default),
+  },
+  // The header above Settings is not what this checks; its loader runs.
+  'routes/_protected/_shell': {
+    loader: (args) => appShell.loader(at('/settings', args)),
+    default: Outlet,
   },
   [`${SETTINGS}/_layout`]: {
     loader: (args) => settingsLayout.loader(at('/settings', args)),

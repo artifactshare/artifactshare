@@ -65,7 +65,8 @@ vi.mock('~/services/link-sharing.server', () => ({
   loadWorkspaceLinkPolicy: async () => null,
 }))
 
-import ProjectActivity, { loader } from './projects.$id.activity'
+import ProjectActivity, { handle, loader } from './projects.$id.activity'
+import { renderUnderAppShell } from '~/test/app-shell-page'
 
 type Db = Kysely<DB>
 
@@ -210,10 +211,10 @@ function componentData(overrides: Record<string, unknown> = {}) {
 
 describe('project activity subpage states', () => {
   test('activity subpage keeps the mobile primary navigation', () => {
-    const html = renderToStaticMarkup(
-      createElement(ProjectActivity, {
-        loaderData: componentData({ rows: [] }),
-      } as never),
+    const loaderData = componentData({ rows: [] })
+    const html = renderUnderAppShell(
+      createElement(ProjectActivity, { loaderData } as never),
+      { handle, loaderData },
     )
     expect(html).toContain('data-bottom-tab-bar')
   })
@@ -311,7 +312,10 @@ test('activity route supplies the loaded project to header search', async () => 
   const { db } = await fixture()
   try {
     const data = await loader(args())
-    const html = renderToStaticMarkup(<ProjectActivity loaderData={data} />)
+    const html = renderUnderAppShell(<ProjectActivity loaderData={data} />, {
+      handle,
+      loaderData: data,
+    })
     expect(html).toContain('data-search-project="proj1"')
     expect(html).toContain('>Project proj1</header>')
   } finally {

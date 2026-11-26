@@ -279,3 +279,59 @@ export async function syncWorkspaceSubscription(
 
   return { kind: 'ok' }
 }
+
+type ReturnedCheckoutSession = Pick<
+  Stripe.Checkout.Session,
+  'client_reference_id' | 'mode' | 'status' | 'customer' | 'subscription'
+>
+
+export type CheckoutReturnStripeClient = BillingStripeClient & {
+  checkout: {
+    sessions: { retrieve: (id: string) => Promise<ReturnedCheckoutSession> }
+  }
+}
+
+const CHECKOUT_SESSION_ID = /^cs_[A-Za-z0-9_]{1,255}$/u
+
+function stripeObjectId(value: string | { id: string } | null): string | null {
+  if (typeof value === 'string') return value
+  return value?.id ?? null
+}
+
+/**
+ * Brings the plan up to date when the owner returns from Stripe Checkout,
+ * before the page reads it, so the billing page shows the plan just bought
+ * without waiting for the webhook. The session must be a completed
+ * subscription Checkout that this workspace started for its own Stripe
+ * customer; anything else is left to the webhook, as before. The subscription
+ * goes through the same sync the webhook uses.
+ */
+export async function syncReturnedCheckout(
+  db: Kysely<DB>,
+  stripe: CheckoutReturnStripeClient,
+  env: BillingEnv,
+  workspaceId: string,
+  checkoutSessionId: string,
+): Promise<SyncWorkspaceSubscriptionResult | { kind: 'not-this-checkout' }> {
+  if (!CHECKOUT_SESSION_ID.test(checkoutSessionId))
+    return { kind: 'not-this-checkout' }
+  const [session, workspace] = await Promise.all([
+    stripe.checkout.sessions.retrieve(checkoutSessionId),
+    db
+      .selectFrom('workspaces')
+      .select('stripe_customer_id')
+      .where('id', '=', workspaceId)
+      .executeTakeFirst(),
+  ])
+  const subscriptionId = stripeObjectId(session.subscription)
+  if (
+    session.mode !== 'subscription' ||
+    session.status !== 'complete' ||
+    session.client_reference_id !== workspaceId ||
+    !workspace?.stripe_customer_id ||
+    stripeObjectId(session.customer) !== workspace.stripe_customer_id ||
+    !subscriptionId
+  )
+    return { kind: 'not-this-checkout' }
+  return syncWorkspaceSubscription(db, stripe, env, subscriptionId)
+}

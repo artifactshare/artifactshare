@@ -61,7 +61,7 @@ import {
   type ProjectBaseVisibility,
   type Visibility,
 } from '~/lib/shareable-types'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import type { GrantEntry } from '~/services/shareables.server'
 import { viewerReturnTo } from '~/lib/viewer-return'
 import { useEditTitle } from '../+hooks/use-edit-title'
@@ -286,6 +286,7 @@ export function ViewerChrome({
   collapseToggleRef,
   onCollapsedChange,
 }: ViewerChromeProps) {
+  const formatRelative = useRelativeTime()
   const translator = useT()
   const { t, tPlural, locale } = translator
   const remove = useRemoveArtifact(artifact.id)

@@ -116,6 +116,14 @@ test('production configs preserve the four public Worker entrypoints', () => {
   }
 })
 
+test('only production sends analytics hits to Google', () => {
+  // Local development, screen captures and browser tests run on the
+  // development config. Without a Measurement ID the app never loads gtag.js,
+  // so none of them sends hits to Google.
+  assert.equal(previewApp.vars.GA4_MEASUREMENT_ID, '')
+  assert.match(app.vars.GA4_MEASUREMENT_ID, /^G-[A-Z0-9]+$/u)
+})
+
 test('production app and sandbox share D1 and artifact storage', () => {
   assert.equal(app.d1_databases[0].binding, 'DB')
   assert.equal(sandbox.d1_databases[0].binding, 'DB')

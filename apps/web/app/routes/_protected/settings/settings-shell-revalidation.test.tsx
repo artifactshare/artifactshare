@@ -113,11 +113,6 @@ vi.mock('~/services/cli-refresh-credentials.server', () => ({
   revokeCliRefreshCredentialFamily: vi.fn(),
   revokeAllCliRefreshCredentialFamilies: vi.fn(),
 }))
-// The shared chrome is not what this checks.
-vi.mock('../../_home/+components/topbar', () => ({ Topbar: () => null }))
-vi.mock('../../_home/+components/bottom-tab-bar', () => ({
-  BottomTabBar: () => null,
-}))
 
 const t = bindI18n('en').t
 const here = new URL('https://example.test/settings/tokens')

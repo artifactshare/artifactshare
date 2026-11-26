@@ -18,7 +18,6 @@ const shell: SettingsLoaderData = {
   },
   currentUserIsAdmin: true,
   currentUserRole: 'owner',
-  joinedProjects: [],
   workspace: {
     id: 'workspace',
     name: 'Example workspace',
@@ -92,7 +91,7 @@ test('a Checkout return notice stays on its own entry when the user opens Billin
   window.history.replaceState(
     null,
     '',
-    '/settings/billing?status=checkout-success',
+    '/settings/billing?status=checkout-success&session_id=cs_test_return',
   )
   const router = createBrowserRouter([
     {

@@ -101,7 +101,6 @@ describe('/api/slack/oauth/callback', () => {
                   kind: 'team',
                   currentUserIsAdmin: true,
                   currentUserRole: 'owner',
-                  joinedProjects: [],
                   workspace: {
                     id: 'workspace-a',
                     name: 'Reports',

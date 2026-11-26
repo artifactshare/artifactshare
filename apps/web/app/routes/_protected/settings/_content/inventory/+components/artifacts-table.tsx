@@ -11,7 +11,7 @@ import {
 } from '~/components/ui/table'
 import { VisibilityChip } from '~/components/app/visibility-chip'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { formatBytes } from '~/lib/format'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import type { Visibility } from '~/lib/shareable-types'
@@ -41,6 +41,7 @@ export function ArtifactsTable({
   rows: InventoryArtifactEntry[]
   locale: 'ja' | 'en'
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   return (
     <>
@@ -130,6 +131,7 @@ function ArtifactRow({
   row: InventoryArtifactEntry
   locale: 'ja' | 'en'
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   return (
     <TableRow>

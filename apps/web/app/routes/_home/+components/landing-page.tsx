@@ -59,7 +59,7 @@ const HERO_SOURCES = [
   { id: 'claude', label: 'Claude Code', brand: 'claude' as const, rev: 'v1' },
   { id: 'codex', label: 'Codex', brand: 'chatgpt' as const, rev: 'v2' },
   { id: 'cursor', label: 'Cursor', brand: 'cursor' as const, rev: 'v3' },
-  { id: 'gemini', label: 'Gemini', brand: null, rev: 'v4' },
+  { id: 'chatgpt', label: 'ChatGPT', brand: 'chatgpt' as const, rev: 'v4' },
 ] as const
 
 function CopyButton({ value }: { value: string }) {
@@ -235,16 +235,14 @@ function HeroStage() {
                     : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
                 )}
               >
-                {source.brand ? (
-                  <AiBrandMark
-                    brand={source.brand}
-                    className={cn(
-                      'size-3 flex-none',
-                      selected ? 'fill-background' : 'fill-muted-foreground',
-                    )}
-                    aria-hidden="true"
-                  />
-                ) : null}
+                <AiBrandMark
+                  brand={source.brand}
+                  className={cn(
+                    'size-3 flex-none',
+                    selected ? 'fill-background' : 'fill-muted-foreground',
+                  )}
+                  aria-hidden="true"
+                />
                 {source.label}
               </button>
             )

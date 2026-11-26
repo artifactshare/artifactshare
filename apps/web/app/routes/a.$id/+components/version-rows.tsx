@@ -1,5 +1,6 @@
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
+import type { Locale } from '~/i18n/messages'
 import { formatBytes } from '~/lib/format'
 import { cn } from '~/lib/utils'
 import type { VersionRow } from './version-history-types'
@@ -11,10 +12,11 @@ export function VersionRows({
   density = 'panel',
 }: {
   versions: ReadonlyArray<VersionRow>
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   t: ReturnType<typeof useT>['t']
   density?: 'panel' | 'popover'
 }) {
+  const formatRelative = useRelativeTime()
   if (versions.length === 0) {
     return (
       <p className="text-muted-foreground m-0 text-xs">{t('history.empty')}</p>

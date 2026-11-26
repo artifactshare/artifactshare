@@ -33,7 +33,7 @@ import type { action } from '../_content/integrations'
 import type { SettingsLayoutContext } from '../_layout'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import type { SlackConnectionListItem } from '~/services/slack.server'
 
 export interface IntegrationsLoaderData {
@@ -147,6 +147,7 @@ export function SlackConnectionCard({
   canManage: boolean
   pending: boolean
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   const time = formatRelative(connection.installedAt, locale)
   const meta = connection.installedByName

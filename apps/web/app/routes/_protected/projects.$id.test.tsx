@@ -1,4 +1,3 @@
-import { createMemoryRouter, RouterProvider } from 'react-router'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -66,7 +65,8 @@ vi.mock('~/components/ui/dropdown-menu', () => ({
   ),
 }))
 
-import ProjectDetail, { action, loader } from './projects.$id'
+import ProjectDetail, { action, handle, loader } from './projects.$id'
+import { renderUnderAppShell } from '~/test/app-shell-page'
 import { versionBadgeLabel } from '~/lib/version-badge'
 import { ProjectRedesignBody } from './+components/project-redesign-body'
 import { MemberDetailActions } from './projects.$id'
@@ -1181,10 +1181,10 @@ test('the actual project route supplies its current id and name to header search
   const { db } = await fixture()
   try {
     const data = await loader(loaderArgs())
-    const router = createMemoryRouter([
-      { path: '*', element: <ProjectDetail loaderData={data} /> },
-    ])
-    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    const html = renderUnderAppShell(<ProjectDetail loaderData={data} />, {
+      handle,
+      loaderData: data,
+    })
     expect(html).toContain('data-search-project="proj1"')
     expect(html).toContain('>Project</header>')
   } finally {

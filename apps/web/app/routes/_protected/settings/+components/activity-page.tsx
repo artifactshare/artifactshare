@@ -12,7 +12,7 @@ import {
 import { Pager } from '~/components/form/pager'
 import { BotBadge, UserKindBadge } from '~/components/app/user-kind-badge'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import {
   displayName,
   AUDIT_EVENTS_PAGE_SIZE,
@@ -84,6 +84,7 @@ function ActivityRow({
   event: AuditEventEntry
   locale: 'ja' | 'en'
 }) {
+  const formatRelative = useRelativeTime()
   const { t } = useT()
   const action = actionText(event, t)
   const subject = subjectText(event, t)

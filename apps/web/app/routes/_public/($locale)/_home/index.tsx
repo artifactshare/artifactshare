@@ -15,7 +15,7 @@ import {
 import type { RecentRow } from '~/lib/recent-row'
 import { Landing } from '../../../_home/+components/landing'
 import { sectionClassName } from '../../../_home/+components/file-list-styles'
-import type { HomeLayoutContext } from '../../../_home/_layout'
+import type { HomeLayoutContext } from '../../../_home/+components/home-main'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
 import { landingMeta } from '~/lib/landing-meta'
@@ -34,6 +34,7 @@ import {
   type RailProject,
 } from '~/services/home.server'
 import { HomeRail } from '../../../_home/+components/home-rail'
+import { requestJoinedProjects } from '../../../_protected/+lib/app-shell.server'
 import {
   AppPageHeader,
   AppPageHeaderActions,
@@ -186,7 +187,9 @@ export async function loader(
     listRecentArtifactsLimited(db, user, 20, { relation, unread }).catch(
       () => null,
     ),
-    listRailProjects(db, user).catch(() => null),
+    listRailProjects(db, user, requestJoinedProjects(context)).catch(
+      () => null,
+    ),
     countRecentArtifacts(db, user, { relation, unread }).catch(() => null),
     recentHistoryCardinality(db, user).catch(() => null),
   ])

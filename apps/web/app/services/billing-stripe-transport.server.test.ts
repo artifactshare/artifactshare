@@ -153,7 +153,7 @@ test('customer and fixed-price checkout serialize billing fields and consume ret
     'customer_update[address]': 'auto',
     billing_address_collection: 'required',
     success_url:
-      'https://app.example.test/settings/billing?status=checkout-success',
+      'https://app.example.test/settings/billing?status=checkout-success&session_id={CHECKOUT_SESSION_ID}',
     cancel_url:
       'https://app.example.test/settings/billing?status=checkout-cancelled',
   })

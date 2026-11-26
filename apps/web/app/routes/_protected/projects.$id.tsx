@@ -13,8 +13,6 @@ import {
 } from 'react-router'
 import { IconDots, IconPlus, IconStack2 as Layers } from '@tabler/icons-react'
 import type { Route } from './+types/projects.$id'
-import type { JoinedProjectNav } from '../_home/+components/primary-nav'
-import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
 import { ProjectScopeChip } from '~/components/app/visibility-chip'
 import { IconButton } from '~/components/app/icon-button'
 import { ProjectScopeField } from '~/components/app/project-scope-field'
@@ -54,7 +52,7 @@ import { Field, FieldGroup, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
 import { Textarea } from '~/components/ui/textarea'
 import { displayTitle } from '~/lib/display-title'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 import { toast } from 'sonner'
 import type { TKey } from '~/lib/i18n'
@@ -113,7 +111,7 @@ import {
   projectDetailHeadClassName,
   projectDetailH1ClassName,
 } from '~/components/app/project-detail-styles'
-import { Topbar } from '../_home/+components/topbar'
+import type { AppShellHandle } from './+components/app-shell'
 import { listMainClassName } from '~/components/app/page-shell-styles'
 import {
   AppPageHeader,
@@ -140,7 +138,6 @@ import {
   countProjectParticipants,
   joinProject,
   leaveProject,
-  listJoinedProjectsForDropdown,
   listProjectParticipants,
   touchProjectSeen,
 } from '~/services/project-membership.server'
@@ -189,7 +186,6 @@ type MemberLoaderData = {
   externalPostingEnabled: boolean
   projectArtifactCount: number
   projectActivity: ProjectActivityData
-  joinedNav: JoinedProjectNav[]
 }
 
 type SharedLoaderData = {
@@ -208,7 +204,6 @@ type SharedLoaderData = {
   projectArtifactCount: number
   files: FileRowData[]
   projectActivity: ProjectActivityData
-  joinedNav: JoinedProjectNav[]
 }
 
 type LoaderData = MemberLoaderData | SharedLoaderData
@@ -290,6 +285,14 @@ async function loadProjectActivity(
     participants: { count: participantCount, top: participantTop },
     joined: Boolean(joinedRow),
   }
+}
+
+// The shared header narrows its search to this project.
+export const handle: AppShellHandle = {
+  searchProject: (data) => {
+    const { project } = data as LoaderData
+    return { id: project.id, name: project.name }
+  },
 }
 
 export async function loader({
@@ -397,7 +400,6 @@ export async function loader({
       'member',
       timeZone,
     ),
-    joinedNav: await listJoinedProjectsForDropdown(db, user, 5).catch(() => []),
   }
 }
 
@@ -482,7 +484,6 @@ async function loadSharedProject(
       'shared',
       timeZone,
     ),
-    joinedNav: await listJoinedProjectsForDropdown(db, user, 5).catch(() => []),
   }
 }
 
@@ -674,6 +675,7 @@ type DialogKind =
   | 'slack'
 
 function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
+  const formatRelative = useRelativeTime()
   const leaveFetcher = useFetcher()
   const [openDialog, setOpenDialog] = useState<DialogKind | null>(null)
   const [editErrorVisible, setEditErrorVisible] = useState(true)
@@ -700,7 +702,7 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
   const fileUpdatedAt = files[0]?.modifiedTime ?? null
   const fileUpdated = useMemo(
     () => (fileUpdatedAt ? formatRelative(fileUpdatedAt, locale) : null),
-    [fileUpdatedAt, locale],
+    [fileUpdatedAt, locale, formatRelative],
   )
   const uploadDestination = useMemo(
     () => ({
@@ -747,12 +749,6 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
   }
   return (
     <>
-      <Topbar
-        searchProject={{ id: project.id, name: project.name }}
-        workspaceName={loaderData.workspaceName}
-        user={loaderData.user}
-        joinedProjects={loaderData.joinedNav}
-      />
       <main className={listMainClassName}>
         <ProjectPageBreadcrumb title={title} />
         <section
@@ -898,7 +894,6 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
         onOpenChange={(open) => setOpenDialog(open ? 'slack' : null)}
         projectId={project.id}
       />
-      <BottomTabBar />
     </>
   )
 }
@@ -983,6 +978,7 @@ function MemberSummaryStrip({
   fileUpdated: string | null
   createdAt: string
 }) {
+  const formatRelative = useRelativeTime()
   const { tPlural, t, locale } = useT()
   return (
     <div className={projectSummaryStripClassName}>
@@ -1030,6 +1026,7 @@ function ProjectFileTable({ files }: { files: FileRowData[] }) {
 }
 
 function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
+  const formatRelative = useRelativeTime()
   const [openDialog, setOpenDialog] = useState<
     'upload' | 'shareDefaults' | null
   >(null)
@@ -1045,7 +1042,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
   const fileUpdatedAt = files[0]?.modifiedTime ?? null
   const fileUpdated = useMemo(
     () => (fileUpdatedAt ? formatRelative(fileUpdatedAt, locale) : null),
-    [fileUpdatedAt, locale],
+    [fileUpdatedAt, locale, formatRelative],
   )
   const uploadDestination = useMemo(
     () => ({
@@ -1069,12 +1066,6 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
   )
   return (
     <>
-      <Topbar
-        searchProject={{ id: project.id, name: project.name }}
-        workspaceName={loaderData.workspaceName}
-        user={loaderData.user}
-        joinedProjects={loaderData.joinedNav}
-      />
       <main className={listMainClassName}>
         <ProjectPageBreadcrumb title={title} />
         <section className={projectContextClassName}>
@@ -1196,7 +1187,6 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
           artifactCount={loaderData.projectArtifactCount}
         />
       ) : null}
-      <BottomTabBar />
     </>
   )
 }

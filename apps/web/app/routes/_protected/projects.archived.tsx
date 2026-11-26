@@ -23,8 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '~/components/ui/empty'
-import { formatRelative } from '~/lib/datetime'
-import { toUserInfo, type UserInfo } from '~/lib/user'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 import { requireUser } from '~/middleware/context'
 import { isTeamWorkspaceAdmin } from '~/services/access.server'
@@ -40,19 +39,13 @@ import {
   projectDetailHeadClassName,
   projectDetailH1ClassName,
 } from '~/components/app/project-detail-styles'
-import { Topbar } from '../_home/+components/topbar'
-import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
-import type { JoinedProjectNav } from '../_home/+components/primary-nav'
 import { listMainClassName } from '~/components/app/page-shell-styles'
-import { listJoinedProjectsForDropdown } from '~/services/project-membership.server'
 type LoaderData = {
   projects: ProjectSummary[]
-  user: UserInfo
   userId: string
   isAdmin: boolean
   workspaceId: string
   workspaceName: string
-  joinedProjects: JoinedProjectNav[]
 }
 
 export async function loader({
@@ -61,7 +54,7 @@ export async function loader({
   const user = requireUser(context)
 
   const db = createDb()
-  const [workspace, projects, isAdmin, joinedProjects] = await Promise.all([
+  const [workspace, projects, isAdmin] = await Promise.all([
     db
       .selectFrom('workspaces')
       .select(['name', 'hd'])
@@ -69,30 +62,19 @@ export async function loader({
       .executeTakeFirst(),
     listArchivedWorkspaceProjects(db, user.workspaceId, user),
     isTeamWorkspaceAdmin(db, user, user.workspaceId),
-    listJoinedProjectsForDropdown(db, user, 5)
-      .then((rows) =>
-        rows.map((row) => ({
-          id: row.id,
-          name: row.name,
-          newCount: row.newCount,
-          workspaceName: row.workspaceName,
-        })),
-      )
-      .catch(() => []),
   ])
 
   return {
     projects,
-    user: toUserInfo(user),
     userId: user.id,
     isAdmin,
     workspaceId: user.workspaceId,
     workspaceName: workspace?.name ?? workspace?.hd ?? 'Files',
-    joinedProjects,
   }
 }
 
 export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
+  const formatRelative = useRelativeTime()
   const { tPlural, t, locale } = useT()
   const revalidator = useRevalidator()
   const { projects, userId, isAdmin, workspaceId, workspaceName } = loaderData
@@ -102,11 +84,6 @@ export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <Topbar
-        workspaceName={workspaceName}
-        user={loaderData.user}
-        joinedProjects={loaderData.joinedProjects}
-      />
       <main className={listMainClassName}>
         <PageBreadcrumb aria-label={t('project.location')}>
           <BreadcrumbList>
@@ -226,7 +203,6 @@ export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
           }}
         />
       ) : null}
-      <BottomTabBar />
     </>
   )
 }

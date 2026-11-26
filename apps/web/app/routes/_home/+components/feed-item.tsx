@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import type { FeedEventRow } from '~/services/events.server'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import { useT } from '~/hooks/use-t'
 
 const eventIcons: Partial<Record<FeedEventRow['type'], typeof IconEye>> = {
@@ -46,6 +46,7 @@ export function FeedItem({
   compact?: boolean
   showLocation?: boolean
 }) {
+  const formatRelative = useRelativeTime()
   const { locale, t } = useT()
   const isAddDigest =
     row.type === 'artifact_created' && (row.addCount ?? 0) >= 2
