@@ -78,6 +78,7 @@ import {
   loadRemovedWorkspaceMembers,
   loadWorkspaceMembersPage,
   parseMembersPageFilters,
+  isRemovedWorkspaceMember,
   removeWorkspaceMember,
   restoreWorkspaceMember,
   revokeWorkspaceAdmin,
@@ -139,6 +140,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         const userId = stringValue(form.get('userId'))
         if (!userId) return settingsFailure(intent, 'invalid')
         result = await removeWorkspaceMember(db, user, userId)
+        // A retry after a lost response finds the member already removed.
+        // The first request committed the removal, so finish the transfer.
+        if (
+          result.kind === 'not-found' &&
+          (await isRemovedWorkspaceMember(db, user.workspaceId, userId))
+        ) {
+          result = { kind: 'ok' }
+        }
         if (result.kind === 'ok') {
           const recipientUserId = stringValue(form.get('recipientUserId'))
           if (recipientUserId && recipientUserId !== NO_ASSET_TRANSFER) {

@@ -17,6 +17,7 @@ const services = vi.hoisted(() => ({
   revokeWorkspaceMemberCliSessions: vi.fn(),
   transferWorkspaceOwner: vi.fn(),
   removeWorkspaceMember: vi.fn(),
+  isRemovedWorkspaceMember: vi.fn(),
   restoreWorkspaceMember: vi.fn(),
   transferRemovedMemberAssets: vi.fn(),
   updateWorkspaceName: vi.fn(),
@@ -337,6 +338,38 @@ describe('/settings role actions', () => {
     })
     expect(response.init?.status).toBe(200)
   })
+  test.each([
+    [true, 200, { ok: true, code: 'removed', intent: 'remove-member' }],
+    [false, 404, undefined],
+  ])(
+    'a retried removal that finds the member already removed (%s) finishes the transfer',
+    async (alreadyRemoved, status, data) => {
+      services.removeWorkspaceMember.mockResolvedValueOnce({
+        kind: 'not-found',
+      })
+      services.isRemovedWorkspaceMember.mockResolvedValueOnce(alreadyRemoved)
+      services.transferRemovedMemberAssets.mockClear()
+      services.transferRemovedMemberAssets.mockResolvedValueOnce({ kind: 'ok' })
+      const request = postForm({
+        intent: 'remove-member',
+        userId: 'target',
+        recipientUserId: 'owner',
+      })
+      const response = await action({
+        request,
+        context: new RouterContextProvider(),
+        params: {},
+        url: new URL(request.url),
+        pattern: '/settings',
+      })
+      expect(services.transferRemovedMemberAssets).toHaveBeenCalledTimes(
+        alreadyRemoved ? 1 : 0,
+      )
+      expect(response.init?.status).toBe(status)
+      if (data) expect(response.data).toEqual(data)
+      else expect(response.data).toMatchObject({ ok: false })
+    },
+  )
   test('returns an invalid result for missing owner input', async () => {
     const request = postForm({ intent: 'grant-admin' })
     const response = await action({

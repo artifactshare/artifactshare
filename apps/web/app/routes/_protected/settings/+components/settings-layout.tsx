@@ -15,6 +15,7 @@ import { PageHeader } from '~/components/form/page-header'
 import { Stack } from '~/components/layout/stack'
 import { SettingsPage } from '~/components/form/settings-page'
 import { useT } from '~/hooks/use-t'
+import { useReloadOnBackForwardRestore } from '~/hooks/use-reload-on-back-forward-restore'
 import { settingsMainClassName } from '~/components/app/page-shell-styles'
 import type { SettingsLoaderData } from '../_layout'
 
@@ -25,6 +26,7 @@ export default function SettingsLayout({
 }) {
   const { pathname } = useLocation()
   const { t } = useT()
+  useReloadOnBackForwardRestore()
 
   return (
     <>
