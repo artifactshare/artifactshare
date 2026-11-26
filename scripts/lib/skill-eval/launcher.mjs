@@ -6,7 +6,14 @@ import { inventory, environments } from './environment.mjs'
 
 export function guardedArguments(bin, argv, baseUrl) {
   let args = argv
-  if (bin === 'npm') {
+  if (bin === 'npx') {
+    const prefix = ['--yes', '@artifactshare/cli']
+    if (!prefix.every((value, i) => args[i] === value))
+      throw new Error(
+        'Unsupported npx form: only the bundled Artifact Share npx form is allowed',
+      )
+    args = args.slice(prefix.length)
+  } else if (bin === 'npm') {
     const prefix = [
       'exec',
       '--yes',
@@ -21,7 +28,7 @@ export function guardedArguments(bin, argv, baseUrl) {
     args = args.slice(prefix.length)
   } else if (bin !== 'artifactshare')
     throw new Error(
-      'Package runners are disabled; use artifactshare or the bundled npm exec form',
+      'Package runners are disabled; use artifactshare or the bundled npx/npm exec form',
     )
   for (let i = 0; i < args.length; i++) {
     if (/^--base(?:-url|Url)(?:=|$)/u.test(args[i])) {
