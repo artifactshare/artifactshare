@@ -65,6 +65,16 @@ test('the report job tracks each reported row after writing the report', () => {
   )
 })
 
+test('the detector runs nightly and by hand, and on no other event', () => {
+  assert.deepEqual(Object.keys(workflow.on).sort(), [
+    'schedule',
+    'workflow_dispatch',
+  ])
+  // A pull request trigger would repeat every suite on every push, and a run of
+  // an unmerged branch must never be the one that files an issue.
+  assert.deepEqual(workflow.on.schedule, [{ cron: '17 2 * * *' }])
+})
+
 test('the detector never cancels a run in progress', () => {
   assert.deepEqual(workflow.concurrency, {
     group: 'flaky-detector',

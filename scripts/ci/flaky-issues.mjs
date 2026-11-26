@@ -14,6 +14,11 @@ const errorLimit = 240
 const titleLimit = 200
 const perPage = 100
 const pageLimit = 10
+// A night with more new rows than a person can triage is the detector or its
+// environment breaking, not that many tests turning flaky at once, and filing
+// them all would bury the signal it is meant to raise. File this many, name the
+// rest in the step summary, and let a later night file them if they persist.
+export const createsPerRun = 10
 const titles = { flaky: 'Flaky', failing: 'Failing every run' }
 
 const oneLine = (value) =>
@@ -27,6 +32,18 @@ const truncate = (value, limit) => {
 // Display only. A backtick would end the code span, and the exact value stays
 // in the state marker, so collapsing it here loses nothing a reader needs.
 const inline = (value) => `\`${oneLine(value).replaceAll('`', "'")}\``
+// A body is editable by hand, so a stored sighting is read back as data: one
+// that cannot be rendered is dropped, rather than left to throw halfway through
+// a run and take every other issue of the night with it.
+const isSighting = (sighting) =>
+  typeof sighting === 'object' &&
+  sighting !== null &&
+  !Array.isArray(sighting) &&
+  ['date', 'runUrl', 'sha', 'firstError'].every(
+    (field) => typeof sighting[field] === 'string',
+  ) &&
+  Number.isSafeInteger(sighting.failureCount) &&
+  Number.isSafeInteger(sighting.repetitions)
 const lane = ({ suite, project }) =>
   [suite, project].filter(Boolean).join(' / ')
 const laneKey = ({ suite, project }) => `${suite}\u0000${project ?? ''}`
@@ -71,7 +88,9 @@ export function parseIssueState(body) {
     },
     greenRuns: Number.isSafeInteger(state.greenRuns) ? state.greenRuns : 0,
     lastRunId: typeof state.lastRunId === 'string' ? state.lastRunId : '',
-    sightings: Array.isArray(state.sightings) ? state.sightings : [],
+    sightings: Array.isArray(state.sightings)
+      ? state.sightings.filter(isSighting)
+      : [],
     sightingCount: Number.isSafeInteger(state.sightingCount)
       ? state.sightingCount
       : 0,
@@ -109,12 +128,17 @@ function renderIssueBody(state, threshold = greenRunsToClose) {
   ].join('\n')
 }
 
+// Only a scheduled run of the default branch writes, so no pull request and no
+// manual run on a side branch can file an issue. The default branch comes from
+// the event payload; a payload without it writes nothing, and the reason makes
+// that case loud in the summary instead of a dry run nobody notices.
 export function syncMode({ eventName, ref, defaultBranch }) {
-  return eventName === 'schedule' &&
-    Boolean(defaultBranch) &&
-    ref === `refs/heads/${defaultBranch}`
-    ? 'write'
-    : 'dry-run'
+  if (eventName !== 'schedule')
+    return { mode: 'dry-run', reason: 'not-scheduled' }
+  if (!defaultBranch) return { mode: 'dry-run', reason: 'no-default-branch' }
+  return ref === `refs/heads/${defaultBranch}`
+    ? { mode: 'write', reason: 'scheduled-default-branch' }
+    : { mode: 'dry-run', reason: 'other-ref' }
 }
 
 export function planIssueActions({
@@ -135,10 +159,12 @@ export function planIssueActions({
       )
       .map(laneKey),
   )
+  // A test that fails every run is worse news than one that fails sometimes, so
+  // it is planned first and the cap on new issues reaches it first.
   const reported = new Map()
   for (const [kind, rows] of [
-    ['flaky', report.flaky ?? []],
     ['failing', report.consistentlyFailing ?? []],
+    ['flaky', report.flaky ?? []],
   ])
     for (const row of rows) {
       const key = rowKey(row)
@@ -147,6 +173,7 @@ export function planIssueActions({
 
   const actions = []
   const tracked = new Map()
+  let creates = 0
   for (const issue of issues) {
     const state = parseIssueState(issue.body)
     if (!state) {
@@ -172,6 +199,11 @@ export function planIssueActions({
     }
     const known = tracked.get(key)
     if (!known) {
+      if (creates >= createsPerRun) {
+        actions.push({ action: 'skip', reason: 'create-limit', key })
+        continue
+      }
+      creates++
       const state = {
         version: 1,
         row: {
@@ -290,9 +322,14 @@ export async function listFlakyIssues(options) {
         .filter((issue) => !issue.pull_request)
         .map(({ number, title, body }) => ({ number, title, body })),
     )
-    if (batch.length < perPage) break
+    if (batch.length < perPage) return issues
   }
-  return issues
+  // Planning from a truncated list would file a second issue for every row the
+  // list did not reach and miscount the green runs of the rest, so stop here and
+  // let the step go red.
+  throw new Error(
+    `More than ${perPage * pageLimit} open ${flakyLabel} issues: refusing to plan from a truncated list`,
+  )
 }
 
 async function ensureLabel(options) {
@@ -380,15 +417,29 @@ export async function syncFlakyIssues({
   }
 }
 
-export function summarizeActions({ mode, actions }) {
+const rowOf = (action) =>
+  action.key ? JSON.parse(action.key).filter(Boolean).join(' / ') : ''
+
+export function summarizeActions({ mode, reason, actions }) {
   const counted = ['create', 'append', 'green', 'close', 'skip'].map(
     (name) =>
       `${name} ${actions.filter((entry) => entry.action === name).length}`,
   )
+  const notFiled = actions.filter((action) => action.reason === 'create-limit')
   return [
     '## Flaky issues',
     '',
-    `Mode: ${mode}. ${counted.join(', ')}.`,
+    `Mode: ${mode}${reason ? ` (${reason})` : ''}. ${counted.join(', ')}.`,
+    ...(reason === 'no-default-branch'
+      ? [
+          '',
+          '> [!WARNING]',
+          '> `DEFAULT_BRANCH` was empty, so this scheduled run wrote nothing and',
+          '> nothing here was recorded. The workflow passes it from',
+          '> `github.event.repository.default_branch`; without it no issue can be',
+          '> filed, and every night stays a dry run until it is fixed.',
+        ]
+      : []),
     '',
     ...(actions.length
       ? [
@@ -397,12 +448,23 @@ export function summarizeActions({ mode, actions }) {
           ...actions.map(
             (action) =>
               `| ${action.action} | ${action.issue ?? 'new'} | ${cell(
-                action.reason ??
-                  JSON.parse(action.key).filter(Boolean).join(' / '),
+                [action.reason, rowOf(action)].filter(Boolean).join(' — '),
               )} |`,
           ),
         ]
       : ['Nothing to track.']),
+    ...(notFiled.length
+      ? [
+          '',
+          `### Not filed this run (${notFiled.length})`,
+          '',
+          `At most ${createsPerRun} issues are filed per run. These rows were`,
+          'reported and have no issue yet; a later run files them if they are',
+          'still reported.',
+          '',
+          ...notFiled.map((action) => `- ${cell(rowOf(action))}`),
+        ]
+      : []),
     '',
   ].join('\n')
 }
@@ -426,8 +488,14 @@ if (
       )
     const repository = process.env.GITHUB_REPOSITORY ?? ''
     const runId = process.env.GITHUB_RUN_ID ?? ''
-    text = summarizeActions(
-      await syncFlakyIssues({
+    const { mode, reason } = syncMode({
+      eventName: process.env.GITHUB_EVENT_NAME ?? '',
+      ref: process.env.GITHUB_REF ?? '',
+      defaultBranch: process.env.DEFAULT_BRANCH ?? '',
+    })
+    text = summarizeActions({
+      reason,
+      ...(await syncFlakyIssues({
         repository,
         token: process.env.GITHUB_TOKEN ?? '',
         report,
@@ -437,13 +505,9 @@ if (
           date: new Date().toISOString().slice(0, 10),
           sha: report.sha,
         },
-        mode: syncMode({
-          eventName: process.env.GITHUB_EVENT_NAME ?? '',
-          ref: process.env.GITHUB_REF ?? '',
-          defaultBranch: process.env.DEFAULT_BRANCH ?? '',
-        }),
-      }),
-    )
+        mode,
+      })),
+    })
   }
   process.stdout.write(`${text}\n`)
   if (summary) fs.appendFileSync(summary, text)
