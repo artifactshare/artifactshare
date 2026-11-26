@@ -52,6 +52,40 @@ jobs:
       - name: Start the local stack
         timeout-minutes: 5
         run: node .claude/skills/verify-artifactshare/scripts/stack.mjs up --run "$VERIFY_RUN"
+      - name: Diagnose a stack that did not come up
+        if: failure()
+        run: |
+          set +e
+          run_dir=".verify-artifactshare/runs/$VERIFY_RUN"
+          echo "::group::environment"
+          node -v; uname -a; id; echo "HOME=$HOME CWD=$PWD"
+          echo "::endgroup::"
+          echo "::group::run.json"
+          cat "$run_dir/run.json"
+          echo "::endgroup::"
+          echo "::group::hosts and interfaces"
+          cat /etc/hosts
+          getent ahosts localhost
+          (ip -o addr || cat /proc/net/if_inet6) 2>&1
+          echo "::endgroup::"
+          echo "::group::listeners"
+          (ss -ltnp || netstat -ltnp || cat /proc/net/tcp /proc/net/tcp6) 2>&1
+          echo "::endgroup::"
+          echo "::group::processes"
+          ps -eo pid,ppid,pgid,etime,rss,args 2>&1 | head -80
+          echo "::endgroup::"
+          echo "::group::connect probe"
+          RUN_JSON="$run_dir/run.json" node -e 'const fs=require("fs"),net=require("net"),https=require("https"),dns=require("dns");const run=JSON.parse(fs.readFileSync(process.env.RUN_JSON,"utf8"));const ports={app:new URL(run.appOrigin).port,sandbox:new URL(run.sandboxOrigin).port};console.log("resultOrder",dns.getDefaultResultOrder());const tcp=(host,name,port)=>new Promise(done=>{const s=net.connect({host,port:Number(port)});s.setTimeout(3000);s.on("connect",()=>{console.log("tcp",name,host,port,"connected");s.destroy();done()});s.on("timeout",()=>{console.log("tcp",name,host,port,"timeout");s.destroy();done()});s.on("error",e=>{console.log("tcp",name,host,port,e.code||e.message);done()})});const get=(host,port)=>new Promise(done=>{const r=https.request({host,port:Number(port),path:"/dev/sign-in",rejectUnauthorized:false,timeout:10000},res=>{console.log("https",host,port,"HTTP",res.statusCode);res.resume();res.on("end",done)});r.on("timeout",()=>{console.log("https",host,port,"timeout");r.destroy()});r.on("error",e=>{console.log("https",host,port,"error",e.code||"",e.message);done()});r.end()});(async()=>{console.log("lookupAll",JSON.stringify(await dns.promises.lookup("localhost",{all:true})));console.log("lookupOne",JSON.stringify(await dns.promises.lookup("localhost")));for(const h of ["127.0.0.1","::1","localhost"])for(const n of ["app","sandbox"])await tcp(h,n,ports[n]);await get("localhost",ports.app);await get("127.0.0.1",ports.app);const m=await import(process.cwd()+"/scripts/lib/dev-sign-in.mjs");try{const r=await m.appFetch(run.appOrigin+"/dev/sign-in","");console.log("appFetch HTTP",r.status)}catch(e){console.log("appFetch failed",e.message);for(let c=e.cause;c;c=c.cause)console.log("  cause",c.code||"",c.message||String(c))}})()' 2>&1
+          echo "::endgroup::"
+          for log in "$run_dir"/logs/*.log; do
+            echo "::group::$log (first 80)"
+            head -n 80 "$log"
+            echo "::endgroup::"
+            echo "::group::$log (last 250)"
+            tail -n 250 "$log"
+            echo "::endgroup::"
+          done
+          exit 0
       - name: Drive every journey
         timeout-minutes: 15
         # One stack for all six, in order, and every journey runs even after
@@ -71,6 +105,14 @@ jobs:
             echo "failed journeys: ${failed[*]}"
             exit 1
           fi
+      - name: Print the stack logs of a failed journey
+        if: failure()
+        run: |
+          for log in ".verify-artifactshare/runs/$VERIFY_RUN"/logs/*.log; do
+            echo "::group::$log (last 250)"
+            tail -n 250 "$log"
+            echo "::endgroup::"
+          done
       - name: Stop the local stack
         if: always()
         run: node .claude/skills/verify-artifactshare/scripts/stack.mjs down --run "$VERIFY_RUN"
