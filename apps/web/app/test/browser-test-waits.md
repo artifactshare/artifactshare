@@ -112,3 +112,39 @@ Examples of choosing the observation and fault control:
   releases the real handshake and checks that the verdict is delivered again.
   This exercises the problematic order deliberately. Repetition alone cannot
   prove that order was reached, and the product must retain origin/token checks.
+
+## Reproducing a flaky browser test
+
+A nightly flaky issue names a lane, a file and a test. `pnpm test:flaky-repro`
+repeats that one test the way the detector runs it, one Vitest process per
+repetition, and prints a JSON summary of what the repetitions did:
+
+```sh
+pnpm test:flaky-repro -- --help
+pnpm test:flaky-repro -- --list
+pnpm test:flaky-repro -- --file apps/web/app/lib/preview-security.behavior.browser.test.tsx \
+  --test 'a reader can rewrite element and selected text for the agent' \
+  --project firefox --repeat 20 --cpus 1 --load 4
+```
+
+It runs in the Playwright image that `compose.playwright.yml` pins, because an
+engine of another version is a different test; `--no-docker` runs it on this
+machine instead, and `--cpus` then has nothing to limit. `--load` runs busy
+loops beside the repetitions. Reports, captured state and `summary.json` land
+under `.flaky-repro/`, which is not committed: a preview URL carries a
+capability, so keep captured state out of issues and pull requests.
+
+Repetition alone rarely reproduces a race. `--delay <point>=<ms>` holds one
+named step from `flaky-repro-points.json`, long enough to make the losing order
+certain; `--list` prints what each point holds. A point is a hold installed into
+the page under test from a browser command, through
+`holdAtReproPoint` in `flaky-repro.ts`, never a switch in product code. With no
+`--delay`, nothing is installed and the scenario keeps its own timing, so a
+normal run carries none of this.
+
+Use a hold to prove a cause, not to find one: the test must fail with the hold
+before the fix and pass with the same hold after it. The runner refuses a run
+that proves nothing, exiting non-zero when no test ran or when a configured hold
+never held a step, which is what a renamed step or a wrong point looks like.
+A scenario that fails writes what the page looked like, so add a collector to
+`captureReproState` in the browser command rather than a console line.

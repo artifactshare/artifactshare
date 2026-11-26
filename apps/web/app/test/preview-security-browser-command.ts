@@ -15,6 +15,12 @@ import { resolve, join } from 'node:path'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import type { Frame, JSHandle, Locator, Page } from 'playwright'
 import { openPopup } from './browser-waits'
+import {
+  captureReproState,
+  holdAtReproPoint,
+  recordReproHolds,
+  type ReproHoldWindow,
+} from './flaky-repro'
 
 // Execute the native postMessage call in a document script. DevTools evaluation
 // is not an authored script entry point and can supply a different incumbent
@@ -298,6 +304,25 @@ export const previewSecurity = defineBrowserCommand(
       })
       await shell.addInitScript(() =>
         Object.defineProperty(navigator, 'language', { value: 'en' }),
+      )
+      await holdAtReproPoint(
+        shell,
+        'shell-save-response',
+        (point) => {
+          const send = window.fetch.bind(window)
+          window.fetch = async (input, init) => {
+            const response = await send(input, init)
+            if (
+              init?.method === 'POST' &&
+              String(input).endsWith('/api/annotations')
+            )
+              await (window as unknown as ReproHoldWindow).__flakyReproHold(
+                point,
+              )
+            return response
+          }
+        },
+        { onLoad: true },
       )
       await shell.goto(ready.url)
       if (view === 'rewrite') {
@@ -937,6 +962,29 @@ export const previewSecurity = defineBrowserCommand(
         result.checks.push('restore-default-screen')
 
         // Moving on while a screen is being restored is not a failed restore.
+        await holdAtReproPoint(shell, 'shell-to-frame-message', (point) => {
+          const contentWindow = Object.getOwnPropertyDescriptor(
+            HTMLIFrameElement.prototype,
+            'contentWindow',
+          )!.get!
+          Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+            configurable: true,
+            get() {
+              const real = contentWindow.call(this) as Window | null
+              // Only the shell's own sends are held; the test drives the rest.
+              if (!real || !new Error().stack?.includes('postToFrame'))
+                return real
+              const hold = (window as unknown as ReproHoldWindow)
+                .__flakyReproHold
+              return {
+                postMessage: (message: unknown, origin: string) =>
+                  void hold(point).then(() =>
+                    real.postMessage(message, origin),
+                  ),
+              }
+            },
+          })
+        })
         await otherScreen('Slide two note').click()
         // The restore arrives by message; an Alt+click sent first can land first.
         await heading().filter({ hasText: 'Slide 2' }).waitFor()
@@ -2309,7 +2357,30 @@ export const previewSecurity = defineBrowserCommand(
       await shell.locator('.thread').waitFor()
       await shell.getByText(/localStorage, IndexedDB/).waitFor()
       return true
+    } catch (error) {
+      await captureReproState(view ?? 'default', async () => {
+        const element = await shell.locator('#artifactFrame').elementHandle()
+        const previewed = await element?.contentFrame()
+        return {
+          shell: await shell.evaluate(() => ({
+            hasFocus: document.hasFocus(),
+            active:
+              document.activeElement?.id || document.activeElement?.tagName,
+            popover: document.getElementById('popover')?.className,
+            popStatus: document.getElementById('popStatus')?.textContent,
+            threads: document.querySelectorAll('.thread').length,
+            orphaned: document.querySelectorAll('.thread.orphaned').length,
+          })),
+          document: await previewed?.evaluate(() => ({
+            hash: location.hash,
+            heading: document.querySelector('#stage h2')?.textContent,
+            hasFocus: document.hasFocus(),
+          })),
+        }
+      })
+      throw error
     } finally {
+      await recordReproHolds(shell)
       await shell.close()
       if (child.exitCode === null) {
         const exited = once(child, 'exit')
