@@ -1070,7 +1070,7 @@
   "lp.hero.bodyTail": ". Review with comments, let AI revise it, and keep the same URL always up to date.",
   "lp.hero.ctaPrimary": "Start for free",
   "lp.hero.ctaSecondary": "See live examples",
-  "lp.hero.toolsNote": "Works with Claude Code · Codex · Gemini · Cursor · ChatGPT · Browser",
+  "lp.hero.toolsNote": "Works with Claude Code · Codex · Cursor · Claude · ChatGPT · Browser upload",
   "lp.hero.tabCliHint": "Paste into Claude Code, Codex, or Cursor Agent",
   "lp.hero.tabMcpHint": "Connect the MCP server to chat AI",
   "lp.hero.cliPrompt": "Set up with npx --yes @artifactshare/cli init",
