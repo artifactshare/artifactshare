@@ -5,6 +5,14 @@ import { GuideHomeLink, GuideTopbar } from '~/components/app/guide-shell'
 import { PlanCard } from '~/components/app/plan-card'
 import { PublicFooter } from '~/components/app/public-footer'
 import { Button } from '~/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '~/components/ui/table'
 import type { Locale } from '~/i18n/messages'
 import {
   type BillingCurrency,
@@ -96,56 +104,51 @@ export function PricingPage({
         <section className="mt-16 grid gap-10 lg:grid-cols-2">
           <div>
             <h2 className="m-0 mb-4 text-2xl font-semibold">{c.compare}</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead>
-                  <tr>
-                    <th
-                      className="border-border border-b px-2 py-3"
+            <Table className="text-sm">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="py-3 whitespace-normal" scope="col">
+                    {c.comparisonFeature}
+                  </TableHead>
+                  {['Free', 'Plus', 'Team'].map((plan) => (
+                    <TableHead
+                      key={plan}
+                      className="py-3 text-center"
                       scope="col"
                     >
-                      {c.comparisonFeature}
-                    </th>
-                    {['Free', 'Plus', 'Team'].map((plan) => (
-                      <th
-                        key={plan}
-                        className="border-border border-b px-2 py-3 text-center"
-                        scope="col"
-                      >
-                        {plan}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {c.comparison.map((row, rowIndex) => (
-                    <tr key={`comparison-row-${rowIndex}`}>
-                      <th
-                        className="border-border border-b px-2 py-3 font-medium"
-                        scope="row"
-                      >
-                        {row.label}
-                      </th>
-                      {comparisonValuesForCurrency(row.values, currency).map(
-                        (value, planIndex) => {
-                          const plan = (['free', 'plus', 'team'] as const)[
-                            planIndex
-                          ]
-                          return (
-                            <td
-                              className="border-border border-b px-2 py-3 text-center"
-                              key={`comparison-${rowIndex}-${plan}`}
-                            >
-                              {value}
-                            </td>
-                          )
-                        },
-                      )}
-                    </tr>
+                      {plan}
+                    </TableHead>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {c.comparison.map((row, rowIndex) => (
+                  <TableRow
+                    key={`comparison-row-${rowIndex}`}
+                    className="hover:bg-transparent"
+                  >
+                    <TableHead className="py-3 whitespace-normal" scope="row">
+                      {row.label}
+                    </TableHead>
+                    {comparisonValuesForCurrency(row.values, currency).map(
+                      (value, planIndex) => {
+                        const plan = (['free', 'plus', 'team'] as const)[
+                          planIndex
+                        ]
+                        return (
+                          <TableCell
+                            className="py-3 text-center whitespace-normal"
+                            key={`comparison-${rowIndex}-${plan}`}
+                          >
+                            {value}
+                          </TableCell>
+                        )
+                      },
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
           <div>
             <h2 className="m-0 mb-4 text-2xl font-semibold">{c.faq}</h2>

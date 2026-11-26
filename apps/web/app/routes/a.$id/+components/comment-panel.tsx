@@ -868,14 +868,15 @@ function PdfPageSubject({
     target === bridge.displayedVersionId
   ) {
     return (
-      <button
+      <Button
         type="button"
-        className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-semibold hover:underline"
+        variant="link"
+        className="h-auto justify-self-start p-0 text-xs font-semibold"
         aria-label={t('comments.openPdfPage', { page })}
         onClick={() => bridge.openPage(page, target)}
       >
         {t('comments.pdfPageShort', { page })}
-      </button>
+      </Button>
     )
   }
   return (
@@ -981,9 +982,10 @@ function CommentReplyList({
       data-thread-content=""
     >
       {hiddenReplyCount > 0 && canExpand ? (
-        <button
+        <Button
           type="button"
-          className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
+          variant="link"
+          className="h-auto justify-self-start p-0 text-xs font-bold"
           disabled={page.pending}
           aria-busy={page.pending}
           onClick={onExpand}
@@ -996,7 +998,7 @@ function CommentReplyList({
                   : 'comments.previousReplyCount',
                 hiddenReplyCount,
               )}
-        </button>
+        </Button>
       ) : null}
       {page.failed && !page.failedRequest?.interiorGap ? (
         <div

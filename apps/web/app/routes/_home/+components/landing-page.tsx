@@ -129,9 +129,11 @@ function CopyButton({ value }: { value: string }) {
   }
   return (
     <>
-      <button
+      <Button
         type="button"
-        className="border-border bg-card text-faint hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
+        variant="outline"
+        size="xs"
+        className="bg-card text-faint hover:border-border-strong flex-none font-sans font-semibold"
         // Confirm only after the write resolves; an unavailable or rejecting
         // clipboard reports failure instead of staying silent.
         onClick={() => void copy()}
@@ -147,7 +149,7 @@ function CopyButton({ value }: { value: string }) {
           <IconCopy className="size-3" aria-hidden="true" />
         )}
         {t('lp.hero.copy')}
-      </button>
+      </Button>
       {/* Outside the button so the announcement does not become part of the
           button's accessible name. */}
       <span aria-live="polite" className="sr-only">

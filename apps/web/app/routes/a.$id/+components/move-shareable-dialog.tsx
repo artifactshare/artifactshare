@@ -17,7 +17,11 @@ import {
 } from '~/components/ui/dialog'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
-import { searchFieldClassName } from '~/components/app/search-field'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '~/components/ui/input-group'
 import { dialogNoteWarnClassName } from './dialog-note-styles'
 import {
   INBOX_VALUE,
@@ -422,19 +426,18 @@ function MoveDestinationOptions({
   return (
     <>
       {destinations.projects.length > 0 ? (
-        <div
-          className={searchFieldClassName}
-          style={{ maxWidth: 'none', marginLeft: 0 }}
-        >
-          <IconSearch size={14} strokeWidth={2} aria-hidden="true" />
-          <input
+        <InputGroup>
+          <InputGroupAddon>
+            <IconSearch aria-hidden="true" />
+          </InputGroupAddon>
+          <InputGroupInput
             type="search"
             value={query}
             onChange={(e) => onQueryChange(e.currentTarget.value)}
             placeholder={t('move.search')}
             aria-label={t('move.search')}
           />
-        </div>
+        </InputGroup>
       ) : null}
 
       <div

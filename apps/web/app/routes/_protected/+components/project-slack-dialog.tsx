@@ -83,9 +83,10 @@ function ProjectSlackDialogContent({
         {data ? (
           <DialogFooter className="sm:justify-between">
             {data.current ? (
-              <button
+              <Button
                 type="button"
-                className="text-destructive text-sm underline"
+                variant="link"
+                className="text-destructive h-auto p-0 underline"
                 disabled={busy}
                 onClick={() =>
                   fetcher.submit(
@@ -95,7 +96,7 @@ function ProjectSlackDialogContent({
                 }
               >
                 {t('project.slack.clear')}
-              </button>
+              </Button>
             ) : (
               <span />
             )}
