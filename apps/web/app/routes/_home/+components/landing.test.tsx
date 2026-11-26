@@ -76,7 +76,7 @@ describe('Landing', () => {
     expect(html).toMatch(/<a[^>]*href="\/ja"[^>]*>日本語<\/a>/)
     expect(html).toContain(t('en', 'lp.loop.title'))
     expect(html).toContain(t('en', 'lp.ba.q'))
-    expect(html).toContain(t('en', 'lp.quote.attr'))
+    expect(html).toContain(t('en', 'lp.hero.toolsNote'))
     expect(html).toContain(t('en', 'lp.ctaEnd.free'))
     // EN locale gets the EN hero screenshot and EN sample links.
     expect(html).toContain('/landing/hero-share-en.webp')
@@ -88,8 +88,6 @@ describe('Landing', () => {
     expect(html).not.toMatch(
       /href="https:\/\/artifactshare\.com\/a\/[^"]+"(?![^>]*rel="noopener noreferrer")/,
     )
-    // The hero prompt renders fully for SSR/no-JS readers.
-    expect(html).toContain(t('en', 'lp.hero.prompt'))
     expect(html).toContain('data-slot="public-footer" data-variant="full"')
     expect(html).toContain(t('en', 'footer.about'))
     expect(html).toContain(t('en', 'footer.operatorName'))

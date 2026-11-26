@@ -1,13 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  IconArrowRight,
+  IconArrowUpRight,
   IconCheck,
   IconCopy,
   IconFileText,
-  IconSend,
-  IconShield,
   IconX,
-  IconUsers,
 } from '@tabler/icons-react'
 import { Link, useRouteLoaderData } from 'react-router'
 import { BrandMark } from '~/components/app/brand-mark'
@@ -18,8 +15,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
-import { SegmentedControlGroup } from '~/components/ui/segmented-control'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { useT } from '~/hooks/use-t'
 import { withLang } from '~/lib/connect-link'
 import { MCP_CONNECTOR_URL } from '~/lib/mcp-metadata'
@@ -47,57 +42,25 @@ const SAMPLES = {
   },
 } as const
 
-/* Derived from MCP_CONNECTOR_URL so they can never drift from the server
- * address. These deliberately differ from the connect page's install links:
- * the claude.ai/new form is the click-verified deep link that survives the
- * settings-page redirect, and the https cursor.com form works from a browser
- * without Cursor installed (the cursor:// scheme does not). */
 const CLAUDE_CONNECTOR_DEEPLINK = `https://claude.ai/new?modal=add-custom-connector&connectorName=Artifact+Share&connectorUrl=${encodeURIComponent(MCP_CONNECTOR_URL)}#settings/customize-connectors`
 const CURSOR_INSTALL_DEEPLINK = `https://cursor.com/en/install-mcp?name=artifactshare&config=${btoa(JSON.stringify({ url: MCP_CONNECTOR_URL }))}`
 
-const RV = 'opacity-0 motion-reduce:opacity-100'
-// Keyed by hero stage.
-const RV_DELAY: Partial<Record<string, string>> = {
-  1: 'motion-safe:animate-lp-reveal-1',
-  2: 'motion-safe:animate-lp-reveal-2',
-  4: 'motion-safe:animate-lp-reveal-4',
-  5: 'motion-safe:animate-lp-reveal-5',
-}
-
 const CONTAINER = 'mx-auto max-w-guide-shell-max px-5 md:px-8'
-const KICKER =
-  'mb-4 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] text-faint'
 const H2 =
-  'font-serif text-[length:var(--lp-text-h2)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance'
+  'font-sans text-[length:var(--lp-text-h2)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-foreground text-balance'
 const LEAD =
-  'mt-4 max-w-[var(--max-width-landing-lead)] text-[length:var(--lp-text-body)] text-faint text-pretty'
+  'mt-3 max-w-[var(--max-width-landing-lead)] text-[length:var(--lp-text-body)] text-muted-foreground text-pretty'
 const BTN_BRAND =
-  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold whitespace-nowrap text-white shadow-[var(--shadow-landing-brand-button)] transition-[background-color,transform] duration-150 active:scale-96'
+  'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-card px-3 text-xs font-semibold whitespace-nowrap text-foreground transition-colors duration-150 hover:bg-muted active:scale-96'
 const CODEBOX =
   'flex items-center gap-3 rounded-md border border-border bg-muted py-2.5 pr-3 pl-4 font-mono text-[length:var(--lp-text-caption)] text-muted-foreground'
-const CARD = 'rounded-lg bg-card p-6 shadow-[var(--shadow-lg)]'
-const MINI =
-  'relative h-full rounded-t-[var(--r-sm)] bg-card px-3.5 py-3 shadow-[var(--shadow-landing-mini)]'
-const PIN =
-  'absolute grid size-4 place-items-center rounded-[var(--lp-pin-radius)] bg-coral/60 text-[length:var(--lp-text-mini)] font-bold text-white'
 
-// Same pattern as analytics-gtag: run before the post-hydration paint in the
-// browser, fall back to useEffect during SSR to avoid the server warning.
-const useIsomorphicLayoutEffect =
-  typeof window === 'undefined' ? useEffect : useLayoutEffect
-
-function prefersReducedMotion() {
-  return (
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  )
-}
-
-/* Streams the hero prompt like an agent typing; the ▍ cursor disappears on
- * completion. Renders the full text when reduced motion is requested or
- * before hydration, so SSR output and no-JS reads stay complete. */
-const TYPEWRITER_START_MS = 500
-const TYPEWRITER_TICK_MS = 38
+const HERO_SOURCES = [
+  { id: 'claude', label: 'Claude Code', brand: 'claude' as const, rev: 'v1' },
+  { id: 'codex', label: 'Codex', brand: 'chatgpt' as const, rev: 'v2' },
+  { id: 'cursor', label: 'Cursor', brand: 'cursor' as const, rev: 'v3' },
+  { id: 'gemini', label: 'Gemini', brand: null, rev: 'v4' },
+] as const
 
 function CopyButton({ value }: { value: string }) {
   const { t } = useT()
@@ -129,18 +92,11 @@ function CopyButton({ value }: { value: string }) {
   }
   return (
     <>
-      <Button
+      <button
         type="button"
-        variant="outline"
-        size="xs"
-        className="bg-card text-faint hover:border-border-strong flex-none font-sans font-semibold"
-        // Confirm only after the write resolves; an unavailable or rejecting
-        // clipboard reports failure instead of staying silent.
+        className="border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
         onClick={() => void copy()}
       >
-        {/* Only the icon changes, so the button width — and the codebox line
-          wrapping around it — never shifts. The outcome text is announced to
-          screen readers instead. */}
         {state === 'copied' ? (
           <IconCheck className="text-success size-3" aria-hidden="true" />
         ) : state === 'failed' ? (
@@ -149,9 +105,7 @@ function CopyButton({ value }: { value: string }) {
           <IconCopy className="size-3" aria-hidden="true" />
         )}
         {t('lp.hero.copy')}
-      </Button>
-      {/* Outside the button so the announcement does not become part of the
-          button's accessible name. */}
+      </button>
       <span aria-live="polite" className="sr-only">
         {state === 'copied'
           ? t('lp.hero.copied')
@@ -176,35 +130,28 @@ function Codebox({ value, mono = true }: { value: string; mono?: boolean }) {
   )
 }
 
-/* The three connector buttons (Claude / Cursor / ChatGPT). ChatGPT has no
- * one-click deeplink, so it opens a short instruction dropdown instead. */
 function ConnectorButtons() {
   const { t, locale } = useT()
   return (
-    <div className="mt-2.5 flex flex-wrap gap-2">
+    <div className="mt-3 flex flex-wrap gap-2">
       <a
-        className={cn(BTN_BRAND, 'bg-brand-claude hover:bg-brand-claude-hover')}
+        className={BTN_BRAND}
         href={CLAUDE_CONNECTOR_DEEPLINK}
         target="_blank"
         rel="noopener noreferrer"
       >
         <AiBrandMark
           brand="claude"
-          className="size-3.5 flex-none fill-white"
+          className="fill-foreground size-3.5 flex-none"
           aria-hidden="true"
         />
         {t('lp.works.addClaude')}
       </a>
       <DropdownMenu>
-        <DropdownMenuTrigger
-          className={cn(
-            BTN_BRAND,
-            'bg-brand-chatgpt hover:bg-brand-chatgpt-hover',
-          )}
-        >
+        <DropdownMenuTrigger className={BTN_BRAND}>
           <AiBrandMark
             brand="chatgpt"
-            className="size-3.5 flex-none fill-white"
+            className="fill-foreground size-3.5 flex-none"
             aria-hidden="true"
           />
           {t('lp.works.addChatgpt')}
@@ -214,7 +161,7 @@ function ConnectorButtons() {
           className="w-75 p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)]"
         >
           <b>{t('lp.works.chatgpt.title')}</b>
-          <ol className="text-faint mt-1.5 ml-4 list-decimal">
+          <ol className="text-muted-foreground mt-1.5 ml-4 list-decimal">
             <li>{t('lp.works.chatgpt.s1')}</li>
             <li>{t('lp.works.chatgpt.s2')}</li>
             <li>
@@ -234,14 +181,14 @@ function ConnectorButtons() {
         </DropdownMenuContent>
       </DropdownMenu>
       <a
-        className={cn(BTN_BRAND, 'bg-brand-cursor hover:bg-brand-cursor-hover')}
+        className={BTN_BRAND}
         href={CURSOR_INSTALL_DEEPLINK}
         target="_blank"
         rel="noopener noreferrer"
       >
         <AiBrandMark
           brand="cursor"
-          className="size-3.5 flex-none fill-white"
+          className="fill-foreground size-3.5 flex-none"
           aria-hidden="true"
         />
         {t('lp.works.addCursor')}
@@ -250,142 +197,73 @@ function ConnectorButtons() {
   )
 }
 
-function HeroTabs() {
-  const { t } = useT()
-  const [tab, setTab] = useState('mcp')
-  return (
-    <Tabs value={tab} onValueChange={setTab} className="mt-6 w-full">
-      <div className="flex items-center gap-3">
-        <SegmentedControlGroup className="contents">
-          <TabsList className="border-border border font-semibold">
-            <TabsTrigger value="mcp" className="px-3 text-xs font-semibold">
-              MCP
-            </TabsTrigger>
-            <TabsTrigger value="cli" className="px-3 text-xs font-semibold">
-              CLI
-            </TabsTrigger>
-          </TabsList>
-        </SegmentedControlGroup>
-        <div className="text-faint text-xs">
-          {tab === 'cli' ? t('lp.hero.tabCliHint') : t('lp.hero.tabMcpHint')}
-        </div>
-      </div>
-      <TabsContent value="mcp">
-        <Codebox value={MCP_CONNECTOR_URL} />
-        <ConnectorButtons />
-      </TabsContent>
-      <TabsContent value="cli">
-        <Codebox value={t('lp.hero.cliPrompt')} mono={false} />
-        {/* Spacer keeps the hero height stable across tab switches — the
-            MCP panel adds a row of connector buttons below its codebox. */}
-        <div className="mt-2.5 h-8" aria-hidden="true" />
-      </TabsContent>
-    </Tabs>
-  )
-}
-
-function HeroVisual({ instant = false }: { instant?: boolean }) {
+/* Interactive product stage: switching AI sources keeps the exact same
+ * stable team URL while advancing the revision badge — visualizing the core
+ * USV without extra copy. */
+function HeroStage() {
   const { t, locale } = useT()
-  const promptRef = useRef<HTMLSpanElement | null>(null)
-  const prompt = t('lp.hero.prompt')
-  // The reveals are pure CSS emitted server-side, so they run from first
-  // paint with no hydration replay; reduced motion is handled by the
-  // motion-safe/motion-reduce variants in RV. The stages after the
-  // typewriter wait for it to finish — the English prompt is longer than
-  // the Japanese one, so their delays derive from the prompt length.
-  const typeDoneS =
-    (TYPEWRITER_START_MS + prompt.length * TYPEWRITER_TICK_MS) / 1000
-  const rv = (stage: string) => (instant ? undefined : cn(RV, RV_DELAY[stage]))
-  const afterType = (offsetS: number) =>
-    instant
-      ? undefined
-      : { animationDelay: `${(typeDoneS + offsetS).toFixed(2)}s` }
-  // Only the typewriter needs JavaScript. The layout effect clears the
-  // server-rendered prompt before the first post-hydration paint, so the
-  // completed text never flashes and vanishes a frame later.
-  // Every scheduled tick is owned by `timer` and cleared by the returned
-  // cleanup. The scanner cannot follow the recursive assignment in `tick`.
-  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
-  useIsomorphicLayoutEffect(() => {
-    const promptEl = promptRef.current
-    if (!promptEl || instant || prefersReducedMotion()) return () => undefined
-    let i = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const tick = () => {
-      i += 1
-      promptEl.textContent = prompt.slice(0, i) + (i < prompt.length ? '▍' : '')
-      if (i < prompt.length) timer = setTimeout(tick, TYPEWRITER_TICK_MS)
-    }
-    promptEl.textContent = ''
-    timer = setTimeout(tick, TYPEWRITER_START_MS)
-    return () => {
-      if (timer !== undefined) clearTimeout(timer)
-      promptEl.textContent = prompt
-    }
-  }, [instant, prompt])
+  const [activeId, setActiveId] = useState<(typeof HERO_SOURCES)[number]['id']>(
+    HERO_SOURCES[0].id,
+  )
+  const active =
+    HERO_SOURCES.find((item) => item.id === activeId) ?? HERO_SOURCES[0]
   const shot =
     locale === 'ja'
       ? { src: '/landing/hero-share-ja.webp', width: 1493, height: 1260 }
       : { src: '/landing/hero-share-en.webp', width: 1600, height: 1163 }
+
   return (
-    <div className="relative">
-      <div
-        aria-hidden="true"
-        className={cn(
-          rv('1'),
-          'bg-card mb-4 rounded-lg p-4 text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)]',
-        )}
-      >
-        <div className="text-faint mb-1.5 flex items-center gap-2 text-[length:var(--lp-text-meta)] font-semibold">
-          <AiBrandMark
-            brand="claude"
-            className="fill-brand-claude size-3.5 flex-none"
-            aria-hidden="true"
-          />
-          Claude Code
-        </div>
-        <div className="text-foreground font-semibold">
-          {/* The invisible copy reserves the final wrapped size, so the card
-              never grows while the prompt types in. */}
-          <span className="grid">
-            <span
-              aria-hidden="true"
-              className="invisible col-start-1 row-start-1"
-            >
-              {prompt}
-            </span>
-            <span ref={promptRef} className="col-start-1 row-start-1">
-              {prompt}
-            </span>
-          </span>
-        </div>
+    <div className="border-border bg-card overflow-hidden rounded-xl border shadow-[var(--shadow-landing-screenshot)]">
+      <div className="border-border bg-muted flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-5">
         <div
-          className={cn(
-            rv('2'),
-            'text-faint mt-2 flex items-center gap-2 text-xs',
-          )}
-          style={afterType(0.25)}
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label={t('lp.hero.toolsNote')}
         >
-          <span className="bg-primary-soft grid size-4 flex-none place-items-center rounded-full">
-            <IconCheck
-              className="stroke-primary size-2.5 stroke-2"
-              aria-hidden="true"
-            />
+          {HERO_SOURCES.map((source) => {
+            const selected = source.id === active.id
+            return (
+              <button
+                key={source.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setActiveId(source.id)}
+                className={cn(
+                  'inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors duration-150',
+                  selected
+                    ? 'border-foreground bg-foreground text-background'
+                    : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
+                )}
+              >
+                {source.brand ? (
+                  <AiBrandMark
+                    brand={source.brand}
+                    className={cn(
+                      'size-3 flex-none',
+                      selected ? 'fill-background' : 'fill-muted-foreground',
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {source.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="border-border bg-card flex items-center gap-2 rounded-md border px-3 py-1 font-mono text-xs">
+          <span className="bg-primary-soft text-primary rounded-sm px-1.5 py-0.5 text-[length:var(--text-size-2xs)] font-bold tabular-nums">
+            {active.rev}
           </span>
-          {t('lp.hero.shared')}{' '}
-          <span className="text-primary font-mono text-[length:var(--lp-text-meta)]">
-            artifactshare.com/a/9x2k…
-          </span>
+          <span className="text-foreground">artifactshare.com/a/9x2k…</span>
         </div>
       </div>
-      {/* The screenshot is the LCP element — never animate its opacity
-          (Chrome excludes opacity-0 elements from LCP, which would push
-          LCP past the reveal delay). Only the chat overlays stage in. */}
+
       <a
         href={locale === 'ja' ? SAMPLES.kpi.ja : SAMPLES.kpi.en}
         target="_blank"
         rel="noopener noreferrer"
-        className="block overflow-hidden rounded-lg shadow-[var(--shadow-landing-screenshot)]"
+        className="block"
       >
         <img
           src={shot.src}
@@ -396,46 +274,6 @@ function HeroVisual({ instant = false }: { instant?: boolean }) {
           fetchPriority="high"
         />
       </a>
-      <div
-        aria-hidden="true"
-        className={cn(
-          rv('4'),
-          'bg-card absolute right-1 -bottom-16 w-[var(--lp-overlay-width)] overflow-hidden rounded-lg text-[length:var(--lp-text-caption)] leading-[var(--lh-prose)] shadow-[var(--shadow-lg)] lg:-right-4 lg:-bottom-24',
-        )}
-        style={afterType(1.9)}
-      >
-        <div className="px-4 pt-4">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="bg-mock-avatar grid size-5 flex-none place-items-center rounded-full text-[length:var(--lp-text-mini)] font-bold text-white">
-              YT
-            </span>
-            <span className="text-xs font-bold">Yuki</span>
-            <span className="flex-1" />
-            <span className="text-faint text-[length:var(--lp-text-meta)]">
-              {t('lp.hero.commentTimeQ')}
-            </span>
-          </div>
-          {t('lp.hero.commentQ')}
-        </div>
-        <div className={cn(rv('5'), 'py-3 pr-4 pl-8')} style={afterType(2.6)}>
-          <div className="mb-1 flex items-center gap-2">
-            <span className="from-coral-light to-coral grid size-5 flex-none place-items-center rounded-full bg-gradient-to-br text-[length:var(--lp-text-mini)] font-bold text-white">
-              as
-            </span>
-            <span className="text-xs font-bold">coji</span>
-            <span className="bg-muted text-faint rounded-sm px-1.5 text-[length:var(--text-size-2xs)] font-semibold">
-              Claude
-            </span>
-            <span className="flex-1" />
-            <span className="text-faint text-[length:var(--lp-text-meta)]">
-              {t('lp.hero.commentTimeA')}
-            </span>
-          </div>
-          <div className="border-border border-l-2 pl-2.5">
-            {t('lp.hero.commentA')}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
@@ -471,41 +309,50 @@ function ChatAvatar({
 }
 
 function UseCaseCard({
-  label,
+  tag,
   title,
   body,
   stat,
   href,
-  children,
+  featured = false,
 }: {
-  label: string
+  tag: string
   title: string
   body: string
   stat: React.ReactNode
   href: string
-  children: React.ReactNode
+  featured?: boolean
 }) {
   const { t } = useT()
   return (
-    <div className="bg-card relative flex flex-col overflow-hidden rounded-lg shadow-[var(--shadow-lg)] transition-transform duration-200 ease-[var(--ease-out)] hover:-translate-y-1">
-      <div className="border-divider bg-muted relative h-37.5 overflow-hidden border-b px-6 pt-4">
-        <div className={MINI} aria-hidden="true">
-          {children}
+    <div
+      className={cn(
+        'border-border bg-card hover:border-border-strong group relative flex flex-col justify-between rounded-xl border p-6 transition-colors duration-150 md:p-7',
+        featured && 'bg-background',
+      )}
+    >
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <span className="border-border bg-muted text-muted-foreground rounded-sm border px-2 py-0.5 font-mono text-[length:var(--text-size-2xs)] font-semibold">
+            {tag}
+          </span>
+          <IconArrowUpRight
+            className="text-faint group-hover:text-primary size-4 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            aria-hidden="true"
+          />
         </div>
-      </div>
-      <div className="px-6 pt-5 pb-6">
-        <div className="text-faint mb-2 text-[length:var(--lp-text-meta)] font-semibold tracking-[var(--tracking-landing-kicker)]">
-          {label}
-        </div>
-        <h3 className="mb-1.5 text-[length:var(--lp-text-card-title)] font-bold">
+        <h3 className="text-foreground mb-2 text-[length:var(--lp-text-card-title)] font-bold">
           {title}
         </h3>
-        <p className="text-faint text-[length:var(--lp-text-caption)]">
+        <p className="text-muted-foreground text-[length:var(--lp-text-caption)] leading-[var(--lh-landing-body)]">
           {body}
         </p>
-        <div className="text-faint mt-3 text-xs">{stat}</div>
+      </div>
+
+      <div className="border-border mt-6 border-t pt-4">
+        <div className="text-faint text-xs">{stat}</div>
         <a
-          className="text-primary hover:text-primary-hover mt-3 inline-flex items-center gap-1 text-xs font-semibold after:absolute after:inset-0"
+          className="text-primary hover:text-primary-hover mt-2 inline-flex items-center gap-1 text-xs font-semibold after:absolute after:inset-0"
           href={href}
           target="_blank"
           rel="noopener noreferrer"
@@ -531,20 +378,20 @@ function StepColumn({
   return (
     <div
       className={cn(
-        'py-7',
+        'py-6',
         first
           ? 'pr-0 lg:pr-8'
           : 'border-border border-t lg:border-t-0 lg:border-l lg:pl-8',
         !first && 'lg:pr-8 lg:last:pr-0',
       )}
     >
-      <div className="text-foreground/60 flex h-11 items-start font-serif text-[length:var(--lp-text-step-number)] leading-none font-bold">
+      <div className="text-primary mb-3 font-mono text-xs font-bold tabular-nums">
         {index}
       </div>
-      <h3 className="min-h-0 text-[length:var(--lp-text-body)] leading-[var(--lh-loose)] font-bold lg:min-h-12">
+      <h3 className="text-foreground text-[length:var(--lp-text-body)] leading-[var(--lh-loose)] font-bold">
         {title}
       </h3>
-      <p className="text-faint mt-2 text-[length:var(--lp-text-caption)] leading-[var(--lh-landing-body)] text-pretty">
+      <p className="text-muted-foreground mt-2 text-[length:var(--lp-text-caption)] leading-[var(--lh-landing-body)] text-pretty">
         {body}
       </p>
     </div>
@@ -554,21 +401,17 @@ function StepColumn({
 type LandingRegression = {
   regions?: { main?: string; hero?: string; footer?: string }
   primary?: string
-  /* Renders the hero visual fully revealed and untyped so scenario
-   * screenshots are deterministic instead of racing the staged reveal. */
   instantHero?: boolean
 }
 
 function LandingHeader() {
   const { t, locale } = useT()
-  // Redirects that carry ?next= never reach this page — Landing shows the
-  // focused sign-in view for them — so a plain /sign-in link suffices.
   const startTo = withLang('/start', locale)
   const shareWithAiTo = withLang('/share-with-ai', locale)
   const pricingTo = withLang('/pricing', locale)
   return (
-    <header className="border-border bg-surface-warm/90 sticky top-0 z-40 border-b backdrop-blur-md">
-      <div className="max-w-guide-shell-max mx-auto flex h-15 items-center gap-2 px-4 sm:gap-4 sm:px-5 md:gap-7 md:px-8">
+    <header className="border-border bg-background/95 sticky top-0 z-40 border-b backdrop-blur-md">
+      <div className="max-w-guide-shell-max mx-auto flex h-14 items-center gap-2 px-4 sm:gap-4 sm:px-5 md:gap-7 md:px-8">
         <Link
           to={withLang('/', locale)}
           className="flex items-center gap-2.5 text-base font-bold whitespace-nowrap no-underline"
@@ -576,7 +419,7 @@ function LandingHeader() {
           <BrandMark size={24} aria-hidden="true" />
           <span className="sr-only sm:not-sr-only">Artifact Share</span>
         </Link>
-        <nav className="text-faint hidden gap-6 text-sm whitespace-nowrap md:flex">
+        <nav className="text-muted-foreground hidden gap-6 text-sm whitespace-nowrap md:flex">
           <Link
             className="hover:text-foreground"
             to={withLang('/about', locale)}
@@ -597,10 +440,8 @@ function LandingHeader() {
           </Link>
         </nav>
         <div className="flex-1" />
-        {/* The other language's endonym, in the first view — a Japanese
-            visitor landing on the EN top page can switch immediately. */}
         <Link
-          className="text-faint hover:text-foreground text-xs whitespace-nowrap sm:text-sm"
+          className="text-muted-foreground hover:text-foreground text-xs whitespace-nowrap sm:text-sm"
           to={locale === 'ja' ? '/' : '/ja'}
           aria-label={locale === 'ja' ? 'Switch to English' : '日本語で表示'}
         >
@@ -609,7 +450,7 @@ function LandingHeader() {
         <Button
           asChild
           variant="outline"
-          className="border-border-strong hover:bg-foreground/5 bg-transparent px-2.5 font-semibold sm:px-3.5"
+          className="border-border-strong hover:bg-muted bg-transparent px-2.5 font-semibold sm:px-3.5"
         >
           <Link to="/sign-in">{t('lp.nav.login')}</Link>
         </Button>
@@ -624,32 +465,27 @@ function LandingHeader() {
 function HeroSection({ regression }: { regression?: LandingRegression }) {
   const { t, locale } = useT()
   const startTo = withLang('/start', locale)
-  const shareWithAiTo = withLang('/share-with-ai', locale)
   return (
     <section
-      className="py-24 pb-29"
+      className="pt-14 pb-18 md:pt-20 md:pb-24"
       data-regression-region={regression?.regions?.hero}
     >
-      <div className="max-w-guide-shell-max mx-auto grid grid-cols-1 items-center gap-14 px-5 md:px-8 lg:grid-cols-[430px_1fr] lg:gap-18">
-        <div className="flex w-full flex-col">
-          <div className="border-border-strong bg-card/60 text-faint inline-flex h-7 w-fit max-w-full items-center gap-2 overflow-hidden rounded-full border px-3 text-[length:var(--text-size-2xs)] font-medium tracking-widest whitespace-nowrap sm:px-3.5 sm:text-[length:var(--lp-text-meta)] sm:tracking-[var(--tracking-landing-kicker)]">
-            <span className="bg-coral size-1.5 rounded-full" />
-            SHARE · COMMENT · UPDATE — SAME URL
-          </div>
-          <h1 className="mt-5 font-serif text-[length:var(--lp-text-h1)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance">
-            <span className="text-foreground/55">
-              {t('lp.hero.titleDim')}
-            </span>{' '}
-            <br className="hidden md:inline" />
+      <div className={CONTAINER}>
+        <div className="max-w-3xl">
+          <h1 className="text-foreground font-sans text-[length:var(--lp-text-h1)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)]">
+            {t('lp.hero.titleDim')}
+            <br />
             {t('lp.hero.titleMain')}
           </h1>
-          <p className="text-faint mt-5 text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] text-pretty">
+          <p className="text-muted-foreground mt-5 max-w-2xl text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] text-pretty">
             {t('lp.hero.bodyLead')}
-            <b className="text-foreground">{t('lp.hero.bodyQuote')}</b>
+            <b className="text-foreground font-semibold">
+              {t('lp.hero.bodyQuote')}
+            </b>
             {t('lp.hero.bodyTail')}
           </p>
-          <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-            <Button asChild className="h-12 px-5 font-semibold">
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <Button asChild className="h-11 px-6 font-semibold">
               <Link to={startTo} data-regression-primary={regression?.primary}>
                 {t('lp.hero.ctaPrimary')}
               </Link>
@@ -657,15 +493,19 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
             <Button
               asChild
               variant="outline"
-              className="border-border-strong hover:bg-foreground/5 h-12 bg-transparent px-5 font-semibold"
+              className="border-border-strong hover:bg-muted h-11 bg-transparent px-5 font-semibold"
             >
-              <Link to={shareWithAiTo}>{t('lp.hero.ctaSecondary')}</Link>
+              <a href="#examples">{t('lp.hero.ctaSecondary')}</a>
             </Button>
+            <span className="text-faint text-xs sm:ml-2">
+              {t('lp.hero.noCard')}
+            </span>
           </div>
-          <HeroTabs />
-          <p className="text-faint mt-3 text-xs">{t('lp.hero.noCard')}</p>
         </div>
-        <HeroVisual instant={regression?.instantHero ?? false} />
+
+        <div className="mt-12">
+          <HeroStage />
+        </div>
       </div>
     </section>
   )
@@ -674,21 +514,16 @@ function HeroSection({ regression }: { regression?: LandingRegression }) {
 function BeforeAfterSection() {
   const { t } = useT()
   return (
-    <section className="border-border bg-muted border-y py-26">
+    <section className="border-border bg-muted border-y py-18 md:py-22">
       <div className={CONTAINER}>
-        <p className={KICKER}>BEFORE / AFTER</p>
         <h2 className={H2}>
           {t('lp.ba.title1')} <br className="hidden md:inline" />
           {t('lp.ba.title2')}
         </h2>
         <p className={LEAD}>{t('lp.ba.body')}</p>
-        <div className="relative mt-12 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-16">
-          <span className="border-border bg-card text-faint absolute top-1/2 left-1/2 hidden size-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border shadow-[var(--shadow-md)] md:grid">
-            <IconArrowRight className="size-4" aria-hidden="true" />
-          </span>
-
-          <div className={CARD}>
-            <div className="text-faint mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
+        <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div className="border-border bg-card rounded-xl border p-6">
+            <div className="text-faint mb-5 text-xs font-semibold">
               {t('lp.ba.beforeLabel')}
             </div>
             <div
@@ -730,8 +565,8 @@ function BeforeAfterSection() {
             </div>
           </div>
 
-          <div className={CARD}>
-            <div className="text-coral-text mb-5 text-xs font-semibold tracking-[var(--tracking-landing-kicker)] uppercase">
+          <div className="border-primary/30 bg-card rounded-xl border p-6">
+            <div className="text-primary mb-5 text-xs font-semibold">
               {t('lp.ba.afterLabel')}
             </div>
             <div
@@ -745,7 +580,7 @@ function BeforeAfterSection() {
                     <b>{t('lp.ba.nameA')}</b>{' '}
                     <span className="text-faint">{t('lp.ba.timeA1')}</span>
                   </div>
-                  <div className="border-border bg-surface-warm rounded-md border p-3">
+                  <div className="border-border bg-muted rounded-md border p-3">
                     <div className="mb-0.5 text-[length:var(--lp-text-caption)] font-bold">
                       {t('lp.ba.reportTitle')}
                     </div>
@@ -782,12 +617,11 @@ function BeforeAfterSection() {
 function LoopSection() {
   const { t } = useT()
   return (
-    <section className="py-26">
+    <section className="py-18 md:py-22">
       <div className={CONTAINER}>
-        <p className={KICKER}>HOW IT WORKS</p>
         <h2 className={H2}>{t('lp.loop.title')}</h2>
         <p className={LEAD}>{t('lp.loop.body')}</p>
-        <div className="border-foreground mt-12 grid grid-cols-1 border-t lg:grid-cols-4">
+        <div className="border-border mt-10 grid grid-cols-1 border-t lg:grid-cols-4">
           <StepColumn
             first
             index="1"
@@ -820,198 +654,99 @@ function UseCasesSection() {
   const sample = (id: keyof typeof SAMPLES) =>
     locale === 'ja' ? SAMPLES[id].ja : SAMPLES[id].en
   return (
-    <section className="border-border bg-muted border-y py-26">
+    <section
+      id="examples"
+      className="border-border bg-muted border-y py-18 md:py-22"
+    >
       <div className={CONTAINER}>
-        <p className={KICKER}>USE CASES</p>
         <h2 className={H2}>{t('lp.uc.title')}</h2>
-        <div className="mt-12 grid grid-cols-1 gap-7 md:grid-cols-2">
+        <div className="mt-10 grid grid-cols-1 gap-5 md:grid-cols-2">
           <UseCaseCard
-            label="UI MOCK"
+            featured
+            tag="UI MOCK"
             title={t('lp.uc.mock.title')}
             body={t('lp.uc.mock.body')}
             stat={
               <>
                 {t('lp.uc.mock.statPre')}
-                <b className="text-muted-foreground font-semibold tabular-nums">
+                <b className="text-foreground font-semibold tabular-nums">
                   {t('lp.uc.mock.statBold')}
                 </b>
                 {t('lp.uc.mock.statPost')}
               </>
             }
             href={sample('mock')}
-          >
-            <div className="mb-2.5 flex gap-1.5">
-              <span className="bg-mock-dot size-1.75 rounded-full" />
-              <span className="bg-mock-dot size-1.75 rounded-full" />
-              <span className="bg-mock-dot size-1.75 rounded-full" />
-            </div>
-            <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
-              {t('lp.uc.mock.mini.title')}
-            </div>
-            <div className="border-border bg-surface-warm text-muted-foreground mb-1.5 flex h-6 items-center rounded-[var(--r-sm)] border px-2 font-mono text-[length:var(--lp-text-mini)]">
-              yuki@example.com
-            </div>
-            <div className="border-border bg-surface-warm text-faint mb-2 flex h-6 items-center rounded-[var(--r-sm)] border px-2 text-[length:var(--lp-text-mini)]">
-              {t('lp.uc.mock.mini.perm')}
-            </div>
-            <div className="flex gap-2">
-              <span className="bg-mock-button grid h-6 w-18 place-items-center rounded-[var(--r-sm)] text-[length:var(--lp-text-mini)] font-semibold text-white">
-                {t('lp.uc.mock.mini.invite')}
-              </span>
-              <span className="border-border text-faint grid h-6 w-18 place-items-center rounded-[var(--r-sm)] border text-[length:var(--lp-text-mini)]">
-                {t('lp.uc.mock.mini.cancel')}
-              </span>
-            </div>
-            <span className={cn(PIN, 'top-13 right-5')}>3</span>
-          </UseCaseCard>
-
+          />
           <UseCaseCard
-            label="KPI / ROADMAP"
+            featured
+            tag="PR GUIDE"
+            title={t('lp.uc.minutes.title')}
+            body={t('lp.uc.minutes.body')}
+            stat={t('lp.uc.minutes.note')}
+            href={sample('minutes')}
+          />
+          <UseCaseCard
+            tag="KPI / PLAN"
             title={t('lp.uc.kpi.title')}
             body={t('lp.uc.kpi.body')}
             stat={
               <>
                 {t('lp.uc.kpi.statPre')}
-                <b className="text-muted-foreground font-semibold tabular-nums">
+                <b className="text-foreground font-semibold tabular-nums">
                   {t('lp.uc.kpi.statBold')}
                 </b>
                 {t('lp.uc.kpi.statPost')}
               </>
             }
             href={sample('kpi')}
-          >
-            <span className="bg-muted text-faint absolute top-2.5 right-3 rounded-full px-2 text-[length:var(--text-size-2xs)] font-semibold">
-              v23
-            </span>
-            <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
-              {t('lp.uc.kpi.mini.title')}
-            </div>
-            <div className="mt-1 flex h-13 items-end gap-2">
-              <span
-                className="bg-mock-bar flex-1 rounded-t-sm"
-                style={{ height: '35%' }}
-              />
-              <span
-                className="bg-mock-bar flex-1 rounded-t-sm"
-                style={{ height: '55%' }}
-              />
-              <span
-                className="bg-mock-bar flex-1 rounded-t-sm"
-                style={{ height: '45%' }}
-              />
-              <span
-                className="bg-mock-bar flex-1 rounded-t-sm"
-                style={{ height: '70%' }}
-              />
-              <span
-                className="bg-mock-bar-accent relative flex-1 rounded-t-sm"
-                style={{ height: '82%' }}
-              >
-                <span className="text-muted-foreground absolute -top-3.5 left-1/2 -translate-x-1/2 text-[length:var(--lp-text-mini)] font-semibold">
-                  9.1M
-                </span>
-              </span>
-            </div>
-            <div className="text-faint mt-1 flex gap-2 text-center text-[length:var(--lp-text-mini)]">
-              <span className="flex-1">{t('lp.uc.kpi.mini.m1')}</span>
-              <span className="flex-1">{t('lp.uc.kpi.mini.m2')}</span>
-              <span className="flex-1">{t('lp.uc.kpi.mini.m3')}</span>
-              <span className="flex-1">{t('lp.uc.kpi.mini.m4')}</span>
-              <span className="flex-1">{t('lp.uc.kpi.mini.m5')}</span>
-            </div>
-            <span className={cn(PIN, 'right-11 bottom-4')}>1</span>
-          </UseCaseCard>
-
+          />
           <UseCaseCard
-            label="RESEARCH"
+            tag="REPORT"
             title={t('lp.uc.research.title')}
             body={t('lp.uc.research.body')}
             stat={
               <>
                 {t('lp.uc.research.statPre')}
-                <b className="text-muted-foreground font-semibold tabular-nums">
+                <b className="text-foreground font-semibold tabular-nums">
                   {t('lp.uc.research.statBold')}
                 </b>
                 {t('lp.uc.research.statPost')}
               </>
             }
             href={sample('research')}
-          >
-            <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
-              {t('lp.uc.research.mini.title')}
-            </div>
-            <p className="text-faint text-[length:var(--lp-text-mini)] leading-[var(--lh-landing-body)]">
-              {t('lp.uc.research.mini.p1')}
-            </p>
-            <p className="text-faint mt-1 text-[length:var(--lp-text-mini)] leading-[var(--lh-landing-body)]">
-              {t('lp.uc.research.mini.p2')}
-            </p>
-            <span className={cn(PIN, 'top-10 right-5')}>2</span>
-          </UseCaseCard>
-
-          <UseCaseCard
-            label="MINUTES"
-            title={t('lp.uc.minutes.title')}
-            body={t('lp.uc.minutes.body')}
-            stat={t('lp.uc.minutes.note')}
-            href={sample('minutes')}
-          >
-            <div className="text-muted-foreground mb-1.5 text-[length:var(--text-size-2xs)] font-semibold">
-              {t('lp.uc.minutes.mini.title')}
-            </div>
-            {(
-              [
-                [t('lp.ba.nameA'), t('lp.uc.minutes.mini.l1')],
-                [t('lp.ba.nameB'), t('lp.uc.minutes.mini.l2')],
-                ['coji', t('lp.uc.minutes.mini.l3')],
-              ] as const
-            ).map(([name, line]) => (
-              <div
-                key={name}
-                className="mb-1.5 flex items-start gap-2 text-[length:var(--lp-text-mini)] last:mb-0"
-              >
-                <span className="bg-mock-bar mt-0.5 size-4 flex-none rounded-full" />
-                <span className="text-muted-foreground flex-none font-semibold">
-                  {name}
-                </span>
-                <span className="text-faint">{line}</span>
-              </div>
-            ))}
-          </UseCaseCard>
+          />
         </div>
       </div>
     </section>
   )
 }
 
-function WorksSection() {
+function WorksAndTrustSection() {
   const { t } = useT()
   return (
-    <section className="py-26">
+    <section className="py-18 md:py-22">
       <div className={CONTAINER}>
-        <p className={KICKER}>WORKS WITH YOUR AI</p>
         <h2 className={H2}>
           {t('lp.works.title1')} <br className="hidden md:inline" />
           {t('lp.works.title2')}
         </h2>
-        <div className="border-foreground mt-12 grid grid-cols-1 border-t md:grid-cols-2">
+        <div className="border-border mt-10 grid grid-cols-1 border-t md:grid-cols-2">
           <div className="flex flex-col py-7 pr-0 md:pr-10">
-            <h3 className="mb-2 text-[length:var(--lp-text-card-title)] font-bold">
+            <h3 className="text-foreground mb-2 text-[length:var(--lp-text-card-title)] font-bold">
               {t('lp.works.cli.title')}
             </h3>
-            <p className="text-faint flex-1 text-sm text-pretty">
+            <p className="text-muted-foreground flex-1 text-sm text-pretty">
               {t('lp.works.cli.body')}
             </p>
             <div className="mt-4">
               <Codebox value={t('lp.hero.cliPrompt')} mono={false} />
             </div>
-            <div className="mt-2.5 hidden h-8 md:block" aria-hidden="true" />
           </div>
           <div className="border-border flex flex-col border-t py-7 md:border-t-0 md:border-l md:pl-10">
-            <h3 className="mb-2 text-[length:var(--lp-text-card-title)] font-bold">
+            <h3 className="text-foreground mb-2 text-[length:var(--lp-text-card-title)] font-bold">
               {t('lp.works.mcp.title')}
             </h3>
-            <p className="text-faint flex-1 text-sm text-pretty">
+            <p className="text-muted-foreground flex-1 text-sm text-pretty">
               {t('lp.works.mcp.body')}
             </p>
             <div className="mt-4">
@@ -1020,55 +755,36 @@ function WorksSection() {
             <ConnectorButtons />
           </div>
         </div>
-      </div>
-    </section>
-  )
-}
 
-function QuoteSection() {
-  const { t } = useT()
-  return (
-    <section className="py-20">
-      <div className="max-w-guide-shell-prose-max mx-auto px-5 text-center md:px-8">
-        <p className="font-serif text-[length:var(--lp-text-quote)] leading-[var(--lh-landing-body)] font-bold text-balance">
-          {t('lp.quote.text')}
-        </p>
-        <p className="text-faint mt-4 text-xs">{t('lp.quote.attr')}</p>
-      </div>
-    </section>
-  )
-}
-
-function TrustSection() {
-  const { t } = useT()
-  return (
-    <section className="border-border bg-muted border-y py-26">
-      <div className={CONTAINER}>
-        <p className={KICKER}>BUILT FOR WORK</p>
-        <h2 className={H2}>
-          {t('lp.trust.title1')} <br className="hidden md:inline" />
-          {t('lp.trust.title2')}
-        </h2>
-        <div className="mt-12 grid grid-cols-1 gap-7 lg:grid-cols-3">
-          {(
-            [
-              [IconShield, t('lp.trust.c1.title'), t('lp.trust.c1.body')],
-              [IconSend, t('lp.trust.c2.title'), t('lp.trust.c2.body')],
-              [IconUsers, t('lp.trust.c3.title'), t('lp.trust.c3.body')],
-            ] as const
-          ).map(([Icon, title, body]) => (
-            <div key={title} className={CARD}>
-              <span className="bg-muted text-foreground mb-4 grid size-9 place-items-center rounded-md">
-                <Icon className="size-4.5" aria-hidden="true" />
-              </span>
-              <h3 className="mb-1.5 text-[length:var(--lp-text-body)] font-bold">
-                {title}
-              </h3>
-              <p className="text-faint text-[length:var(--lp-text-caption)]">
-                {body}
-              </p>
-            </div>
-          ))}
+        {/* Editorial 2-column split instead of generic 3-icon cards */}
+        <div className="border-border mt-16 grid grid-cols-1 gap-10 border-t pt-14 lg:grid-cols-[340px_1fr] lg:gap-16">
+          <div>
+            <h2 className={H2}>
+              {t('lp.trust.title1')} <br className="hidden lg:inline" />
+              {t('lp.trust.title2')}
+            </h2>
+          </div>
+          <dl className="divide-border divide-y">
+            {(
+              [
+                [t('lp.trust.c1.title'), t('lp.trust.c1.body')],
+                [t('lp.trust.c2.title'), t('lp.trust.c2.body')],
+                [t('lp.trust.c3.title'), t('lp.trust.c3.body')],
+              ] as const
+            ).map(([title, body]) => (
+              <div
+                key={title}
+                className="grid grid-cols-1 gap-2 py-5 first:pt-0 last:pb-0 sm:grid-cols-[200px_1fr] sm:gap-6"
+              >
+                <dt className="text-foreground text-[length:var(--lp-text-body)] font-bold">
+                  {title}
+                </dt>
+                <dd className="text-muted-foreground m-0 text-[length:var(--lp-text-caption)] leading-[var(--lh-landing-body)]">
+                  {body}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </div>
     </section>
@@ -1080,33 +796,35 @@ function ClosingCtaSection() {
   const startTo = withLang('/start', locale)
   const pricingTo = withLang('/pricing', locale)
   return (
-    <section className="py-28 text-center">
+    <section className="py-12 md:py-16">
       <div className={CONTAINER}>
-        <h2
-          className={cn(
-            H2,
-            'mx-auto max-w-[var(--max-width-landing-cta-heading)]',
-          )}
-        >
-          {t('lp.ctaEnd.title1')} <br className="hidden md:inline" />
-          {t('lp.ctaEnd.title2')}
-        </h2>
-        <p className={cn(LEAD, 'mx-auto')}>{t('lp.ctaEnd.body')}</p>
-        <div className="mt-9 flex flex-wrap justify-center gap-3.5">
-          <Button asChild className="h-10 px-5 font-semibold">
-            <Link to={startTo}>{t('lp.hero.ctaPrimary')}</Link>
-          </Button>
-          <Button
-            asChild
-            variant="outline"
-            className="border-border-strong hover:bg-foreground/5 h-10 bg-transparent px-5 font-semibold"
-          >
-            <Link to={pricingTo}>{t('lp.ctaEnd.pricing')}</Link>
-          </Button>
+        <div className="bg-foreground text-background rounded-2xl px-6 py-16 text-center md:px-12 md:py-20">
+          <h2 className="mx-auto max-w-[var(--max-width-landing-cta-heading)] font-sans text-[length:var(--lp-text-h2)] leading-[var(--lh-landing-heading)] font-bold tracking-[var(--tracking-landing-heading)] text-balance">
+            {t('lp.ctaEnd.title1')} <br className="hidden md:inline" />
+            {t('lp.ctaEnd.title2')}
+          </h2>
+          <p className="text-background/75 mx-auto mt-4 max-w-[var(--max-width-landing-lead)] text-[length:var(--lp-text-body)] text-pretty">
+            {t('lp.ctaEnd.body')}
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Button
+              asChild
+              className="bg-background text-foreground hover:bg-background/90 h-11 px-6 font-semibold"
+            >
+              <Link to={startTo}>{t('lp.hero.ctaPrimary')}</Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              className="border-background/30 text-background hover:bg-background/10 h-11 bg-transparent px-5 font-semibold"
+            >
+              <Link to={pricingTo}>{t('lp.ctaEnd.pricing')}</Link>
+            </Button>
+          </div>
+          <p className="text-background/65 mt-5 text-[length:var(--lp-text-caption)] tabular-nums">
+            {t('lp.ctaEnd.free')}
+          </p>
         </div>
-        <p className="text-faint mt-5 text-[length:var(--lp-text-caption)] tabular-nums">
-          {t('lp.ctaEnd.free')}
-        </p>
       </div>
     </section>
   )
@@ -1122,19 +840,9 @@ export function LandingPage({
     | { maintenance?: boolean }
     | undefined
   const maintenance = rootData?.maintenance === true
-  // The landing serif loads lazily when this page actually mounts, so the
-  // 62 KB (gzip) @fontsource stylesheet never rides in a shared route chunk
-  // that signed-in product pages also load. Until it arrives the headline
-  // shows the fallback serif stack from --font-serif.
-  useEffect(() => {
-    // A failed chunk fetch just leaves the fallback serif from --font-serif.
-    import('@fontsource/zen-old-mincho/700.css').catch(() => {})
-  }, [])
 
   return (
-    // Header and footer live outside <main> so their banner/contentinfo
-    // landmarks are exposed to assistive technology.
-    <div className="bg-surface-warm text-foreground font-landing-body bg-[radial-gradient(circle_at_20%_0%,rgba(35,131,226,0.05),transparent_40%),radial-gradient(circle_at_80%_100%,rgba(255,138,101,0.05),transparent_40%)] font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]">
+    <div className="bg-background text-foreground font-landing-body font-sans text-[length:var(--lp-text-body)] leading-[var(--lh-landing-body)] [word-break:auto-phrase]">
       <LandingHeader />
       {maintenance ? (
         <p className="border-border bg-warning-soft text-foreground m-0 border-b px-5 py-2 text-center text-[length:var(--lp-text-caption)]">
@@ -1151,11 +859,7 @@ export function LandingPage({
 
         <UseCasesSection />
 
-        <WorksSection />
-
-        <QuoteSection />
-
-        <TrustSection />
+        <WorksAndTrustSection />
 
         <ClosingCtaSection />
       </main>
