@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 70
+version: 71
 managed: true
 -->
 
@@ -27,15 +27,15 @@ for creating or designing an artifact inside the chat. Artifact Share is for
 sharing, updating, opening, or reading back existing files, folders, static
 sites, and Artifact Share URLs.
 
-Run commands with `npm exec --yes --package=@artifactshare/cli -- artifactshare`. When unsure about a
-command or flag, run `npm exec --yes --package=@artifactshare/cli -- artifactshare <command> --help` first.
+Run commands with `npx --yes @artifactshare/cli`. When unsure about a
+command or flag, run `npx --yes @artifactshare/cli <command> --help` first.
 
 Honor an explicit user request to use CLI or MCP before selecting the default
 below. Use the CLI when a coding agent can access a user-controlled workspace,
 install the CLI package, and reach Artifact Share, even when MCP tools are also
 available. Use remote MCP for source text in chat or a temporary sandbox when
 CLI network access is unavailable or uncertain; a temporary file alone is not
-enough to try `npm exec`. MCP OAuth is not CLI authentication: follow the CLI
+enough to try `npx`. MCP OAuth is not CLI authentication: follow the CLI
 `auth_required` recovery for first setup, then reuse the saved CLI profile.
 
 When passing paths or free-form text through a shell, quote them. Paths may
@@ -57,7 +57,7 @@ Workspace administrators can approve multiple destination projects for an ordina
 
 ## First-time setup
 
-`npm exec --yes --package=@artifactshare/cli -- artifactshare init --json` detects the agent, installs or updates
+`npx --yes @artifactshare/cli init --json` detects the agent, installs or updates
 this skill, and reports the next steps (sign in, then share). When you receive
 a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
 this skill is installed or updated, then reads single-file artifacts or returns
@@ -80,8 +80,8 @@ case-insensitive `</body>` when present, or at source end otherwise. It adds no
 newline or separator and does not support sites, PDFs, or videos.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --project-id <id> --json
+npx --yes @artifactshare/cli share ./report.html --json
+npx --yes @artifactshare/cli share ./site-dir --project-id <id> --json
 ```
 
 - `share` accepts a single `.html` / `.md` / `.pdf` / `.mp4` file or a static-site directory.
@@ -135,7 +135,7 @@ Read [static-site scripts and data](references/static-sites.md) when a folder us
 Use `update` to add a new version to an existing artifact while keeping its URL.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> ./report.html --json
+npx --yes @artifactshare/cli update <artifact-id-or-url> ./report.html --json
 ```
 
 - Pass `--expected-version <version-id>` to reject an update when another
@@ -175,10 +175,10 @@ returns `unsupported_kind`), and `download` saves its original `.pdf` or
 `.mp4` bytes.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --include versions --include comments --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare download <artifact-id-or-url> --output ./out --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare download --project-id <id> --output ./out --json
+npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --json
+npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --include versions --include comments --json
+npx --yes @artifactshare/cli download <artifact-id-or-url> --output ./out --json
+npx --yes @artifactshare/cli download --project-id <id> --output ./out --json
 ```
 
 - In the successful JSON response, read the source from `data.content` and the current version from `data.version_id`.
@@ -257,8 +257,8 @@ Home treats `project` as `private` for this comparison, just as on creation.
 Change the audience intentionally, then check it:
 
 ```sh
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <id> --visibility private --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <id> --json
+npx --yes @artifactshare/cli edit <id> --visibility private --json
+npx --yes @artifactshare/cli artifacts get <id> --json
 ```
 
 For HTML/Markdown artifacts, `data.visibility` is the current stored audience

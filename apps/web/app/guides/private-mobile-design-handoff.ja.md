@@ -12,7 +12,7 @@
 モバイル側のエージェントに、次のコマンドで投稿してもらいます。
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare share ./design.md --home --visibility private
+npx --yes @artifactshare/cli share ./design.md --home --visibility private
 ```
 
 共有範囲は投稿ごとに指定できます。`--visibility private` を付けた投稿を見られるのは自分だけです。指定しない場合の既定はワークスペース公開になり、同じワークスペースのメンバーにも見えます。
@@ -28,7 +28,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./design.md -
 home へ投稿するたびに `--visibility private` を付けるのが手間なら、既定の共有範囲を private に変えておけます。
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user
+npx --yes @artifactshare/cli config set home_audience private --scope user
 ```
 
 この設定を入れると、この CLI 環境からの新しい home 投稿は、指定しなくても private になります。設定は端末ごとに保存され、Artifact Share アカウントには同期されません。PC からも home 投稿をするなら、PC 側でも同じコマンドを実行しておきます。
@@ -38,7 +38,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_aud
 既定値を変えたのにワークスペース公開になってしまう場合は、リポジトリ側の `home_audience` 設定が端末側の設定より優先されています。実際に適用されている値は次のコマンドで確かめられます。
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective
+npx --yes @artifactshare/cli config get home_audience --scope effective
 ```
 
 リポジトリ設定はそのリポジトリを使う全員に効くため、書き換えるときは関係者と合意してからにしてください。

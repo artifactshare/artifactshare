@@ -56,9 +56,9 @@ test('project config default_profile becomes an auth_required profile source', a
       token_url: 'https://artifactshare.com/settings/tokens',
       env_var: 'ARTIFACTSHARE_TOKEN',
       login_command:
-        'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile project-default',
+        'npx --yes @artifactshare/cli login --profile project-default',
       agent_login_command:
-        'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile project-default --preset agent',
+        'npx --yes @artifactshare/cli login --profile project-default --preset agent',
       token_option: '--token',
       credential_source: 'project_config',
       profile: 'project-default',
@@ -127,11 +127,11 @@ test('local config default_profile uses local_config credential source', async (
     assert.equal(result.source, 'local_config')
     assert.equal(
       result.error.details?.login_command,
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile local-default',
+      'npx --yes @artifactshare/cli login --profile local-default',
     )
     assert.equal(
       result.error.details?.agent_login_command,
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile local-default --preset agent',
+      'npx --yes @artifactshare/cli login --profile local-default --preset agent',
     )
     assert.equal(
       result.error.details?.token_url,
@@ -256,12 +256,11 @@ test('auth_required suggests another profile with a saved token', async () => {
       assert.equal(result.error.details?.alternative_profile, 'production')
       assert.deepEqual(result.error.recovery, {
         kind: 'run_command',
-        command:
-          'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use production',
+        command: 'npx --yes @artifactshare/cli profiles use production',
       })
       assert.equal(
         result.error.details?.suggested_profile_command,
-        'npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use production',
+        'npx --yes @artifactshare/cli profiles use production',
       )
       assert.ok(result.error.hint.includes('--profile production'))
       assert.ok(result.error.hint.includes('init --profile production'))

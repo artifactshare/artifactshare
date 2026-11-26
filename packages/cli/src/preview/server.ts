@@ -54,7 +54,7 @@ export function previewResumeCommand(filePath: string): string {
   const quoted = /^[\w./@-]+$/.test(relative)
     ? relative
     : `'${relative.replaceAll("'", `'\\''`)}'`
-  return `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ${quoted}`
+  return `npx --yes @artifactshare/cli preview ${quoted}`
 }
 
 export interface PreviewServerOptions {

@@ -4,8 +4,7 @@ import { CLI_DEVICE_CLIENT_ID } from '@artifactshare/contract'
 export const SCHEMA_VERSION = 2
 export const DEFAULT_BASE_URL = 'https://artifactshare.com'
 export const DEVICE_CLIENT_ID = CLI_DEVICE_CLIENT_ID
-export const CLI_INVOCATION =
-  'npm exec --yes --package=@artifactshare/cli -- artifactshare'
+export const CLI_INVOCATION = 'npx --yes @artifactshare/cli'
 export const AGENT_DOWNLOAD_OUTPUT = './artifact'
 export const TOKEN_ENV_VAR = 'ARTIFACTSHARE_TOKEN'
 export const TOKEN_OPTION = '--token'

@@ -288,33 +288,33 @@ const entryCommand = define({
   description: 'Artifact Share CLI',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare init --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title "New title" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare resolve <url-id-or-title> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create "Launch review" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare move <artifact-id-or-url> --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body "<text>" --json
+  examples: `npx --yes @artifactshare/cli init --json
+npx --yes @artifactshare/cli open <artifact-id-or-url> --json
+npx --yes @artifactshare/cli share <path> --json
+npx --yes @artifactshare/cli update <artifact-id-or-url> <path> --json
+npx --yes @artifactshare/cli edit <artifact-id-or-url> --title "New title" --json
+npx --yes @artifactshare/cli delete <artifact-id-or-url> --json
+npx --yes @artifactshare/cli resolve <url-id-or-title> --json
+npx --yes @artifactshare/cli projects create "Launch review" --json
+npx --yes @artifactshare/cli projects edit <id> --add-email viewer@example.com --json
+npx --yes @artifactshare/cli move <artifact-id-or-url> --project-id <id> --json
+npx --yes @artifactshare/cli artifacts list --json
+npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --json
+npx --yes @artifactshare/cli comments list <artifact-id-or-url> --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body "<text>" --json
 ${agentDownloadCommand('<artifact-id-or-url>')}
-npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile default
-npm exec --yes --package=@artifactshare/cli -- artifactshare logout --profile default --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use <name> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare init --profile <name> --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share <path> --home --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare whoami --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare doctor --json
+npx --yes @artifactshare/cli login --profile default
+npx --yes @artifactshare/cli logout --profile default --json
+npx --yes @artifactshare/cli profiles list --json
+npx --yes @artifactshare/cli profiles use <name> --json
+npx --yes @artifactshare/cli projects list --json
+npx --yes @artifactshare/cli config get home_audience --json
+npx --yes @artifactshare/cli skills install --tool codex --json
+npx --yes @artifactshare/cli skills list --json
+npx --yes @artifactshare/cli init --profile <name> --project-id <id> --json
+npx --yes @artifactshare/cli share <path> --home --json
+npx --yes @artifactshare/cli whoami --json
+npx --yes @artifactshare/cli doctor --json
 
 Authentication:
   Interactive terminal: run ${CLI_INVOCATION} login --profile default, then approve in your browser.
@@ -349,8 +349,8 @@ const loginDefinition = define({
         'Exact project name or id to confirm with --preset agent (login only)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile default
-npm exec --yes --package=@artifactshare/cli -- artifactshare login --profile client-a --preset agent --project 'Weekly Reports' --json
+  examples: `npx --yes @artifactshare/cli login --profile default
+npx --yes @artifactshare/cli login --profile client-a --preset agent --project 'Weekly Reports' --json
 
 login requires browser approval in an interactive terminal.
 For an attended agent on your machine, use --preset agent; --project makes the browser confirm one fixed project, while omitting it keeps the project picker.
@@ -367,8 +367,8 @@ const logoutDefinition = define({
   description: 'Revoke and remove the saved credential for a CLI profile.',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare logout --profile client-a --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare logout --json
+  examples: `npx --yes @artifactshare/cli logout --profile client-a --json
+npx --yes @artifactshare/cli logout --json
 
 logout revokes a device-login refresh credential before removing it locally. API-token profiles are removed locally only. Profile metadata stays in config.json for re-login hints.
 When no --profile is passed, the global default profile is used.
@@ -444,27 +444,27 @@ const shareDefinition = define({
         'Require this current version id when --key updates an existing artifact; use data.version.id, not a number (artifacts get returns data.version_id)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --key nightly-report --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share deck.pdf --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share demo.mp4 --project-id <id> --json
+  examples: `npx --yes @artifactshare/cli share report.html --project-id <id> --json
+npx --yes @artifactshare/cli share report.html --project-id <id> --key nightly-report --json
+npx --yes @artifactshare/cli share deck.pdf --project-id <id> --json
+npx --yes @artifactshare/cli share demo.mp4 --project-id <id> --json
 
 Posting to a project delivers to the audience defined by that project.
 With no destination, share posts to home. Choose the setting by purpose:
   Personal safe default (this CLI environment only):
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
+    npx --yes @artifactshare/cli config set home_audience private --scope user --json
   Shared policy agreed by all repository participants:
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
+    npx --yes @artifactshare/cli config set home_audience workspace --scope repository --json
   One-time audience for a single post: pass --visibility private|workspace|link.
     With no audience setting, Home uses workspace for organization accounts and private otherwise. Explicit/configured workspace still rejects when unavailable. Link sharing requires --visibility link.
   Link sharing accepts --link-expires-at <RFC3339 UTC> or --no-link-expiry;
   these expiry options are mutually exclusive.
   Pass --no-slack-notify to suppress the project Slack notification for this post.
   Check the resolved audience before posting:
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
+    npx --yes @artifactshare/cli config get home_audience --scope effective --json
 
 To keep an existing share URL, use update:
-  npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json
+  npx --yes @artifactshare/cli update <artifact-id-or-url> <path> --json
 
 A single file can be HTML (.html, .htm), Markdown (.md, .markdown), PDF, or MP4 video.
 A PDF needs a .pdf name (any case) and must start with %PDF-; it is stored as
@@ -649,11 +649,11 @@ const editDefinition = define({
       description: 'Move back to the owner home area',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --title "Launch plan" --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --visibility private --grant-email viewer@example.com --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare edit https://artifactshare.com/a/abc123def4 --project-id prj123 --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --project-id prj1 --visibility project --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --home --json
+  examples: `npx --yes @artifactshare/cli edit abc123def4 --title "Launch plan" --json
+  npx --yes @artifactshare/cli edit abc123def4 --visibility private --grant-email viewer@example.com --json
+  npx --yes @artifactshare/cli edit https://artifactshare.com/a/abc123def4 --project-id prj123 --json
+  npx --yes @artifactshare/cli edit abc123def4 --project-id prj1 --visibility project --json
+  npx --yes @artifactshare/cli edit abc123def4 --home --json
 
 Link sharing accepts --visibility link with either --link-expires-at <RFC3339 UTC> or --no-link-expiry. These expiry options are mutually exclusive.
 
@@ -682,8 +682,8 @@ const deleteDefinition = define({
         'Artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare delete abc123def4 --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare delete https://artifactshare.com/a/abc123def4 --json
+  examples: `npx --yes @artifactshare/cli delete abc123def4 --json
+npx --yes @artifactshare/cli delete https://artifactshare.com/a/abc123def4 --json
 
 Delete permanently removes the artifact and its version history. This cannot be undone.
 Use resolve first when a user gives a title or project name, then pass the id here.
@@ -705,8 +705,8 @@ const resolveDefinition = define({
       description: 'Share URL, sandbox URL, ID, title, or project name',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare resolve "Weekly report" --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare resolve https://artifactshare.com/a/abc123def4 --json
+  examples: `npx --yes @artifactshare/cli resolve "Weekly report" --json
+  npx --yes @artifactshare/cli resolve https://artifactshare.com/a/abc123def4 --json
 
 Use resolve before write commands when a user gives a title or project name.
 Pass the returned artifact id or project id to the next command.
@@ -748,8 +748,8 @@ const downloadDefinition = define({
       description: 'Replace existing output; retain backups for recovery',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare download abc123def4 --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare download --project-id <id> --output ./project-download --json
+  examples: `npx --yes @artifactshare/cli download abc123def4 --json
+  npx --yes @artifactshare/cli download --project-id <id> --output ./project-download --json
   ${agentDownloadCommand('https://artifactshare.com/a/abc123def4')}
 
 Use resolve first when a user gives a title or project name, then pass the id here.
@@ -785,8 +785,8 @@ const openDefinition = define({
         'Artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare open https://artifactshare.com/a/abc123def4 --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare open abc123def4 --json
+  examples: `npx --yes @artifactshare/cli open https://artifactshare.com/a/abc123def4 --json
+  npx --yes @artifactshare/cli open abc123def4 --json
 
 Use this as the first command when an agent receives an Artifact Share URL.
 It installs or updates the bundled Artifact Share skill in user scope (Claude Code,
@@ -831,8 +831,8 @@ const moveDefinition = define({
       description: 'Move back to the owner home area',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare move abc123def4 --project-id prj123 --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare move https://artifactshare.com/a/abc123def4 --home --json
+  examples: `npx --yes @artifactshare/cli move abc123def4 --project-id prj123 --json
+  npx --yes @artifactshare/cli move https://artifactshare.com/a/abc123def4 --home --json
 
 Move changes the artifact destination. It does not add grants. Project visibility
 artifacts may change audience when moved between projects; the JSON response
@@ -874,9 +874,9 @@ const artifactsGetDefinition = define({
       description: 'Extra data to include: versions or comments',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get abc123def4 --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get https://artifactshare.com/a/abc123def4 --include versions --include comments --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get abc123def4 --offset 200000 --json
+  examples: `npx --yes @artifactshare/cli artifacts get abc123def4 --json
+  npx --yes @artifactshare/cli artifacts get https://artifactshare.com/a/abc123def4 --include versions --include comments --json
+  npx --yes @artifactshare/cli artifacts get abc123def4 --offset 200000 --json
 
 Use resolve first when a user gives a title or project name, then pass the id here.
 Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
@@ -911,8 +911,8 @@ const artifactsVersionsDefinition = define({
       description: 'Continue history with next_cursor from the previous page',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --cursor <token> --json
+  examples: `npx --yes @artifactshare/cli artifacts versions <artifact-id-or-url> --json
+npx --yes @artifactshare/cli artifacts versions <artifact-id-or-url> --cursor <token> --json
 
 Returns versions with version_id, created_at, size_bytes and is_current, newest first, 50 per page.
 Use next_cursor while has_more is true. Restart without --cursor if invalid.
@@ -976,10 +976,10 @@ const artifactsListDefinition = define({
         'Continue listing from the cursor returned by the previous page',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --project-id <id> --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --home --query report --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --project-id <id> --cursor <token> --json
+  examples: `npx --yes @artifactshare/cli artifacts list --json
+  npx --yes @artifactshare/cli artifacts list --project-id <id> --json
+  npx --yes @artifactshare/cli artifacts list --home --query report --json
+  npx --yes @artifactshare/cli artifacts list --project-id <id> --cursor <token> --json
 
 Search with --q <text> and optional owner/project/period filters. Search groups matching documents by title and returns excerpts, group_size and total matching groups, capped at 1000 (eq exact, gte lower bound). Repeat the same filters with --cursor. Restricted credentials only search their readable project range and omit version summaries. Combining --query with search filters returns validation_failed. Rephrase the query and search again before concluding that nothing exists.
 
@@ -1005,13 +1005,13 @@ const artifactsDefinition = define({
       deleteRunner(ctx, 'artifacts delete'),
     ),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json
+  examples: `npx --yes @artifactshare/cli artifacts list --json
+npx --yes @artifactshare/cli artifacts get <artifact-id-or-url> --json
 
 Use artifacts list to find IDs for update, edit, move, delete, artifacts get, and comments list.
 Use artifacts get to read back Markdown or HTML before update.
 Use artifacts delete as an alias of top-level delete:
-npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts delete <artifact-id-or-url> --json`,
+npx --yes @artifactshare/cli artifacts delete <artifact-id-or-url> --json`,
   run: parentCommandRunner('artifacts'),
 })
 
@@ -1049,7 +1049,7 @@ const commentsListDefinition = define({
         'Artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments list abc123def4 --json
+  examples: `npx --yes @artifactshare/cli comments list abc123def4 --json
 
 Returns up to 50 threads (open threads first); has_more reports whether more exist.
 Each thread carries its first message and latest three replies, message_count,
@@ -1128,9 +1128,9 @@ const commentsPostDefinition = define({
         'Agent name posting on behalf of the user (e.g. Claude, Cursor)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments post abc123def4 --body "Looks good" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post abc123def4 --body "Done" --reply-to <thread-id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post abc123def4 --body "Fix this" --quote "exact text" --json
+  examples: `npx --yes @artifactshare/cli comments post abc123def4 --body "Looks good" --json
+npx --yes @artifactshare/cli comments post abc123def4 --body "Done" --reply-to <thread-id> --json
+npx --yes @artifactshare/cli comments post abc123def4 --body "Fix this" --quote "exact text" --json
 
 The viewer resolves quoted comments using unique exact quote and context.
 Resolution is deferred until the version is viewed; anchor.position_state is
@@ -1186,7 +1186,7 @@ const commentsEditDefinition = define({
       description: 'Updated comment text (required)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit abc123def4 --message-id <message-id> --body "Updated text" --json
+  examples: `npx --yes @artifactshare/cli comments edit abc123def4 --message-id <message-id> --body "Updated text" --json
 
 Common failures:
   message_not_found  Run comments list and retry with a listed message_id
@@ -1199,7 +1199,7 @@ const commentsResolveDefinition = define({
   description: 'Mark a comment thread as resolved.',
   toKebab: true,
   args: commentThreadActionArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve abc123def4 --thread-id <thread-id> --json
+  examples: `npx --yes @artifactshare/cli comments resolve abc123def4 --thread-id <thread-id> --json
 
 Common failures:
   thread_not_found   Run comments list and retry with a listed thread_id
@@ -1212,7 +1212,7 @@ const commentsReopenDefinition = define({
   description: 'Reopen a resolved comment thread.',
   toKebab: true,
   args: commentThreadActionArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments reopen abc123def4 --thread-id <thread-id> --json
+  examples: `npx --yes @artifactshare/cli comments reopen abc123def4 --thread-id <thread-id> --json
 
 Common failures:
   thread_not_found   Run comments list and retry with a listed thread_id
@@ -1232,8 +1232,8 @@ const commentsDeleteDefinition = define({
       description: 'Message id from comments list; omit to delete the thread',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete abc123def4 --thread-id <thread-id> --message-id <message-id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete abc123def4 --thread-id <thread-id> --json
+  examples: `npx --yes @artifactshare/cli comments delete abc123def4 --thread-id <thread-id> --message-id <message-id> --json
+npx --yes @artifactshare/cli comments delete abc123def4 --thread-id <thread-id> --json
 
 Deleting comments cannot be undone. Omit --message-id only when deleting the whole thread.
 
@@ -1268,8 +1268,8 @@ const previewNextDefinition = define({
       description: 'Preview session id from the ready JSON',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session 0123456789abcdef
+  examples: `npx --yes @artifactshare/cli preview next ./lp.html --wait 90
+npx --yes @artifactshare/cli preview next --session 0123456789abcdef
 
 Returns {items: []} with timed_out: true when the wait expires, and
 session_ended: true when the preview shuts down while waiting. Successful
@@ -1310,7 +1310,7 @@ const previewDoneDefinition = define({
       description: 'Preview session id from the ready JSON',
     },
   },
-  examples: `printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npm exec --yes --package=@artifactshare/cli -- artifactshare preview done ./lp.html --stdin
+  examples: `printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin
 
 Each item returns accepted | stale | already_reported | unknown_thread. The
 result also includes the sanitized agent notification projection.
@@ -1349,7 +1349,7 @@ const previewReplyDefinition = define({
       description: 'Preview session id from the ready JSON',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview reply ./lp.html --thread t1 --body "Which shade of coral?"
+  examples: `npx --yes @artifactshare/cli preview reply ./lp.html --thread t1 --body "Which shade of coral?"
 
 Common failures:
   preview_session_not_found  Start a session with: preview <file>
@@ -1381,8 +1381,8 @@ const previewHistoryDefinition = define({
         'Return one batch with its comments, reports and document snapshots',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview history ./lp.html
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview history ./lp.html --batch <batch_id>
+  examples: `npx --yes @artifactshare/cli preview history ./lp.html
+npx --yes @artifactshare/cli preview history ./lp.html --batch <batch_id>
 
 Works after the preview has stopped; reads only local files and sends nothing.
 Without --batch, lists batches with item, fixed and skipped counts. With
@@ -1419,8 +1419,8 @@ const previewStopDefinition = define({
         'Clear a session record once its process is gone (refused while it is alive)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop ./lp.html
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview stop ./lp.html --force
+  examples: `npx --yes @artifactshare/cli preview stop ./lp.html
+npx --yes @artifactshare/cli preview stop ./lp.html --force
 
 Common failures:
   preview_session_not_found  Nothing to stop; the session already ended
@@ -1446,8 +1446,8 @@ const previewStartDefinition = define({
       description: 'Do not open the browser automatically',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html --no-open
+  examples: `npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview ./lp.html --no-open
 
 Prints one ready JSON line ({url, session, share_origin, reused, agent}) and
 keeps serving until stopped. Re-running against a live session reuses it.
@@ -1471,8 +1471,8 @@ const previewDefinition = define({
     history: lazyCommand(previewHistoryDefinition, previewHistoryRunner),
     stop: lazyCommand(previewStopDefinition, previewStopRunner),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90
+  examples: `npx --yes @artifactshare/cli preview ./lp.html
+npx --yes @artifactshare/cli preview next ./lp.html --wait 90
 
 Common failures:
   validation_failed            Pass a single local .md or .html file; PDF and video files cannot be previewed, share them instead
@@ -1495,11 +1495,11 @@ const commentsDefinition = define({
     reopen: lazyCommand(commentsReopenDefinition, commentsReopenRunner),
     delete: lazyCommand(commentsDeleteDefinition, commentsDeleteRunner),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body "<text>" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <message-id> --body "<text>" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve <artifact-id-or-url> --thread-id <thread-id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <artifact-id-or-url> --thread-id <thread-id> --json
+  examples: `npx --yes @artifactshare/cli comments list <artifact-id-or-url> --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body "<text>" --json
+npx --yes @artifactshare/cli comments edit <artifact-id-or-url> --message-id <message-id> --body "<text>" --json
+npx --yes @artifactshare/cli comments resolve <artifact-id-or-url> --thread-id <thread-id> --json
+npx --yes @artifactshare/cli comments delete <artifact-id-or-url> --thread-id <thread-id> --json
 
 Deleting comments cannot be undone.`,
   run: parentCommandRunner('comments'),
@@ -1510,7 +1510,7 @@ const profilesListDefinition = define({
   description: 'List saved CLI profiles and the default profile.',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
+  examples: `npx --yes @artifactshare/cli profiles list --json
 
 token_present shows whether a saved credential exists; token values are never printed.`,
 })
@@ -1526,7 +1526,7 @@ const profilesUseDefinition = define({
       description: 'Profile name to make the default',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use client-a --json
+  examples: `npx --yes @artifactshare/cli profiles use client-a --json
 
 Common failures:
   profile_not_found  Run profiles list to see saved profiles, or login --profile <name>`,
@@ -1550,7 +1550,7 @@ const profilesImportTokenDefinition = define({
         'Replace an existing profile credential when importing a bot token (no-op for API tokens)',
     },
   },
-  examples: `printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile client-a --json
+  examples: `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json
 
 Reads the token from standard input only. Use this in unattended CI or scripts without browser approval after issuing a token at ${DEFAULT_BASE_URL}/settings/tokens.
 
@@ -1569,7 +1569,7 @@ const profilesDeleteDefinition = define({
   description: 'Delete a saved CLI profile and its credential.',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete client-a --json
+  examples: `npx --yes @artifactshare/cli profiles delete client-a --json
 
 Removes the profile from config.json and clears its saved credential.
 If the deleted profile was the default, default_profile becomes null.
@@ -1636,12 +1636,12 @@ const configDefinition = define({
   examples: `Posting to a project delivers to that project's audience. Without a destination, share posts to home.
 Choose the home audience by purpose:
   Personal safe default (this CLI environment only):
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
+    npx --yes @artifactshare/cli config set home_audience private --scope user --json
   Shared policy agreed by all repository participants:
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
+    npx --yes @artifactshare/cli config set home_audience workspace --scope repository --json
   One-time audience for a single post: pass --visibility private|workspace.
   Check the resolved audience with:
-    npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
+    npx --yes @artifactshare/cli config get home_audience --scope effective --json
 
 Keys:
   home_audience                  Canonical home-post audience.
@@ -1666,10 +1666,10 @@ const profilesDefinition = define({
     ),
     delete: lazyCommand(profilesDeleteDefinition, profilesDeleteRunner),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use client-a --json
-printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile client-a --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete client-a --json`,
+  examples: `npx --yes @artifactshare/cli profiles list --json
+npx --yes @artifactshare/cli profiles use client-a --json
+printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile client-a --json
+npx --yes @artifactshare/cli profiles delete client-a --json`,
   run: parentCommandRunner('profiles'),
 })
 
@@ -1678,7 +1678,7 @@ const projectsListDefinition = define({
   description: 'List projects you can share into.',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
+  examples: `npx --yes @artifactshare/cli projects list --json
 
 is_default marks the working-directory default project from .artifactshare/config.json.
 Use a project id with share --project-id or init --project-id.
@@ -1710,12 +1710,12 @@ const projectsCreateDefinition = define({
         'workspace or private (default: default_project_visibility, resolved from repository, user, then workspace)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare projects create "Launch review" --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare projects create "Client" --description "Weekly reports" --visibility private --json
+  examples: `npx --yes @artifactshare/cli projects create "Launch review" --json
+  npx --yes @artifactshare/cli projects create "Client" --description "Weekly reports" --visibility private --json
 
 Persist the default for project creation in the repository:
-  npm exec --yes --package=@artifactshare/cli -- artifactshare config get default_project_visibility --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare config set default_project_visibility private --scope repository --json
+  npx --yes @artifactshare/cli config get default_project_visibility --json
+  npx --yes @artifactshare/cli config set default_project_visibility private --scope repository --json
 
 The response includes project.id and next_command for share --project-id.
 
@@ -1774,10 +1774,10 @@ const projectsEditDefinition = define({
       description: 'Unarchive the project before other edits',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --name "Launch review" --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --visibility private --add-email viewer@example.com --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --archive --json
-  npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --unarchive --description "" --json
+  examples: `npx --yes @artifactshare/cli projects edit <id> --name "Launch review" --json
+  npx --yes @artifactshare/cli projects edit <id> --visibility private --add-email viewer@example.com --json
+  npx --yes @artifactshare/cli projects edit <id> --archive --json
+  npx --yes @artifactshare/cli projects edit <id> --unarchive --description "" --json
 
 Common failures:
   target_not_found       Use a project id from projects list
@@ -1798,9 +1798,9 @@ const projectsDefinition = define({
     create: lazyCommand(projectsCreateDefinition, projectsCreateRunner),
     edit: lazyCommand(projectsEditDefinition, projectsEditRunner),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create "Launch review" --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json`,
+  examples: `npx --yes @artifactshare/cli projects list --json
+npx --yes @artifactshare/cli projects create "Launch review" --json
+npx --yes @artifactshare/cli projects edit <id> --add-email viewer@example.com --json`,
   run: parentCommandRunner('projects'),
 })
 
@@ -1838,8 +1838,8 @@ const skillsInstallDefinition = define({
         'Take over bundled paths or intentionally downgrade; preserve user additions',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --scope project --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool claude --tool cursor --dry-run --json
+  examples: `npx --yes @artifactshare/cli skills install --tool codex --scope project --json
+npx --yes @artifactshare/cli skills install --tool claude --tool cursor --dry-run --json
 
 Writes SKILL.md and bundled references into skills/artifactshare/ for every tool and scope.
 Project Cursor uses .cursor/skills/artifactshare/. A manifest tracks owned files.
@@ -1862,7 +1862,7 @@ const skillsListDefinition = define({
   description: 'Show skill install status for each supported agent tool.',
   toKebab: true,
   args: commonArgs,
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
+  examples: `npx --yes @artifactshare/cli skills list --json
 
 Reports each tool and scope with detection, version, completeness, missing/differing files,
 ownership metadata, and legacy Cursor rule coexistence. Shared folders appear once with aliases
@@ -1884,8 +1884,8 @@ const skillsUpdateDefinition = define({
         'Rewrite managed folder files, allowing an explicit downgrade; never take over an unmanaged entry',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json
+  examples: `npx --yes @artifactshare/cli skills update --json
+npx --yes @artifactshare/cli skills update --tool codex --scope user --json
 
 Updates managed folders and repairs missing files. Edited owned files require --force; user additions are preserved.
 Folder and ancestor directory symlinks are resolved. User links outside bundled, owned, pending and reserved CLI paths are ignored and listed in user_links; protected links in managed folders are refused even with --force.
@@ -1914,9 +1914,9 @@ const skillsEnsureDefinition = define({
       description: 'Show planned file changes without writing',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --scope user --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool claude --json
+  examples: `npx --yes @artifactshare/cli skills ensure --tool auto --json
+npx --yes @artifactshare/cli skills ensure --tool auto --scope user --json
+npx --yes @artifactshare/cli skills ensure --tool claude --json
 
 Use --tool auto from an agent workspace. It detects .claude, .codex/.agents, or
 .cursor in the current directory, or the Claude user root when CLAUDE_CONFIG_DIR
@@ -1945,8 +1945,8 @@ const skillsRemoveDefinition = define({
     ...commonArgs,
     ...skillsToolArgs,
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --tool cursor --json
+  examples: `npx --yes @artifactshare/cli skills remove --json
+npx --yes @artifactshare/cli skills remove --tool cursor --json
 
 Only manifest-owned files (or a legacy managed SKILL.md) are deleted; user files are preserved.
 Unmanaged folders are skipped_unmanaged, including protected-path links when no ownership records or managed legacy rule exist.
@@ -1965,9 +1965,9 @@ const skillsDefinition = define({
     ensure: lazyCommand(skillsEnsureDefinition, skillsEnsureRunner),
     remove: lazyCommand(skillsRemoveDefinition, skillsRemoveRunner),
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json`,
+  examples: `npx --yes @artifactshare/cli skills install --tool codex --json
+npx --yes @artifactshare/cli skills ensure --tool auto --json
+npx --yes @artifactshare/cli skills list --json`,
   run: parentCommandRunner('skills'),
 })
 
@@ -1990,9 +1990,9 @@ const initDefinition = define({
         'Show the planned skill changes without writing (onboarding)',
     },
   },
-  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare init --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare init --dry-run --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare init --profile client-a --project-id <id> --json
+  examples: `npx --yes @artifactshare/cli init --json
+npx --yes @artifactshare/cli init --dry-run --json
+npx --yes @artifactshare/cli init --profile client-a --project-id <id> --json
 
 Without flags, init detects Claude Code, Codex, or Cursor in the working directory,
 installs or updates the bundled skill in user scope, and shows the next steps (sign

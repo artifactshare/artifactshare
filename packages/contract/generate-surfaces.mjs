@@ -520,7 +520,7 @@ function duplicationProse(value) {
     .map((line) => line.replace(/^\s*[-*]\s+/, ''))
     .filter(
       (line) =>
-        !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$|npm exec --yes --package=@artifactshare\/cli -- artifactshare\b)/.test(
+        !/^\s*(?:https?:\/\/|#|`[^`]+`$|[\w.-]+\/[\w./-]+$|npx --yes @artifactshare\/cli\b)/.test(
           line,
         ),
     )
@@ -689,7 +689,7 @@ export async function generateSurface({
 }
 
 export function cliInvocation(command) {
-  return `npm exec --yes --package=@artifactshare/cli -- artifactshare ${command}`
+  return `npx --yes @artifactshare/cli ${command}`
 }
 
 export function generateCliAgentCommands() {
@@ -918,7 +918,7 @@ function commandTokens(value) {
 export function extractCommandExamples(content) {
   const examples = []
   const pattern =
-    /(?:npm exec\s+--yes\s+--package=@artifactshare\/cli\s+--\s+artifactshare|@artifactshare\/cli|\bartifactshare)\s+([^\n`]+)/g
+    /(?:npx\s+--yes\s+@artifactshare\/cli|npm exec\s+--yes\s+--package=@artifactshare\/cli\s+--\s+artifactshare|@artifactshare\/cli|\bartifactshare)\s+([^\n`]+)/g
   for (const match of content.matchAll(pattern)) {
     const tokens = commandTokens(match[1])
     if (tokens[0] && /^[a-z][a-z0-9-]*$/.test(tokens[0])) examples.push(tokens)

@@ -12,11 +12,11 @@ Use `comments list` to read, `comments post` to write. IDs from `list` feed
 into `edit`, `resolve`, `reopen`, and `delete`.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --reply-to <thread-id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --quote 'exact text' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
+npx --yes @artifactshare/cli comments list <artifact-id-or-url> --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --reply-to <thread-id> --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --quote 'exact text' --json
+npx --yes @artifactshare/cli comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
 ```
 
 Quoted comments are resolved in the viewer using the exact quote and surrounding context, never the nearest repeated words. `--quote-before` and `--quote-after` accept up to 400 characters per side; preserve spaces next to the quote. Creation does not search the artifact. Optional `anchor.position_state` is `unchecked` until that version is viewed, then `attached` or `needs-check`. Only `attached` maps to `anchor.state: attached`; both other states map to `orphaned`. Older responses may omit `position_state`. Local preview uses the same strict resolution on every reload and preserves the original quote when its position needs checking.
@@ -31,10 +31,10 @@ Quoted comments are resolved in the viewer using the exact quote and surrounding
   `comments list` returns an `agent` field on messages posted with this flag.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve <artifact-id-or-url> --thread-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments reopen <artifact-id-or-url> --thread-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <artifact-id-or-url> --thread-id <id> --message-id <id> --json
+npx --yes @artifactshare/cli comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json
+npx --yes @artifactshare/cli comments resolve <artifact-id-or-url> --thread-id <id> --json
+npx --yes @artifactshare/cli comments reopen <artifact-id-or-url> --thread-id <id> --json
+npx --yes @artifactshare/cli comments delete <artifact-id-or-url> --thread-id <id> --message-id <id> --json
 ```
 
 - Comment deletion cannot be undone. Omit `--message-id` only when the user

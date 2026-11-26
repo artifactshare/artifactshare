@@ -352,7 +352,7 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
     const usage = usageNodes()[0]
     const pre = document.querySelector<HTMLPreElement>('#commands article pre')!
     const example = pre.querySelector('code')!
-    const token = 'artifactshare'
+    const token = '@artifactshare/cli'
     for (const [code, container] of [
       [usage, usage],
       [example, pre],

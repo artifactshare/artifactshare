@@ -18,7 +18,7 @@
   API-token profiles are removed locally only and are not revoked on the server.
 - To keep using an issued token as a named profile without TTY or browser
   login, pipe it on standard input:
-  `printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile <name> --json`.
+  `printf '%s' "$TOKEN" | npx --yes @artifactshare/cli profiles import-token --profile <name> --json`.
   Bot tokens (`asb_` prefix, issued by a workspace admin) use the same command; the first
   refresh consumes the displayed token, overwriting an existing profile credential requires
   `--force`, and a revoked or superseded bot token fails with `bot_token_invalid` (ask the
@@ -33,9 +33,9 @@
 ## Profiles
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use <name> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete <name> --json
+npx --yes @artifactshare/cli profiles list --json
+npx --yes @artifactshare/cli profiles use <name> --json
+npx --yes @artifactshare/cli profiles delete <name> --json
 ```
 
 - `profiles list` shows saved profiles and the default.
@@ -48,9 +48,9 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete <na
 ## Skills
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
+npx --yes @artifactshare/cli skills ensure --tool auto --json
+npx --yes @artifactshare/cli skills update --json
+npx --yes @artifactshare/cli skills list --json
 ```
 
 - `open`, flag-less `init`, and `skills ensure --tool auto` detect Claude Code,

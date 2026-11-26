@@ -143,7 +143,7 @@ test('open returns a download next_command for multi-file artifacts', async () =
       assert.equal(payload.data.open.kind, 'download_required')
       assert.equal(
         payload.data.open.next_command,
-        'npm exec --yes --package=@artifactshare/cli -- artifactshare download abc123def4 --output ./artifact --json',
+        'npx --yes @artifactshare/cli download abc123def4 --output ./artifact --json',
       )
     },
   )
@@ -189,7 +189,7 @@ test('open metadata-only response returns a download next_command for multi-file
       assert.equal(payload.data.open.kind, 'download_required')
       assert.equal(
         payload.data.open.next_command,
-        'npm exec --yes --package=@artifactshare/cli -- artifactshare download abc123def4 --output ./artifact --json',
+        'npx --yes @artifactshare/cli download abc123def4 --output ./artifact --json',
       )
     },
   )

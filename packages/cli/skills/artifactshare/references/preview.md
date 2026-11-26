@@ -26,8 +26,8 @@ long-running or background process mechanism. Keep that process or task handle
 for the lifetime of the preview.
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview start ./lp.html --no-open --json
+npx --yes @artifactshare/cli preview ./lp.html --json
+npx --yes @artifactshare/cli preview start ./lp.html --no-open --json
 ```
 
 - Run the CLI invocation itself as the long-running task. Do not add shell
@@ -113,7 +113,7 @@ Pick the first mode your environment supports:
    terminal; that user-owned process is the server owner, and comment pickup is
    manual.
 3. For an Artifact Share-managed Cursor ACP session, start with
-   `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
+   `npx --yes @artifactshare/cli-preview-cursor <file>`.
    Run one managed launcher per workspace. The launcher creates or loads the
    workspace's managed conversation and sends a fixed batch-ready prompt only
    while that session is idle. Read all comment content with `preview next`;
@@ -134,8 +134,8 @@ call, do not re-arm; report the situation to the user instead.
 ### Working through a batch
 
 ```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90 --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session 0123456789abcdef --json
+npx --yes @artifactshare/cli preview next ./lp.html --wait 90 --json
+npx --yes @artifactshare/cli preview next --session 0123456789abcdef --json
 ```
 
 - Read the whole batch first, then fix everything in one editing pass and
@@ -162,7 +162,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --sess
   know.
 
 ```bash
-printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npm exec --yes --package=@artifactshare/cli -- artifactshare preview done ./lp.html --stdin --json
+printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npx --yes @artifactshare/cli preview done ./lp.html --stdin --json
 ```
 
 Sharing is user-driven: the page's share button opens a separate-origin

@@ -6,7 +6,7 @@ supported CLI package.
 Use [`@artifactshare/cli`](https://www.npmjs.com/package/@artifactshare/cli):
 
 ```sh
-npm exec --yes --package=@artifactshare/cli -- artifactshare --help
+npx --yes @artifactshare/cli --help
 ```
 
 The supported CLI source and documentation are in the

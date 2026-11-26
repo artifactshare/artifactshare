@@ -39,7 +39,7 @@ const MUTATION_HEADERS = {
 
 it('uses the explicit main package binary in the resume command', () => {
   expect(previewResumeCommand(join(process.cwd(), 'report.html'))).toBe(
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare preview report.html',
+    'npx --yes @artifactshare/cli preview report.html',
   )
 })
 

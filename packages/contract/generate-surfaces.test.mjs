@@ -222,7 +222,7 @@ test('document examples are checked against the committed surface', () => {
   }
   assert.deepEqual(
     extractCommandExamples(
-      '`npm exec --yes --package=@artifactshare/cli -- artifactshare share report.md --home --json`',
+      '`npx --yes @artifactshare/cli share report.md --home --json`',
     ),
     [['share', 'report.md', '--home', '--json']],
   )
@@ -769,7 +769,7 @@ test('negative control: the matrix checker reads owner and reference files for p
 
 test('literal duplication ignores explicit executable command lines', () => {
   const command =
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --project-id example --json'
+    'npx --yes @artifactshare/cli share ./report.html --project-id example --json'
   assert.deepEqual(
     validateLiteralDuplication({ source: command, reference: command }),
     [],
@@ -813,7 +813,7 @@ test('presentation surfaces come from the shared contract metadata', () => {
   const commands = generateCliAgentCommands()
   assert.equal(
     commands.open,
-    'npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-or-url> --json',
+    'npx --yes @artifactshare/cli open <artifact-id-or-url> --json',
   )
   assert.match(renderCliReadmeCommandTable(), /`open <target>`/)
   assert.match(renderSkillQuickReferenceTable(), /`share <path> --json`/)

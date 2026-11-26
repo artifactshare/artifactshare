@@ -870,6 +870,7 @@ test('report compares versions and excludes contamination and incomplete results
   assert.match(report, /two: incomplete 1/u)
 })
 test('guard handles all base flag spellings and blocks unsupported package runners', () => {
+  const npx = ['--yes', '@artifactshare/cli']
   const npm = [
     'exec',
     '--yes',
@@ -877,7 +878,11 @@ test('guard handles all base flag spellings and blocks unsupported package runne
     '--',
     'artifactshare',
   ]
-  for (const bin of ['artifactshare', 'npm'])
+  for (const [bin, prefix] of [
+    ['artifactshare', []],
+    ['npx', npx],
+    ['npm', npm],
+  ])
     for (const flag of ['--base-url', '--baseUrl'])
       for (const args of [
         [flag, 'https://example.com'],
@@ -886,10 +891,18 @@ test('guard handles all base flag spellings and blocks unsupported package runne
         assert.throws(() =>
           guardedArguments(
             bin,
-            [...(bin === 'npm' ? npm : []), 'share', ...args],
+            [...prefix, 'share', ...args],
             'http://localhost',
           ),
         )
+  assert.deepEqual(
+    guardedArguments(
+      'npx',
+      [...npx, 'help', '--json', '--baseUrl=http://localhost'],
+      'http://localhost',
+    ),
+    ['help', '--json', '--baseUrl=http://localhost'],
+  )
   assert.deepEqual(
     guardedArguments(
       'npm',
@@ -898,8 +911,9 @@ test('guard handles all base flag spellings and blocks unsupported package runne
     ),
     ['help', '--json', '--baseUrl=http://localhost'],
   )
-  for (const bin of ['npx', 'pnpm', 'bunx'])
+  for (const bin of ['pnpm', 'bunx'])
     assert.throws(() => guardedArguments(bin, [], 'http://localhost'))
+  assert.throws(() => guardedArguments('npx', [], 'http://localhost'))
   assert.throws(() => guardedArguments('npm', ['install'], 'http://localhost'))
   assert.equal(
     redact('a synthetic-secret b', ['synthetic-secret']),
@@ -1136,7 +1150,7 @@ if (process.argv[2] === 'remote') {
         env: run.env.agent,
       },
     ),
-    /Package runners are disabled/u,
+    /Unsupported npx form/u,
   )
   await assert.rejects(access(run.config.log))
   const jsonCheck = (actions) =>
@@ -1574,8 +1588,7 @@ test('malformed shapes remain incomplete and duplicate tool completions do not c
       error: {
         recovery: {
           kind: 'run_command',
-          command:
-            'npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json',
+          command: 'npx --yes @artifactshare/cli projects list --json',
         },
       },
     }),

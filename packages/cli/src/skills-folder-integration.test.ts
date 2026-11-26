@@ -2119,7 +2119,7 @@ setGlobalDispatcher(agent);
     assert.equal(row.action, 'update_recommended')
     assert.equal(
       row.update_command,
-      'npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --scope user --force --json',
+      'npx --yes @artifactshare/cli skills install --tool codex --scope user --force --json',
     )
     assert.equal(await readFile(path, 'utf8'), 'personal reference')
   })
