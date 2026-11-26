@@ -35,7 +35,7 @@ import {
   MAX_COMMENT_BODY_LENGTH,
   quoteCommentText,
 } from '~/lib/comments'
-import { formatRelative } from '~/lib/datetime'
+import type { Locale } from '~/i18n/messages'
 import { cn } from '~/lib/utils'
 import type { CommentThreadView } from '~/lib/comments'
 import { CommentMessageItem } from './comment-message-item'
@@ -596,7 +596,7 @@ function ThreadCard({
 }: {
   thread: CommentThreadView
   newCommentMessages: ReadonlyArray<NewCommentMessage>
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   target: boolean
   targetScroll: TargetThreadScroll
   pendingKeys: ReadonlySet<string>
@@ -963,7 +963,7 @@ function CommentReplyList({
   missingSelectedId?: string
   gaps: ReturnType<typeof commentGapRequests>
   newMessageIds: Set<string>
-  locale: Parameters<typeof formatRelative>[1]
+  locale: Locale
   pendingKeys: ReadonlySet<string>
   onUpdateMessage: (messageId: string, body: string) => Promise<boolean>
   onDeleteMessage: (messageId: string) => Promise<boolean>

@@ -2,7 +2,7 @@ import { IconLoader2 } from '@tabler/icons-react'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
+import { useRelativeTime } from '~/components/app/render-clock'
 import type { SlackData } from './project-slack-dialog'
 
 export function ProjectSlackStatus({
@@ -12,6 +12,7 @@ export function ProjectSlackStatus({
   data: SlackData | undefined
   projectId: string
 }) {
+  const formatRelative = useRelativeTime()
   const { t, locale } = useT()
   return !data ? (
     <div className="flex justify-center py-8">
