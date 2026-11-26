@@ -37,19 +37,23 @@ For interactive development, `pnpm dev` prepares local certificates, variables,
 and D1 state before starting the application, sandbox, and image worker.
 
 Some screens need states the local stack cannot reach, such as a Stripe
-contract whose payment failed or a workspace close to its storage limit. The
-dev server renders them with fixture data at `/dev/settings/<state>/billing`,
-beside the `/dev/scenarios/<scenario>` pages, and `/dev/screens` lists both.
-With `pnpm dev` running, `pnpm screens` captures them into `.screens/`:
+contract whose payment failed, a workspace close to its storage limit, or a
+team with members, bots and history. The dev server renders the Settings pages
+with fixture data at `/dev/settings/<state>/<page>`, beside the
+`/dev/scenarios/<scenario>` pages, and `/dev/screens` lists both. With
+`pnpm dev` running, `pnpm screens` captures them into `.screens/`:
 
 ```sh
 pnpm screens --list
 pnpm screens past-due near-limit
+pnpm screens team-member
 pnpm screens billing --theme light,dark --viewport desktop,mobile --lang ja,en
 ```
 
-A filter keeps the screens whose id contains it. Billing states live in
-`apps/web/app/routes/dev.settings.$state/+components/settings-states.ts`.
+A filter keeps the screens whose id contains it. The states live in
+`apps/web/app/routes/dev.settings.$state/+components/settings-states.ts`: the
+`free`, `team-subscribed` and `team-member` states cover every page their
+Settings menu shows, and the other states cover billing.
 
 The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
 After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.
