@@ -25,7 +25,11 @@ import {
   SkillAutoUpdateContainerSchema,
 } from '@artifactshare/contract'
 import { loadSkillBundle } from './command-runners/skill-folder.js'
-import { expectSuccess, expectFailure } from './test/helpers.js'
+import {
+  expectSuccess,
+  expectFailure,
+  withoutProxyEnv,
+} from './test/helpers.js'
 
 let root: string, work: string, home: string
 let overlay: string, compileCache: string
@@ -67,7 +71,7 @@ function run(args: string[], preload?: string, env: NodeJS.ProcessEnv = {}) {
       encoding: 'utf8',
       timeout: 10000,
       env: {
-        ...process.env,
+        ...withoutProxyEnv(process.env),
         HOME: home,
         CLAUDE_CONFIG_DIR: join(home, '.claude'),
         ARTIFACTSHARE_CONFIG_HOME: join(home, '.config'),

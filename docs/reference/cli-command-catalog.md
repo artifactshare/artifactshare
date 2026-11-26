@@ -50,6 +50,8 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 | `--allow-plaintext-token-store` | 無効                                                        | OS の credential store が使えない POSIX 環境で、パーミッション 0600 の平文トークン保存を許す（Windows では利用不可） |
 | `--insecure-localhost`          | 無効                                                        | localhost の HTTPS 開発サーバーの自己署名証明書のみ許可する                                                     |
 
+API への通信は `HTTPS_PROXY` / `HTTP_PROXY`（小文字も可）で指定したプロキシを通り、`NO_PROXY` に挙げたホストへは直接つなぐ。どちらも設定されていなければ直接つなぐ。
+
 ## 共有契約とスナップショットの同期
 
 コマンドの存在、使い方、オプション名の基準は `packages/cli/src/index.ts` の定義とビルド済み CLI の実ヘルプである。`packages/contract/generate-surfaces.mjs` はトップレベルとサブコマンドの `--help` を実行し、`apps/web/app/lib/cli-reference-surface.generated.json`、能力表、OpenAPI、同梱 Skill のコマンド一覧を 1 つの共有契約からまとめて生成する。

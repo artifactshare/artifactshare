@@ -52,8 +52,25 @@ type JsonPayload = {
  * so a rebuilt CLI is never served a stale entry. */
 const compileCache = join(tmpdir(), 'artifactshare-cli-test-compile-cache')
 
+/** The CLI routes requests through a proxy named in the environment, so a
+ * developer's own proxy settings would reroute the loopback stubs. Tests that
+ * exercise the proxy set these themselves. */
+export function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const copy = { ...env }
+  for (const name of [
+    'HTTPS_PROXY',
+    'https_proxy',
+    'HTTP_PROXY',
+    'http_proxy',
+    'NO_PROXY',
+    'no_proxy',
+  ])
+    delete copy[name]
+  return copy
+}
+
 function subprocessEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env = { ...process.env }
+  const env = withoutProxyEnv(process.env)
   delete env.CLAUDE_CONFIG_DIR
   return {
     ...env,
