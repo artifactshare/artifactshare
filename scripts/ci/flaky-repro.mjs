@@ -74,7 +74,9 @@ const inside = (root, candidate) => {
 const underResults = (root, candidate) => {
   const relative = inside(root, candidate)
   if (!relative.startsWith(`${resultsRoot}/`))
-    misuse(`--results must name a directory under ${resultsRoot}/: ${candidate}`)
+    misuse(
+      `--results must name a directory under ${resultsRoot}/: ${candidate}`,
+    )
   return relative
 }
 
