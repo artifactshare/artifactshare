@@ -50,6 +50,7 @@
     "test:unit:noncli": "pnpm fixtures:build && pnpm test:scripts && pnpm --filter @artifactshare/web test:unit && pnpm --filter @artifactshare/contract test && pnpm --filter @artifactshare/qm-bridge test",
     "test:d1": "pnpm --filter @artifactshare/web test:d1",
     "test:behavior-browser": "pnpm --filter @artifactshare/web test:behavior-browser",
+    "test:flaky-repro": "node scripts/ci/flaky-repro.mjs",
     "check:browser-local-state": "node scripts/browser-local-state.mjs",
     "build": "pnpm --filter @artifactshare/web build && pnpm --filter @artifactshare/contract build && pnpm --filter @artifactshare/cli build && pnpm --filter @artifactshare/qm-bridge build",
     "build:alerts": "pnpm --filter @artifactshare/web build:alerts",

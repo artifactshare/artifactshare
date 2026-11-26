@@ -1,0 +1,4 @@
+{
+  "shell-save-response": "Hold the preview shell after a saved annotation response arrives, before it handles it, as a busy main thread would.",
+  "shell-to-frame-message": "Deliver preview shell messages to the document frame late, in the order they were sent."
+}

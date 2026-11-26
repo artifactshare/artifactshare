@@ -41,3 +41,6 @@ apps/web/.app-css-base-*/
 
 # Verification runs from .claude/skills/verify-artifactshare (state, logs, evidence).
 .verify-artifactshare/
+
+# Reports, captured page state and summaries from pnpm test:flaky-repro.
+.flaky-repro/
