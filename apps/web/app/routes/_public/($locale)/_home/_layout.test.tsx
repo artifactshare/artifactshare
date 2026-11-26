@@ -9,16 +9,31 @@ const dbState = vi.hoisted(() => ({
   db: null as Kysely<DB> | null,
 }))
 
+const joinedReads = vi.hoisted(() => ({ count: 0 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => {
     if (!dbState.db) throw new Error('missing sqlite fixture')
     return dbState.db
   },
 }))
+vi.mock('~/services/project-membership.server', async (original) => {
+  const actual =
+    await original<typeof import('~/services/project-membership.server')>()
+  return {
+    ...actual,
+    listJoinedProjectsForDropdown: (
+      ...args: Parameters<typeof actual.listJoinedProjectsForDropdown>
+    ) => {
+      joinedReads.count += 1
+      return actual.listJoinedProjectsForDropdown(...args)
+    },
+  }
+})
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { loader } from './_layout'
+import { loader as homeLoader } from './index'
 import {
   hasUploadQuery,
   uploadReturnTo,
@@ -60,6 +75,29 @@ describe('/ home layout loader', () => {
       workspaceHd: 'techtalk.jp',
     })
   })
+})
+
+test('signed-in / reads the joined projects once for the header and the rail', async () => {
+  const fixture = createMigratedInMemoryDb()
+  dbState.db = fixture.db
+  try {
+    await seedWorkspace(fixture.db, { id: 'ws-a', name: 'A', hd: null })
+    const context = new Map()
+    context.set(userContext, sessionUser({ id: 'u-a', workspaceId: 'ws-a' }))
+    joinedReads.count = 0
+    const request = new Request('https://artifactshare.test/')
+    const url = new URL(request.url)
+    const [layout, home] = await Promise.all([
+      loader({ request, context, params: {}, url } as never),
+      homeLoader({ request, context, params: {}, url } as never),
+    ])
+    expect(layout).toMatchObject({ signedIn: true, joinedProjects: [] })
+    expect(home).toMatchObject({ signedIn: true, rail: { projects: [] } })
+    expect(joinedReads.count).toBe(1)
+  } finally {
+    dbState.db = null
+    await fixture.db.destroy()
+  }
 })
 
 describe('home upload query', () => {

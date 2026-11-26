@@ -10,7 +10,7 @@ import type {
 } from '~/routes/_home/+components/home-view'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
-import { listJoinedProjectsForDropdown } from './project-membership.server'
+import type { listJoinedProjectsForDropdown } from './project-membership.server'
 import { listMyProjects } from './projects.server'
 import {
   INBOX_CONTAINER_NAME,
@@ -581,14 +581,23 @@ export type RailProject = {
   newCount?: number
 }
 
+const RAIL_PROJECTS = 3
+
 // ホームのレール「プロジェクト」区画: 参加中を優先して最大 3 件。参加 0 件は
-// 現行どおり自分が作成したプロジェクト名だけを返す。
+// 現行どおり自分が作成したプロジェクト名だけを返す。参加中の一覧は上のバーと
+// 同じ読み込み (新しい順) を受け取り、先頭の 3 件を使う。
 export async function listRailProjects(
   db: Kysely<DB>,
   user: SessionUser,
+  joinedProjects: ReturnType<typeof listJoinedProjectsForDropdown>,
 ): Promise<RailProject[]> {
-  const joined = await listJoinedProjectsForDropdown(db, user, 3)
+  const joined = (await joinedProjects).slice(0, RAIL_PROJECTS)
   if (joined.length > 0) return joined.map((p) => ({ ...p, joined: true }))
-  const created = await listMyProjects(db, user.id, user.workspaceId, 3)
+  const created = await listMyProjects(
+    db,
+    user.id,
+    user.workspaceId,
+    RAIL_PROJECTS,
+  )
   return created.map((p) => ({ ...p, joined: false }))
 }

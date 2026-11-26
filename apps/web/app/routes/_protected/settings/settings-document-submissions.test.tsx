@@ -51,18 +51,9 @@ const shellReads = vi.hoisted(() => ({
     currentUserIsAdmin: true,
     currentUserRole: 'owner' as const,
   })),
-  joined: vi.fn(async () => []),
 }))
 vi.mock('./+lib/settings-request.server', () => ({
   loadSettingsShell: shellReads.shell,
-}))
-vi.mock('~/services/project-membership.server', () => ({
-  listJoinedProjectsForDropdown: shellReads.joined,
-}))
-// The shared chrome is not what this checks.
-vi.mock('../../_home/+components/topbar', () => ({ Topbar: () => null }))
-vi.mock('../../_home/+components/bottom-tab-bar', () => ({
-  BottomTabBar: () => null,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: () => ({
@@ -162,7 +153,6 @@ test('a native token POST renders Settings with one fresh shell and its result',
     name: 'Reports',
   })
   shellReads.shell.mockClear()
-  shellReads.joined.mockClear()
   const handle = documentRequestHandler({
     path: '/settings/tokens',
     Page: TokensPage,
@@ -185,7 +175,6 @@ test('a native token POST renders Settings with one fresh shell and its result',
   // The returned document shows the freshly read shell.
   expect(html).toContain('Freshly read workspace')
   expect(shellReads.shell).toHaveBeenCalledTimes(1)
-  expect(shellReads.joined).toHaveBeenCalledTimes(1)
 })
 
 test('API token creation shows the new token or the name error in the returned page', async () => {

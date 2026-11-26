@@ -29,7 +29,8 @@ vi.mock('~/services/link-sharing.server', () => ({
   loadWorkspaceLinkPolicy: async () => null,
 }))
 
-import ProjectFiles, { loader } from './projects.$id.files'
+import ProjectFiles, { handle, loader } from './projects.$id.files'
+import { renderUnderAppShell } from '~/test/app-shell-page'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 type Db = Kysely<DB>
@@ -407,10 +408,10 @@ test('the actual project route supplies its current id and name to header search
   const { db } = await fixture()
   try {
     const data = await loader(args())
-    const router = createMemoryRouter([
-      { path: '*', element: <ProjectFiles loaderData={data} /> },
-    ])
-    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    const html = renderUnderAppShell(<ProjectFiles loaderData={data} />, {
+      handle,
+      loaderData: data,
+    })
     expect(html).toContain('data-search-project="proj1"')
     expect(html).toContain('>Project</header>')
   } finally {

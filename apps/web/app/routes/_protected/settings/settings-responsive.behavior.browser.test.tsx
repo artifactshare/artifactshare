@@ -34,7 +34,7 @@ import { ProjectsTable } from './_content/inventory/+components/projects-table'
 import { ArtifactsTable } from './_content/inventory/+components/artifacts-table'
 import { BotSection } from './+components/bot-section'
 import ExternalAccessPage from './_content/external-access'
-import SettingsLayout from './_layout'
+import { SettingsUnderAppShell } from '~/test/app-shell-page'
 const language = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n(language.locale) }))
 vi.mock('~/services/link-sharing.server', () => ({}))
@@ -301,7 +301,7 @@ async function withScreen(
         element: (
           <TooltipProvider>
             {layoutShell ? (
-              <SettingsLayout loaderData={layoutShell} />
+              <SettingsUnderAppShell loaderData={layoutShell} />
             ) : (
               <Outlet />
             )}
@@ -372,7 +372,7 @@ for (const width of [600, 979, 980])
           {
             element: (
               <TooltipProvider>
-                <SettingsLayout loaderData={shell} />
+                <SettingsUnderAppShell loaderData={shell} />
               </TooltipProvider>
             ),
             children: [
@@ -1216,7 +1216,7 @@ test.each([
       {
         element: (
           <TooltipProvider>
-            <SettingsLayout loaderData={shell} />
+            <SettingsUnderAppShell loaderData={shell} />
           </TooltipProvider>
         ),
         children: [
@@ -1452,7 +1452,7 @@ for (const theme of ['light', 'dark'])
             content,
             async (container) => {
               expect(container.querySelector('main'), path).not.toBeNull()
-              // Settings draws its own top and bottom bars around the page.
+              // The app shell draws the top and bottom bars around Settings.
               for (const bar of ['#app-topbar', '[data-bottom-tab-bar]'])
                 await expect
                   .element(page.elementLocator(container.querySelector(bar)!), {
@@ -1792,7 +1792,7 @@ test.each(['members', 'artifacts'] as const)(
         {
           element: (
             <TooltipProvider>
-              <SettingsLayout loaderData={shell} />
+              <SettingsUnderAppShell loaderData={shell} />
             </TooltipProvider>
           ),
           children: [

@@ -47,7 +47,7 @@ import {
   parseProjectBaseVisibility,
   type SharedProjectSummary,
 } from '~/services/projects.server'
-import type { HomeLayoutContext } from '../_layout'
+import type { HomeLayoutContext } from '../+components/home-main'
 import {
   joinProject,
   leaveProject,
