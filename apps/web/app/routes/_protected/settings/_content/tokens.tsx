@@ -19,22 +19,15 @@ import {
 import { createDb } from '~/services/db.server'
 import ApiTokensPage, {
   MAX_TOKEN_NAME_LENGTH,
+  type TokensLoaderData,
 } from '../+components/ai-tools-page'
 
-export default function TokensRoute({
-  loaderData,
-}: Pick<Route.ComponentProps, 'loaderData'>) {
-  return <ApiTokensPage loaderData={loaderData} />
-}
+// React Router passes loaderData only to a default export declared here.
+export default ApiTokensPage
 
-type CreatedToken = { name: string; token: string }
-
-export async function loader({ context }: Route.LoaderArgs): Promise<{
-  tokens: Awaited<ReturnType<typeof listApiTokens>>
-  // A new secret is shown only from the create action's response.
-  createdToken: CreatedToken | null
-  cliFamilies: Awaited<ReturnType<typeof listCliRefreshCredentialFamilies>>
-}> {
+export async function loader({
+  context,
+}: Route.LoaderArgs): Promise<TokensLoaderData> {
   const user = requireUser(context)
   const db = createDb()
   const tokens = await listApiTokens(db, user.id)

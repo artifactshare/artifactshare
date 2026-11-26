@@ -15,15 +15,20 @@ import {
 } from '~/services/bot-members.server'
 import { createDb } from '~/services/db.server'
 import { requireSettingsAdminPage } from '../+lib/settings-admin.server'
-import { SettingsPage } from '~/components/form/settings-page'
-import { BotSection } from '../+components/bot-section'
+import BotsPage, { type BotsLoaderData } from '../+components/bots-page'
 import type { Route } from './+types/bots'
+
+// React Router passes loaderData only to a default export declared here.
+export default BotsPage
+
 // Settings action for bot management. Tokens are returned only in this
 // action's response body — never via redirect, flash/session storage, URL
 // parameters, or logs. The bot-members feature flag gates creation only:
 // stop/reissue keep working for existing bots regardless of the flag.
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({
+  context,
+}: Route.LoaderArgs): Promise<BotsLoaderData> {
   requireSettingsAdminPage(context)
   const user = requireUser(context)
   const db = createDb()
@@ -32,19 +37,6 @@ export async function loader({ context }: Route.LoaderArgs) {
     isBotMembersEnabled(user.workspaceId),
   ])
   return { bots, botCreationEnabled }
-}
-
-export default function BotsPage({
-  loaderData,
-}: Pick<Route.ComponentProps, 'loaderData'>) {
-  return (
-    <SettingsPage>
-      <BotSection
-        bots={loaderData.bots}
-        canCreate={loaderData.botCreationEnabled}
-      />
-    </SettingsPage>
-  )
 }
 
 async function botRequestBody(request: {

@@ -201,7 +201,7 @@ test('validates token names and returns a new one-time secret only on create', a
 // default-declaration boundary as well as rendering with router-owned data.
 test('renders the tokens route with router-owned loader data', () => {
   const source = readFileSync(new URL('./tokens.tsx', import.meta.url), 'utf8')
-  expect(source).toMatch(/export default function /)
+  expect(source).toMatch(/^export default \w+/m)
   const router = createMemoryRouter(
     [
       {

@@ -17,12 +17,13 @@ test('390px settings sheet exposes all groups, closes on selection, and contains
   const router = createMemoryRouter(
     [
       {
-        path: '/settings/*',
+        path: '/settings',
         element: (
           <SettingsNav currentUserIsAdmin workspaceKind="team">
             <h1>Settings</h1>
           </SettingsNav>
         ),
+        children: [{ path: '*' }],
       },
     ],
     { initialEntries: ['/settings/tokens'] },

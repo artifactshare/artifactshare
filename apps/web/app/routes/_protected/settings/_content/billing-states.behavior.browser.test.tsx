@@ -11,7 +11,7 @@ import { page, userEvent } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
 import { formatBytes } from '~/lib/format'
 import { PLAN_DISPLAY } from '~/lib/billing-prices'
-import { BILLING_STATES } from '~/routes/dev.settings.$state/+components/billing-states'
+import { SETTINGS_STATES } from '~/routes/dev.settings.$state/+components/settings-states'
 import SettingsLayout from '../_layout'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import BillingPage, { action as billingAction } from './billing'
@@ -101,7 +101,10 @@ test.each(['team-subscribed', 'team-past-due', 'team-overage'] as const)(
   '%s shows its contract controls and billing availability',
   async (state) => {
     const selector = 'form:has(input[value="portal"]) button:enabled'
-    const { shell, billing } = BILLING_STATES[state]
+    const {
+      shell,
+      pages: { billing },
+    } = SETTINGS_STATES[state]
     for (const billingConfigured of [true, false]) {
       const router = createMemoryRouter([
         {
@@ -177,7 +180,10 @@ test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
   '%s shows its billing outcome with Japanese billing copy',
   async (id) => {
     const { state, query, visible } = outcomes[id]
-    const { shell, billing } = BILLING_STATES[state]
+    const {
+      shell,
+      pages: { billing },
+    } = SETTINGS_STATES[state]
     const createBillingRouter = (entry: string) =>
       createMemoryRouter(
         [
@@ -207,7 +213,9 @@ test.each(Object.keys(outcomes) as Array<keyof typeof outcomes>)(
                 path: 'unconfigured',
                 element: (
                   <BillingPage
-                    loaderData={BILLING_STATES['free-unconfigured'].billing}
+                    loaderData={
+                      SETTINGS_STATES['free-unconfigured'].pages.billing
+                    }
                   />
                 ),
               },

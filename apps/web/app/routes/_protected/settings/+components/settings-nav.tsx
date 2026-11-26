@@ -12,7 +12,13 @@ import {
   IconChevronDown,
 } from '@tabler/icons-react'
 import { useState, type ReactNode } from 'react'
-import { Link, matchPath, useLocation } from 'react-router'
+import {
+  Link,
+  matchPath,
+  resolvePath,
+  useLocation,
+  useResolvedPath,
+} from 'react-router'
 import { useT } from '~/hooks/use-t'
 import type { TKey } from '~/i18n/messages'
 import {
@@ -29,6 +35,7 @@ import {
   SheetClose,
 } from '~/components/ui/sheet'
 
+// Each `to` is relative to the Settings shell route that renders the menu.
 const GROUPS: {
   label: TKey
   items: {
@@ -42,12 +49,12 @@ const GROUPS: {
     label: 'settings.group.your',
     items: [
       {
-        to: '/settings/tokens',
+        to: 'tokens',
         label: 'settings.connections',
         icon: IconTerminal2,
       },
       {
-        to: '/settings/analytics',
+        to: 'analytics',
         label: 'settings.analytics',
         icon: IconChartBar,
       },
@@ -56,20 +63,20 @@ const GROUPS: {
   {
     label: 'settings.group.workspace',
     items: [
-      { to: '/settings', label: 'team.members', icon: IconUsers },
+      { to: '.', label: 'team.members', icon: IconUsers },
       {
-        to: '/settings/bots',
+        to: 'bots',
         label: 'team.bots',
         icon: IconRobot,
         adminPage: 'bots',
       },
       {
-        to: '/settings/external-access',
+        to: 'external-access',
         label: 'team.externalAccess',
         icon: IconShare2,
       },
       {
-        to: '/settings/integrations',
+        to: 'integrations',
         label: 'team.integrations',
         icon: IconPlug,
       },
@@ -79,13 +86,13 @@ const GROUPS: {
     label: 'settings.group.review',
     items: [
       {
-        to: '/settings/activity',
+        to: 'activity',
         label: 'team.activity',
         icon: IconActivity,
         adminPage: 'activity',
       },
       {
-        to: '/settings/inventory',
+        to: 'inventory',
         label: 'team.inventory',
         icon: IconBoxMultiple,
         adminPage: 'inventory',
@@ -94,15 +101,11 @@ const GROUPS: {
   },
   {
     label: 'settings.group.plan',
-    items: [
-      { to: '/settings/billing', label: 'team.billing', icon: IconCreditCard },
-    ],
+    items: [{ to: 'billing', label: 'team.billing', icon: IconCreditCard }],
   },
   {
     label: 'settings.group.info',
-    items: [
-      { to: '/settings/general', label: 'team.general', icon: IconSettings },
-    ],
+    items: [{ to: 'general', label: 'team.general', icon: IconSettings }],
   },
 ]
 
@@ -115,15 +118,12 @@ export function SettingsNav(props: SettingsNavProps) {
   const { pathname } = useLocation()
   return <SettingsNavigation {...props} pathname={pathname} />
 }
-export function SettingsNavigation({
-  pathname,
-  children,
+/** The menu groups and items a person in this role may open, in order. */
+export function settingsNavGroups({
   currentUserIsAdmin,
   workspaceKind,
-}: SettingsNavProps & { pathname: string }) {
-  const { t } = useT()
-  const [openPath, setOpenPath] = useState<string | null>(null)
-  const groups = GROUPS.map((group) => ({
+}: Pick<SettingsNavProps, 'currentUserIsAdmin' | 'workspaceKind'>) {
+  return GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
       ({ adminPage }) =>
@@ -134,8 +134,28 @@ export function SettingsNavigation({
         }) === 'allowed',
     ),
   })).filter((group) => group.items.length)
+}
+
+export function SettingsNavigation({
+  pathname,
+  children,
+  currentUserIsAdmin,
+  workspaceKind,
+}: SettingsNavProps & { pathname: string }) {
+  const { t } = useT()
+  const [openPath, setOpenPath] = useState<string | null>(null)
+  const shellPath = useResolvedPath('.').pathname
+  const groups = settingsNavGroups({ currentUserIsAdmin, workspaceKind }).map(
+    (group) => ({
+      ...group,
+      items: group.items.map((item) => ({
+        ...item,
+        to: resolvePath(item.to, shellPath).pathname,
+      })),
+    }),
+  )
   const matchesItem = (item: { to: string }) =>
-    matchPath({ path: item.to, end: item.to === '/settings' }, pathname)
+    matchPath({ path: item.to, end: item.to === shellPath }, pathname)
   const currentGroup = groups.find((group) => group.items.some(matchesItem))
   const current = currentGroup?.items.find(matchesItem)
   const menu = (

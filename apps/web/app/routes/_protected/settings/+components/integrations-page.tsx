@@ -1,0 +1,409 @@
+import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { IconAlertTriangle, IconPlug as Plug } from '@tabler/icons-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useFetcher, Link, useOutletContext } from 'react-router'
+import { SettingsPage } from '~/components/form/settings-page'
+import { ConfirmActionDialog } from './confirm-action-dialog'
+import { SettingsBanner, StatusBanner, settingsNotice } from './settings-banner'
+import { Inline } from '~/components/layout/inline'
+import { Stack } from '~/components/layout/stack'
+import { Button } from '~/components/ui/button'
+import { Badge } from '~/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '~/components/ui/card'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+} from '~/components/ui/empty'
+import { SettingsSection } from '~/components/form/settings-section'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '~/components/ui/tooltip'
+import type { action } from '../_content/integrations'
+import type { SettingsLayoutContext } from '../_layout'
+import { useT } from '~/hooks/use-t'
+import type { Locale } from '~/i18n/messages'
+import { useRelativeTime } from '~/components/app/render-clock'
+import type { SlackConnectionListItem } from '~/services/slack.server'
+
+export interface IntegrationsLoaderData {
+  connections: SlackConnectionListItem[]
+  /** The code of a Slack install that failed before returning here. */
+  launchFailure?: string
+}
+
+export default function IntegrationsPage({
+  loaderData,
+}: {
+  loaderData: IntegrationsLoaderData
+}) {
+  const fetcher = useFetcher<typeof action>()
+  useSettingsEntryChange(fetcher.reset)
+  const [selected, setSelected] = useState<SlackConnectionListItem | null>(null)
+  const [open, setOpen] = useState(false)
+  const pending = fetcher.state !== 'idle'
+  const result = pending ? undefined : fetcher.data
+  useEffect(() => {
+    if (result?.ok) setOpen(false)
+  }, [result])
+  const connections = result?.ok
+    ? loaderData.connections.filter(
+        (connection) => connection.id !== result.connectionId,
+      )
+    : loaderData.connections
+  const { currentUserIsAdmin } = useOutletContext<SettingsLayoutContext>()
+  const dialogRendered =
+    open &&
+    selected &&
+    currentUserIsAdmin &&
+    connections.some((connection) => connection.id === selected.id)
+  return (
+    <SettingsPage>
+      {loaderData.launchFailure && (
+        <StatusBanner status={loaderData.launchFailure} />
+      )}
+      {result?.ok && <StatusBanner status={result.code} />}
+      {result && !result.ok && !dialogRendered && (
+        <DisconnectFailure selected={selected} code={result.code} />
+      )}
+      {dialogRendered && (
+        <DisconnectDialog
+          selected={selected}
+          fetcher={fetcher}
+          close={(next) => {
+            setOpen(next)
+            // Dismissing ends the attempt: its failure is not repeated on
+            // the page while the connection is still listed.
+            if (!next && !pending && result && !result.ok) fetcher.reset()
+          }}
+        />
+      )}
+      <SlackConnections
+        connections={connections}
+        currentUserIsAdmin={currentUserIsAdmin}
+        pendingId={pending ? selected?.id : undefined}
+        onDisconnect={(connection) => {
+          fetcher.reset()
+          setSelected(connection)
+          setOpen(true)
+        }}
+      />
+    </SettingsPage>
+  )
+}
+
+function SlackEmptyState({ canManage }: { canManage: boolean }) {
+  const { t } = useT()
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyDescription>
+          {t(
+            canManage
+              ? 'team.integrations.slack.empty'
+              : 'team.integrations.slack.memberEmpty',
+          )}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        {canManage ? (
+          <Button asChild size="sm">
+            <Link to="/integrations/slack/install">
+              {t('team.integrations.slack.connect')}
+            </Link>
+          </Button>
+        ) : (
+          <AdminOnlyTooltip label={t('team.integrations.slack.adminOnly')}>
+            <Button size="sm" type="button" disabled>
+              {t('team.integrations.slack.connect')}
+            </Button>
+          </AdminOnlyTooltip>
+        )}
+      </EmptyContent>
+    </Empty>
+  )
+}
+
+export function SlackConnectionCard({
+  connection,
+  locale,
+  canManage,
+  pending,
+  onDisconnect,
+}: {
+  onDisconnect: () => void
+  connection: SlackConnectionListItem
+  locale: Locale
+  canManage: boolean
+  pending: boolean
+}) {
+  const formatRelative = useRelativeTime()
+  const { t } = useT()
+  const time = formatRelative(connection.installedAt, locale)
+  const meta = connection.installedByName
+    ? t('team.integrations.slack.installedBy', {
+        time,
+        name: connection.installedByName,
+      })
+    : t('team.integrations.slack.installed', { time })
+  const adminOnly = t('team.integrations.slack.adminOnly')
+  const reauthorizationAdminOnly = t(
+    'team.integrations.slack.reauthorization.adminOnly',
+  )
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <Inline gap="3" align="center">
+          <span
+            className="bg-muted grid size-9 shrink-0 place-items-center rounded-[var(--r-md)] [&_svg]:size-5.5"
+            aria-hidden="true"
+          >
+            <Plug size={22} />
+          </span>
+          <div>
+            <CardTitle>{connection.teamName}</CardTitle>
+            <CardDescription>{meta}</CardDescription>
+          </div>
+        </Inline>
+      </CardHeader>
+      {connection.needsReauthorization ? (
+        <CardContent className="border-warning/30 bg-warning-soft border-y py-3">
+          <Inline gap="2" align="start">
+            <IconAlertTriangle
+              className="text-warning size-4 shrink-0"
+              aria-hidden="true"
+            />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">
+                {t('team.integrations.slack.reauthorization.title')}
+              </p>
+              <p className="text-foreground text-sm">
+                {t(
+                  canManage
+                    ? 'team.integrations.slack.reauthorization.body'
+                    : 'team.integrations.slack.reauthorization.memberBody',
+                )}
+              </p>
+            </div>
+          </Inline>
+        </CardContent>
+      ) : null}
+      <CardFooter className="max-stack:items-stretch max-stack:flex-col justify-between gap-[var(--spacing-3)]">
+        <Badge
+          variant={connection.needsReauthorization ? 'warning' : 'success'}
+        >
+          {t(
+            connection.needsReauthorization
+              ? 'team.integrations.slack.reauthorization.state'
+              : 'team.integrations.slack.state',
+          )}
+        </Badge>
+        <div className="max-stack:grid max-stack:grid-cols-2 flex gap-2">
+          {connection.needsReauthorization ? (
+            canManage ? (
+              <Button asChild size="sm">
+                <Link
+                  to={`/integrations/slack/install?connection=${connection.id}`}
+                >
+                  {t('team.integrations.slack.reauthorization.action')}
+                </Link>
+              </Button>
+            ) : (
+              <AdminOnlyTooltip label={reauthorizationAdminOnly}>
+                <Button
+                  className="max-stack:w-full"
+                  size="sm"
+                  type="button"
+                  disabled
+                >
+                  {t('team.integrations.slack.reauthorization.action')}
+                </Button>
+              </AdminOnlyTooltip>
+            )
+          ) : null}
+          {canManage ? (
+            <Button
+              id={`disconnect-${connection.id}`}
+              type="button"
+              className="max-stack:w-full"
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={onDisconnect}
+            >
+              {t('team.integrations.slack.disconnect')}
+            </Button>
+          ) : (
+            <AdminOnlyTooltip label={adminOnly}>
+              <Button
+                className="max-stack:w-full"
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled
+              >
+                {t('team.integrations.slack.disconnect')}
+              </Button>
+            </AdminOnlyTooltip>
+          )}
+        </div>
+      </CardFooter>
+    </Card>
+  )
+}
+
+function AdminOnlyTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {/* disabled button はフォーカス不能なため、キーボードでもツールチップへ届くよう span を焦点対象にする */}
+        {/* react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex */}
+        <span className="inline-flex" tabIndex={0}>
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function SlackConnections({
+  connections,
+  currentUserIsAdmin,
+  pendingId,
+  onDisconnect,
+}: {
+  connections: SlackConnectionListItem[]
+  currentUserIsAdmin: boolean
+  pendingId?: string
+  onDisconnect: (connection: SlackConnectionListItem) => void
+}) {
+  const { locale, t } = useT()
+  return (
+    <SettingsSection
+      headingId="slack-heading"
+      title={t('team.integrations.slack.title')}
+      description={t('team.integrations.slack.body')}
+    >
+      {!currentUserIsAdmin ? (
+        <p className="text-muted-foreground text-sm">
+          {t('team.integrations.slack.memberGuidance')}
+        </p>
+      ) : null}
+      {connections.length === 0 ? (
+        <SlackEmptyState canManage={currentUserIsAdmin} />
+      ) : (
+        <>
+          <Stack gap="3">
+            {connections.map((connection) => (
+              <SlackConnectionCard
+                key={connection.id}
+                connection={connection}
+                locale={locale}
+                canManage={currentUserIsAdmin}
+                pending={connection.id === pendingId}
+                onDisconnect={() => onDisconnect(connection)}
+              />
+            ))}
+          </Stack>
+          <div className="pt-4">
+            {currentUserIsAdmin ? (
+              <Button asChild variant="outline" size="sm">
+                <Link to="/integrations/slack/install">
+                  {t('team.integrations.slack.addAnother')}
+                </Link>
+              </Button>
+            ) : (
+              <AdminOnlyTooltip label={t('team.integrations.slack.adminOnly')}>
+                <Button variant="outline" size="sm" type="button" disabled>
+                  {t('team.integrations.slack.addAnother')}
+                </Button>
+              </AdminOnlyTooltip>
+            )}
+          </div>
+        </>
+      )}
+    </SettingsSection>
+  )
+}
+
+function DisconnectFailure({
+  selected,
+  code,
+}: {
+  selected: SlackConnectionListItem | null
+  code: string
+}) {
+  const { t } = useT()
+  return (
+    <SettingsBanner kind="error">
+      {selected && (
+        <p>
+          {t('team.integrations.slack.disconnectFailed', {
+            name: selected.teamName,
+          })}
+        </p>
+      )}
+      <p>{t(settingsNotice(code).message)}</p>
+    </SettingsBanner>
+  )
+}
+
+function DisconnectDialog({
+  selected,
+  fetcher,
+  close,
+}: {
+  selected: SlackConnectionListItem
+  fetcher: ReturnType<typeof useFetcher<typeof action>>
+  close: (open: boolean) => void
+}) {
+  const { t } = useT()
+  const pending = fetcher.state !== 'idle'
+  const result = pending ? undefined : fetcher.data
+  return (
+    <ConfirmActionDialog
+      open
+      awaitResult
+      destructive
+      pending={pending}
+      returnFocusId={`disconnect-${selected.id}`}
+      fallbackFocusId="slack-heading"
+      onOpenChange={close}
+      title={t('team.integrations.slack.disconnectTitle', {
+        name: selected.teamName,
+      })}
+      description={t('team.integrations.slack.disconnectBody')}
+      action={t(
+        result && !result.ok
+          ? 'dialog.retry'
+          : 'team.integrations.slack.disconnect',
+      )}
+      pendingLabel={t('team.integrations.slack.disconnecting')}
+      result={result && !result.ok && <StatusBanner status={result.code} />}
+      onConfirm={() => {
+        void fetcher.submit(
+          { intent: 'disconnect-slack', connectionId: selected.id },
+          { method: 'post' },
+        )
+      }}
+    />
+  )
+}
