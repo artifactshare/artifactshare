@@ -14,17 +14,26 @@ import type { Locale } from '~/i18n/messages'
 import { formatRelative } from '~/lib/datetime'
 import { withLang } from '~/lib/connect-link'
 import type { ApiTokenListItem } from '~/services/api-tokens.server'
+import type { CliRefreshCredentialFamily } from '~/services/cli-refresh-credentials.server'
 import { CredentialTable } from './credential-table'
 import { StatusBanner } from './settings-banner'
 import { CreatedTokenPanel } from './created-token-panel'
 import { RevokeDialog } from './revoke-dialog'
 import { CliSessionsSection } from './cli-sessions-section'
-import type { action, loader } from '../_content/tokens'
+import type { action } from '../_content/tokens'
 export const MAX_TOKEN_NAME_LENGTH = 100
+
+export interface TokensLoaderData {
+  tokens: ApiTokenListItem[]
+  // A new secret is shown only from the create action's response.
+  createdToken: { name: string; token: string } | null
+  cliFamilies: CliRefreshCredentialFamily[]
+}
+
 export default function ApiTokensPage({
   loaderData,
 }: {
-  loaderData: Awaited<ReturnType<typeof loader>>
+  loaderData: TokensLoaderData
 }) {
   const [target, setTarget] = useState<ApiTokenListItem | null>(null)
   const fetcher = useFetcher<typeof action>()

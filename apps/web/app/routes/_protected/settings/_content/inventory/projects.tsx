@@ -1,16 +1,20 @@
 import type { Route } from './+types/projects'
-import { Stack } from '~/components/layout/stack'
-import { TeamMutedParagraph } from '~/components/form/team-muted'
-import { useT } from '~/hooks/use-t'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
 import { loadWorkspaceInventoryProjectsPage } from '~/services/team-management.server'
-import { INVENTORY_PAGE_SIZE } from '~/lib/team-management'
 import { requireSettingsAdminPage } from '../../+lib/settings-admin.server'
-import { ProjectsTable } from './+components/projects-table'
-import { Pager } from '~/components/form/pager'
 import { parsePageParam } from '~/lib/pagination'
-export async function loader({ request, context }: Route.LoaderArgs) {
+import ProjectsPage, {
+  type InventoryProjectsLoaderData,
+} from './+components/projects-page'
+
+// React Router passes loaderData only to a default export declared here.
+export default ProjectsPage
+
+export async function loader({
+  request,
+  context,
+}: Route.LoaderArgs): Promise<InventoryProjectsLoaderData> {
   requireSettingsAdminPage(context)
   const user = requireUser(context)
   const db = createDb()
@@ -22,31 +26,4 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       Number.isFinite(raw) ? raw : 1,
     ),
   }
-}
-export default function ProjectsPage({
-  loaderData,
-}: Pick<Route.ComponentProps, 'loaderData'>) {
-  const { t, locale } = useT()
-  const { projects } = loaderData
-  return (
-    <Stack gap="3">
-      <TeamMutedParagraph>
-        {t('team.inventory.projects.body')}
-      </TeamMutedParagraph>
-      <ProjectsTable rows={projects.projects} locale={locale} />
-      <Pager
-        page={projects.page}
-        total={projects.total}
-        pageSize={INVENTORY_PAGE_SIZE}
-        labels={{
-          range: 'team.inventory.range',
-          prev: 'team.inventory.page.prev',
-          next: 'team.inventory.page.next',
-        }}
-        hrefFor={(page) =>
-          `/settings/inventory/projects${page > 1 ? `?page=${page}` : ''}`
-        }
-      />
-    </Stack>
-  )
 }
