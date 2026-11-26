@@ -484,6 +484,7 @@
   "billing.estimate.title": "今月の請求見込み",
   "billing.estimate.plan": "プラン料金",
   "billing.estimate.planBilled": "{date} に請求済み",
+  "billing.estimate.planUnpaid": "{date} の請求が未払い",
   "billing.estimate.planUpcoming": "{date} に請求",
   "billing.estimate.noCharge": "今月の請求はありません — 次回請求日 {date}",
   "billing.estimate.noChargeCancel": "今月の請求はありません — 契約は {date} に終了します",

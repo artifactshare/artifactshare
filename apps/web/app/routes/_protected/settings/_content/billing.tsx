@@ -178,6 +178,7 @@ export async function loader({
     projection,
     estimateNow,
     allowsStorageOverage(workspace.plan, workspace.stripe_subscription_status),
+    workspace.stripe_subscription_status,
   )
 
   const query = new URL(request.url).searchParams
@@ -395,6 +396,12 @@ export default function BillingPage({
           {t('billing.pastDue.banner')}
         </SettingsBanner>
       ) : null}
+      {showStorageWarning ? (
+        <StorageNearLimitBanner
+          loaderData={loaderData}
+          presentation={presentation}
+        />
+      ) : null}
 
       <SettingsSection
         headingId="billing-heading"
@@ -437,58 +444,62 @@ export default function BillingPage({
             <MonthlyEstimate estimate={loaderData.monthlyEstimate} />
           </section>
         ) : null}
-        <BillingStorageSection
-          showStorageWarning={showStorageWarning}
-          loaderData={loaderData}
-          presentation={presentation}
-        />
+        <BillingStorageSection loaderData={loaderData} />
       </SettingsSection>
     </SettingsPage>
   )
 }
 
-function BillingStorageSection({
-  showStorageWarning,
+// 警告はプランを選ぶ案内を含むため、プランのカードより前(ページの先頭)に出す。
+function StorageNearLimitBanner({
   loaderData,
   presentation,
 }: {
-  showStorageWarning: boolean
+  loaderData: Pick<
+    BillingView,
+    'storageUsedBytes' | 'storageQuotaBytes' | 'canManage' | 'billingConfigured'
+  >
+  presentation: ReturnType<typeof billingPresentation>
+}) {
+  const { t } = useT()
+  return (
+    <SettingsBanner kind="warning" urgent>
+      <p className="font-medium">{t('team.usage.nearLimit')}</p>
+      <p>
+        {t('team.usage.nearLimitDetails', {
+          used: formatBytes(loaderData.storageUsedBytes),
+          limit: formatBytes(loaderData.storageQuotaBytes),
+          remaining: formatBytes(
+            Math.max(
+              0,
+              loaderData.storageQuotaBytes - loaderData.storageUsedBytes,
+            ),
+          ),
+        })}
+      </p>
+      <NearLimitNextStep
+        canManage={loaderData.canManage}
+        billingConfigured={loaderData.billingConfigured}
+        presentation={presentation}
+      />
+    </SettingsBanner>
+  )
+}
+
+function BillingStorageSection({
+  loaderData,
+}: {
   loaderData: Pick<
     BillingView,
     | keyof UsageLoaderData
     | 'storageUsedBytes'
     | 'storageQuotaBytes'
     | 'monthlyEstimate'
-    | 'canManage'
-    | 'billingConfigured'
   >
-  presentation: ReturnType<typeof billingPresentation>
 }) {
   const { t } = useT()
   return (
     <SettingsSubsection title={t('billing.usage.storageTitle')}>
-      {showStorageWarning ? (
-        <SettingsBanner kind="warning" urgent>
-          <p className="font-medium">{t('team.usage.nearLimit')}</p>
-          <p>
-            {t('team.usage.nearLimitDetails', {
-              used: formatBytes(loaderData.storageUsedBytes),
-              limit: formatBytes(loaderData.storageQuotaBytes),
-              remaining: formatBytes(
-                Math.max(
-                  0,
-                  loaderData.storageQuotaBytes - loaderData.storageUsedBytes,
-                ),
-              ),
-            })}
-          </p>
-          <NearLimitNextStep
-            canManage={loaderData.canManage}
-            billingConfigured={loaderData.billingConfigured}
-            presentation={presentation}
-          />
-        </SettingsBanner>
-      ) : null}
       <UsageStats columns={2}>
         <UsageStat
           label={t('team.usage.storageUsed')}
@@ -646,11 +657,13 @@ function MonthlyEstimate({ estimate }: { estimate: MonthlyEstimate }) {
             note={
               estimate.planCharge === 'billed'
                 ? t('billing.estimate.planBilled', { date })
-                : estimate.planCharge === 'upcoming'
-                  ? t('billing.estimate.planUpcoming', { date })
-                  : estimate.cancelAtPeriodEnd
-                    ? t('billing.estimate.noChargeCancel', { date })
-                    : t('billing.estimate.noCharge', { date })
+                : estimate.planCharge === 'unpaid'
+                  ? t('billing.estimate.planUnpaid', { date })
+                  : estimate.planCharge === 'upcoming'
+                    ? t('billing.estimate.planUpcoming', { date })
+                    : estimate.cancelAtPeriodEnd
+                      ? t('billing.estimate.noChargeCancel', { date })
+                      : t('billing.estimate.noCharge', { date })
             }
             value={
               estimate.planCharge === 'none' ? '—' : price(estimate.planAmount)

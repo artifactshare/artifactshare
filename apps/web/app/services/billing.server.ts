@@ -250,7 +250,7 @@ export type MonthlyEstimate = {
   planAmount: number
   overageAmount: number
   totalAmount: number
-  planCharge: 'billed' | 'upcoming' | 'none'
+  planCharge: 'billed' | 'unpaid' | 'upcoming' | 'none'
   cancelAtPeriodEnd: boolean
   planDate: string
   overageGb: number
@@ -285,6 +285,7 @@ export function resolveMonthlyEstimate(
   projection: OverageProjection | null,
   now: Date,
   allowsOverage = true,
+  subscriptionStatus: string | null = null,
 ): MonthlyEstimate | null {
   if (
     !contract?.currency ||
@@ -300,8 +301,11 @@ export function resolveMonthlyEstimate(
   const startInMonth = start.toISOString().slice(0, 7) === month
   const renewsInMonth = renewsAt.toISOString().slice(0, 7) === month
   // cancel_at_period_end の契約は期間末に更新されないため、更新請求を計上しない。
+  // past_due は今期の請求が失敗している状態なので、請求済みではなく未払いとして出す。
   const planCharge = startInMonth
-    ? 'billed'
+    ? subscriptionStatus === 'past_due'
+      ? 'unpaid'
+      : 'billed'
     : renewsInMonth && !contract.cancelAtPeriodEnd
       ? 'upcoming'
       : 'none'
