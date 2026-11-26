@@ -9,8 +9,6 @@ import {
 import { clearFirstTouch } from '~/lib/analytics/first-touch.client'
 import { clearAllAuthAttempts } from '~/lib/analytics/auth-attempt.client'
 
-let warnedMissingMeasurementId = false
-
 const useClientLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect
 
@@ -107,14 +105,11 @@ function syncGtagWithConsent(
     return
   }
 
-  // Consent granted but no Measurement ID configured: nothing to load; warn in
-  // dev so a missing GA4_MEASUREMENT_ID is diagnosable.
+  // Consent granted but no Measurement ID configured: nothing to load. Local
+  // development, captures and tests run this way on purpose, so that they never
+  // send hits to Google.
   setAnalyticsRuntimeState({ shouldLoadAnalytics: true, measurementId: null })
   removeAnalyticsCookies(measurementId)
-  if (import.meta.env.DEV && !warnedMissingMeasurementId) {
-    warnedMissingMeasurementId = true
-    console.warn('[analytics] GA4_MEASUREMENT_ID is not set; gtag not loaded')
-  }
 }
 
 // Query parameters allowed on the page_location sent to GA. Everything else is
