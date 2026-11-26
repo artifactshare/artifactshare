@@ -1307,7 +1307,7 @@ export const previewSecurity = defineBrowserCommand(
         )
         assert.ok(
           (await shell.locator('#endedBody code').textContent())!.includes(
-            'artifactshare preview',
+            '@artifactshare/cli preview',
           ),
         )
         await shell.locator('#popText').focus()
