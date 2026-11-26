@@ -46,6 +46,18 @@ const reproDelay = (point: ReproDelayPoint): number => delays().get(point) ?? 0
 // One repetition's directory, where the runner collects what this run saw.
 const runDirectory = () => process.env.FLAKY_REPRO_DIR
 
+// Neither instrument may replace the failure a scenario is reporting: both run
+// while one is being thrown. A write that fails says so on stderr, which the
+// repetition's diagnostic log keeps, and the runner then reports a hold that
+// never held rather than a reproduction.
+function despite(what: string, write: () => void) {
+  try {
+    write()
+  } catch (failing) {
+    process.stderr.write(`Could not write ${what}: ${String(failing)}\n`)
+  }
+}
+
 function installHold(entries: [string, number][]) {
   const page = window as unknown as ReproHoldPage
   const holds = (page.__flakyReproHolds ??= {})
@@ -95,8 +107,10 @@ export async function recordReproHolds(page: Page): Promise<void> {
       () => (window as unknown as ReproHoldPage).__flakyReproHolds ?? {},
     )
     .catch((error: unknown) => ({ unreadable: String(error) }))
-  mkdirSync(directory, { recursive: true })
-  appendFileSync(join(directory, 'holds.jsonl'), `${JSON.stringify(holds)}\n`)
+  despite('the holds this run recorded', () => {
+    mkdirSync(directory, { recursive: true })
+    appendFileSync(join(directory, 'holds.jsonl'), `${JSON.stringify(holds)}\n`)
+  })
 }
 
 /**
@@ -112,12 +126,17 @@ export async function captureReproState(
 ): Promise<void> {
   const directory = runDirectory()
   if (!directory) return
-  const captured = await state().catch((collecting: unknown) => ({
-    uncollected: String(collecting),
-  }))
-  mkdirSync(directory, { recursive: true })
-  writeFileSync(
-    join(directory, `state-${label}-${Date.now()}.json`),
-    `${JSON.stringify(captured, null, 2)}\n`,
-  )
+  let captured: Record<string, unknown>
+  try {
+    captured = await state()
+  } catch (collecting) {
+    captured = { uncollected: String(collecting) }
+  }
+  despite(`the state captured for ${label}`, () => {
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(
+      join(directory, `state-${label}-${Date.now()}.json`),
+      `${JSON.stringify(captured, null, 2)}\n`,
+    )
+  })
 }

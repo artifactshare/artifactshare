@@ -965,6 +965,11 @@ export const previewSecurity = defineBrowserCommand(
         result.checks.push('restore-default-screen')
 
         // Moving on while a screen is being restored is not a failed restore.
+        //
+        // The hold below recognises the shell's own sends by the name of the
+        // function that makes them, `postToFrame` in the preview shell. A
+        // rename there leaves this holding nothing, which is why the runner
+        // refuses a run whose hold never held instead of reading it as a pass.
         await holdAtReproPoint(shell, 'shell-to-frame-message', (point) => {
           const contentWindow = Object.getOwnPropertyDescriptor(
             HTMLIFrameElement.prototype,
