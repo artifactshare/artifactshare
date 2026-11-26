@@ -36,6 +36,21 @@ Run the commands in that order. Local configuration uses fixtures and local serv
 For interactive development, `pnpm dev` prepares local certificates, variables,
 and D1 state before starting the application, sandbox, and image worker.
 
+Some screens need states the local stack cannot reach, such as a Stripe
+contract whose payment failed or a workspace close to its storage limit. The
+dev server renders them with fixture data at `/dev/settings/<state>/billing`,
+beside the `/dev/scenarios/<scenario>` pages, and `/dev/screens` lists both.
+With `pnpm dev` running, `pnpm screens` captures them into `.screens/`:
+
+```sh
+pnpm screens --list
+pnpm screens past-due near-limit
+pnpm screens billing --theme light,dark --viewport desktop,mobile --lang ja,en
+```
+
+A filter keeps the screens whose id contains it. Billing states live in
+`apps/web/app/routes/dev.settings.$state/+components/billing-states.ts`.
+
 The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
 After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.
 The generated file is deterministic, unformatted output and is excluded from repository formatting.
