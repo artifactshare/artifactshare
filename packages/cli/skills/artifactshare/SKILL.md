@@ -201,7 +201,8 @@ npx --yes @artifactshare/cli download --project-id <id> --output ./out --json
   artifacts whose version is unchanged are reported as `unchanged` and not
   fetched again.
 - Find artifact IDs with `artifacts list --json`. Filter with `--project-id`,
-  `--home`, or `--query <text>`. With `--project-id`, the list includes other
+  `--home`, or `--query <text>` (titles only). To find text inside artifacts,
+  use `--q <text>` (see [Full-text search](#full-text-search)). With `--project-id`, the list includes other
   members' artifacts you can view (with `owner_email`); when `has_more` is
   true, continue with `--cursor <next_cursor>`.
 - When the user gives a title, project name, or URL instead of an ID, run
@@ -305,6 +306,7 @@ use a stable app viewer URL regardless of visibility; opening it still checks ac
 | Download a whole project               | `download --project-id <id> --output ./out --json`                                  |
 | Inspect retained versions and bytes    | `artifacts versions <target> --json`                                                |
 | List your artifacts                    | `artifacts list --json`                                                             |
+| Search titles and body text            | `artifacts list --q '<text>' --json`                                                |
 | Post a comment                         | `comments post <target> --body '<text>' --json`                                     |
 | Read comments                          | `comments list <target> --json`                                                     |
 | Read older replies                     | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
