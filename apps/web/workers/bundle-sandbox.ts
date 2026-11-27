@@ -860,6 +860,22 @@ async function serveBundleAsset(
         file.size_bytes !== null,
     )
   const requested = direct.map(stored).find((file) => file !== undefined)
+  const url = new URL(request.url)
+  // Like other static hosts, serve a directory index only at the slash URL so
+  // the page's relative links resolve inside its directory.
+  if (requested && requested.path !== path && !url.pathname.endsWith('/')) {
+    return contentResponse(
+      null,
+      'text/plain; charset=utf-8',
+      artifactCsp('static_site', false, responseDomain),
+      {
+        status: 301,
+        headers: new Headers({
+          Location: cleanEntrypointTarget(url, `${path}/`),
+        }),
+      },
+    )
+  }
   if (requested)
     return await serveBundleFile(requested, request, responseDomain)
 
