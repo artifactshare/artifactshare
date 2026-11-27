@@ -188,6 +188,20 @@ describe('classifyViewerLinkNavigation', () => {
     })
   })
 
+  test('allows a static site link to a directory served by its index.html', () => {
+    expect(
+      classifyViewerLinkNavigation({
+        ...base,
+        mode: 'site',
+        bundlePaths: ['/index.html', '/guide/index.html'],
+        href: 'https://md123abcde.sandbox.artifactshare.com/guide/',
+      }),
+    ).toEqual({
+      kind: 'allow-frame',
+      url: 'https://md123abcde.sandbox.artifactshare.com/guide/',
+    })
+  })
+
   test('allows static site client routes when the bundle falls back to index', () => {
     expect(
       classifyViewerLinkNavigation({

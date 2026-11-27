@@ -17,10 +17,10 @@ import type { Compilable, Kysely, Selectable } from 'kysely'
 import { sql } from 'kysely'
 import { nowIso } from '~/lib/datetime'
 import {
-  hasCommentPathExtension,
   isCommentLocationServed,
   parseCommentLocation,
 } from '@artifactshare/viewer-kit/reporter/comment-location'
+import { staticSitePathCandidates } from '@artifactshare/viewer-kit/reporter/static-site-paths'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import {
   isPdfPageNumber,
@@ -1463,9 +1463,8 @@ async function isStaticSiteLocationServed(
   // candidates; the version's fallback flag decides which form is canonical.
   const parsed = parseCommentLocation(location)
   if (!versionId || !parsed) return false
-  const candidates = hasCommentPathExtension(parsed.pathname)
-    ? [parsed.pathname]
-    : [parsed.pathname, '/index.html']
+  const { direct, fallback } = staticSitePathCandidates(parsed.pathname)
+  const candidates = fallback ? [...direct, fallback] : direct
   const rows = await db
     .selectFrom('versions')
     .leftJoin('version_files', (join) =>
