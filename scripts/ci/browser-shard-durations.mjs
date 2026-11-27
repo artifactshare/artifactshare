@@ -2,7 +2,8 @@
 // Public CI browser runs, so the shard sequencer balances runners by current
 // file durations. Download a run's logs (Actions → run → Download log archive),
 // unzip them, and pass the browser job log files. Logs from several runs give
-// each file its median duration.
+// each file its median duration. An engine with no lines in the logs keeps
+// its current durations.
 //
 //   node scripts/ci/browser-shard-durations.mjs logs/*browser*.txt
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -59,8 +60,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   )
   if (durations.length === 0)
     throw new Error('No browser file durations found in the logs')
+  const current = JSON.parse(readFileSync(output, 'utf8'))
   writeFileSync(
     output,
-    `${JSON.stringify(medianDurations(durations), null, 2)}\n`,
+    `${JSON.stringify({ ...current, ...medianDurations(durations) }, null, 2)}\n`,
   )
 }
