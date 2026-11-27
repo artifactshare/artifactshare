@@ -472,8 +472,10 @@ describe('billing service', () => {
     seedWorkspace(sqlite, 'free', 'cus_free')
     const stripe = {
       customers: { create: vi.fn() },
+      subscriptions: { list: vi.fn().mockResolvedValue({ data: [] }) },
       checkout: {
         sessions: {
+          list: vi.fn().mockResolvedValue({ data: [] }),
           create: vi.fn().mockResolvedValue({ url: 'https://checkout.test' }),
         },
       },

@@ -167,6 +167,23 @@ export async function ensureStripeCustomer(
   return customer.id
 }
 
+// Statuses in which a subscription can still be charged without a new
+// Checkout. `incomplete` turns active once its first invoice is paid, and
+// `unpaid` still creates invoices that can be paid later. `canceled` and
+// `incomplete_expired` are final, and `paused` creates no invoices.
+const BILLABLE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+  'active',
+  'trialing',
+  'past_due',
+  'unpaid',
+  'incomplete',
+] satisfies Stripe.Subscription.Status[])
+
+/**
+ * Opens Checkout for the first paid subscription. When the customer already
+ * has a subscription Stripe can bill, returns the billing portal URL instead,
+ * where the owner manages that subscription.
+ */
 export async function createCheckoutSession(
   db: Kysely<DB>,
   stripe: Stripe,
@@ -187,6 +204,34 @@ export async function createCheckoutSession(
   if (!fixedPriceId) return { kind: 'invalid' }
 
   try {
+    // The customer may already have a subscription the workspace row does not
+    // show yet, or a Checkout still open in another tab. Either way, paying
+    // would start a second subscription, and the sync tracks only one.
+    const existingCustomer = workspace.stripe_customer_id
+    if (existingCustomer) {
+      const open = await stripe.checkout.sessions.list({
+        customer: existingCustomer,
+        status: 'open',
+        limit: 100,
+      })
+      // Expire before reading subscriptions: a session that completes in
+      // between then either fails to expire or shows up in the list below.
+      await Promise.all(
+        open.data.map((session) => stripe.checkout.sessions.expire(session.id)),
+      )
+      const subscriptions = await stripe.subscriptions.list({
+        customer: existingCustomer,
+        limit: 100,
+      })
+      if (
+        subscriptions.data.some((subscription) =>
+          BILLABLE_SUBSCRIPTION_STATUSES.has(subscription.status),
+        )
+      ) {
+        return createPortalSession(stripe, env, existingCustomer, origin)
+      }
+    }
+
     const customerId = await ensureStripeCustomer(db, stripe, workspace, locale)
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
