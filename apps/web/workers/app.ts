@@ -27,9 +27,11 @@ import {
 } from '../app/lib/hosts'
 import { isAuthCookieName } from '../app/lib/auth-cookies'
 import {
+  getUpdatesDetailSlug,
   isPublicPagePath,
   normalizeGuidePathname,
 } from '../app/lib/guide-locale'
+import { getPublicPagePairs } from '../app/lib/public-pages'
 import { ctxContext, linkDomainContext } from '../app/middleware/context'
 import {
   anchorAuthInit,
@@ -679,7 +681,9 @@ function isMaintenanceOgImagePath(pathname: string): boolean {
     normalized === '/connect/og-image' ||
     normalized === '/ja/connect/og-image' ||
     normalized === '/guides/private-mobile-design-handoff/og-image' ||
-    normalized === '/ja/guides/private-mobile-design-handoff/og-image'
+    normalized === '/ja/guides/private-mobile-design-handoff/og-image' ||
+    (normalized.endsWith('/og-image') &&
+      getUpdatesDetailSlug(normalized.slice(0, -'/og-image'.length)) !== null)
   )
 }
 
@@ -700,10 +704,23 @@ function isMaintenancePublicPagePath(pathname: string): boolean {
 
 function isMaintenancePublicDataRequest(pathname: string): boolean {
   if (!pathname.endsWith('.data')) return false
-  const routePathname =
-    pathname === '/_.data' ? '/' : pathname.slice(0, -'.data'.length)
+  // Single fetch requests the data for `<path>/` as `<path>/_.data`.
+  const routePathname = pathname.endsWith('/_.data')
+    ? pathname.slice(0, -'_.data'.length)
+    : pathname.slice(0, -'.data'.length)
   return isMaintenancePublicPagePath(routePathname)
 }
+
+// Route discovery requests every ancestor of the target with it, so
+// navigating to /guides/cli asks for /guides too.
+const MAINTENANCE_PUBLIC_PAGE_ANCESTORS = new Set(
+  getPublicPagePairs()
+    .flatMap(({ en, ja }) => [en, ja])
+    .flatMap((path) => {
+      const parents = path.split('/').slice(1, -1)
+      return parents.map((_, i) => `/${parents.slice(0, i + 1).join('/')}`)
+    }),
+)
 
 function isMaintenancePublicManifestRequest(url: URL): boolean {
   if (url.pathname !== '/__manifest') return false
@@ -712,8 +729,10 @@ function isMaintenancePublicManifestRequest(url: URL): boolean {
   const requestedPathnames = paths.split(',').filter(Boolean)
   return (
     requestedPathnames.length > 0 &&
-    requestedPathnames.every((pathname) =>
-      isMaintenancePublicPagePath(pathname),
+    requestedPathnames.every(
+      (pathname) =>
+        isMaintenancePublicPagePath(pathname) ||
+        MAINTENANCE_PUBLIC_PAGE_ANCESTORS.has(normalizeGuidePathname(pathname)),
     )
   )
 }
