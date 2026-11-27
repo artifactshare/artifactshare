@@ -66,6 +66,42 @@ async function seedDailyUsage(
     .execute()
 }
 
+async function seedEveryDayOfMonth(
+  db: Kysely<DB>,
+  args: {
+    workspaceId: string
+    month: string
+    billableOverageGb: number
+  },
+) {
+  const [year, monthNumber] = args.month.split('-').map(Number)
+  const days = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+  for (let day = 1; day <= days; day++) {
+    await seedDailyUsage(db, {
+      workspaceId: args.workspaceId,
+      date: `${args.month}-${String(day).padStart(2, '0')}`,
+      billableOverageGb: args.billableOverageGb,
+    })
+  }
+}
+
+// Stripe's list call is a promise of the first page that also iterates every
+// page, as the SDK's auto-pagination does.
+function stripeList<T>(items: T[], limit = 10) {
+  return Object.assign(
+    Promise.resolve({
+      object: 'list',
+      data: items.slice(0, limit),
+      has_more: items.length > limit,
+    }),
+    {
+      async *[Symbol.asyncIterator]() {
+        yield* items
+      },
+    },
+  )
+}
+
 function makeStripeMock() {
   return {
     subscriptions: {
@@ -84,7 +120,9 @@ function makeStripeMock() {
     },
     invoiceItems: {
       create: vi.fn().mockResolvedValue({ id: 'ii_1' }),
-      list: vi.fn().mockResolvedValue({ data: [] }),
+      list: vi.fn((_params: { pending?: boolean; limit?: number }) =>
+        stripeList<{ id: string }>([]),
+      ),
     },
     invoices: {
       create: vi.fn().mockResolvedValue({ id: 'in_1' }),
@@ -242,16 +280,13 @@ describe('createMonthlyOverageCharges', () => {
       stripeSubscriptionId: 'sub_1',
       stripeSubscriptionStatus: 'active',
     })
-    await seedDailyUsage(db, {
-      workspaceId: 'ws1',
-      date: '2026-06-10',
-      billableOverageGb: 1,
-    })
-    await seedDailyUsage(db, {
-      workspaceId: 'ws1',
-      date: '2026-06-20',
-      billableOverageGb: 2,
-    })
+    for (let day = 1; day <= 30; day++) {
+      await seedDailyUsage(db, {
+        workspaceId: 'ws1',
+        date: `2026-06-${String(day).padStart(2, '0')}`,
+        billableOverageGb: day <= 15 ? 1 : 2,
+      })
+    }
 
     const stripe = makeStripeMock()
     const result = await createMonthlyOverageCharges(
@@ -380,9 +415,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeSubscriptionId: 'sub_canceled',
       stripeSubscriptionStatus: 'canceled',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-canceled',
-      date: '2026-06-15',
+      month: '2026-06',
       billableOverageGb: 2,
     })
 
@@ -466,9 +501,9 @@ describe('createMonthlyOverageCharges', () => {
       ['ws-recent', 1],
       ['ws-stale', 1],
     ] as const) {
-      await seedDailyUsage(db, {
+      await seedEveryDayOfMonth(db, {
         workspaceId,
-        date: '2026-06-15',
+        month: '2026-06',
         billableOverageGb: gb,
       })
     }
@@ -527,9 +562,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_fail',
       stripeSubscriptionId: 'sub_fail',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-fail',
-      date: '2026-06-15',
+      month: '2026-06',
       billableOverageGb: 1,
     })
 
@@ -599,9 +634,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeSubscriptionId: 'sub_ok',
     })
     for (const workspaceId of ['ws-fail', 'ws-ok']) {
-      await seedDailyUsage(db, {
+      await seedEveryDayOfMonth(db, {
         workspaceId,
-        date: '2026-06-15',
+        month: '2026-06',
         billableOverageGb: 1,
       })
     }
@@ -644,9 +679,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_downgraded',
       stripeSubscriptionId: 'sub_downgraded',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-downgraded',
-      date: '2026-06-15',
+      month: '2026-06',
       billableOverageGb: 2,
     })
 
@@ -677,9 +712,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_1',
       stripeSubscriptionId: 'sub_1',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws1',
-      date: '2026-06-20',
+      month: '2026-06',
       billableOverageGb: 1.5,
     })
 
@@ -706,9 +741,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_old',
       stripeSubscriptionId: 'sub_old',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-old',
-      date: '2026-04-10',
+      month: '2026-04',
       billableOverageGb: 2,
     })
     await db
@@ -808,9 +843,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_reuse',
       stripeSubscriptionId: 'sub_reuse',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-reuse',
-      date: '2026-04-10',
+      month: '2026-04',
       billableOverageGb: 1,
     })
     await db
@@ -825,14 +860,15 @@ describe('createMonthlyOverageCharges', () => {
       .execute()
 
     const stripe = makeStripeMock()
-    stripe.invoiceItems.list.mockResolvedValue({
-      data: [
+    stripe.invoiceItems.list.mockReturnValue(
+      stripeList([
         {
           id: 'ii_existing',
+          invoice: null,
           metadata: { workspace_id: 'ws-reuse', month: '2026-04' },
         },
-      ],
-    })
+      ]),
+    )
 
     const result = await createMonthlyOverageCharges(
       db,
@@ -842,11 +878,6 @@ describe('createMonthlyOverageCharges', () => {
     )
 
     expect(result.invoice_items_created).toBe(0)
-    expect(stripe.invoiceItems.list).toHaveBeenCalledWith({
-      customer: 'cus_reuse',
-      pending: true,
-      limit: 100,
-    })
     expect(stripe.invoiceItems.create).not.toHaveBeenCalled()
 
     const charge = await db
@@ -917,9 +948,9 @@ describe('createMonthlyOverageCharges', () => {
       stripeCustomerId: 'cus_eur',
       stripeSubscriptionId: 'sub_eur',
     })
-    await seedDailyUsage(db, {
+    await seedEveryDayOfMonth(db, {
       workspaceId: 'ws-eur',
-      date: '2026-06-15',
+      month: '2026-06',
       billableOverageGb: 1,
     })
 
@@ -961,6 +992,125 @@ describe('createMonthlyOverageCharges', () => {
   })
 })
 
+describe('monthly overage amount and retries', () => {
+  let db: Kysely<DB>
+
+  beforeEach(() => {
+    db = createMigratedInMemoryDb().db
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test('charges a workspace that started mid-month only for the days it was over', async () => {
+    await seedWorkspace(db, {
+      id: 'ws-new',
+      plan: 'team',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+      stripeSubscriptionStatus: 'active',
+    })
+    for (const day of [25, 26, 27, 28, 29, 30]) {
+      await seedDailyUsage(db, {
+        workspaceId: 'ws-new',
+        date: `2026-06-${day}`,
+        billableOverageGb: 30,
+      })
+    }
+
+    const stripe = makeStripeMock()
+    await createMonthlyOverageCharges(
+      db,
+      stripe as never,
+      OVERAGE_PRODUCT_ID,
+      MONTH_START,
+    )
+
+    // 30 GB over on 6 of June's 30 days is 6 GB-month.
+    expect(stripe.invoiceItems.create).toHaveBeenCalledWith(
+      expect.objectContaining({ quantity: 6 }),
+      expect.any(Object),
+    )
+    const charge = await db
+      .selectFrom('billing_overage_charges')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(charge.overage_gb_month).toBe(6)
+  })
+
+  test('a retry after the standalone invoice went out charges nothing more', async () => {
+    await seedWorkspace(db, {
+      id: 'ws1',
+      plan: 'free',
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+      stripeSubscriptionStatus: 'canceled',
+    })
+    for (let day = 1; day <= 30; day++) {
+      await seedDailyUsage(db, {
+        workspaceId: 'ws1',
+        date: `2026-06-${String(day).padStart(2, '0')}`,
+        billableOverageGb: 4,
+      })
+    }
+    // The earlier run created the invoice item and the invoice that took it,
+    // then stopped before recording the charge as completed.
+    await db
+      .insertInto('billing_overage_charges')
+      .values({
+        workspace_id: 'ws1',
+        month: '2026-06',
+        overage_gb_month: 0,
+        status: 'pending',
+        created_at: '2026-07-01T17:00:00.000Z',
+      })
+      .execute()
+    const stripeItems = [
+      {
+        id: 'ii_1',
+        invoice: 'in_1',
+        metadata: { workspace_id: 'ws1', month: '2026-06' },
+      },
+    ]
+    const stripe = makeStripeMock()
+    stripe.subscriptions.retrieve.mockResolvedValue({
+      id: 'sub_1',
+      status: 'canceled',
+      currency: 'jpy',
+    })
+    stripe.invoiceItems.list.mockImplementation((params) =>
+      stripeList(
+        params.pending
+          ? stripeItems.filter((item) => item.invoice === null)
+          : stripeItems,
+        params.limit,
+      ),
+    )
+
+    // The next daily run, after Stripe's idempotency keys have expired.
+    await createMonthlyOverageCharges(
+      db,
+      stripe as never,
+      OVERAGE_PRODUCT_ID,
+      new Date('2026-07-02T18:00:00.000Z'),
+    )
+
+    expect(stripe.invoiceItems.create).not.toHaveBeenCalled()
+    expect(stripe.invoices.create).not.toHaveBeenCalled()
+    const charge = await db
+      .selectFrom('billing_overage_charges')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(charge).toMatchObject({
+      status: 'completed',
+      overage_gb_month: 4,
+      stripe_invoice_item_id: 'ii_1',
+      stripe_invoice_id: 'in_1',
+    })
+  })
+})
+
 describe('loadCurrentMonthOverageProjection', () => {
   let db: Kysely<DB>
 
@@ -973,18 +1123,15 @@ describe('loadCurrentMonthOverageProjection', () => {
     await db.destroy()
   })
 
-  test('rounds projected GB and cost to integer GB basis', async () => {
+  test('projects the rest of the month at the latest snapshot, rounded to whole GB', async () => {
     await seedWorkspace(db, { id: 'ws1', plan: 'team' })
-    await seedDailyUsage(db, {
-      workspaceId: 'ws1',
-      date: '2026-07-10',
-      billableOverageGb: 1,
-    })
-    await seedDailyUsage(db, {
-      workspaceId: 'ws1',
-      date: '2026-07-20',
-      billableOverageGb: 2,
-    })
+    for (let day = 1; day <= 6; day++) {
+      await seedDailyUsage(db, {
+        workspaceId: 'ws1',
+        date: `2026-07-0${day}`,
+        billableOverageGb: day <= 3 ? 1 : 2,
+      })
+    }
 
     const projection = await loadCurrentMonthOverageProjection(db, 'ws1', NOW)
 
@@ -992,6 +1139,29 @@ describe('loadCurrentMonthOverageProjection', () => {
       projectedOverageGb: 2,
       projectedOverageUsd: 0.2,
       projectedOverageJpy: 32,
+    })
+  })
+
+  test('projects a workspace that started mid-month at what the month will charge', async () => {
+    await seedWorkspace(db, { id: 'ws-new', plan: 'team' })
+    for (const day of [25, 26, 27]) {
+      await seedDailyUsage(db, {
+        workspaceId: 'ws-new',
+        date: `2026-06-${day}`,
+        billableOverageGb: 30,
+      })
+    }
+
+    const projection = await loadCurrentMonthOverageProjection(
+      db,
+      'ws-new',
+      new Date('2026-06-27T18:00:00.000Z'),
+    )
+
+    // 30 GB over from the 25th through the 30th is 6 GB-month.
+    expect(projection).toMatchObject({
+      projectedOverageGb: 6,
+      projectedOverageJpy: 96,
     })
   })
 })
