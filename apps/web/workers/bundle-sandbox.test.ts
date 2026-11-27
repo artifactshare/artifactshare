@@ -3574,6 +3574,58 @@ describe('handleArtifactSandboxRequest', () => {
     )
   })
 
+  test.each([
+    { requestPath: '/about', fallbackToIndex: 1 },
+    { requestPath: '/about/', fallbackToIndex: 1 },
+    { requestPath: '/about', fallbackToIndex: 0 },
+  ])(
+    'serves the directory index.html for $requestPath (fallback $fallbackToIndex)',
+    async ({ requestPath, fallbackToIndex }) => {
+      await dbRef
+        .current!.updateTable('versions')
+        .set({ fallback_to_index: fallbackToIndex })
+        .where('id', '=', 'v-bundle')
+        .execute()
+      await dbRef
+        .current!.insertInto('version_files')
+        .values({
+          id: 'vf-about',
+          version_id: 'v-bundle',
+          path: '/about/index.html',
+          r2_key: 'ws-a/abc123def4/v-bundle/about/index.html',
+          mime_type: 'text/html; charset=utf-8',
+          size_bytes: 20,
+          sha256: 'sha-about',
+          scan_flags: null,
+          created_at: '2026-05-22T00:00:00.000Z',
+        })
+        .execute()
+      storageMock.getArtifact.mockImplementation(
+        async (_bucket: unknown, key: string) =>
+          storedArtifact(
+            key.endsWith('/about/index.html')
+              ? '<!doctype html><body>About</body>'
+              : '<!doctype html><body>Home</body>',
+            'text/html',
+          ),
+      )
+      const token = await entrypointToken()
+      const entrypoint = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
+      )
+      const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}${requestPath}`, {
+          headers: { Cookie: cookie ?? '' },
+        }),
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.text()).resolves.toContain('About')
+    },
+  )
+
   test('keeps missing asset-shaped paths as 404 when fallback is enabled', async () => {
     await dbRef
       .current!.updateTable('versions')

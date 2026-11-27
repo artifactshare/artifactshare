@@ -132,9 +132,11 @@ import {
   publish as publishArtifact,
   appendShareable,
   createVersion,
+  staticSitePublishResponse,
   staticSiteRequestContent,
   uploadShareable,
 } from '~/modules/publish'
+import { runStaticSiteVersionUpload } from '~/lib/static-site-version-upload.server'
 import {
   normalizeArtifactKey,
   resolveArtifactKey,
@@ -1526,6 +1528,21 @@ INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot
     expect(file.arrayBuffer).not.toHaveBeenCalled()
     expect(storageMock.putArtifact).not.toHaveBeenCalled()
   })
+
+  test.each(['', '.', '/', './.', '\\'])(
+    'rejects the single-file name %j because it names no file',
+    async (name) => {
+      const result = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile(name, '<p>hi</p>'),
+        'private',
+      )
+
+      expect(result).toEqual({ kind: 'invalid-path' })
+      expect(storageMock.putArtifact).not.toHaveBeenCalled()
+    },
+  )
 
   test('normalizes single-file index entrypoint casing', async () => {
     nanoidMock.push(
@@ -3466,6 +3483,38 @@ INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot
     },
   )
 
+  test('names the file and the 10 MB limit when one multipart file is too large', async () => {
+    const form = new FormData()
+    form.append('file', siteFile('/index.html', 16, 'text/html'))
+    form.append('file', siteFile('/assets/hero.png', 10 * MB + 1, 'image/png'))
+    const request = new Request(
+      'https://example.com/api/shareables/uploads?artifact_kind=static_site',
+      { method: 'POST', body: form },
+    )
+
+    const result = await staticSiteRequestContent(request, {
+      expectedContainerId: null,
+    }).session.publish({
+      db,
+      user: { ...OWNER, msTenantId: null },
+      authority: null,
+      target: { kind: 'create' },
+      containerId: null,
+      idempotencyKey: null,
+      touchArtifactKeyId: null,
+    })
+    const response = staticSitePublishResponse(request, result)
+
+    expect(response.status).toBe(413)
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'file-too-large',
+        message: 'File is larger than 10 MB: /assets/hero.png',
+      },
+    })
+    expect(await db.selectFrom('shareables').selectAll().execute()).toEqual([])
+  })
+
   test('records a link-visible static-site creation in the durable ledger', async () => {
     await db
       .updateTable('workspaces')
@@ -4815,6 +4864,34 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     await db.destroy()
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
+  })
+
+  test('names the file and the 10 MB limit when a new version has one file too large', async () => {
+    const before = await db.selectFrom('versions').selectAll().execute()
+    const form = new FormData()
+    form.append('file', siteFile('/index.html', 16, 'text/html'))
+    form.append('file', siteFile('/assets/hero.png', 10 * MB + 1, 'image/png'))
+
+    const response = await runStaticSiteVersionUpload(
+      db,
+      new Request('https://example.com/api/shareables/bundle1/versions', {
+        method: 'POST',
+        body: form,
+      }),
+      OWNER,
+      'bundle1',
+    )
+
+    expect(response.status).toBe(413)
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'file-too-large',
+        message: 'File is larger than 10 MB: /assets/hero.png',
+      },
+    })
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      before,
+    )
   })
 
   test('denies unknown static-site authority before creating a session or writing blobs', async () => {
