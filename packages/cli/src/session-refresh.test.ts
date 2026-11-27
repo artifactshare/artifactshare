@@ -19,6 +19,8 @@ const LEGACY_ACCESS_TOKEN = 'legacy-access-token'
 const REFRESH_TOKEN = 'refresh-token-1'
 const ROTATED_REFRESH_TOKEN = 'refresh-token-2'
 const ROTATED_REFRESH_EXPIRES_AT = '2027-02-01T00:00:00.000Z'
+const NEXT_REFRESH_TOKEN = 'refresh-token-3'
+const OTHER_PROCESS_SESSION_TOKEN = 'other-process-session-token'
 const FRESH_EXPIRES_AT = '2026-08-01T00:00:00.000Z'
 const ARTIFACT_ID = 'abc123def4'
 const PROJECT_ID = 'prj1'
@@ -72,49 +74,53 @@ const withProfileArgs = (baseUrl: string, args: string[]) => [
   '--json',
 ]
 
-async function writeExpiredSession(
+async function writeStoredCredential(
   baseUrl: string,
-  pendingRotationId?: string,
+  credential: Record<string, unknown>,
 ): Promise<void> {
   await mkdir(homeDir, { recursive: true })
   await writeFile(
     join(homeDir, 'tokens.json'),
     JSON.stringify(
-      {
-        [`${baseUrl}:${PROFILE}`]: JSON.stringify({
-          kind: 'session',
-          session_token: EXPIRED_TOKEN,
-          refresh_token: REFRESH_TOKEN,
-          expires_at: '2026-01-01T00:00:00.000Z',
-          ...(pendingRotationId
-            ? { pending_rotation_id: pendingRotationId }
-            : {}),
-        }),
-      },
+      { [`${baseUrl}:${PROFILE}`]: JSON.stringify(credential) },
       null,
       2,
     ),
   )
 }
 
+async function writeExpiredSession(
+  baseUrl: string,
+  pendingRotationId?: string,
+): Promise<void> {
+  await writeStoredCredential(baseUrl, {
+    kind: 'session',
+    session_token: EXPIRED_TOKEN,
+    refresh_token: REFRESH_TOKEN,
+    expires_at: '2026-01-01T00:00:00.000Z',
+    ...(pendingRotationId ? { pending_rotation_id: pendingRotationId } : {}),
+  })
+}
+
 async function writeApiTokenProfile(
   baseUrl: string,
   token = 'api-token-1',
 ): Promise<void> {
-  await mkdir(homeDir, { recursive: true })
-  await writeFile(
-    join(homeDir, 'tokens.json'),
-    JSON.stringify(
-      {
-        [`${baseUrl}:${PROFILE}`]: JSON.stringify({
-          kind: 'api_token',
-          token,
-        }),
-      },
-      null,
-      2,
-    ),
-  )
+  await writeStoredCredential(baseUrl, { kind: 'api_token', token })
+}
+
+// What another CLI process sharing the profile saves after it rotates the
+// session.
+async function writeOtherProcessSession(
+  baseUrl: string,
+  refreshToken: string,
+): Promise<void> {
+  await writeStoredCredential(baseUrl, {
+    kind: 'session',
+    session_token: OTHER_PROCESS_SESSION_TOKEN,
+    refresh_token: refreshToken,
+    expires_at: FRESH_EXPIRES_AT,
+  })
 }
 
 async function readStoredSession(baseUrl: string): Promise<any> {
@@ -885,6 +891,124 @@ test('whoami resumes a staged rotation after a prior credential-save failure', a
       assert.equal(stored.pending_rotation_id, undefined)
     },
   )
+})
+
+// Runs whoami with an expired session. The stub answers a refresh with 401
+// unless `refresh` accepts the posted refresh token, the way the server
+// rejects a refresh token that another process has already rotated.
+async function whoamiWithSharedProfile({
+  onExpiredSession,
+  refresh,
+}: {
+  onExpiredSession?: (baseUrl: string) => Promise<void>
+  refresh: (refreshToken: string, baseUrl: string) => Promise<boolean>
+}) {
+  const refreshTokens: string[] = []
+  let serverBaseUrl = ''
+  return await withServer(
+    async (request, response) => {
+      const body = await collectBody(request)
+      response.setHeader('content-type', 'application/json')
+      if (request.url === '/api/cli/auth/refresh') {
+        const refreshToken = JSON.parse(body).refresh_token
+        refreshTokens.push(refreshToken)
+        if (!(await refresh(refreshToken, serverBaseUrl))) {
+          response.statusCode = 401
+          response.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        response.end(
+          JSON.stringify({
+            access_token: FRESH_TOKEN,
+            token_type: 'Bearer',
+            expires_at: FRESH_EXPIRES_AT,
+            refresh_token: NEXT_REFRESH_TOKEN,
+            refresh_token_expires_at: ROTATED_REFRESH_EXPIRES_AT,
+          }),
+        )
+        return
+      }
+      if (request.headers.authorization === `Bearer ${FRESH_TOKEN}`) {
+        response.end(
+          JSON.stringify({
+            user: { id: 'u1', email: 'user@example.com' },
+            workspace: { id: 'w1', hosted_domain: null },
+          }),
+        )
+        return
+      }
+      if (request.headers.authorization === `Bearer ${EXPIRED_TOKEN}`) {
+        await onExpiredSession?.(serverBaseUrl)
+      }
+      response.statusCode = 401
+      response.end(JSON.stringify({ error: 'unauthorized' }))
+    },
+    async (baseUrl) => {
+      serverBaseUrl = baseUrl
+      await writeExpiredSession(baseUrl)
+      const result = await runAsync(
+        withProfileArgs(baseUrl, ['whoami']),
+        isolation(),
+      )
+      return { result, refreshTokens, stored: await readStoredSession(baseUrl) }
+    },
+  )
+}
+
+test('whoami refreshes with the refresh token another process stored after this one started', async () => {
+  const { result, refreshTokens, stored } = await whoamiWithSharedProfile({
+    onExpiredSession: async (baseUrl) =>
+      await writeOtherProcessSession(baseUrl, ROTATED_REFRESH_TOKEN),
+    refresh: async (refreshToken) => refreshToken === ROTATED_REFRESH_TOKEN,
+  })
+
+  assert.deepEqual(refreshTokens, [ROTATED_REFRESH_TOKEN])
+  expectSuccess(result, 'whoami')
+  assert.equal(stored.session_token, FRESH_TOKEN)
+  assert.equal(stored.refresh_token, NEXT_REFRESH_TOKEN)
+  assert.equal(stored.pending_rotation_id, undefined)
+})
+
+test('whoami retries the refresh once with the refresh token another process stored while it was refreshing', async () => {
+  const { result, refreshTokens, stored } = await whoamiWithSharedProfile({
+    refresh: async (refreshToken, baseUrl) => {
+      if (refreshToken === ROTATED_REFRESH_TOKEN) return true
+      await writeOtherProcessSession(baseUrl, ROTATED_REFRESH_TOKEN)
+      return false
+    },
+  })
+
+  assert.deepEqual(refreshTokens, [REFRESH_TOKEN, ROTATED_REFRESH_TOKEN])
+  expectSuccess(result, 'whoami')
+  assert.equal(stored.session_token, FRESH_TOKEN)
+  assert.equal(stored.refresh_token, NEXT_REFRESH_TOKEN)
+  assert.equal(stored.pending_rotation_id, undefined)
+})
+
+test('whoami does not repeat a rejected refresh when the stored refresh token is unchanged', async () => {
+  const { result, refreshTokens } = await whoamiWithSharedProfile({
+    refresh: async () => false,
+  })
+
+  expectFailure(result, { command: 'whoami', code: 'auth_required' })
+  assert.deepEqual(refreshTokens, [REFRESH_TOKEN])
+})
+
+test('whoami stops after two rejected refreshes when the stored refresh token keeps changing', async () => {
+  let rotations = 0
+  const { result, refreshTokens } = await whoamiWithSharedProfile({
+    refresh: async (_refreshToken, baseUrl) => {
+      rotations += 1
+      await writeOtherProcessSession(
+        baseUrl,
+        `other-refresh-token-${rotations}`,
+      )
+      return false
+    },
+  })
+
+  expectFailure(result, { command: 'whoami', code: 'auth_required' })
+  assert.deepEqual(refreshTokens, [REFRESH_TOKEN, 'other-refresh-token-1'])
 })
 
 test('whoami does not refresh an api token profile', async () => {

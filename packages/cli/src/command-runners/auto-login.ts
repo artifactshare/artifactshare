@@ -195,14 +195,12 @@ export async function refreshAuthenticatedCredential(
   if (
     isRetry ||
     !credential.profile ||
-    credential.profileCredentialKind !== 'session' ||
-    !credential.refreshToken
+    credential.profileCredentialKind !== 'session'
   ) {
     return { ok: false }
   }
   const refreshed = await refreshStoredProfileSession(
     credential.profile,
-    credential.refreshToken,
     options,
   )
   if (!refreshed.ok) return refreshed
@@ -249,13 +247,17 @@ export async function runAuthenticatedApi<T>(
   return await request(refreshed.credential)
 }
 
+// Another CLI process sharing this profile can rotate the session at any time,
+// so refresh with the refresh token the store holds now.
 async function refreshStoredProfileSession(
   profile: string,
-  refreshToken: string,
   options: CliOptions,
+  rejectedRefreshToken?: string,
 ): Promise<{ ok: true; token: string } | { ok: false; error?: CliError }> {
   const stored = await readProfileToken(profile, options)
   if (!stored.ok || stored.credential.kind !== 'session') return { ok: false }
+  const refreshToken = stored.credential.refresh_token
+  if (refreshToken === rejectedRefreshToken) return { ok: false }
   if (!(await probeTokenStoreWritable(profile, options))) {
     return {
       ok: false,
@@ -290,7 +292,14 @@ async function refreshStoredProfileSession(
   if (result.error) return { ok: false, error: result.error }
   const { response, body } = result
   if (!response.ok) {
-    if (response.status === 401) return { ok: false }
+    if (response.status === 401) {
+      // The server rejects a refresh token that another process rotated while
+      // this request was in flight. Retry once if that process stored a newer
+      // one.
+      return rejectedRefreshToken === undefined
+        ? await refreshStoredProfileSession(profile, options, refreshToken)
+        : { ok: false }
+    }
     return {
       ok: false,
       error: mapApiError(response.status, body, {
