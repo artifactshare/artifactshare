@@ -11,6 +11,7 @@ import {
 import { cspDiagnostic } from './app/test/csp-diagnostic-browser-command'
 import { pdfViewerScenario } from './app/test/pdf-viewer-browser-command'
 import { videoViewerScenario } from './app/test/video-viewer-browser-command'
+import { closeSandboxWorkers } from './app/test/sandbox-harness'
 import {
   staticSiteExtensions,
   staticSiteXmlEmbedding,
@@ -73,6 +74,12 @@ export default defineConfig({
       },
       load(id) {
         return id === '\0cloudflare:workers' ? 'export const env = {}' : null
+      },
+    },
+    {
+      name: 'close-sandbox-workers',
+      configureVitest({ vitest }) {
+        vitest.onClose(closeSandboxWorkers)
       },
     },
   ],
