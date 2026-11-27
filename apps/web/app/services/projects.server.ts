@@ -30,6 +30,7 @@ import {
 } from '~/services/access.server'
 import {
   isWorkspaceAccessRevoked,
+  projectAccessAllowedSql,
   workspaceAccessRevokedSql,
 } from '~/modules/access'
 import { projectLimitForPlan } from '~/lib/billing-plan.server'
@@ -441,7 +442,9 @@ export async function getOrCreateInboxContainerId(
 
 // Shared base query for project summaries: the select list plus the per-viewer
 // visible file count / last-update subqueries, scoped to the workspace's
-// projects. Non-archived by default; pass archived = true for the archive view,
+// projects. With a viewer, only projects that viewer may open are returned;
+// without one it reads unfiltered, for callers that already checked authority.
+// Non-archived by default; pass archived = true for the archive view,
 // or 'any' to read a project regardless of its archive state (used when a single
 // edit_project call both edits and archives, so the response can still read it).
 // Callers add the id/slug discriminator and ordering.
@@ -505,6 +508,15 @@ function projectSummaryQuery(
     .where('c.kind', '=', 'project')
     .$if(archived !== 'any', (qb) =>
       qb.where('c.archived_at', archived ? 'is not' : 'is', null),
+    )
+    .$if(Boolean(viewer), (qb) =>
+      qb.where(
+        sql<boolean>`EXISTS (
+          SELECT 1 FROM users access_viewer
+          WHERE access_viewer.id = ${viewer!.id}
+            AND ${projectAccessAllowedSql('c', 'access_viewer')}
+        )`,
+      ),
     )
 }
 
@@ -576,7 +588,7 @@ export async function findWorkspaceProject(
   db: Kysely<DB>,
   workspaceId: string,
   projectId: string,
-  viewer?: ShareableViewer,
+  viewer: ShareableViewer,
 ): Promise<ProjectSummary | null> {
   const row = await projectSummaryQuery(db, workspaceId, viewer)
     .where('c.id', '=', projectId)
@@ -593,7 +605,7 @@ export async function findWorkspaceProjectAnyState(
   db: Kysely<DB>,
   workspaceId: string,
   projectId: string,
-  viewer?: ShareableViewer,
+  viewer: ShareableViewer,
 ): Promise<ProjectSummary | null> {
   const row = await projectSummaryQuery(db, workspaceId, viewer, 'any')
     .where('c.id', '=', projectId)
@@ -1598,8 +1610,12 @@ export async function updateProjectContainer(
     throw error
   }
   if (result?.id !== projectId) return { kind: 'not-found' }
-  const project = await findWorkspaceProject(db, workspaceId, projectId)
-  return project ? { kind: 'ok', project } : { kind: 'not-found' }
+  const row = await projectSummaryQuery(db, workspaceId)
+    .where('c.id', '=', projectId)
+    .executeTakeFirst()
+  return row
+    ? { kind: 'ok', project: toProjectSummary(row) }
+    : { kind: 'not-found' }
 }
 
 export type ProjectArchiveResult = 'ok' | 'not-found' | 'forbidden'
