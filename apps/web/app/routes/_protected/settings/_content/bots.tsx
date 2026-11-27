@@ -4,7 +4,7 @@ import {
   confirmationResult,
   runConfirmedMutation,
 } from '~/lib/settings-confirmation'
-import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
+import { isFlagOn } from '~/lib/feature-flags.server'
 import { requireUser } from '~/middleware/context'
 import {
   cancelWorkspaceBot,
@@ -34,7 +34,7 @@ export async function loader({
   const db = createDb()
   const [bots, botCreationEnabled] = await Promise.all([
     listWorkspaceBots(db, user.workspaceId),
-    isBotMembersEnabled(user.workspaceId),
+    isFlagOn('bot-members', { workspaceId: user.workspaceId }),
   ])
   return { bots, botCreationEnabled }
 }
@@ -103,7 +103,7 @@ async function submitBotForm(
           revision: body.revision,
         })
       case 'create':
-        if (!(await isBotMembersEnabled(user.workspaceId)))
+        if (!(await isFlagOn('bot-members', { workspaceId: user.workspaceId })))
           return { kind: 'feature-not-available' } as const
         if (typeof body.name !== 'string' || typeof body.projectId !== 'string')
           return { kind: 'invalid-body' } as const

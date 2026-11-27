@@ -27,8 +27,8 @@ vi.mock('~/services/db.server', () => ({ createDb: () => ({}) }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'admin', workspaceId: 'workspace' }),
 }))
-vi.mock('~/lib/bot-members-flag.server', () => ({
-  isBotMembersEnabled: () => true,
+vi.mock('~/lib/feature-flags.server', () => ({
+  isFlagOn: () => true,
 }))
 vi.mock('~/services/team-management.server', () => ({}))
 function submitBot({

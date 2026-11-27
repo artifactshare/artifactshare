@@ -79,7 +79,7 @@ vi.mock('~/services/upload-access.server', () => ({
   checkUploadAccess: vi.fn(),
 }))
 vi.mock('~/middleware/context', () => ({ requireUser: vi.fn() }))
-vi.mock('~/lib/flagship-fallback.server', () => ({}))
+vi.mock('~/lib/feature-flags.server', () => ({}))
 
 const row = (overrides: Record<string, unknown> = {}) => ({
   id: 'project-1',

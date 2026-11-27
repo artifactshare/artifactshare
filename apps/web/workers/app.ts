@@ -47,7 +47,7 @@ import {
 } from '../app/services/reconcile.server'
 import { getOwnerInitial } from '../app/lib/user'
 import { MAINTENANCE_REQUEST_HEADER } from '../app/lib/maintenance'
-import { evaluateFlagshipFlag } from '../app/lib/flagship-fallback.server'
+import { isFlagOn } from '../app/lib/feature-flags.server'
 import { handlePostUploadWorkflowSpike } from './post-upload-workflow-spike'
 import { handleD1BackupWorkflow } from './d1-backup-workflow-route'
 import {
@@ -78,8 +78,6 @@ const requestHandler = createRequestHandler(
   () => import('virtual:react-router/server-build'),
   import.meta.env.MODE,
 )
-
-const MAINTENANCE_FLAG_KEY = 'maintenance'
 
 export type ScheduledWorkerEnv = Pick<
   Cloudflare.Env,
@@ -642,33 +640,12 @@ function boundedLiveParam(
   return trimmed
 }
 
-async function isMaintenanceEnabled(
+function isMaintenanceEnabled(
   env: Cloudflare.Env,
   url: URL,
   hostname: string,
 ): Promise<boolean> {
-  const result = await evaluateFlagshipFlag(env, {
-    flagKey: MAINTENANCE_FLAG_KEY,
-    context: {
-      targetingKey: hostname,
-      hostname,
-      pathname: url.pathname,
-    },
-  })
-
-  switch (result.kind) {
-    case 'evaluated':
-      return result.enabled
-    case 'missing-binding':
-      if (result.production) {
-        console.error('maintenance_flagship_binding_missing_in_production')
-        return false
-      }
-      return result.enabled
-    case 'evaluation-error':
-      console.error('maintenance_flagship_evaluation_failed', result.error)
-      return false
-  }
+  return isFlagOn('maintenance', { hostname, pathname: url.pathname }, env)
 }
 
 function isMaintenanceExempt(url: URL): boolean {

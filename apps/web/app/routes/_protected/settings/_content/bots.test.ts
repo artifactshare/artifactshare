@@ -5,7 +5,7 @@ import { settingsAdminGate } from '../+lib/settings-admin.server'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 const services = vi.hoisted(() => ({
-  isBotMembersEnabled: vi.fn(),
+  isFlagOn: vi.fn(),
   updateWorkspaceBotDestinations: vi.fn(),
 }))
 
@@ -15,8 +15,8 @@ vi.mock('~/services/db.server', () => ({ createDb: () => db }))
 vi.mock('~/middleware/context', () => ({
   requireUser: () => ({ id: 'user-1', workspaceId: 'workspace-1' }),
 }))
-vi.mock('~/lib/bot-members-flag.server', () => ({
-  isBotMembersEnabled: services.isBotMembersEnabled,
+vi.mock('~/lib/feature-flags.server', () => ({
+  isFlagOn: services.isFlagOn,
 }))
 vi.mock('~/services/bot-members.server', () => ({
   listWorkspaceBots: vi.fn(),
@@ -43,7 +43,7 @@ function admittedContext() {
 test.each(['ok', 'forbidden', 'bot-conflict', 'bot-stopped'] as const)(
   'destination action is available with creation off and preserves %s result',
   async (kind) => {
-    services.isBotMembersEnabled.mockResolvedValue(false)
+    services.isFlagOn.mockResolvedValue(false)
     services.updateWorkspaceBotDestinations.mockResolvedValue({ kind })
     const input = {
       intent: 'destinations',

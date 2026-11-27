@@ -53,8 +53,8 @@ vi.mock('~/services/bot-members.server', () => ({
   listWorkspaceBots: adminRead('bots'),
 }))
 vi.mock('~/services/bot-destinations.server', () => ({}))
-vi.mock('~/lib/bot-members-flag.server', () => ({
-  isBotMembersEnabled: async () => false,
+vi.mock('~/lib/feature-flags.server', () => ({
+  isFlagOn: async () => false,
 }))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/billing.server', () => ({}))

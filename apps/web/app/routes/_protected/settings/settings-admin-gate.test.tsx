@@ -39,8 +39,8 @@ import { SettingsNavigation } from './+components/settings-nav'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/services/db.server', () => ({ createDb: () => fixture.db }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => bindI18n('en') }))
-vi.mock('~/lib/bot-members-flag.server', () => ({
-  isBotMembersEnabled: async () => true,
+vi.mock('~/lib/feature-flags.server', () => ({
+  isFlagOn: async () => true,
 }))
 const botService = vi.hoisted(() => ({
   listWorkspaceBots: vi.fn(async () => [{ id: 'bot-1', name: 'Nightly' }]),
