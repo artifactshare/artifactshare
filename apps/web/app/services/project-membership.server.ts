@@ -13,6 +13,7 @@ import {
 import { nowIso } from '~/lib/datetime'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 type Db = Kysely<DB>
 export type MembershipResult = 'joined' | 'left' | 'not-found' | 'forbidden'
@@ -68,7 +69,7 @@ export function visibleProjectContainerToViewerSql(user: SessionUser) {
               AND wm.user_id = ${user.id}
               AND wm.role IN ('owner', 'admin')
               AND wm.status = 'active'
-              AND w2.plan = 'team'
+              AND ${planInTierSql('w2.plan', ['team'])}
           )
         )
       )
@@ -137,7 +138,7 @@ function visibleShareableToDatabaseViewerSql(now: string) {
             AND access_count_wm.user_id = access_viewer.id
             AND access_count_wm.role IN ('owner', 'admin')
             AND access_count_wm.status = 'active'
-            AND access_count_w.plan = 'team'
+            AND ${planInTierSql('access_count_w.plan', ['team'])}
         )
         OR (
           access_viewer.email_verified = 1
@@ -162,7 +163,7 @@ function visibleShareableToDatabaseViewerSql(now: string) {
           AND access_link_wm.user_id = access_viewer.id
           AND access_link_wm.role IN ('owner', 'admin')
           AND access_link_wm.status = 'active'
-          AND access_link_w.plan = 'team'
+          AND ${planInTierSql('access_link_w.plan', ['team'])}
       )
     )
   )`
@@ -365,7 +366,7 @@ export async function listJoinedProjectsForDropdown(
           eb.or([
             sql<boolean>`NOT ${workspaceAccessRevoked} AND (c.base_visibility = 'workspace' OR c.created_by_id = ${user.id})`,
             sql<boolean>`exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=${email})`,
-            sql<boolean>`exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=${user.id} and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')`,
+            sql<boolean>`exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=${user.id} and wm.role in ('owner','admin') and wm.status='active' and ${planInTierSql('w2.plan', ['team'])})`,
           ]),
         ]),
         eb.and([
@@ -408,7 +409,7 @@ export async function countProjectParticipants(db: Db, containerId: string) {
             )
           )
           OR exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email) and u.email_verified = 1)
-          OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')
+          OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and ${planInTierSql('w2.plan', ['team'])})
         ))
         OR (u.workspace_id <> c.workspace_id AND u.email_verified = 1
           AND exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email)))
@@ -444,7 +445,7 @@ export async function listProjectParticipants(
             )
           )
           OR exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email) and u.email_verified = 1)
-          OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and w2.plan='team')
+          OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and ${planInTierSql('w2.plan', ['team'])})
         ))
         OR (u.workspace_id <> c.workspace_id AND u.email_verified = 1
           AND exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email)))

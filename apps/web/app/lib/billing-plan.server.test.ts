@@ -2,8 +2,6 @@ import { describe, expect, test } from 'vitest'
 import { BILLING_PRICES } from './billing-prices'
 import {
   allowsStorageOverage,
-  isPaidPlan,
-  normalizePlan,
   projectLimitForPlan,
   storageQuotaForPlan,
 } from './billing-plan.server'
@@ -13,19 +11,6 @@ describe('billing-plan', () => {
     expect(BILLING_PRICES.plus.jpy).toEqual({ month: 800, year: 8000 })
     expect(BILLING_PRICES.team.usd).toEqual({ month: 29, year: 290 })
   })
-  test('normalizePlan falls back unknown values to free', () => {
-    expect(normalizePlan('enterprise')).toBe('free')
-    expect(normalizePlan(null)).toBe('free')
-    expect(normalizePlan(undefined)).toBe('free')
-  })
-
-  test('isPaidPlan is true for plus and team only', () => {
-    expect(isPaidPlan('free')).toBe(false)
-    expect(isPaidPlan('plus')).toBe(true)
-    expect(isPaidPlan('team')).toBe(true)
-    expect(isPaidPlan('unknown')).toBe(false)
-  })
-
   test('allows storage overage for active plus and team subscriptions', () => {
     expect(allowsStorageOverage('free', 'active')).toBe(false)
     expect(allowsStorageOverage('plus', 'active')).toBe(true)

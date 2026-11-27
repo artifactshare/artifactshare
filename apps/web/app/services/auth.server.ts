@@ -77,6 +77,7 @@ import {
   moveUserToWorkspaceForOAuth,
 } from './workspace-domain-claims.server'
 import { CLI_DEVICE_SESSION_USER_AGENT } from './cli-refresh-credentials.server'
+import { planTier } from '~/lib/plan-tier'
 
 const GOOGLE_SIGNIN_SCOPES = ['openid', 'email', 'profile']
 const BEARER_SCHEME = 'bearer '
@@ -1782,7 +1783,7 @@ export async function ensureDevSignInUser(
   const now = nowIso()
   const config = DEV_SIGN_IN_CONFIG[persona]
   const workspaceOwnerEmail =
-    config.plan === 'team'
+    planTier(config.plan) === 'team'
       ? DEV_SIGN_IN_CONFIG['team-owner'].email
       : config.email
   const workspaceId = await ensureDevSignInWorkspace(

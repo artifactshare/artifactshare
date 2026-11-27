@@ -3,9 +3,9 @@ import Stripe from 'stripe'
 import type { Locale } from '~/i18n/messages'
 import {
   isActiveSubscriptionStatus,
-  isPaidPlan,
   type BillingPlan,
 } from '~/lib/billing-plan.server'
+import { isPaidPlan } from '~/lib/plan-tier'
 import type { DB } from '~/types/db'
 import { defaultBillingCurrency } from '~/lib/billing-prices'
 import type { OverageProjection } from '~/services/billing-usage.server'

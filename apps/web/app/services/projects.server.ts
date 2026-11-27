@@ -32,7 +32,7 @@ import {
   isWorkspaceAccessRevoked,
   workspaceAccessRevokedSql,
 } from '~/modules/access'
-import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
+import { projectLimitForPlan } from '~/lib/billing-plan.server'
 import {
   externalPostingAllowedSql,
   isExternalPostingAllowedForWorkspace,
@@ -42,6 +42,8 @@ import { cliWriteAuthority } from '~/lib/cli-authority-policy'
 import type { CliAuthority } from './cli-authority.server'
 import { publisherAuthoritySql } from './publisher-scope.server'
 import type { DB } from '~/types/db'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
+import { normalizePlan, planTier } from '~/lib/plan-tier'
 
 export const INBOX_CONTAINER_NAME = '未整理'
 
@@ -243,7 +245,7 @@ export function visibleShareableToViewer(
           .where('workspace_members.user_id', '=', viewer.id)
           .where('workspace_members.role', 'in', ['owner', 'admin'])
           .where('workspace_members.status', '=', 'active')
-          .where('workspaces.plan', '=', 'team'),
+          .where(planInTierSql('workspaces.plan', ['team'])),
       ),
     ]),
   ])
@@ -803,7 +805,7 @@ export function projectContainerEditAuthoritySql(
               AND project_editor_admin.user_id = ${actor.id}
               AND project_editor_admin.role IN ('owner', 'admin')
               AND project_editor_admin.status = 'active'
-              AND project_editor_workspace.plan = 'team'
+              AND ${planInTierSql('project_editor_workspace.plan', ['team'])}
           )
           OR (
             ${managerEnabled}
@@ -1490,7 +1492,7 @@ export async function createProjectContainer(
         kind: 'project-limit-reached',
         limit,
         billingWorkspaceId: workspaceId,
-        observedPlan: observedPlan === 'plus' ? 'plus' : 'free',
+        observedPlan: planTier(observedPlan) === 'individual' ? 'plus' : 'free',
       }
     }
     await insertCreatorMembershipOrRollback(db, id, createdById, now)
@@ -1934,7 +1936,7 @@ async function restoreProjectContainer(
         kind: 'project-limit-reached',
         limit,
         billingWorkspaceId: workspaceId,
-        observedPlan: observedPlan === 'plus' ? 'plus' : 'free',
+        observedPlan: planTier(observedPlan) === 'individual' ? 'plus' : 'free',
       }
     }
     scheduleWorkspaceSearch(workspaceId)
@@ -2266,7 +2268,7 @@ export function projectPlacementSql(
           placement_project.base_visibility = 'workspace'
           OR (${restrictedAgent ? 0 : 1} AND placement_user.kind = 'human' AND (
             placement_project.created_by_id = placement_user.id
-            OR (placement_workspace.plan = 'team' AND EXISTS (
+            OR (${planInTierSql('placement_workspace.plan', ['team'])} AND EXISTS (
               SELECT 1 FROM workspace_members placement_admin
               WHERE placement_admin.workspace_id = placement_project.workspace_id
                 AND placement_admin.user_id = placement_user.id

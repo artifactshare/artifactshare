@@ -41,7 +41,8 @@ import {
 } from '../+lib/settings-request.server'
 import { settingsShellShouldRevalidate } from '../+lib/shell-revalidation'
 import { checkoutReturnMiddleware } from '../+lib/checkout-return.server'
-import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
+import { projectLimitForPlan } from '~/lib/billing-plan.server'
+import { normalizePlan } from '~/lib/plan-tier'
 import { countActiveProjects } from '~/services/projects.server'
 import BillingPage, {
   type BillingLoaderData,

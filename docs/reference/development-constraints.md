@@ -64,6 +64,12 @@
 - **人が判断する現行規則**: `apps/web/app/i18n/en.json` と `apps/web/app/i18n/ja.json` で意味をそろえます。日本語 UI に内部用語や英語動詞をそのまま出さず、トーストやエラーメッセージに literal backtick を入れません。同じ画面内では文体を統一します。
 - **復元しない事項**: 現行実装に該当がない locale 運用規則は復元しません。
 
+## プラン
+
+- **機械検査で強制済み**: `scripts/plan-tier-lint-plugin.mjs` は、課金・料金表示以外のアプリコードで plan を有料プランの名前（`plus`・`team`）と比べることを、TS・SQL・Kysely の `where` のいずれでも拒否します。機能の判定は `apps/web/app/lib/plan-tier.ts` の `planTier`・`isPaidPlan` と、SQL では `apps/web/app/lib/plan-tier-sql.server.ts` の `planInTierSql` を使います。`free` との比較は、新しい有料プランでもそのまま正しいので許可します。
+- **人が判断する現行規則**: プランを足すときは、`PLAN_TIERS` に 1 行足して、どの tier（`free`・`individual`・`team`）の機能を持つかを決めます。tier の意味を変えるときは、`planTier` と `planInTierSql` の呼び出し元をすべて確かめます。
+- **復元しない事項**: なし。
+
 ## Legal
 
 - **機械検査で強制済み**: 法務 Markdown の公開範囲は、`apps/web/app/services/legal-content.server.ts` のテストとビルドが検査します。

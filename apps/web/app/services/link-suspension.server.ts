@@ -8,6 +8,7 @@ import { constantTimeEqual, hmacSha256Base64Url } from '~/lib/hmac'
 import type { LinkOpsTokenPayload } from '~/lib/link-ops-token'
 import type { DB } from '~/types/db'
 import { isWorkspaceAccessRevoked } from '~/modules/access'
+import { planTier } from '~/lib/plan-tier'
 
 // An operator pauses a link share while reviewing it (from the Slack judgment
 // notification) and resumes it afterwards; the owner is told by email and by
@@ -163,7 +164,7 @@ async function notificationRecipients(
       relationship: 'workspace_owner',
       requiresVerified: true,
       includeReasonAndAppeal: false,
-      includeManageUrl: row.workspace_plan === 'team',
+      includeManageUrl: planTier(row.workspace_plan) === 'team',
     },
   ]
 }
@@ -373,7 +374,7 @@ async function transitionLink(
               includeReasonAndAppeal: recipient.includeReasonAndAppeal,
               includeManageUrl:
                 recipient.relationship === 'artifact_owner' ||
-                current.current_workspace_plan === 'team',
+                planTier(current.current_workspace_plan) === 'team',
             })
           } catch {
             return 'failed'

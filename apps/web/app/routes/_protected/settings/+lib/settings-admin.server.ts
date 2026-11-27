@@ -13,6 +13,7 @@ import {
   settingsActiveRole,
   settingsWorkspace,
 } from './settings-request.server'
+import { planTier } from '~/lib/plan-tier'
 
 /** The admin gate's decision for this request; unset means not decided. */
 export const settingsAdminGate = createContext<'allowed' | 'forbidden' | null>(
@@ -37,7 +38,7 @@ export const settingsAdminMiddleware: MiddlewareFunction<Response> = async (
   const team =
     isAdmin &&
     page === 'inventory' &&
-    (await settingsWorkspace(context)).plan === 'team'
+    planTier((await settingsWorkspace(context)).plan) === 'team'
   const decision = page
     ? settingsAdminPageAccess(page, { isAdmin, team })
     : 'forbidden'

@@ -20,6 +20,7 @@ import { TeamMutedParagraph } from '~/components/form/team-muted'
 import { useT } from '~/hooks/use-t'
 import { stringValue } from '~/lib/form'
 import type { WorkspaceLinkPolicy } from '~/lib/link-sharing-policy'
+import { isPlanInTier, planTier } from '~/lib/plan-tier'
 
 export interface ExternalAccessLoaderData {
   policy: WorkspaceLinkPolicy
@@ -53,9 +54,10 @@ function ExternalAccessForm({ policy }: { policy: WorkspaceLinkPolicy }) {
   useEffect(() => {
     if (saved) setDraft(policyDraft(saved.policy))
   }, [saved, setDraft])
-  const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
+  const canEditSwitches =
+    planTier(policy.plan) === 'team' && shell.currentUserIsAdmin
   const canEditExpiry =
-    policy.plan === 'team'
+    planTier(policy.plan) === 'team'
       ? shell.currentUserIsAdmin
       : shell.currentUserRole === 'owner'
   const expiryDisabled = !canEditExpiry || pending
@@ -97,7 +99,7 @@ function ExternalAccessForm({ policy }: { policy: WorkspaceLinkPolicy }) {
             canEditExpiry
               ? undefined
               : t(
-                  policy.plan === 'team'
+                  planTier(policy.plan) === 'team'
                     ? 'externalAccess.expiry.managerOnly'
                     : 'externalAccess.expiry.ownerOnly',
                 )
@@ -176,8 +178,11 @@ function ExpiryConfirmation({
 }
 
 function resumeGuidanceKey(policy: WorkspaceLinkPolicy, isOwner: boolean) {
-  if (isOwner || policy.plan === 'team') return
-  if (policy.plan === 'plus' && !policy.externalPostingEnabled) {
+  if (isOwner || planTier(policy.plan) === 'team') return
+  if (
+    planTier(policy.plan) === 'individual' &&
+    !policy.externalPostingEnabled
+  ) {
     return policy.linkSharingEnabled
       ? 'externalAccess.resume.ownerOnly.externalPosting'
       : 'externalAccess.resume.ownerOnly.both'
@@ -241,7 +246,7 @@ function ExternalAccessPolicySection({
           </span>
         </div>
 
-        {policy.plan !== 'team' ? (
+        {!isPlanInTier(policy.plan, 'team') ? (
           <>
             <PlusPolicyStatus
               kind="linkSharing"
@@ -255,7 +260,7 @@ function ExternalAccessPolicySection({
               kind="externalPosting"
               plan={policy.plan}
               enabled={policy.externalPostingEnabled}
-              canResume={policy.plan === 'plus' && isOwner}
+              canResume={planTier(policy.plan) === 'individual' && isOwner}
               pending={pending}
               t={t}
             />
@@ -702,7 +707,7 @@ function toggleDescription(
         : 'externalAccess.externalPosting.free',
     )
   }
-  if (plan === 'plus') {
+  if (planTier(plan) === 'individual') {
     return t(
       kind === 'linkSharing'
         ? 'externalAccess.linkSharing.plus'

@@ -23,10 +23,11 @@ const EXCLUDED_DIRECTORIES = new Set([
   'test',
   'tests',
 ])
-// Keep aligned with analytics-lint-plugin.test.mjs and
-// module-boundary-lint-plugin.test.mjs, which create these during parallel tests.
+// Keep aligned with analytics-lint-plugin.test.mjs,
+// module-boundary-lint-plugin.test.mjs, and plan-tier-lint-plugin.test.mjs,
+// which create these during parallel tests.
 const LINT_FIXTURE_DIRECTORY =
-  /^apps\/web\/app\/(?:(?:analytics|module-boundary)-lint-fixture-[^/]+|modules\/module-boundary-lint-fixture-[^/]+)$/
+  /^apps\/web\/app\/(?:(?:analytics|module-boundary|plan-tier)-lint-fixture-[^/]+|modules\/module-boundary-lint-fixture-[^/]+)$/
 const SET_OPERATION_WORDS = new Set(['EXCEPT', 'INTERSECT', 'UNION'])
 const SET_OPERATION_METHODS = new Set([
   'except',

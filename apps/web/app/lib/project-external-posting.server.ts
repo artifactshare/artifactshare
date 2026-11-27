@@ -2,6 +2,8 @@ import { sql, type Kysely, type RawBuilder } from 'kysely'
 import { canUseExternalPosting } from './link-sharing-policy'
 import { loadWorkspaceLinkPolicy } from '~/services/link-sharing.server'
 import type { DB } from '~/types/db'
+import { PAID_TIERS } from '~/lib/plan-tier'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 export async function isExternalPostingEnabledForWorkspace(
   db: Kysely<DB>,
@@ -24,6 +26,6 @@ export function externalPostingAllowedSql(
 ): RawBuilder<boolean> {
   return sql<boolean>`EXISTS (SELECT 1 FROM workspaces posting_workspace
     WHERE posting_workspace.id = ${workspaceId}
-      AND posting_workspace.plan IN ('plus', 'team')
+      AND ${planInTierSql('posting_workspace.plan', PAID_TIERS)}
       AND posting_workspace.external_posting_enabled = 1)`
 }

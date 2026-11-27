@@ -4,7 +4,8 @@
     "./scripts/copy-glossary-lint-plugin.mjs",
     "./scripts/analytics-lint-plugin.mjs",
     "./scripts/module-boundary-lint-plugin.mjs",
-    "./scripts/test-reliability-lint-plugin.mjs"
+    "./scripts/test-reliability-lint-plugin.mjs",
+    "./scripts/plan-tier-lint-plugin.mjs"
   ],
   "categories": {
     "correctness": "error"
@@ -19,7 +20,8 @@
     "copy-glossary/no-violations": "error",
     "analytics/typed-sender": "error",
     "module-boundary/no-internal-imports": "error",
-    "test-reliability/observed-waits": "error"
+    "test-reliability/observed-waits": "error",
+    "plan-tier/no-plan-name-comparison": "error"
   },
   "overrides": [
     {

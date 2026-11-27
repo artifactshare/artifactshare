@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '~/types/db'
-import { normalizePlan } from '~/lib/billing-plan.server'
+import { normalizePlan } from '~/lib/plan-tier'
 import {
   isLowTrustLinkWorkspace,
   linkTrustThresholdsFromEnv,

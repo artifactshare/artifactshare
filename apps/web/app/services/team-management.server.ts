@@ -42,6 +42,7 @@ import {
   revokeAllCliRefreshCredentialFamiliesForMember as revokeMemberCliFamilies,
 } from '~/services/cli-refresh-credentials.server'
 import type { DB } from '~/types/db'
+import { planTier } from '~/lib/plan-tier'
 
 export { WORKSPACE_NAME_MAX_LENGTH } from '~/lib/team-management'
 export type {
@@ -117,7 +118,7 @@ export async function loadSettingsShell(
     'member') as WorkspaceMemberRole
 
   return {
-    kind: workspace.plan === 'team' ? 'team' : 'upgrade',
+    kind: planTier(workspace.plan) === 'team' ? 'team' : 'upgrade',
     workspace: {
       id: workspace.id,
       name: workspace.name,
