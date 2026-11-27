@@ -1,4 +1,4 @@
-import { type Kysely, sql } from 'kysely'
+import type { Kysely } from 'kysely'
 import type Stripe from 'stripe'
 import {
   allowsStorageOverage,
@@ -139,18 +139,35 @@ export async function snapshotDailyStorageUsage(
   }
 }
 
-async function averageBillableOverageGbForMonth(
+function daysInUtcMonth(month: string): number {
+  const [year, monthNumber] = month.split('-').map(Number)
+  return new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+}
+
+function dailyOverageForMonth(
   db: Kysely<DB>,
   workspaceId: string,
   month: string,
-): Promise<number> {
-  const result = await sql<{ avg: number | null }>`
-    SELECT AVG(billable_overage_gb) AS avg
-    FROM workspace_storage_daily_usage
-    WHERE workspace_id = ${workspaceId}
-      AND date LIKE ${`${month}%`}
-  `.execute(db)
-  return result.rows[0]?.avg ?? 0
+) {
+  return db
+    .selectFrom('workspace_storage_daily_usage')
+    .select(['date', 'billable_overage_gb'])
+    .where('workspace_id', '=', workspaceId)
+    .where('date', 'like', `${month}%`)
+    .orderBy('date')
+    .execute()
+}
+
+/**
+ * Overage is priced per GB-month: the month's daily overage summed and divided
+ * by the days in the month, so a day without a snapshot counts as zero.
+ */
+function overageGbMonth(month: string, overageGbDays: number): number {
+  return Math.round(overageGbDays / daysInUtcMonth(month))
+}
+
+function sumOverageGbDays(days: { billable_overage_gb: number }[]): number {
+  return days.reduce((sum, day) => sum + day.billable_overage_gb, 0)
 }
 
 async function monthlyOverageGbForMonth(
@@ -158,8 +175,8 @@ async function monthlyOverageGbForMonth(
   workspaceId: string,
   month: string,
 ): Promise<number> {
-  const avgGb = await averageBillableOverageGbForMonth(db, workspaceId, month)
-  return Math.round(avgGb)
+  const days = await dailyOverageForMonth(db, workspaceId, month)
+  return overageGbMonth(month, sumOverageGbDays(days))
 }
 
 type OverageClaimResult = { kind: 'claimed' } | { kind: 'skip' }
@@ -561,10 +578,16 @@ export async function loadCurrentMonthOverageProjection(
   now: Date,
 ): Promise<OverageProjection> {
   const month = utcMonthString(now)
-  const projectedOverageGb = await monthlyOverageGbForMonth(
-    db,
-    workspaceId,
+  const days = await dailyOverageForMonth(db, workspaceId, month)
+  // The days after the latest snapshot are projected at its overage.
+  const latest = days.at(-1)
+  const projectedGbDays = latest
+    ? latest.billable_overage_gb *
+      (daysInUtcMonth(month) - Number(latest.date.slice(8)))
+    : 0
+  const projectedOverageGb = overageGbMonth(
     month,
+    sumOverageGbDays(days) + projectedGbDays,
   )
   return {
     projectedOverageGb,

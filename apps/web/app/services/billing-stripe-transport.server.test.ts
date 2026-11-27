@@ -297,16 +297,18 @@ test.each(['active', 'canceled'])(
         stripe_subscription_status: status,
       })
       .execute()
-    await db
-      .insertInto('workspace_storage_daily_usage')
-      .values({
-        workspace_id: 'ws1',
-        date: '2026-06-15',
-        used_bytes: 0,
-        included_bytes: 0,
-        billable_overage_gb: 2,
-      })
-      .execute()
+    for (let day = 1; day <= 30; day++) {
+      await db
+        .insertInto('workspace_storage_daily_usage')
+        .values({
+          workspace_id: 'ws1',
+          date: `2026-06-${String(day).padStart(2, '0')}`,
+          used_bytes: 0,
+          included_bytes: 0,
+          billable_overage_gb: 2,
+        })
+        .execute()
+    }
     replies.push(
       {
         path: '/v1/subscriptions/sub_local',
