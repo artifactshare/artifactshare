@@ -1,6 +1,5 @@
 import type { Compilable, Kysely, ExpressionBuilder } from 'kysely'
 import { nanoid } from 'nanoid'
-import { normalizePlan } from '~/lib/billing-plan.server'
 import {
   canUseLinkSharing,
   isValidUtcIso,
@@ -20,6 +19,7 @@ import type { startLinkAbuseJudgment } from './link-abuse-signals.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 import { isWorkspaceAccessRevoked } from '~/modules/access'
+import { normalizePlan, planTier } from '~/lib/plan-tier'
 
 export { canUseLinkSharing } from '~/lib/link-sharing-policy'
 
@@ -441,7 +441,7 @@ export async function reopenExpiredLink(
         shareable.workspace_id,
         actor.id,
       ))) ||
-    (policy.plan === 'team' &&
+    (planTier(policy.plan) === 'team' &&
       (membership?.role === 'owner' || membership?.role === 'admin'))
   if (!allowed) return { kind: 'forbidden' }
 
@@ -522,19 +522,19 @@ async function resolveWorkspaceExternalAccessPolicy(
     .where('status', '=', 'active')
     .executeTakeFirst()
   const allowedRole =
-    current.plan === 'team'
+    planTier(current.plan) === 'team'
       ? membership?.role === 'owner' || membership?.role === 'admin'
       : membership?.role === 'owner'
   if (!allowedRole) return { kind: 'forbidden' }
 
-  if (current.plan !== 'team') {
+  if (planTier(current.plan) !== 'team') {
     // Free and Plus owners can only resume a switch that a previous Team
     // policy turned off; external posting stays unavailable on Free.
     const onlyResumesDisabledPolicy =
       (patch.linkSharingEnabled === undefined ||
         (patch.linkSharingEnabled === true && !current.linkSharingEnabled)) &&
       (patch.externalPostingEnabled === undefined ||
-        (current.plan === 'plus' &&
+        (planTier(current.plan) === 'individual' &&
           patch.externalPostingEnabled === true &&
           !current.externalPostingEnabled))
     if (!onlyResumesDisabledPolicy) return { kind: 'forbidden' }

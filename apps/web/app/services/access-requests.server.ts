@@ -13,6 +13,7 @@ import {
   isWorkspaceAccessRevoked,
   workspaceAccessRevokedSql,
 } from '~/modules/access'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected'
 export type AccessRequestScope = 'artifact' | 'project'
@@ -495,7 +496,7 @@ function currentAccessRequestHandlerPredicate(userId: string) {
               AND workspace_owner.role = 'owner'
               AND workspace_owner.status = 'active'
               AND (
-                w.plan = 'team'
+                ${planInTierSql('w.plan', ['team'])}
                 OR workspace_owner.user_id = c.created_by_id
               )
               AND ${verifiedHuman('owner_user')}
@@ -509,7 +510,7 @@ function currentAccessRequestHandlerPredicate(userId: string) {
               AND workspace_admin.role = 'admin'
               AND workspace_admin.status = 'active'
               AND (
-                w.plan = 'team'
+                ${planInTierSql('w.plan', ['team'])}
                 OR workspace_admin.user_id = c.created_by_id
               )
               AND ${verifiedHuman('admin_user')}
@@ -540,7 +541,7 @@ function currentAccessRequestHandlerPredicate(userId: string) {
             WHERE workspace_owner.workspace_id = s.workspace_id
               AND workspace_owner.role = 'owner'
               AND workspace_owner.status = 'active'
-              AND w.plan = 'team'
+              AND ${planInTierSql('w.plan', ['team'])}
               AND ${verifiedHuman('owner_user')}
             LIMIT 1
           ),
@@ -551,7 +552,7 @@ function currentAccessRequestHandlerPredicate(userId: string) {
             WHERE workspace_admin.workspace_id = s.workspace_id
               AND workspace_admin.role = 'admin'
               AND workspace_admin.status = 'active'
-              AND w.plan = 'team'
+              AND ${planInTierSql('w.plan', ['team'])}
               AND ${verifiedHuman('admin_user')}
             ORDER BY workspace_admin.created_at, workspace_admin.user_id
             LIMIT 1
@@ -1213,7 +1214,7 @@ function scopeCapabilityPredicate(
             AND current_project_admin.user_id = ${user.id}
             AND current_project_admin.role IN ('owner', 'admin')
             AND current_project_admin.status = 'active'
-            AND current_workspace.plan = 'team'
+            AND ${planInTierSql('current_workspace.plan', ['team'])}
         )
         OR (
           current_workspace.plan <> 'free'

@@ -15,6 +15,7 @@ import { decodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import type { DB } from '~/types/db'
 import { ensureWorkspaceAdmin } from './team-management.server'
+import { planTier } from '~/lib/plan-tier'
 
 export type OAuthWorkspaceIntegrationSource =
   | 'google_hd'
@@ -553,11 +554,11 @@ export async function applyOAuthWorkspaceIntegration(
           WHERE shareable_id IN (${shareableIdList})) != ${current.artifactKeys.length}
       OR (${beforeTeamAdminGuard.length ? sql.join(beforeTeamAdminGuard, sql` OR `) : sql`0`})
       OR (
-        ${current.projects.length > 0 && current.sourceWorkspace?.plan === 'team' ? sql`(SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ${sourceWorkspaceId} AND status = 'active' AND role IN ('owner', 'admin')) != ${beforeTeamAdminAudience.length}` : sql`0`}
+        ${current.projects.length > 0 && planTier(current.sourceWorkspace?.plan) === 'team' ? sql`(SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ${sourceWorkspaceId} AND status = 'active' AND role IN ('owner', 'admin')) != ${beforeTeamAdminAudience.length}` : sql`0`}
       )
       OR (${afterTeamAdminGuard.length ? sql.join(afterTeamAdminGuard, sql` OR `) : sql`0`})
       OR (
-        ${current.projects.length > 0 && current.targetWorkspace?.plan === 'team' ? sql`(SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ${targetWorkspaceId} AND status = 'active' AND role IN ('owner', 'admin')) != ${afterTeamAdminAudience.length}` : sql`0`}
+        ${current.projects.length > 0 && planTier(current.targetWorkspace?.plan) === 'team' ? sql`(SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ${targetWorkspaceId} AND status = 'active' AND role IN ('owner', 'admin')) != ${afterTeamAdminAudience.length}` : sql`0`}
       )
       OR EXISTS (SELECT 1 FROM comment_threads WHERE created_by_id = ${userId})
       OR EXISTS (SELECT 1 FROM comment_messages WHERE created_by_id = ${userId})
@@ -1449,7 +1450,7 @@ async function buildPlan(
   const loadTeamAdminAudience = (
     workspace: { id: string; plan: string } | undefined,
   ) => {
-    if (!workspace || workspace.plan !== 'team') return []
+    if (!workspace || planTier(workspace.plan) !== 'team') return []
     return db
       .selectFrom('workspace_members')
       .innerJoin('users', 'users.id', 'workspace_members.user_id')

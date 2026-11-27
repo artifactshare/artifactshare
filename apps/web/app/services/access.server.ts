@@ -10,6 +10,7 @@ import {
   type ViewerAccessFacts,
 } from '~/modules/access'
 import { checkAnonymousLinkAccess } from './link-sharing.server'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 export type { ViewerAccessFacts } from '~/modules/access'
 
@@ -61,7 +62,7 @@ export async function isTeamWorkspaceAdmin(
   if (user.workspaceId !== workspaceId) return false
   const row = await workspaceAdminQuery(db, user.id, workspaceId)
     .innerJoin('workspaces', 'workspaces.id', 'workspace_members.workspace_id')
-    .where('workspaces.plan', '=', 'team')
+    .where(planInTierSql('workspaces.plan', ['team']))
     .executeTakeFirst()
   return Boolean(row)
 }
@@ -170,7 +171,7 @@ export function workspaceScopedProjectVisibility(
                   .where('workspace_members.user_id', '=', viewer.id)
                   .where('workspace_members.role', 'in', ['owner', 'admin'])
                   .where('workspace_members.status', '=', 'active')
-                  .where('workspaces.plan', '=', 'team'),
+                  .where(planInTierSql('workspaces.plan', ['team'])),
               ),
             ]),
           ),

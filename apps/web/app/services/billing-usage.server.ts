@@ -3,9 +3,9 @@ import type Stripe from 'stripe'
 import {
   allowsStorageOverage,
   isActiveSubscriptionStatus,
-  normalizePlan,
   PLAN_STORAGE_QUOTA_BYTES,
 } from '~/lib/billing-plan.server'
+import { normalizePlan } from '~/lib/plan-tier'
 import type { DB } from '~/types/db'
 import { STORAGE_OVERAGE_PRICES } from '~/lib/billing-prices'
 

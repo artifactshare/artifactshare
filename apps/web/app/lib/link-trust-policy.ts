@@ -1,4 +1,4 @@
-import { normalizePlan } from './billing-plan.server'
+import { normalizePlan } from './plan-tier'
 
 export const DEFAULT_LINK_LOW_TRUST_ACCOUNT_AGE_DAYS = 14
 export const DEFAULT_LINK_LOW_TRUST_LINK_PUBLISH_COUNT = 5

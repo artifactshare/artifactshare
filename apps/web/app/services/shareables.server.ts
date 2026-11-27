@@ -105,6 +105,8 @@ import { slackNotificationEnqueueQuery } from './slack-notifications.server'
 import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { CliAuthority } from './cli-authority.server'
 import { isAgentPublishableDestination } from './agent-scope.server'
+import { PAID_TIERS } from '~/lib/plan-tier'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 const MAX_SHAREABLE_ID_ATTEMPTS = 5
 const MAX_STATIC_SITE_FILES = STATIC_SITE_UPLOAD_LIMITS.files
@@ -1785,7 +1787,7 @@ export async function moveShareableContainer(
       WHERE move_admin.workspace_id = shareables.workspace_id
         AND move_admin.user_id = ${user.id} AND move_admin.status = 'active'
         AND move_admin.role IN ('owner', 'admin')
-        AND (move_workspace.plan = 'team' OR move_owner.kind = 'bot')
+        AND (${planInTierSql('move_workspace.plan', ['team'])} OR move_owner.kind = 'bot')
     )
   )`
   const sourcePredicate = sql<boolean>`shareables.id = ${shareableId}
@@ -3593,7 +3595,7 @@ export async function reserveQuota(
         storage_updated_at = ${now}
     WHERE id = ${workspaceId}
       AND (
-        (plan IN ('plus', 'team') AND stripe_subscription_status IN (${activeStatuses}))
+        (${planInTierSql('plan', PAID_TIERS)} AND stripe_subscription_status IN (${activeStatuses}))
         OR storage_used_bytes + ${sizeBytes} <= storage_quota_bytes
       )
   `.execute(db)
@@ -3874,7 +3876,7 @@ function writableShareableSql(
                     AND writable_admin.user_id = ${user.id}
                     AND writable_admin.role IN ('owner', 'admin')
                     AND writable_admin.status = 'active'
-                    AND writable_workspace.plan = 'team'
+                    AND ${planInTierSql('writable_workspace.plan', ['team'])}
                 )
                 OR EXISTS (
                   SELECT 1 FROM project_share_defaults writable_grant

@@ -2,6 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import type { Visibility } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 type AccessSqlValue = string | ReturnType<typeof sql.ref>
 
@@ -185,7 +186,7 @@ export function projectAccessFactSelections(
         AND ${viewer('workspace_id')} = ${container('workspace_id')}
         AND access_wm.status = 'active'
         AND access_wm.role IN ('owner', 'admin')
-        AND access_w.plan = 'team'
+        AND ${planInTierSql('access_w.plan', ['team'])}
     )`.as('access_is_project_admin'),
     sql<number>`EXISTS(
       SELECT 1 FROM project_share_defaults access_psd
@@ -273,7 +274,7 @@ export function projectAccessAllowedSql(
               AND access_allowed_wm.user_id = ${viewer('id')}
               AND access_allowed_wm.status = 'active'
               AND access_allowed_wm.role IN ('owner', 'admin')
-              AND access_allowed_w.plan = 'team'
+              AND ${planInTierSql('access_allowed_w.plan', ['team'])}
           )
           OR (
             ${viewer('email_verified')} = 1
@@ -385,7 +386,7 @@ export async function facts(
           AND access_viewer.workspace_id = shareables.workspace_id
           AND wm.status = 'active'
           AND wm.role IN ('owner', 'admin')
-          AND w.plan = 'team'
+          AND ${planInTierSql('w.plan', ['team'])}
       )`.as('is_team_admin'),
       sql<number>`EXISTS(
         SELECT 1 FROM shareable_grants sg

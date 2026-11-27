@@ -60,6 +60,7 @@ import {
   releaseQuota,
   reserveQuota,
 } from '~/services/shareables.server'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 
 const MAX_SHAREABLE_ID_ATTEMPTS = 5
 const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
@@ -1459,7 +1460,7 @@ function writableShareableSql(
                     AND writable_admin.user_id = ${user.id}
                     AND writable_admin.role IN ('owner', 'admin')
                     AND writable_admin.status = 'active'
-                    AND writable_workspace.plan = 'team'
+                    AND ${planInTierSql('writable_workspace.plan', ['team'])}
                 )
                 OR EXISTS (
                   SELECT 1 FROM project_share_defaults writable_grant

@@ -6,6 +6,7 @@ import type {
 import { requireUser } from '~/middleware/context'
 import { workspaceAdminQuery } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
+import { planTier } from '~/lib/plan-tier'
 
 /**
  * The workspace row Settings reads once per request. It stays on the server:
@@ -118,7 +119,7 @@ export async function loadSettingsShell(
   ])
   const currentUserRole = role ?? 'member'
   return {
-    kind: workspace.plan === 'team' ? 'team' : 'upgrade',
+    kind: planTier(workspace.plan) === 'team' ? 'team' : 'upgrade',
     workspace: {
       id: workspace.id,
       name: workspace.name,

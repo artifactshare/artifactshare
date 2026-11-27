@@ -25,6 +25,7 @@ import type { InventoryArtifactsLoaderData } from '~/routes/_protected/settings/
 import type { BillingLoaderData } from '~/routes/_protected/settings/+components/billing-page'
 import type { GeneralLoaderData } from '~/routes/_protected/settings/+components/general-page'
 import type { SettingsLoaderData } from '~/routes/_protected/settings/_layout'
+import { planTier } from '~/lib/plan-tier'
 
 /**
  * What each Settings page's loader returns. The analytics page has no
@@ -117,7 +118,7 @@ function shell(
 ): SettingsLoaderData {
   const user = PEOPLE[role === 'member' ? 'ren' : 'aoi']
   return {
-    kind: plan === 'team' ? 'team' : 'upgrade',
+    kind: planTier(plan) === 'team' ? 'team' : 'upgrade',
     workspace: {
       id: 'fixture-workspace',
       name: 'Aozora Studio',

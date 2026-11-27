@@ -1,4 +1,5 @@
-import { normalizePlan, type BillingPlan } from './billing-plan.server'
+import type { BillingPlan } from './billing-prices'
+import { normalizePlan } from './plan-tier'
 
 export const LINK_EXPIRY_MIN_DAYS = 1
 export const LINK_EXPIRY_MAX_DAYS = 365
