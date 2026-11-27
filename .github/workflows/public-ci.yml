@@ -518,6 +518,7 @@ jobs:
     timeout-minutes: 30
     # Keep one serial browser per runner. Historical file durations balance
     # independent runners without adding resource contention inside a browser.
+    # Refresh them with scripts/ci/browser-shard-durations.mjs.
     strategy:
       fail-fast: false
       matrix:
@@ -525,10 +526,12 @@ jobs:
           - { project: chromium, shard: 1, total: 3 }
           - { project: chromium, shard: 2, total: 3 }
           - { project: chromium, shard: 3, total: 3 }
-          - { project: firefox, shard: 1, total: 2 }
-          - { project: firefox, shard: 2, total: 2 }
-          - { project: webkit, shard: 1, total: 2 }
-          - { project: webkit, shard: 2, total: 2 }
+          - { project: firefox, shard: 1, total: 3 }
+          - { project: firefox, shard: 2, total: 3 }
+          - { project: firefox, shard: 3, total: 3 }
+          - { project: webkit, shard: 1, total: 3 }
+          - { project: webkit, shard: 2, total: 3 }
+          - { project: webkit, shard: 3, total: 3 }
     env:
       HOME: /root
     steps:
