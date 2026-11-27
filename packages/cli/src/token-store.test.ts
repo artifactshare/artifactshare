@@ -188,10 +188,13 @@ test('a reader never sees a profile disappear while another process saves it', a
     const missing: string[] = []
     let saving = true
     const save = (async () => {
-      for (let n = 1; n <= 200; n += 1) {
-        await saveProfileSessionCredential('default', credential(n), options)
+      try {
+        for (let n = 1; n <= 200; n += 1) {
+          await saveProfileSessionCredential('default', credential(n), options)
+        }
+      } finally {
+        saving = false
       }
-      saving = false
     })()
     const read = async () => {
       while (saving) {
