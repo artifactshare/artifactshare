@@ -397,6 +397,7 @@ test('prunes only the ephemeral lint fixture namespaces before scanning sources'
   const fixtureDirectories = [
     'apps/web/app/analytics-lint-fixture-demo',
     'apps/web/app/module-boundary-lint-fixture-demo',
+    'apps/web/app/plan-tier-lint-fixture-demo',
     'apps/web/app/modules/module-boundary-lint-fixture-demo',
   ]
   const productionFiles = [
@@ -406,6 +407,7 @@ test('prunes only the ephemeral lint fixture namespaces before scanning sources'
     'apps/web/app/example-fixture-demo/example.ts',
     'apps/web/app/analytics-lint-fixture-/example.ts',
     'apps/web/app/module-boundary-lint-fixture-/example.ts',
+    'apps/web/app/plan-tier-lint-fixture-/example.ts',
     'apps/web/app/modules/module-boundary-lint-fixture-/example.ts',
     'apps/web/app/modules/analytics-lint-fixture-demo/example.ts',
     'apps/web/app/demo/analytics-lint-fixture-demo/example.ts',
