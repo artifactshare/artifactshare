@@ -1,5 +1,6 @@
 import { spawnFile } from './process.js'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { baseUrlOf } from './api.js'
@@ -701,13 +702,7 @@ async function deletePlaintextTokenAccount(account: string): Promise<boolean> {
   if (!home) return false
   const { [account]: _removed, ...rest } = tokens
   await mkdir(home, { recursive: true, mode: 0o700 })
-  const path = plaintextTokensPath(home)
-  if (Object.keys(rest).length === 0) {
-    await writeFile(path, '{}\n', { mode: 0o600 })
-  } else {
-    await writeFile(path, `${JSON.stringify(rest, null, 2)}\n`, { mode: 0o600 })
-  }
-  await chmod(path, 0o600)
+  await replacePlaintextTokens(home, rest)
   return true
 }
 
@@ -727,12 +722,27 @@ async function writePlaintextToken(
   const tokens = (await readPlaintextTokens()) ?? {}
   tokens[account] = token
   await mkdir(home, { recursive: true, mode: 0o700 })
-  const path = plaintextTokensPath(home)
-  await writeFile(path, `${JSON.stringify(tokens, null, 2)}\n`, {
-    mode: 0o600,
-  })
-  await chmod(path, 0o600)
+  await replacePlaintextTokens(home, tokens)
   return true
+}
+
+// Other CLI processes read tokens.json at any moment, so they must see the old
+// file or the new one, never a truncated one.
+async function replacePlaintextTokens(
+  home: string,
+  tokens: Record<string, unknown>,
+): Promise<void> {
+  const path = plaintextTokensPath(home)
+  const staged = `${path}.${randomUUID()}.tmp`
+  try {
+    await writeFile(staged, `${JSON.stringify(tokens, null, 2)}\n`, {
+      mode: 0o600,
+    })
+    await rename(staged, path)
+  } catch (error) {
+    await rm(staged, { force: true })
+    throw error
+  }
 }
 
 async function readPlaintextTokens(): Promise<Record<string, unknown> | null> {
