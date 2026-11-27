@@ -371,6 +371,100 @@ test.each(['active', 'canceled'])(
   },
 )
 
+test('a stale overage retry reads every invoice item page and charges nothing already invoiced', async () => {
+  await db
+    .updateTable('workspaces')
+    .set({
+      stripe_customer_id: 'cus_local',
+      stripe_subscription_id: 'sub_local',
+      stripe_subscription_status: 'canceled',
+    })
+    .execute()
+  for (let day = 1; day <= 30; day++) {
+    await db
+      .insertInto('workspace_storage_daily_usage')
+      .values({
+        workspace_id: 'ws1',
+        date: `2026-06-${String(day).padStart(2, '0')}`,
+        used_bytes: 0,
+        included_bytes: 0,
+        billable_overage_gb: 2,
+      })
+      .execute()
+  }
+  await db
+    .insertInto('billing_overage_charges')
+    .values({
+      workspace_id: 'ws1',
+      month: '2026-06',
+      overage_gb_month: 0,
+      status: 'pending',
+      created_at: '2026-07-01T17:00:00.000Z',
+    })
+    .execute()
+  replies.push(
+    {
+      path: '/v1/subscriptions/sub_local',
+      body: { ...subscription, status: 'canceled' },
+    },
+    {
+      path: '/v1/invoiceitems',
+      body: {
+        object: 'list',
+        url: '/v1/invoiceitems',
+        has_more: true,
+        data: [{ id: 'ii_other', invoice: 'in_other', metadata: {} }],
+      },
+    },
+    {
+      path: '/v1/invoiceitems',
+      body: {
+        object: 'list',
+        url: '/v1/invoiceitems',
+        has_more: false,
+        data: [
+          {
+            id: 'ii_local',
+            invoice: 'in_local',
+            metadata: { workspace_id: 'ws1', month: '2026-06' },
+          },
+        ],
+      },
+    },
+  )
+
+  const result = await createMonthlyOverageCharges(
+    db,
+    createStripeClient(env),
+    env.STRIPE_PRODUCT_STORAGE_OVERAGE,
+    new Date('2026-07-02T18:00:00Z'),
+  )
+
+  expect(result.invoice_items_created).toBe(0)
+  expect(requests.map((request) => request.method)).toEqual([
+    'GET',
+    'GET',
+    'GET',
+  ])
+  expect(Object.fromEntries(new URL(requests[1]!.url).searchParams)).toEqual({
+    customer: 'cus_local',
+    limit: '100',
+  })
+  expect(new URL(requests[2]!.url).searchParams.get('starting_after')).toBe(
+    'ii_other',
+  )
+  expect(
+    await db
+      .selectFrom('billing_overage_charges')
+      .selectAll()
+      .executeTakeFirstOrThrow(),
+  ).toMatchObject({
+    status: 'completed',
+    stripe_invoice_item_id: 'ii_local',
+    stripe_invoice_id: 'in_local',
+  })
+})
+
 test('SDK connection failure preserves the service external-failed result', async () => {
   vi.mocked(fetch).mockRejectedValue(
     new TypeError('local connection interrupted'),

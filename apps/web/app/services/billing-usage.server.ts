@@ -237,24 +237,24 @@ async function resolveOverageTarget(
   return { activeSubscriptionId: null, currency: customer.currency ?? null }
 }
 
-async function findExistingPendingInvoiceItem(
+async function findOverageInvoiceItem(
   stripe: Stripe,
   customerId: string,
   workspaceId: string,
   month: string,
 ): Promise<Stripe.InvoiceItem | null> {
-  const list = await stripe.invoiceItems.list({
+  for await (const item of stripe.invoiceItems.list({
     customer: customerId,
-    pending: true,
     limit: 100,
-  })
-  return (
-    list.data.find(
-      (item) =>
-        item.metadata?.workspace_id === workspaceId &&
-        item.metadata?.month === month,
-    ) ?? null
-  )
+  })) {
+    if (
+      item.metadata?.workspace_id === workspaceId &&
+      item.metadata?.month === month
+    ) {
+      return item
+    }
+  }
+  return null
 }
 
 type OverageWorkItem = {
@@ -334,7 +334,7 @@ async function processOverageWorkItem(
     }
 
     const existingItem = work.isStaleRetry
-      ? await findExistingPendingInvoiceItem(
+      ? await findOverageInvoiceItem(
           stripe,
           stripeCustomerId,
           workspaceId,
@@ -376,7 +376,12 @@ async function processOverageWorkItem(
     }
 
     let invoiceId: string | null = null
-    if (!activeSubscriptionId) {
+    if (existingItem?.invoice && !activeSubscriptionId) {
+      invoiceId =
+        typeof existingItem.invoice === 'string'
+          ? existingItem.invoice
+          : existingItem.invoice.id
+    } else if (!activeSubscriptionId) {
       const invoice = await stripe.invoices.create(
         {
           customer: stripeCustomerId,
