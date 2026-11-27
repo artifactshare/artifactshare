@@ -11,7 +11,7 @@ The viewer tells people two things along the bottom edge: the sandbox security b
 
 ## How to get to it (user POV)
 
-- Viewer (`/a/<id>`) of a file whose HTML loads scripts, stylesheets, or frames from another origin: the banner appears under the file, above the version chip.
+- Viewer (`/a/<id>`) of a file whose HTML loads scripts, stylesheets, or frames from an origin the sandbox does not allow (the allowlisted CDNs, such as `cdn.jsdelivr.net`, are not blocked): the banner appears under the file, above the version chip.
 - Viewer › `Comments` › a thread › `More actions` › `Copy link`. With a browser that allows the clipboard this shows `Copied`; with one that refuses it (a locked-down browser, a sandboxed frame, an insecure origin) it shows the recovery toast instead.
 
 ## Driving it with Playwright and the CLI
@@ -22,7 +22,7 @@ Preconditions:
 - The file has to ask for enough blocked resources for the banner to reach its full height (`max-h-96`), or the banner never reaches the band the toast uses. 14 external scripts and a stylesheet do.
 
 - **Whole journey.** Run `node .claude/skills/verify-artifactshare/scripts/journeys/viewer-notices.mjs`. It prints one `ok` line per step and ends with `PASS viewer-notices`. The evidence is in `evidence/viewer-notices/`.
-- **Security banner.** Open the viewer. A `status` region reads `⚠ Security blocked <n> resources` (`csp.banner.summaryOne`/`Other`). Click `What was blocked` (`csp.banner.detailsSummary`) and it lists one line per blocked resource, each with its directive (`script-src-elem`, `style-src-elem`, `frame-src`) and URL. Expanded with 15 resources it is 358×384 at the phone width below, 72px above the bottom edge.
+- **Security banner.** Open the viewer. A `status` region reads `⚠ Security blocked <n> resources` (`csp.banner.summaryOne`/`Other`). Click the summary `What was blocked · File` (`csp.banner.detailsSummary`, then the group) and it lists one line per blocked resource, each with its directive (`script-src-elem`, `style-src-elem`, `frame-src`) and URL. Expanded with 15 resources it is 358×384 at the phone width below, 72px above the bottom edge.
 - **Phone.** Build the viewport with `browser.newContext({ storageState, viewport: { width: 390, height: 844 } })`, and refuse the clipboard in the same context with `addInitScript` (`navigator.clipboard.writeText` rejects, `document.execCommand` returns `false`). That is what a browser that denies clipboard access does.
 - **Comment sheet.** Click `getByRole('button', { name: 'Comments', exact: true })`. The dialog named `Comments` becomes a sheet along the bottom: 370×340 (`--height-comment-panel-sheet`), its bottom on the viewport's bottom edge. It slides in, so read its box with `stableBox`.
 - **Toast.** In a thread, `More actions` › `Copy link`. The toast is `[data-sonner-toast]`, holds `Couldn't copy · copy this link manually` with the link below it, and a button named `Close notification` (`toast.close`, `通知を閉じる` in Japanese). It has no timeout, so it can be measured and the sheet closed under it.

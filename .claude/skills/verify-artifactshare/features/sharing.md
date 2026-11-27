@@ -12,10 +12,10 @@ The owner changes who can view a file: only specific people (the default for a F
 
 ## How to get to it (user POV)
 
-- Viewer top bar › the visibility button (`Private · Change who can view` for a private file).
+- Viewer top bar › the visibility button (`Private · Change who can view` for a private file nobody else has been added to, `Specific · Change who can view` once a person is added).
 - In the dialog, the audience button (`Specific people …`) opens a menu with `Specific people` and `Anyone with the link`.
 - The `Add a file` dialog › `Who can view` (before uploading).
-- Terminal: `artifactshare edit <id-or-url> --visibility private|workspace|project|link` (link needs `--no-link-expiry` or `--link-expires-at`), and `artifactshare share <path> --grant-email <email>`.
+- Terminal: `artifactshare edit <id-or-url> --visibility private|workspace|project|link` (for link, `--no-link-expiry` or `--link-expires-at` sets the expiry; without either the workspace default applies), and `artifactshare share <path> --grant-email <email>`.
 
 ## Driving it with Playwright and the CLI
 
@@ -40,7 +40,7 @@ Preconditions:
 
 - The visibility button's accessible name is `<current audience> · Change who can view`, so it changes with the state. Match on the `Change who can view` suffix when the state is unknown.
 - Adding a person does nothing until `Save`. A test that stops at `Add` proves nothing.
-- `edit --visibility link` without an expiry option is rejected. Pass `--no-link-expiry` or `--link-expires-at`.
+- `edit --visibility link` without an expiry option succeeds with the workspace default expiry (30 days out on a Free workspace, in `data.share.link_expires_at`). Pass `--no-link-expiry` or `--link-expires-at` when the expiry matters; the two cannot be combined.
 - Email invitations are not delivered locally. Prove access by signing in as the other persona, not by checking an inbox.
 - A save that leaves the file private closes the dialog, so read the saved state by reopening it. A save that leaves the file link-shared keeps it open.
 - The grant input commits a valid address on blur, so after the audience menu restores focus, press `Enter` in the input instead of clicking `Add`.

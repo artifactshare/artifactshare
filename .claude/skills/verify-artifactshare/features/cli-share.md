@@ -44,6 +44,6 @@ Preconditions:
 - Without `--visibility`, a Free persona's Home share is `private`, and a team persona may default to workspace. Pass the visibility you mean to assert.
 - The viewer shell (title, `Copy link`) renders even when the sandbox is down. Only the heading inside the iframe proves the content rendered.
 - The CLI defaults to production. `runCli` always sets `ARTIFACTSHARE_BASE_URL`, so never call `packages/cli/dist/index.js` directly without it.
-- The token value is in the `01-token-created` evidence. It is valid only for this run's local state, which `down` deletes.
+- The token value never reaches the evidence: `capture` masks it in `01-token-created.png` and writes `[redacted api token]` in its ARIA text, and `runCli` redacts it from the recorded command and streams. It lives only in the journey's memory and the run's local state, which `down` deletes.
 - `--json` prints a success to stdout and a failure to stderr. `runCli` parses whichever one is JSON, so read `result.json.error` for a failure.
 - The CLI reports a refused certificate as `network_failed` with `why: fetch failed`; undici does not pass the TLS reason through. The proof is the contrast with the same call that carries the flag.
