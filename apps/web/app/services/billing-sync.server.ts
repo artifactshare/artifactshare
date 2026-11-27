@@ -52,10 +52,20 @@ export type SyncWorkspaceSubscriptionResult =
 
 type WorkspaceSubscriptionRow = Pick<
   WorkspaceBillingRow,
-  'id' | 'plan' | 'stripe_customer_id' | 'stripe_subscription_id'
+  | 'id'
+  | 'plan'
+  | 'stripe_customer_id'
+  | 'stripe_subscription_id'
+  | 'stripe_subscription_status'
 > & {
   link_sharing_enabled: number
 }
+
+// Stripe statuses of a subscription whose first invoice was never paid.
+const NEVER_PAID_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+  'incomplete',
+  'incomplete_expired',
+] satisfies Stripe.Subscription.Status[])
 
 export function deriveContractPlanFromSubscription(
   subscription: BillingSubscription,
@@ -111,6 +121,7 @@ async function resolveWorkspaceForSubscription(
         'plan',
         'stripe_customer_id',
         'stripe_subscription_id',
+        'stripe_subscription_status',
         'link_sharing_enabled',
       ])
       .where('id', '=', metadataWorkspaceId)
@@ -129,6 +140,7 @@ async function resolveWorkspaceForSubscription(
         'plan',
         'stripe_customer_id',
         'stripe_subscription_id',
+        'stripe_subscription_status',
         'link_sharing_enabled',
       ])
       .where('stripe_customer_id', '=', customerId)
@@ -193,10 +205,14 @@ export async function syncWorkspaceSubscription(
 
   // Apply the access-control defaults on the first paid contract. Link expiry
   // settings belong to the workspace and are never rewritten by a plan change;
-  // later paid-plan changes preserve the access controls too.
+  // later paid-plan changes preserve the access controls too. A subscription
+  // recorded before its first payment does not count as a contract.
+  const hadPaidContract =
+    workspace.stripe_subscription_id !== null &&
+    !NEVER_PAID_SUBSCRIPTION_STATUSES.has(workspace.stripe_subscription_status)
   if (
     workspace.plan === 'free' &&
-    workspace.stripe_subscription_id === null &&
+    !hadPaidContract &&
     workspace.plan !== plan
   ) {
     if (plan === 'plus' || plan === 'team') {

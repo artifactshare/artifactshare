@@ -639,6 +639,37 @@ describe('billing sync service', () => {
     })
   })
 
+  test('a workspace whose first subscription expired unpaid gets the paid defaults with the next one', async () => {
+    seedWorkspace(sqlite, {
+      plan: 'free',
+      stripeSubscriptionId: 'sub_abandoned',
+      stripeSubscriptionStatus: 'incomplete_expired',
+    })
+    const stripe = mockStripeRetrieve(
+      makeSubscription({
+        id: 'sub_new',
+        status: 'active',
+        metadata: { workspace_id: 'ws1' },
+        items: [{ priceId: prices.plusMonthly }],
+      }),
+    )
+
+    await syncWorkspaceSubscription(db, stripe, env, 'sub_new')
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT plan, link_sharing_enabled, external_posting_enabled
+           FROM workspaces WHERE id = 'ws1'`,
+        )
+        .get(),
+    ).toEqual({
+      plan: 'plus',
+      link_sharing_enabled: 1,
+      external_posting_enabled: 1,
+    })
+  })
+
   test('syncWorkspaceSubscription writes plan.change audit once with webhook idempotency', async () => {
     seedWorkspace(sqlite, { plan: 'free' })
     sqlite.exec(`
