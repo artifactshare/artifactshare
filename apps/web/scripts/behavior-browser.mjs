@@ -56,36 +56,41 @@ function run(argv, label) {
   }
 }
 
+const runs = []
+for (const signal of ['SIGINT', 'SIGTERM'])
+  process.on(signal, () => {
+    for (const { child } of runs) child.kill(signal)
+  })
+
 if (selectsProject) {
-  const { done } = run([...base, ...args])
-  process.exit((await done).code)
+  runs.push(run([...base, ...args]))
+  process.exit((await runs[0].done).code)
 }
 
 // Each process gets its own browser API port so none waits on another's.
 // File filters often name a file only some engines run, so an engine without
 // a match passes; the run still fails when no engine found a file.
-const runs = PROJECTS.map((project, index) =>
-  run(
-    [
-      ...base,
-      `--project=${project}`,
-      `--browser.api.port=${63316 + index}`,
-      ...(args.length > 0 ? ['--passWithNoTests'] : []),
-      ...args,
-    ],
-    project,
+runs.push(
+  ...PROJECTS.map((project, index) =>
+    run(
+      [
+        ...base,
+        `--project=${project}`,
+        `--api.port=${63316 + index}`,
+        ...(args.length > 0 ? ['--passWithNoTests'] : []),
+        ...args,
+      ],
+      project,
+    ),
   ),
 )
-for (const signal of ['SIGINT', 'SIGTERM'])
-  process.on(signal, () => {
-    for (const { child } of runs) child.kill(signal)
-  })
 const results = await Promise.all(runs.map(({ done }) => done))
 for (const { label, code, signal, seconds } of results)
   console.log(
     `${label}: ${code === 0 ? 'passed' : `failed (${signal ?? `exit ${code}`})`} in ${seconds.toFixed(0)}s`,
   )
-const failed =
-  results.some(({ code }) => code !== 0) ||
-  results.every(({ foundNoFiles }) => foundNoFiles)
-process.exit(failed ? 1 : 0)
+if (results.every(({ foundNoFiles }) => foundNoFiles)) {
+  console.error('No engine found a test file matching the filter.')
+  process.exit(1)
+}
+process.exit(results.some(({ code }) => code !== 0) ? 1 : 0)
