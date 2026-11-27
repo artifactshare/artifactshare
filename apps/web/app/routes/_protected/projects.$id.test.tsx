@@ -386,6 +386,32 @@ describe('project detail loader', () => {
     },
   )
 
+  test('a workspace member outside a private project audience gets 404', async () => {
+    const { db } = await fixture()
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'proj1')
+      .execute()
+    userState.user = { ...userState.user, id: 'u2', email: 'u2@example.com' }
+    await expect(loader(loaderArgs())).rejects.toMatchObject({ status: 404 })
+
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'd1',
+        project_container_id: 'proj1',
+        email: 'u2@example.com',
+        role: 'viewer',
+        created_by_id: 'u1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    expect((await loader(loaderArgs())).access).toBe('member')
+    await db.destroy()
+  })
+
   test('returns pins, feed, ranking, and now', async () => {
     const { db } = await fixture()
     await insertShareable(db, 's1')

@@ -992,6 +992,32 @@ describe('listRecentArtifactsLimited unread counts', () => {
     expect((await recentRow())?.recent_attribute).toBe('joined-project')
   })
 
+  test('restricts a link file in Recents once its link is suspended', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 's-unread')
+      .execute()
+    const recentRow = async () =>
+      (await listRecentArtifactsLimited(db, viewer, 10)).find(
+        (row) => row.id === 's-unread',
+      )
+    expect(await recentRow()).toMatchObject({ visible: 1 })
+
+    await db
+      .updateTable('shareables')
+      .set({ link_suspended_at: TS, link_suspended_reason: 'review' })
+      .where('id', '=', 's-unread')
+      .execute()
+    expect(await recentRow()).toMatchObject({ visible: 0 })
+    expect(await countRecentArtifacts(db, viewer, { unread: true })).toBe(0)
+  })
+
   test('applies relation and unread filters after visibility and keeps max-two cardinality', async () => {
     expect(await countRecentArtifacts(db, viewer)).toBe(1)
     expect(

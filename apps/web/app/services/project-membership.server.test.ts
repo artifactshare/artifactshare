@@ -556,8 +556,8 @@ describe('listProjectsForIndex', () => {
       '2026-09-15T00:00:00.000Z',
     )
     expect(enabled.find((row) => row.id === 'p-count')).toMatchObject({
-      fileCount: 4,
-      newCount: 4,
+      fileCount: 3,
+      newCount: 3,
     })
 
     await db

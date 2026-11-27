@@ -14,25 +14,13 @@ const slack = vi.hoisted(() => ({
 }))
 const setChannel = vi.hoisted(() => vi.fn())
 
+vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/services/db.server', () => ({ createDb: () => state.db }))
 vi.mock('~/middleware/auth', () => ({ requireUserMiddleware: {} }))
 vi.mock('~/middleware/context', () => ({ requireUser: () => state.user }))
 vi.mock('~/services/slack.server', () => slack)
 vi.mock('~/services/slack-notifications.server', () => ({
   setContainerSlackChannel: setChannel,
-}))
-vi.mock('~/services/projects.server', () => ({
-  findWorkspaceProject: async (
-    db: Kysely<DB>,
-    workspaceId: string,
-    id: string,
-  ) =>
-    db
-      .selectFrom('artifact_containers')
-      .select('id')
-      .where('id', '=', id)
-      .where('workspace_id', '=', workspaceId)
-      .executeTakeFirst(),
 }))
 
 import { loader } from './api.slack.notify.callback'
@@ -154,6 +142,41 @@ describe('/api/slack/notify/callback loader', () => {
     expect(
       (await callback('state=valid&code=code')).headers.get('Location'),
     ).toBe('/projects?slack=error')
+  })
+
+  test('a workspace member outside a private project audience cannot connect its channel', async () => {
+    await state
+      .db!.insertInto('users')
+      .values({
+        id: 'u2',
+        email: 'u2@example.com',
+        name: 'Member',
+        email_verified: 1,
+        image: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        workspace_id: 'w1',
+        locale: null,
+      })
+      .execute()
+    await state
+      .db!.updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'proj1')
+      .execute()
+    state.user = { id: 'u2', workspaceId: 'w1' }
+    slack.verifySlackNotifyState.mockResolvedValue({
+      user_id: 'u2',
+      workspace_id: 'w1',
+      container_id: 'proj1',
+      nonce: 'n4',
+    })
+
+    expect(
+      (await callback('state=valid&code=code')).headers.get('Location'),
+    ).toBe('/projects?slack=error')
+    expect(slack.exchangeSlackWebhookOauthCode).not.toHaveBeenCalled()
+    expect(setChannel).not.toHaveBeenCalled()
   })
 
   test('認可拒否 / exchange 失敗 redirects to project error', async () => {

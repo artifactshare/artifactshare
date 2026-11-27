@@ -338,6 +338,33 @@ describe('project files subpage loader', () => {
     await expect(loader(args())).rejects.toMatchObject({ status: 404 })
   })
 
+  test('a workspace member outside a private project audience gets 404', async () => {
+    const { db } = await fixture()
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'proj1')
+      .execute()
+    userState.user = { ...userState.user, id: 'u2', email: 'u2@example.com' }
+    await expect(loader(args())).rejects.toMatchObject({ status: 404 })
+
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'd1',
+        project_container_id: 'proj1',
+        email: 'u2@example.com',
+        role: 'viewer',
+        display_name: null,
+        created_by_id: 'u1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    const data = await loader(args())
+    expect(data.ctx.access).toBe('member')
+  })
+
   test('shared external viewer sees only project-visibility rows', async () => {
     const { db } = await fixture()
     await insertShareable(db, 's-project', { visibility: 'project' })
