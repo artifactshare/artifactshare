@@ -5,7 +5,8 @@ on:
     tags:
       - 'cli-v*'
   # Manual run from main, for releasing where a tag cannot be pushed (for
-  # example a cloud agent session). The workflow tags main after publishing.
+  # example a cloud agent session). Workflows stay read-only, so this path
+  # publishes without creating the tag; npm provenance records the commit.
   workflow_dispatch:
     inputs:
       version:
@@ -137,21 +138,3 @@ jobs:
           mapfile -t tarballs < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
           test "${#tarballs[@]}" -eq 1
           pnpm publish "${tarballs[0]}" --no-git-checks --access public --provenance
-
-  tag:
-    name: Tag the released commit
-    if: github.event_name == 'workflow_dispatch'
-    needs: publish
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Create cli-v tag on the published commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/cli-v$RELEASE_VERSION" \
-            -f sha="$GITHUB_SHA"

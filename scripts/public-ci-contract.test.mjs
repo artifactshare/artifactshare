@@ -752,15 +752,7 @@ test('CLI release is tag or manual, current-main-only, preflighted, and OIDC-onl
   assert.doesNotMatch(JSON.stringify(publish), /secrets\./)
   assert.doesNotMatch(publishRuns, /pnpm install/)
 
-  const tag = releaseWorkflow.jobs.tag
-  assert.equal(tag.needs, 'publish')
-  assert.equal(tag.if, "github.event_name == 'workflow_dispatch'")
-  assert.deepEqual(tag.permissions, { contents: 'write' })
-  assert.equal(tag.environment, undefined)
-  const tagRuns = tag.steps.map((step) => step.run ?? '').join('\n')
-  assert.match(tagRuns, /ref="refs\/tags\/cli-v\$RELEASE_VERSION"/)
-  assert.match(tagRuns, /sha="\$GITHUB_SHA"/)
-  assert.doesNotMatch(JSON.stringify(tag), /secrets\./)
+  assert.equal(releaseWorkflow.jobs.tag, undefined)
 })
 
 test('reserved package release is protected, tag-only, and OIDC-only', () => {
