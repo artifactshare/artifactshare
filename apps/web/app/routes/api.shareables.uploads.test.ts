@@ -1699,7 +1699,7 @@ describe('/api/shareables/uploads', () => {
               new File(
                 [
                   source === 'parser file'
-                    ? new Uint8Array(STATIC_SITE_UPLOAD_LIMITS.fileBytes + 1)
+                    ? new Uint8Array(STATIC_SITE_UPLOAD_LIMITS.totalBytes + 1)
                     : '<p>hi</p>',
                 ],
                 'index.html',

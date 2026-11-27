@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import { errorResponse } from '~/lib/api-errors'
 import { renderMarkdownDocument } from '~/lib/markdown-render'
+import { staticSitePathCandidates } from '~/lib/static-site-paths'
 import type { SessionUser } from '~/lib/user'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
@@ -255,7 +256,8 @@ async function loadStaticSiteExportSource(
   const path = normalizeExportPath(
     queryPath ?? access.entrypointPath ?? '/index.html',
   )
-  const candidatePaths = staticSiteExportCandidatePaths(path)
+  const { direct, fallback: fallbackPath } = staticSitePathCandidates(path)
+  const candidatePaths = fallbackPath ? [...direct, fallbackPath] : direct
   const files = await db
     .selectFrom('versions')
     .innerJoin('version_files', 'version_files.version_id', 'versions.id')
@@ -268,13 +270,7 @@ async function loadStaticSiteExportSource(
     .where('versions.id', '=', access.currentVersionId!)
     .where('version_files.path', 'in', candidatePaths)
     .execute()
-  const requestedCandidatePaths =
-    path === '/index.html'
-      ? ['/index.html']
-      : candidatePaths.filter(
-          (candidatePath) => candidatePath !== '/index.html',
-        )
-  const htmlCandidate = requestedCandidatePaths
+  const htmlCandidate = direct
     .map((candidatePath) => files.find((file) => file.path === candidatePath))
     .find(
       (file) =>
@@ -282,14 +278,14 @@ async function loadStaticSiteExportSource(
     )
   const nonHtmlCandidate = htmlCandidate
     ? undefined
-    : requestedCandidatePaths
+    : direct
         .map((candidatePath) =>
           files.find((file) => file.path === candidatePath),
         )
         .find((file) => file !== undefined)
   const fallback = files.find(
     (file) =>
-      file.path === '/index.html' && Number(file.fallback_to_index) === 1,
+      file.path === fallbackPath && Number(file.fallback_to_index) === 1,
   )
   const file = htmlCandidate ?? (nonHtmlCandidate ? undefined : fallback)
   if (!file) {
@@ -355,17 +351,4 @@ function decodePath(path: string): string {
   } catch {
     return path
   }
-}
-
-function hasFileExtension(path: string): boolean {
-  const lastSegment = path.split('/').at(-1) ?? ''
-  return /\.[^./]+$/.test(lastSegment)
-}
-
-function staticSiteExportCandidatePaths(path: string): string[] {
-  if (hasFileExtension(path)) return [path]
-  const directoryIndexPath = path.endsWith('/')
-    ? `${path}index.html`
-    : `${path}/index.html`
-  return Array.from(new Set([path, directoryIndexPath, '/index.html']))
 }
