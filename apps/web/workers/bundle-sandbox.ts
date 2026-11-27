@@ -33,6 +33,7 @@ import {
   verifySandboxTokenDetailed,
 } from '../app/lib/sandbox-token'
 import { type ArtifactKind } from '../app/lib/shareable-types'
+import { staticSitePathCandidates } from '../app/lib/static-site-paths'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
 import * as access from '../app/modules/access'
 import { createDb } from '../app/services/db.server'
@@ -787,7 +788,8 @@ async function serveBundleAsset(
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   const db = createDb()
-  const candidatePaths = hasFileExtension(path) ? [path] : [path, '/index.html']
+  const { direct, fallback } = staticSitePathCandidates(path)
+  const candidatePaths = fallback ? [...direct, fallback] : direct
   const now = new Date().toISOString()
   const files = await db
     .selectFrom('versions')
@@ -850,21 +852,19 @@ async function serveBundleAsset(
       )
     }
   }
-  const requested = files.find(
-    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
-      file.path === path && file.r2_key !== null && file.size_bytes !== null,
-  )
+  const stored = (candidate: string | null) =>
+    files.find(
+      (file): file is typeof file & { r2_key: string; size_bytes: number } =>
+        file.path === candidate &&
+        file.r2_key !== null &&
+        file.size_bytes !== null,
+    )
+  const requested = direct.map(stored).find((file) => file !== undefined)
   if (requested)
     return await serveBundleFile(requested, request, responseDomain)
 
-  const fallback = files.find(
-    (file): file is typeof file & { r2_key: string; size_bytes: number } =>
-      file.path === '/index.html' &&
-      file.r2_key !== null &&
-      file.size_bytes !== null &&
-      Number(file.fallback_to_index) === 1,
-  )
-  if (!fallback) {
+  const fallbackFile = stored(fallback)
+  if (!fallbackFile || Number(fallbackFile.fallback_to_index) !== 1) {
     return deniedResponse(
       'bundle_file_missing',
       'This artifact is unavailable.',
@@ -873,7 +873,7 @@ async function serveBundleAsset(
       responseDomain,
     )
   }
-  return await serveBundleFile(fallback, request, responseDomain)
+  return await serveBundleFile(fallbackFile, request, responseDomain)
 }
 
 // A PDF or video version is a virtual bundle: a generated viewer page at the
@@ -1218,11 +1218,6 @@ function resolveRequestedRange(
       ? size - 1
       : Number(BigInt(endValue))
   return { start, length: end - start + 1 }
-}
-
-function hasFileExtension(path: string): boolean {
-  const lastSegment = path.split('/').at(-1) ?? ''
-  return /\.[^./]+$/.test(lastSegment)
 }
 
 function requestPath(url: URL): string | null {
