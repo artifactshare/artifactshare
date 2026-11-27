@@ -14,6 +14,8 @@
 // its router may treat `/index.html` as another route; only the served-file
 // check maps it to `/index.html`.
 
+import { staticSitePathCandidates } from './static-site-paths.js'
+
 export const MAX_COMMENT_LOCATION_LENGTH = 1000
 
 function hasControlCharacter(value: string): boolean {
@@ -157,12 +159,7 @@ export function commentLocationHref(
   return pathname + parsed.hash
 }
 
-export function hasCommentPathExtension(pathname: string): boolean {
-  const lastSegment = pathname.split('/').at(-1) ?? ''
-  return /\.[^./]+$/.test(lastSegment)
-}
-
-/** A location is served by a version file or, with fallback, by its index. */
+/** A location is served by a version file or, with fallback, by the root index. */
 export function isCommentLocationServed(
   location: string,
   files: { has(path: string): boolean },
@@ -170,10 +167,9 @@ export function isCommentLocationServed(
 ): boolean {
   const parsed = parseCommentLocation(location, fallbackToIndex)
   if (!parsed || parsed.location !== location) return false
+  const { direct, fallback } = staticSitePathCandidates(parsed.pathname)
   return (
-    files.has(parsed.pathname) ||
-    (fallbackToIndex &&
-      files.has('/index.html') &&
-      !hasCommentPathExtension(parsed.pathname))
+    direct.some((path) => files.has(path)) ||
+    (fallbackToIndex && fallback !== null && files.has(fallback))
   )
 }

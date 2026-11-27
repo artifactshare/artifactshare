@@ -33,7 +33,7 @@ import {
   verifySandboxTokenDetailed,
 } from '../app/lib/sandbox-token'
 import { type ArtifactKind } from '../app/lib/shareable-types'
-import { staticSitePathCandidates } from '../app/lib/static-site-paths'
+import { staticSitePathCandidates } from '@artifactshare/viewer-kit/reporter/static-site-paths'
 import { renderMarkdownDocument } from '../app/lib/markdown-render'
 import * as access from '../app/modules/access'
 import { createDb } from '../app/services/db.server'

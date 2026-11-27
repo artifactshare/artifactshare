@@ -1,3 +1,4 @@
+import { staticSitePathCandidates } from '@artifactshare/viewer-kit/reporter/static-site-paths'
 import type { ArtifactType } from './artifact-type'
 
 export type LinkNavigationMode = 'document' | 'site'
@@ -88,11 +89,14 @@ export function classifyViewerLinkNavigation({
 
   if (url.origin === sandboxOrigin) {
     const path = normalizedBundlePath(url)
+    const candidates = path ? staticSitePathCandidates(path) : null
     if (
       mode === 'site' &&
-      (!path ||
-        (!bundlePaths.includes(path) &&
-          !(fallbackToIndex && !hasFileExtension(path))))
+      (!candidates ||
+        (!candidates.direct.some((candidate) =>
+          bundlePaths.includes(candidate),
+        ) &&
+          !(fallbackToIndex && candidates.fallback !== null)))
     ) {
       return { kind: 'unavailable-in-document', url: url.href }
     }
@@ -152,9 +156,4 @@ function normalizedBundlePath(url: URL): string | null {
     }
   }
   return `/${segments.join('/')}`.normalize('NFC')
-}
-
-function hasFileExtension(path: string): boolean {
-  const lastSegment = path.split('/').at(-1) ?? ''
-  return /\.[^./]+$/.test(lastSegment)
 }
