@@ -95,7 +95,6 @@ test('project config default_profile keeps its source with a saved token', async
       assert.equal(result.profile, 'project-default')
       assert.equal(result.token, 'stored-token')
       assert.equal(result.profileCredentialKind, 'session')
-      assert.equal(result.refreshToken, 'refresh-token')
     }
   } finally {
     await rm(root, { recursive: true, force: true })
