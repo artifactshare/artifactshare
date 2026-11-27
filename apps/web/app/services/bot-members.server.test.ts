@@ -381,6 +381,23 @@ describe('createWorkspaceBot', () => {
     expect(second.kind).toBe('bot-limit-reached')
   })
 
+  test('a plan the app does not know gets the free-plan cap', async () => {
+    sqlite
+      .prepare(`UPDATE workspaces SET plan = 'legacy' WHERE id = 'ws1'`)
+      .run()
+    seedProject('proj1')
+    const first = await createWorkspaceBot(db, ADMIN, {
+      name: 'Bot A',
+      projectId: 'proj1',
+    })
+    expect(first.kind).toBe('ok')
+    const second = await createWorkspaceBot(db, ADMIN, {
+      name: 'Bot B',
+      projectId: 'proj1',
+    })
+    expect(second.kind).toBe('bot-limit-reached')
+  })
+
   test('a stopped bot frees the cap and its name', async () => {
     seedProject('proj1')
     const first = await createWorkspaceBot(db, ADMIN, {

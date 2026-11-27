@@ -604,6 +604,41 @@ describe('billing sync service', () => {
     ).toEqual({ processed_at: expect.any(String) })
   })
 
+  test('a first subscription that starts incomplete gets the paid defaults once it is active', async () => {
+    seedWorkspace(sqlite, { plan: 'free' })
+    const sync = (status: Stripe.Subscription.Status) =>
+      syncWorkspaceSubscription(
+        db,
+        mockStripeRetrieve(
+          makeSubscription({
+            id: 'sub_new',
+            status,
+            metadata: { workspace_id: 'ws1' },
+            items: [{ priceId: prices.plusMonthly }],
+          }),
+        ),
+        env,
+        'sub_new',
+      )
+
+    // Checkout creates the subscription before a 3-D Secure payment finishes.
+    await sync('incomplete')
+    await sync('active')
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT plan, link_sharing_enabled, external_posting_enabled
+           FROM workspaces WHERE id = 'ws1'`,
+        )
+        .get(),
+    ).toEqual({
+      plan: 'plus',
+      link_sharing_enabled: 1,
+      external_posting_enabled: 1,
+    })
+  })
+
   test('syncWorkspaceSubscription writes plan.change audit once with webhook idempotency', async () => {
     seedWorkspace(sqlite, { plan: 'free' })
     sqlite.exec(`
@@ -739,6 +774,41 @@ describe('syncing on the return from Checkout', () => {
       stripe_subscription_status: 'active',
     })
   })
+
+  test.each(['return first', 'webhook first', 'at the same time'] as const)(
+    'the purchase is logged once when the Checkout return and the webhook sync it %s',
+    async (order) => {
+      const stripe = checkoutStripe(completed)
+      sqlite.exec(`INSERT INTO billing_webhook_events
+        (stripe_event_id, event_type, received_at) VALUES
+        ('evt_checkout', 'checkout.session.completed', '2026-07-01T00:00:00.000Z')`)
+      const checkoutReturn = () =>
+        syncReturnedCheckout(db, stripe, env, 'ws1', 'cs_test_a1')
+      const webhook = () =>
+        syncWorkspaceSubscription(db, stripe, env, 'sub_new', {
+          stripeEventId: 'evt_checkout',
+        })
+
+      if (order === 'return first') {
+        await checkoutReturn()
+        await webhook()
+      } else if (order === 'webhook first') {
+        await webhook()
+        await checkoutReturn()
+      } else {
+        await Promise.all([checkoutReturn(), webhook()])
+      }
+
+      const audits = sqlite
+        .prepare(`SELECT action, detail FROM audit_events`)
+        .all() as Array<{ action: string; detail: string }>
+      expect(audits.map((row) => row.action)).toEqual(['plan.change'])
+      expect(JSON.parse(audits[0]!.detail)).toMatchObject({
+        from: 'free',
+        to: 'team',
+      })
+    },
+  )
 
   test.each([
     ['started by another workspace', { client_reference_id: 'ws2' }],
