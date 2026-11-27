@@ -55,7 +55,8 @@ export function isPaidPlan(plan: string | null | undefined): boolean {
 export function plansInTier(
   tiers: readonly [PlanTier, ...PlanTier[]],
 ): BillingPlan[] {
+  const wanted = new Set<PlanTier>(tiers)
   return (Object.keys(PLAN_TIERS) as BillingPlan[]).filter((plan) =>
-    tiers.includes(PLAN_TIERS[plan]),
+    wanted.has(PLAN_TIERS[plan]),
   )
 }
