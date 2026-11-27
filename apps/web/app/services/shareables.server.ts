@@ -3230,7 +3230,10 @@ export async function prepareUpload(
   )
   if (!nameType) return { kind: 'unsupported-type' } as const
   const pathValidation = validateBundlePath(logicalFile.name)
-  if (pathValidation.kind === 'blocked') {
+  const entrypointPath = normalizeBundlePath(logicalFile.name)
+  // A name such as "", "." or "/" keeps no segment and would store the root
+  // itself as the file path.
+  if (pathValidation.kind === 'blocked' || entrypointPath === '/') {
     return { kind: 'invalid-path' } as const
   }
 
@@ -3301,7 +3304,6 @@ export async function prepareUpload(
         : renderType === 'video'
           ? 'video'
           : 'html_page'
-  const entrypointPath = normalizeBundlePath(logicalFile.name)
   return {
     kind: 'ok' as const,
     versionId,
