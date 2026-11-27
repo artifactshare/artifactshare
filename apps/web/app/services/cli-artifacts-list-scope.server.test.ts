@@ -148,6 +148,17 @@ describe('listCliArtifacts project scope', () => {
       { ...BASE, projectId: 'project-a' },
     )
     expect(noAudience.kind).toBe('invalid-project')
+
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'project-b')
+      .execute()
+    const outsidePrivateAudience = await listCliArtifacts(db, MEMBER, {
+      ...BASE,
+      projectId: 'project-b',
+    })
+    expect(outsidePrivateAudience.kind).toBe('invalid-project')
   })
 
   test('home and unfiltered listings stay owner-scoped without owner_email', async () => {

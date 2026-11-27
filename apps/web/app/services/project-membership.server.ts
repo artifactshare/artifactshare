@@ -2,11 +2,11 @@ import { sql, type Kysely } from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { grantMatchEmail } from './access.server'
 import {
+  activeLinkExpiry,
   projectAccessAllowedSql,
   workspaceAccessRevokedSql,
 } from '~/modules/access'
 import {
-  validLinkExpirySql,
   visibleShareableToViewerSql,
   visibleSharedProjectShareableToViewerSql,
 } from './projects.server'
@@ -93,12 +93,13 @@ function visibleShareableToDatabaseViewerSql(now: string) {
   return sql<boolean>`(
     (
       shareables.visibility = 'link'
+      AND shareables.link_suspended_at IS NULL
       AND EXISTS (
         SELECT 1 FROM workspaces access_link_workspace
         WHERE access_link_workspace.id = shareables.workspace_id
           AND access_link_workspace.link_sharing_enabled = 1
       )
-      AND ${validLinkExpirySql(sql.ref('shareables.link_expires_at'), now)}
+      AND ${activeLinkExpiry(now)}
     )
     OR (
       shareables.visibility = 'workspace'

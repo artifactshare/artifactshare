@@ -5,6 +5,8 @@ import type { DB } from '~/types/db'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
+import { facts } from '~/modules/access'
+import { viewerAccessAllowed } from './access.server'
 import { visibleShareableToViewer } from './projects.server'
 
 const TS = '2026-06-14T00:00:00.000Z'
@@ -208,6 +210,92 @@ describe('visibleShareableToViewer', () => {
       .where('id', '=', 'ws-a')
       .execute()
     expect(await visibleIds(db, 'ws-a', OWNER)).toContain('link-unlimited')
+  })
+
+  test.each([
+    ['2026-06-15T00:00:00Z', true],
+    ['2026-06-15T00:00:00.000Z', true],
+    ['2026-06-15T00:00:00.5Z', true],
+    ['2026-06-15T00:00:00.123456Z', true],
+    ['2026-06-13T00:00:00.123456Z', false],
+    ['2026-06-15T00:00:00.badZ', false],
+  ])(
+    'a link expiring at %s is listed exactly when it opens',
+    async (expiry, live) => {
+      await db
+        .updateTable('workspaces')
+        .set({ link_sharing_enabled: 1 })
+        .where('id', '=', 'ws-a')
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          ...shareable('link-expiry', 'ws-a', 'u-other', 'inbox-a', 'link'),
+          link_expires_at: expiry,
+        })
+        .execute()
+
+      expect(
+        (await visibleIds(db, 'ws-a', OWNER)).includes('link-expiry'),
+      ).toBe(live)
+      const access = await facts(db, {
+        shareableId: 'link-expiry',
+        viewerUserId: OWNER.id,
+        now: TS,
+      })
+      expect(access?.anonymousLinkAllowed).toBe(live)
+    },
+  )
+
+  test('a suspended link is listed only for viewers who can still open it', async () => {
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values([
+        shareable('link-live', 'ws-a', 'u-other', 'inbox-a', 'link'),
+        {
+          ...shareable('link-suspended', 'ws-a', 'u-other', 'inbox-a', 'link'),
+          link_suspended_at: TS,
+          link_suspended_reason: 'review',
+        },
+      ])
+      .execute()
+    const reach = async (viewer: typeof OWNER) => {
+      const access = await facts(db, {
+        shareableId: 'link-suspended',
+        viewerUserId: viewer.id,
+        now: TS,
+      })
+      return {
+        listed: (await visibleIds(db, 'ws-a', viewer)).includes(
+          'link-suspended',
+        ),
+        openable: access !== null && viewerAccessAllowed(access),
+      }
+    }
+
+    expect(await visibleIds(db, 'ws-a', OWNER)).toContain('link-live')
+    expect({
+      member: await reach(OWNER),
+      linkOwner: await reach({
+        id: 'u-other',
+        email: 'other@example.com',
+        emailVerified: true,
+      }),
+      teamAdmin: await reach({
+        id: 'u-admin',
+        email: 'admin@example.com',
+        emailVerified: true,
+      }),
+    }).toEqual({
+      member: { listed: false, openable: false },
+      linkOwner: { listed: true, openable: true },
+      teamAdmin: { listed: true, openable: true },
+    })
   })
 
   test('owner, verified grant, and active Team admin bypass an invalid link policy', async () => {

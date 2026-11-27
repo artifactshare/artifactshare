@@ -17,19 +17,6 @@ vi.mock('~/middleware/context', () => ({
   requireUser: () => state.user,
   userContext: Symbol('userContext'),
 }))
-vi.mock('~/services/projects.server', () => ({
-  findWorkspaceProject: async (
-    db: Kysely<DB>,
-    workspaceId: string,
-    id: string,
-  ) =>
-    db
-      .selectFrom('artifact_containers')
-      .select('id')
-      .where('id', '=', id)
-      .where('workspace_id', '=', workspaceId)
-      .executeTakeFirst(),
-}))
 vi.mock('~/services/slack.server', () => slack)
 vi.mock('cloudflare:workers', () => ({
   env: { SLACK_CLIENT_ID: 'client-id' },
@@ -127,6 +114,46 @@ async function fixture() {
 }
 const loaderArgs = (id = 'proj1') => args(id)
 
+async function insertChannel(db: Db) {
+  await db
+    .insertInto('container_slack_channels')
+    .values({
+      container_id: 'proj1',
+      webhook_url: 'https://hooks.slack.test/secret',
+      slack_team_id: 't1',
+      slack_team_name: 'Slack 1',
+      channel_id: 'C1',
+      channel_name: 'general',
+      created_by: 'u1',
+      updated_by: 'u1',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    })
+    .execute()
+}
+
+async function makeProjectPrivateWithMember(db: Db) {
+  await db
+    .insertInto('users')
+    .values({
+      id: 'u2',
+      email: 'u2@example.com',
+      name: 'Member',
+      email_verified: 1,
+      image: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      workspace_id: 'w1',
+      locale: null,
+    })
+    .execute()
+  await db
+    .updateTable('artifact_containers')
+    .set({ base_visibility: 'private' })
+    .where('id', '=', 'proj1')
+    .execute()
+}
+
 beforeEach(() => {
   state.user = { id: 'u1', workspaceId: 'w1' }
   vi.clearAllMocks()
@@ -193,6 +220,50 @@ describe('project Slack route', () => {
     expect(
       await db.selectFrom('container_slack_channels').selectAll().execute(),
     ).toHaveLength(0)
+  })
+
+  test('a workspace member outside a private project audience cannot read, clear, or reconnect its channel', async () => {
+    const db = await fixture()
+    await insertChannel(db)
+    await makeProjectPrivateWithMember(db)
+    state.user = { id: 'u2', workspaceId: 'w1' }
+
+    await expect(loader(loaderArgs())).rejects.toMatchObject({ status: 404 })
+    await expect(
+      action(args('proj1', formRequest({ intent: 'clear-slack-channel' }))),
+    ).rejects.toMatchObject({ status: 404 })
+    await expect(installLoader(loaderArgs() as never)).rejects.toMatchObject({
+      status: 404,
+    })
+    expect(
+      await db
+        .selectFrom('container_slack_channels')
+        .select('channel_id')
+        .execute(),
+    ).toEqual([{ channel_id: 'C1' }])
+    expect(slack.signSlackNotifyState).not.toHaveBeenCalled()
+  })
+
+  test('an audience member of a private project keeps the channel controls', async () => {
+    const db = await fixture()
+    await insertChannel(db)
+    await makeProjectPrivateWithMember(db)
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'd1',
+        project_container_id: 'proj1',
+        email: 'u2@example.com',
+        role: 'viewer',
+        created_by_id: 'u1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    state.user = { id: 'u2', workspaceId: 'w1' }
+
+    expect((await loader(loaderArgs())).current?.channelId).toBe('C1')
+    expect((await installLoader(loaderArgs() as never)).status).toBe(302)
   })
 
   test('install redirects to Slack authorize URL with project state', async () => {

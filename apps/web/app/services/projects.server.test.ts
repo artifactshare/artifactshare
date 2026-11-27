@@ -15,7 +15,10 @@ import {
   createProjectContainer,
   editProjectContainerSettings,
   findWorkspaceProject,
+  findWorkspaceProjectAnyState,
   getProjectContainerWorkspaceId,
+  listArchivedWorkspaceProjects,
+  listWorkspaceProjects,
   lookupProjectShareDefaultUsers,
   resolveUploadContainer,
   listPlacementProjects,
@@ -494,7 +497,11 @@ describe('project share defaults', () => {
     expect(result).toEqual({ kind: 'ok', id: expect.any(String) })
     if (result.kind !== 'ok') return
 
-    const project = await findWorkspaceProject(db, 'ws-a', result.id)
+    const project = await findWorkspaceProject(db, 'ws-a', result.id, {
+      id: 'u1',
+      email: 'owner@example.com',
+      emailVerified: true,
+    })
     expect(project?.baseVisibility).toBe('private')
   })
 
@@ -789,6 +796,114 @@ describe('getProjectContainerWorkspaceId', () => {
     await expect(
       getProjectContainerWorkspaceId(db, 'project-a'),
     ).resolves.toBeNull()
+  })
+})
+
+describe('workspace project lookups', () => {
+  let db: Kysely<DB>
+  const creator = { id: 'u1', email: 'owner@example.com', emailVerified: true }
+  const member = { id: 'u2', email: 'member@example.com', emailVerified: true }
+  const admin = { id: 'u3', email: 'admin@example.com', emailVerified: true }
+
+  beforeEach(async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    await seedWorkspace(db)
+    await seedProject(db)
+    await seedUser(db, member)
+    await seedUser(db, admin)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'team' })
+      .where('id', '=', 'ws-a')
+      .execute()
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: admin.id,
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-05-22T00:00:00.000Z',
+        updated_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'project-a')
+      .execute()
+  })
+
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  async function lookups(viewer: typeof member) {
+    return {
+      found: await findWorkspaceProject(db, 'ws-a', 'project-a', viewer),
+      foundAnyState: await findWorkspaceProjectAnyState(
+        db,
+        'ws-a',
+        'project-a',
+        viewer,
+      ),
+      listed: (await listWorkspaceProjects(db, 'ws-a', viewer)).map(
+        (project) => project.id,
+      ),
+    }
+  }
+
+  test('a member outside the audience cannot look up a private project', async () => {
+    expect(await lookups(member)).toEqual({
+      found: null,
+      foundAnyState: null,
+      listed: [],
+    })
+  })
+
+  test('the creator, an audience member, and a Team admin can look it up', async () => {
+    await seedShareDefault(db, { email: member.email, role: 'viewer' })
+    for (const viewer of [creator, member, admin]) {
+      expect(await lookups(viewer)).toMatchObject({
+        found: { id: 'project-a' },
+        foundAnyState: { id: 'project-a' },
+        listed: ['project-a'],
+      })
+    }
+  })
+
+  test('a workspace-visible project stays visible to every member', async () => {
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'workspace' })
+      .where('id', '=', 'project-a')
+      .execute()
+    expect(await lookups(member)).toMatchObject({
+      found: { id: 'project-a' },
+      foundAnyState: { id: 'project-a' },
+      listed: ['project-a'],
+    })
+  })
+
+  test('the archive list hides an archived private project from members outside the audience', async () => {
+    await db
+      .updateTable('artifact_containers')
+      .set({ archived_at: '2026-05-23T00:00:00.000Z' })
+      .where('id', '=', 'project-a')
+      .execute()
+    const archivedIds = async (viewer: typeof member) =>
+      (await listArchivedWorkspaceProjects(db, 'ws-a', viewer)).map(
+        (project) => project.id,
+      )
+
+    expect(await archivedIds(member)).toEqual([])
+    expect(
+      await findWorkspaceProjectAnyState(db, 'ws-a', 'project-a', member),
+    ).toBeNull()
+    expect(await archivedIds(creator)).toEqual(['project-a'])
+    expect(
+      await findWorkspaceProjectAnyState(db, 'ws-a', 'project-a', creator),
+    ).toMatchObject({ id: 'project-a' })
   })
 })
 
