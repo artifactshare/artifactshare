@@ -10,10 +10,7 @@ import {
 } from '~/services/shareables.server'
 import { errorResponse, workspaceAccessRevokedResponse } from './api-errors'
 import {
-  MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
-  MAX_STATIC_SITE_UPLOAD_FILES,
-  MAX_STATIC_SITE_UPLOAD_PARTS,
-  MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
+  STATIC_SITE_MULTIPART_LIMITS,
   staticSiteBundleResponse,
   staticSiteParseErrorResponse,
 } from './static-site-upload-response.server'
@@ -77,12 +74,7 @@ export async function runStaticSiteVersionUpload(
     if (request.body !== null || !options.baseVersionId) {
       const form = await parseFormData(
         request,
-        {
-          maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
-          maxFileSize: MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
-          maxParts: MAX_STATIC_SITE_UPLOAD_PARTS,
-          maxTotalSize: MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
-        },
+        STATIC_SITE_MULTIPART_LIMITS,
         async (file) => {
           if (file.fieldName !== 'file') return file
           const result = await session.addFile(file)

@@ -26,12 +26,16 @@ import { MAX_GRANT_EMAILS } from './grant-emails'
 import { STATIC_SITE_UPLOAD_LIMITS } from './upload-artifact-validation'
 
 export const MAX_STATIC_SITE_UPLOAD_FILES = STATIC_SITE_UPLOAD_LIMITS.files
-export const MAX_STATIC_SITE_UPLOAD_FILE_BYTES =
-  STATIC_SITE_UPLOAD_LIMITS.fileBytes
-export const MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES =
-  STATIC_SITE_UPLOAD_LIMITS.totalBytes
-export const MAX_STATIC_SITE_UPLOAD_PARTS =
-  MAX_STATIC_SITE_UPLOAD_FILES + 3 + MAX_GRANT_EMAILS * 2
+
+// Parser limits for a static-site multipart body. A single part may use the
+// whole request size: the upload session rejects a file over the per-file
+// limit and names it, which a parser error cannot do.
+export const STATIC_SITE_MULTIPART_LIMITS = {
+  maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
+  maxFileSize: STATIC_SITE_UPLOAD_LIMITS.totalBytes,
+  maxParts: MAX_STATIC_SITE_UPLOAD_FILES + 3 + MAX_GRANT_EMAILS * 2,
+  maxTotalSize: STATIC_SITE_UPLOAD_LIMITS.totalBytes,
+}
 
 export function staticSiteBundleResponse(
   request: Request,
