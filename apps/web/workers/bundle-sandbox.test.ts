@@ -3626,6 +3626,31 @@ describe('handleArtifactSandboxRequest', () => {
     },
   )
 
+  test('serves an extensionless file at its own path without a redirect', async () => {
+    const cookie = await cookieForSiteWithAboutIndex(0)
+    await dbRef
+      .current!.insertInto('version_files')
+      .values({
+        id: 'vf-plain',
+        version_id: 'v-bundle',
+        path: '/plain',
+        r2_key: 'ws-a/abc123def4/v-bundle/plain',
+        mime_type: 'text/html; charset=utf-8',
+        size_bytes: 20,
+        sha256: 'sha-plain',
+        scan_flags: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/plain`, { headers: { Cookie: cookie } }),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.text()).resolves.toContain('Home')
+  })
+
   test.each([{ fallbackToIndex: 1 }, { fallbackToIndex: 0 }])(
     'serves the directory index.html for /about/ (fallback $fallbackToIndex)',
     async ({ fallbackToIndex }) => {
