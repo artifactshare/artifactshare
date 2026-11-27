@@ -231,28 +231,16 @@ export async function syncWorkspaceSubscription(
     }
   }
 
-  if (!options?.stripeEventId) {
-    await db
-      .updateTable('workspaces')
-      .set(workspaceUpdates)
-      .where('id', '=', workspace.id)
-      .execute()
-    return { kind: 'ok' }
-  }
-
   const now = nowIso()
-  const batch: Compilable<unknown>[] = [
-    db
-      .updateTable('workspaces')
-      .set(workspaceUpdates)
-      .where('id', '=', workspace.id),
-  ]
+  const batch: Compilable<unknown>[] = []
   if (workspace.plan !== plan) {
     const planChangeDetail = JSON.stringify({
-      stripe_event_id: options.stripeEventId,
+      stripe_event_id: options?.stripeEventId,
       from: workspace.plan,
       to: plan,
     })
+    // Only the sync that moves the plan off `from` logs the change, so the
+    // Checkout return and the webhook for one purchase write one entry.
     batch.push(
       db
         .insertInto('audit_events')
@@ -268,9 +256,9 @@ export async function syncWorkspaceSubscription(
         ])
         .expression((eb) =>
           eb
-            .selectFrom('billing_webhook_events')
-            .where('stripe_event_id', '=', options.stripeEventId!)
-            .where('processed_at', 'is', null)
+            .selectFrom('workspaces')
+            .where('id', '=', workspace.id)
+            .where('plan', '=', workspace.plan)
             .select([
               eb.val(nanoid(16)).as('id'),
               eb.val(workspace.id).as('workspace_id'),
@@ -286,11 +274,19 @@ export async function syncWorkspaceSubscription(
   }
   batch.push(
     db
-      .updateTable('billing_webhook_events')
-      .set({ processed_at: now, error: null })
-      .where('stripe_event_id', '=', options.stripeEventId)
-      .where('processed_at', 'is', null),
+      .updateTable('workspaces')
+      .set(workspaceUpdates)
+      .where('id', '=', workspace.id),
   )
+  if (options?.stripeEventId) {
+    batch.push(
+      db
+        .updateTable('billing_webhook_events')
+        .set({ processed_at: now, error: null })
+        .where('stripe_event_id', '=', options.stripeEventId)
+        .where('processed_at', 'is', null),
+    )
+  }
   await runD1Batch(db, ...batch)
 
   return { kind: 'ok' }
