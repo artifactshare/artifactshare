@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.24.3 - 2026-11-27
 
 - Keep a profile signed in when two CLI processes refresh its session at the same time. A process that found the session expired refreshed with the refresh token it had read at start, even when the other process had already used that token and saved a newer one, so it failed with `auth_required` and asked for a new login although the profile held a valid session. The CLI now refreshes with the token saved in the profile, and retries once when another process replaces it during the refresh.
 
