@@ -1507,7 +1507,13 @@ describe('app worker maintenance mode', () => {
   })
 
   test('passes public React Router data requests through without auth cookies', async () => {
-    for (const path of ['/_.data', '/connect.data'] as const) {
+    // React Router requests a trailing-slash URL's data as `<path>/_.data`.
+    for (const path of [
+      '/_.data',
+      '/connect.data',
+      '/ja/terms/_.data',
+      '/pricing/_.data',
+    ] as const) {
       const response = await app.fetch(
         workerRequest(`https://artifactshare.com${path}`, {
           headers: {
@@ -1526,22 +1532,58 @@ describe('app worker maintenance mode', () => {
     }
   })
 
-  test('blocks protected React Router data requests during maintenance', async () => {
-    const response = await app.fetch(
-      workerRequest('https://artifactshare.com/projects.data'),
-      productionEnv({ maintenance: true }),
-      executionContext(),
-    )
+  test.each(['/projects.data', '/projects/_.data'] as const)(
+    'blocks protected React Router data request %s during maintenance',
+    async (path) => {
+      const response = await app.fetch(
+        workerRequest(`https://artifactshare.com${path}`),
+        productionEnv({ maintenance: true }),
+        executionContext(),
+      )
 
-    expect(response.status).toBe(503)
-    await expect(response.text()).resolves.toContain('メンテナンス中')
-  })
+      expect(response.status).toBe(503)
+      await expect(response.text()).resolves.toContain('メンテナンス中')
+    },
+  )
 
-  test('passes public React Router manifest patches through', async () => {
+  test.each([
+    [['/connect', '/ja/share-with-ai']],
+    [['/guides/cli']],
+    [['/ja/guides/search', '/updates/search-filters']],
+  ])(
+    'passes the manifest patch React Router requests for public pages %j',
+    async (targets) => {
+      const response = await app.fetch(
+        workerRequest(routeDiscoveryUrl('https://artifactshare.com', targets)),
+        productionEnv({ maintenance: true }),
+        executionContext(),
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.text()).resolves.toBe('app')
+    },
+  )
+
+  test.each([[['/projects']], [['/guides/cli', '/projects']], [['/guides/x']]])(
+    'blocks the manifest patch React Router requests for %j during maintenance',
+    async (targets) => {
+      const response = await app.fetch(
+        workerRequest(routeDiscoveryUrl('https://artifactshare.com', targets)),
+        productionEnv({ maintenance: true }),
+        executionContext(),
+      )
+
+      expect(response.status).toBe(503)
+      await expect(response.text()).resolves.toContain('メンテナンス中')
+    },
+  )
+
+  test.each([
+    '/updates/search-filters/og-image',
+    '/ja/updates/search-filters/og-image',
+  ] as const)('passes the public page og image %s through', async (path) => {
     const response = await app.fetch(
-      workerRequest(
-        'https://artifactshare.com/__manifest?paths=%2F%2C%2Fconnect%2C%2Fja%2Fshare-with-ai&version=8e74ecb1',
-      ),
+      workerRequest(`https://artifactshare.com${path}`),
       productionEnv({ maintenance: true }),
       executionContext(),
     )
@@ -1550,17 +1592,14 @@ describe('app worker maintenance mode', () => {
     await expect(response.text()).resolves.toBe('app')
   })
 
-  test('blocks protected React Router manifest patches during maintenance', async () => {
+  test('blocks artifact og images during maintenance', async () => {
     const response = await app.fetch(
-      workerRequest(
-        'https://artifactshare.com/__manifest?paths=%2F%2C%2Fprojects&version=8e74ecb1',
-      ),
+      workerRequest('https://artifactshare.com/a/abc123def4/og-image'),
       productionEnv({ maintenance: true }),
       executionContext(),
     )
 
     expect(response.status).toBe(503)
-    await expect(response.text()).resolves.toContain('メンテナンス中')
   })
 
   test('passes discovery files through to the app handler', async () => {
@@ -1794,6 +1833,22 @@ function workerRequest(input: string, init?: RequestInit) {
     unknown,
     IncomingRequestCfProperties<unknown>
   >
+}
+
+// The manifest URL React Router's route discovery fetches for these targets:
+// each target with every ancestor (`/guides/cli` adds `/guides`), sorted.
+function routeDiscoveryUrl(origin: string, targets: string[]) {
+  const paths = new Set<string>()
+  for (const target of targets) {
+    for (let i = 1; i < target.length; i++)
+      if (target[i] === '/') paths.add(target.slice(0, i))
+    paths.add(target)
+  }
+  const params = new URLSearchParams({
+    paths: [...paths].sort().join(','),
+    version: '8e74ecb1',
+  })
+  return `${origin}/__manifest?${params}`
 }
 
 describe('report Worker admission before initialization', () => {
