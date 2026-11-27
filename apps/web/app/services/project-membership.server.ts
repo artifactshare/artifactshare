@@ -93,6 +93,7 @@ function visibleShareableToDatabaseViewerSql(now: string) {
   return sql<boolean>`(
     (
       shareables.visibility = 'link'
+      AND shareables.link_suspended_at IS NULL
       AND EXISTS (
         SELECT 1 FROM workspaces access_link_workspace
         WHERE access_link_workspace.id = shareables.workspace_id

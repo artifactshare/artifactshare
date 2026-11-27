@@ -183,6 +183,7 @@ export function shareableLinkAccessToViewer(
 ) {
   return eb.and([
     eb('shareables.visibility', '=', 'link'),
+    eb('shareables.link_suspended_at', 'is', null),
     eb.exists(
       eb
         .selectFrom('workspaces')
