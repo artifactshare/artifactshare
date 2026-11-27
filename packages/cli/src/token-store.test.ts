@@ -164,51 +164,59 @@ windowsIntegrationTest(
   30_000,
 )
 
-test('a reader never sees a profile disappear while another process saves it', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'artifactshare-token-store-'))
-  const saved = {
-    ARTIFACTSHARE_CONFIG_HOME: process.env.ARTIFACTSHARE_CONFIG_HOME,
-    ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE:
-      process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE,
-  }
-  process.env.ARTIFACTSHARE_CONFIG_HOME = root
-  process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = '1'
-  const options = {
-    baseUrl: 'https://artifactshare.test',
-    allowPlaintextTokenStore: true,
-  }
-  const credential = (n: number) =>
-    ({
-      kind: 'session',
-      session_token: `session-${n}`,
-      refresh_token: `refresh-${n}`,
-    }) as const
-  try {
-    await saveProfileSessionCredential('default', credential(0), options)
-    const missing: string[] = []
-    let saving = true
-    const save = (async () => {
-      try {
-        for (let n = 1; n <= 200; n += 1) {
-          await saveProfileSessionCredential('default', credential(n), options)
+// Windows never writes the plaintext token file, so there is nothing to race.
+test.skipIf(!plaintextFallbackSupported())(
+  'a reader never sees a profile disappear while another process saves it',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-token-store-'))
+    const saved = {
+      ARTIFACTSHARE_CONFIG_HOME: process.env.ARTIFACTSHARE_CONFIG_HOME,
+      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE:
+        process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE,
+    }
+    process.env.ARTIFACTSHARE_CONFIG_HOME = root
+    process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = '1'
+    const options = {
+      baseUrl: 'https://artifactshare.test',
+      allowPlaintextTokenStore: true,
+    }
+    const credential = (n: number) =>
+      ({
+        kind: 'session',
+        session_token: `session-${n}`,
+        refresh_token: `refresh-${n}`,
+      }) as const
+    try {
+      await saveProfileSessionCredential('default', credential(0), options)
+      const missing: string[] = []
+      let saving = true
+      const save = (async () => {
+        try {
+          for (let n = 1; n <= 200; n += 1) {
+            await saveProfileSessionCredential(
+              'default',
+              credential(n),
+              options,
+            )
+          }
+        } finally {
+          saving = false
         }
-      } finally {
-        saving = false
+      })()
+      const read = async () => {
+        while (saving) {
+          const token = await readProfileToken('default', options)
+          if (!token.ok) missing.push(token.reason)
+        }
       }
-    })()
-    const read = async () => {
-      while (saving) {
-        const token = await readProfileToken('default', options)
-        if (!token.ok) missing.push(token.reason)
+      await Promise.all([save, read(), read(), read(), read()])
+      assert.deepEqual(missing, [])
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
       }
+      await rm(root, { recursive: true, force: true })
     }
-    await Promise.all([save, read(), read(), read(), read()])
-    assert.deepEqual(missing, [])
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-    await rm(root, { recursive: true, force: true })
-  }
-})
+  },
+)
