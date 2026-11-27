@@ -90,12 +90,11 @@ export function classifyViewerLinkNavigation({
   if (url.origin === sandboxOrigin) {
     const path = normalizedBundlePath(url)
     const candidates = path ? staticSitePathCandidates(path) : null
+    const files = new Set(bundlePaths)
     if (
       mode === 'site' &&
       (!candidates ||
-        (!candidates.direct.some((candidate) =>
-          bundlePaths.includes(candidate),
-        ) &&
+        (!candidates.direct.some((candidate) => files.has(candidate)) &&
           !(fallbackToIndex && candidates.fallback !== null)))
     ) {
       return { kind: 'unavailable-in-document', url: url.href }
