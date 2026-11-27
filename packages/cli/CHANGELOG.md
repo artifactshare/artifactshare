@@ -7,6 +7,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 - Keep a profile signed in when two CLI processes refresh its session at the same time. A process that found the session expired refreshed with the refresh token it had read at start, even when the other process had already used that token and saved a newer one, so it failed with `auth_required` and asked for a new login although the profile held a valid session. The CLI now refreshes with the token saved in the profile, and retries once when another process replaces it during the refresh.
 
+- Keep a profile signed in when one CLI process reads the plaintext token file while another saves it. The file was rewritten in place, so a reader could find it empty and report the profile as signed out. The CLI now writes a new file and moves it into place, so a reader sees the old tokens or the new ones.
+
 ## 0.24.2 - 2026-11-27
 
 - Point the bundled skill at full-text search when looking for an artifact by its contents. `--query` matches titles only; `artifacts list --q <text>` searches titles and body text, and the quick-reference table now lists it. Update the bundled skill to version 72.
