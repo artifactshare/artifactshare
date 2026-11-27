@@ -18,6 +18,8 @@ import {
 import { encodeBase64Url } from '~/lib/base64url'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
+import { isPaidPlan, PAID_TIERS } from '~/lib/plan-tier'
+import { planInTierSql } from '~/lib/plan-tier-sql.server'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { REFRESH_CREDENTIAL_TTL_MS } from '~/lib/product-contracts'
 import { computeTextSha256Hex } from '~/lib/sha256'
@@ -354,7 +356,7 @@ export async function createWorkspaceBot(
         .where(
           activeBotCountQuery(db, actor.workspaceId),
           '<',
-          sql<number>`CASE WHEN workspaces.plan = 'free' THEN ${FREE_PLAN_ACTIVE_BOT_LIMIT} ELSE ${ACTIVE_BOT_LIMIT} END`,
+          sql<number>`CASE WHEN ${planInTierSql('workspaces.plan', PAID_TIERS)} THEN ${ACTIVE_BOT_LIMIT} ELSE ${FREE_PLAN_ACTIVE_BOT_LIMIT} END`,
         )
         .select([
           eb.val(botUserId).as('id'),
@@ -738,8 +740,9 @@ async function classifyCreateFailure(
     .select('plan')
     .where('id', '=', workspaceId)
     .executeTakeFirst()
-  const cap =
-    workspace?.plan === 'free' ? FREE_PLAN_ACTIVE_BOT_LIMIT : ACTIVE_BOT_LIMIT
+  const cap = isPaidPlan(workspace?.plan)
+    ? ACTIVE_BOT_LIMIT
+    : FREE_PLAN_ACTIVE_BOT_LIMIT
   const activeCount = await activeBotCountQuery(
     db,
     workspaceId,
