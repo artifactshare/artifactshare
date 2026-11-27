@@ -1713,7 +1713,8 @@ describe('app worker maintenance mode', () => {
 
     expect(response.status).toBe(200)
     expect(errorSpy).toHaveBeenCalledWith(
-      'maintenance_flagship_evaluation_failed',
+      'feature_flag_evaluation_failed',
+      'maintenance',
       expect.any(Error),
     )
     errorSpy.mockRestore()
@@ -1730,7 +1731,8 @@ describe('app worker maintenance mode', () => {
 
     expect(response.status).toBe(200)
     expect(errorSpy).toHaveBeenCalledWith(
-      'maintenance_flagship_binding_missing_in_production',
+      'feature_flag_binding_missing_in_production',
+      'maintenance',
     )
     errorSpy.mockRestore()
   })

@@ -10,11 +10,13 @@ import {
   toListItem,
 } from './updates-visibility.server'
 
-const evaluateFlagshipFlagMock = vi.hoisted(() => vi.fn())
-
-vi.mock('~/lib/flagship-fallback.server', () => ({
-  evaluateFlagshipFlag: evaluateFlagshipFlagMock,
-}))
+// A Flagship binding that turns on exactly the listed flags.
+function flagsOn(...keys: string[]) {
+  return {
+    APP_ENV: 'production',
+    FLAGS: { getBooleanValue: async (key: string) => keys.includes(key) },
+  }
+}
 
 const getAllUpdatesMock = vi.hoisted(() => vi.fn())
 const getUpdateBySlugMock = vi.hoisted(() => vi.fn())
@@ -40,7 +42,6 @@ const baseEntry: UpdateEntry = {
 }
 
 beforeEach(() => {
-  evaluateFlagshipFlagMock.mockReset()
   getAllUpdatesMock.mockReset()
   getUpdateBySlugMock.mockReset()
 })
@@ -64,20 +65,17 @@ describe('isUpdateEntryVisible', () => {
 })
 
 describe('getVisibleUpdates', () => {
-  test('filters flagged entries using evaluateFlagshipFlag', async () => {
+  test('filters flagged entries by their flag', async () => {
     getAllUpdatesMock.mockReturnValue([
       baseEntry,
       { ...baseEntry, slug: 'hidden', flag: 'hidden-flag' },
       { ...baseEntry, slug: 'shown', flag: 'shown-flag' },
     ])
-    evaluateFlagshipFlagMock.mockImplementation(
-      async (_source: unknown, options: { flagKey: string }) => ({
-        kind: 'evaluated',
-        enabled: options.flagKey === 'shown-flag',
-      }),
+    const visible = await getVisibleUpdates(
+      'en',
+      undefined,
+      flagsOn('shown-flag'),
     )
-
-    const visible = await getVisibleUpdates('en')
     expect(visible.map((entry) => entry.slug)).toEqual([
       '2026-07-01-sample',
       'shown',
@@ -89,17 +87,19 @@ describe('getVisibleUpdates', () => {
       { ...baseEntry, slug: 'missing', flag: 'missing-flag' },
       { ...baseEntry, slug: 'error', flag: 'error-flag' },
     ])
-    evaluateFlagshipFlagMock.mockImplementation(
-      async (_source: unknown, options: { flagKey: string }) => {
-        if (options.flagKey === 'missing-flag') {
-          return { kind: 'missing-binding', production: true, enabled: false }
-        }
-        return { kind: 'evaluation-error', error: new Error('boom') }
-      },
-    )
-
-    const visible = await getVisibleUpdates('en')
-    expect(visible).toEqual([])
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(
+      getVisibleUpdates('en', undefined, { APP_ENV: 'production' }),
+    ).resolves.toEqual([])
+    await expect(
+      getVisibleUpdates('en', undefined, {
+        APP_ENV: 'production',
+        FLAGS: {
+          getBooleanValue: () => Promise.reject(new Error('boom')),
+        },
+      }),
+    ).resolves.toEqual([])
+    error.mockRestore()
   })
 
   test('shows flagged entries via dev fallback when binding is missing outside production', async () => {
@@ -107,15 +107,10 @@ describe('getVisibleUpdates', () => {
       { ...baseEntry, slug: 'dev-on', flag: 'dev-flag' },
       { ...baseEntry, slug: 'dev-off', flag: 'other-flag' },
     ])
-    evaluateFlagshipFlagMock.mockImplementation(
-      async (_source: unknown, options: { flagKey: string }) => ({
-        kind: 'missing-binding',
-        production: false,
-        enabled: options.flagKey === 'dev-flag',
-      }),
-    )
-
-    const visible = await getVisibleUpdates('en')
+    const visible = await getVisibleUpdates('en', undefined, {
+      APP_ENV: 'development',
+      DEV_FLAGS: 'dev-flag',
+    })
     expect(visible.map((entry) => entry.slug)).toEqual(['dev-on'])
   })
 })
@@ -133,25 +128,19 @@ describe('getVisibleUpdateBySlug', () => {
       ...baseEntry,
       flag: 'hidden-flag',
     })
-    evaluateFlagshipFlagMock.mockResolvedValue({
-      kind: 'evaluated',
-      enabled: false,
-    })
-
     await expect(
-      getVisibleUpdateBySlug('2026-07-01-sample', 'en'),
+      getVisibleUpdateBySlug('2026-07-01-sample', 'en', flagsOn()),
     ).resolves.toBeUndefined()
   })
 
   test('returns entry when flag is enabled', async () => {
     const flagged = { ...baseEntry, flag: 'shown-flag' }
     getUpdateBySlugMock.mockReturnValue(flagged)
-    evaluateFlagshipFlagMock.mockResolvedValue({
-      kind: 'evaluated',
-      enabled: true,
-    })
-
-    const visible = await getVisibleUpdateBySlug('2026-07-01-sample', 'en')
+    const visible = await getVisibleUpdateBySlug(
+      '2026-07-01-sample',
+      'en',
+      flagsOn('shown-flag'),
+    )
     expect(visible).toEqual({ ...baseEntry })
     expect(visible).not.toHaveProperty('flag')
   })
@@ -185,13 +174,8 @@ describe('getLatestVisibleNotice', () => {
       internal,
       { ...baseEntry, slug: 'ordinary', date: '2026-07-27' },
     ])
-    evaluateFlagshipFlagMock.mockResolvedValue({
-      kind: 'evaluated',
-      enabled: false,
-    })
-
     await expect(
-      getLatestVisibleNotice('en', {}, new Date('2026-07-27T12:00:00Z')),
+      getLatestVisibleNotice('en', flagsOn(), new Date('2026-07-27T12:00:00Z')),
     ).resolves.toBeUndefined()
     expect(toListItem(internal)).not.toHaveProperty('notice')
     expect(toListItem(internal)).not.toHaveProperty('flag')

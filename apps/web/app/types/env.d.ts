@@ -63,7 +63,7 @@ declare namespace Cloudflare {
     // unset in `pnpm dev` and production.
     DEV_APP_PORT?: string
     DEV_SANDBOX_PORT?: string
-    FLAGS?: import('../lib/flagship-fallback.server').FlagshipFlagsBinding
+    FLAGS?: import('../lib/feature-flags.server').FlagshipFlagsBinding
   }
 }
 

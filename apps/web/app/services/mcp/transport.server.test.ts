@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   } as Record<string, unknown>,
   verifyJwsAccessToken: vi.fn(),
   getLocalJwksWithHangDetection: vi.fn(),
-  evaluateFlagshipFlag: vi.fn(),
   createDb: vi.fn(),
   readUser: vi.fn(),
   readSession: vi.fn(),
@@ -25,10 +24,6 @@ vi.mock('cloudflare:workers', () => ({ env: mocks.env }))
 
 vi.mock('better-auth/oauth2', () => ({
   verifyJwsAccessToken: mocks.verifyJwsAccessToken,
-}))
-
-vi.mock('~/lib/flagship-fallback.server', () => ({
-  evaluateFlagshipFlag: mocks.evaluateFlagshipFlag,
 }))
 
 vi.mock('~/services/auth.server', () => ({
@@ -78,7 +73,6 @@ beforeEach(() => {
 
   mocks.verifyJwsAccessToken.mockReset()
   mocks.getLocalJwksWithHangDetection.mockReset()
-  mocks.evaluateFlagshipFlag.mockReset()
   mocks.createDb.mockReset()
   mocks.createMcpServer.mockReset()
   mocks.serverConnect.mockReset()
@@ -89,10 +83,6 @@ beforeEach(() => {
     sub: 'verified-user',
     azp: 'client-1',
     scope: 'openid profile',
-  })
-  mocks.evaluateFlagshipFlag.mockResolvedValue({
-    kind: 'evaluated',
-    enabled: false,
   })
   mocks.serverConnect.mockResolvedValue(undefined)
   mocks.createMcpServer.mockReturnValue({ connect: mocks.serverConnect })
@@ -137,7 +127,6 @@ describe('handleMcpRequest method guard', () => {
       expect(response.headers.get('Allow')).toBe('POST')
       expect(mocks.verifyJwsAccessToken).not.toHaveBeenCalled()
       expect(mocks.getLocalJwksWithHangDetection).not.toHaveBeenCalled()
-      expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
       expect(mocks.createDb).not.toHaveBeenCalled()
     },
   )
@@ -176,7 +165,6 @@ describe('handleMcpRequest product scope enforcement', () => {
     expect(response.headers.get('WWW-Authenticate')).toBe(
       'Bearer error="insufficient_scope", scope="artifactshare:access", resource_metadata="https://artifactshare.test/.well-known/oauth-protected-resource/mcp"',
     )
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createDb).not.toHaveBeenCalled()
     expect(mocks.createMcpServer).not.toHaveBeenCalled()
     expect(mocks.transportConstructor).not.toHaveBeenCalled()
@@ -194,7 +182,6 @@ describe('handleMcpRequest product scope enforcement', () => {
 
     expect(response.status).toBe(200)
     await expect(response.text()).resolves.toBe('handled')
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createMcpServer).toHaveBeenCalledWith(
       expect.objectContaining({
         identity: {
@@ -211,40 +198,28 @@ describe('handleMcpRequest product scope enforcement', () => {
     {
       name: 'missing FLAGS',
       environment: {},
-      flagResult: {
-        kind: 'missing-binding',
-        production: false,
-        enabled: false,
-      },
     },
     {
       name: 'default off',
       environment: { FLAGS: { getBooleanValue: vi.fn() } },
-      flagResult: { kind: 'evaluated', enabled: false },
     },
     {
       name: 'evaluation failure',
       environment: { FLAGS: { getBooleanValue: vi.fn() } },
-      flagResult: {
-        kind: 'evaluation-error',
-        error: new Error('flag unavailable'),
-      },
     },
   ])(
     '$name cannot relax missing product scope authorization',
-    async ({ environment, flagResult }) => {
+    async ({ environment }) => {
       Object.assign(mocks.env, environment)
       mocks.verifyJwsAccessToken.mockResolvedValue({
         sub: 'verified-user',
         azp: 'client-1',
         scope: 'openid profile',
       })
-      mocks.evaluateFlagshipFlag.mockResolvedValue(flagResult)
 
       const response = await handleMcpRequest(mcpRequest(), executionContext)
 
       expect(response.status).toBe(403)
-      expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
       expect(mocks.createDb).not.toHaveBeenCalled()
       expect(mocks.createMcpServer).not.toHaveBeenCalled()
     },
@@ -399,7 +374,6 @@ describe('handleMcpRequest product scope enforcement', () => {
     const response = await handleMcpRequest(mcpRequest(), executionContext)
 
     expect(response.status).toBe(401)
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createDb).not.toHaveBeenCalled()
   })
 
@@ -412,7 +386,6 @@ describe('handleMcpRequest product scope enforcement', () => {
     const response = await handleMcpRequest(mcpRequest(), executionContext)
 
     expect(response.status).toBe(401)
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createDb).not.toHaveBeenCalled()
   })
 
@@ -430,7 +403,6 @@ describe('handleMcpRequest product scope enforcement', () => {
       'dev-token',
       expect.any(Object),
     )
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createDb).not.toHaveBeenCalled()
   })
 
@@ -442,7 +414,6 @@ describe('handleMcpRequest product scope enforcement', () => {
 
     expect(response.status).toBe(200)
     expect(mocks.verifyJwsAccessToken).not.toHaveBeenCalled()
-    expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
     expect(mocks.createMcpServer).toHaveBeenCalledWith(
       expect.objectContaining({
         identity: {

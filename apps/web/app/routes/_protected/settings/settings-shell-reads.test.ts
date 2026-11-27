@@ -61,8 +61,8 @@ const policyReads = vi.hoisted(() => vi.fn())
 vi.mock('~/services/project-membership.server', () => ({
   listJoinedProjectsForDropdown: joined,
 }))
-vi.mock('~/lib/bot-members-flag.server', () => ({
-  isBotMembersEnabled: async () => false,
+vi.mock('~/lib/feature-flags.server', () => ({
+  isFlagOn: async () => false,
 }))
 const contract = {
   plan: 'plus' as const,

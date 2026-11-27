@@ -1,9 +1,6 @@
 import { env } from 'cloudflare:workers'
 
-import {
-  evaluateFlagshipFlag,
-  type FlagshipSource,
-} from '~/lib/flagship-fallback.server'
+import { isFlagKeyOn, type FlagSource } from '~/lib/feature-flags.server'
 import type {
   UpdateDetail,
   UpdateEntry,
@@ -30,24 +27,9 @@ export function isUpdateEntryVisible(
   return enabled
 }
 
-async function isFlagEnabled(
-  flagKey: string,
-  source: FlagshipSource,
-): Promise<boolean> {
-  const result = await evaluateFlagshipFlag(source, {
-    flagKey,
-    context: FLAG_CONTEXT,
-  })
-  if (result.kind === 'evaluated') return result.enabled
-  if (result.kind === 'missing-binding' && !result.production) {
-    return result.enabled
-  }
-  return false
-}
-
 async function filterByFlagVisibility(
   entries: UpdateEntry[],
-  source: FlagshipSource,
+  source: FlagSource,
 ): Promise<UpdateEntry[]> {
   const flagKeys = [
     ...new Set(
@@ -60,7 +42,10 @@ async function filterByFlagVisibility(
   const enabledByFlag = new Map<string, boolean>()
   await Promise.all(
     flagKeys.map(async (flagKey) => {
-      enabledByFlag.set(flagKey, await isFlagEnabled(flagKey, source))
+      enabledByFlag.set(
+        flagKey,
+        await isFlagKeyOn(source, flagKey, FLAG_CONTEXT),
+      )
     }),
   )
 
@@ -98,7 +83,7 @@ export function toDetail(entry: UpdateEntry): UpdateDetail {
 export async function getVisibleUpdates(
   locale: UpdateLocale,
   product?: UpdateProduct,
-  source: FlagshipSource = env,
+  source: FlagSource = env,
 ): Promise<UpdateEntry[]> {
   const entries = getAllUpdates(locale, product)
   const visible = await filterByFlagVisibility(entries, source)
@@ -108,7 +93,7 @@ export async function getVisibleUpdates(
 export async function getVisibleUpdateBySlug(
   slug: string,
   locale: UpdateLocale,
-  source: FlagshipSource = env,
+  source: FlagSource = env,
 ): Promise<UpdateEntry | undefined> {
   const entry = getUpdateBySlug(slug, locale)
   if (!entry) {
@@ -119,13 +104,13 @@ export async function getVisibleUpdateBySlug(
     return withoutFlag(entry)
   }
 
-  const enabled = await isFlagEnabled(entry.flag, source)
+  const enabled = await isFlagKeyOn(source, entry.flag, FLAG_CONTEXT)
   return isUpdateEntryVisible(entry, enabled) ? withoutFlag(entry) : undefined
 }
 
 export async function getLatestVisibleNotice(
   locale: UpdateLocale = 'en',
-  source: FlagshipSource = env,
+  source: FlagSource = env,
   now = new Date(),
 ): Promise<UpdateEntry | undefined> {
   const visible = await filterByFlagVisibility(getAllUpdates(locale), source)

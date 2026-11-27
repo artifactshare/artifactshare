@@ -67,7 +67,7 @@ vi.mock('~/services/bot-members.server', () => ({
   reissueWorkspaceBotCredential: mutate,
 }))
 vi.mock('~/services/bot-destinations.server', () => ({}))
-vi.mock('~/lib/bot-members-flag.server', () => ({}))
+vi.mock('~/lib/feature-flags.server', () => ({}))
 vi.mock('~/services/api-tokens.server', () => ({ revokeApiToken: mutate }))
 vi.mock('~/services/cli-refresh-credentials.server', () => ({
   revokeAllCliRefreshCredentialFamilies: mutate,
