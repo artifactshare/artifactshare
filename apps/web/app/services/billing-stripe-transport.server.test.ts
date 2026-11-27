@@ -51,7 +51,12 @@ const subscription = {
 }
 let db: Kysely<DB>
 let requests: Request[]
-let replies: Array<{ path: string; body: unknown }>
+let replies: Array<{
+  method?: string
+  path: string
+  status?: number
+  body: unknown
+}>
 beforeEach(async () => {
   db = createMigratedInMemoryDb().db
   await db
@@ -74,11 +79,12 @@ beforeEach(async () => {
       if (
         !reply ||
         new URL(request.url).origin !== 'https://api.stripe.com' ||
-        new URL(request.url).pathname !== reply.path
+        new URL(request.url).pathname !== reply.path ||
+        (reply.method !== undefined && request.method !== reply.method)
       ) {
         throw new Error(`Unexpected Stripe transport request: ${request.url}`)
       }
-      return Response.json(reply.body)
+      return Response.json(reply.body, { status: reply.status })
     }),
   )
 })
@@ -163,6 +169,159 @@ test('customer and fixed-price checkout serialize billing fields and consume ret
       .select('stripe_customer_id')
       .executeTakeFirstOrThrow(),
   ).toEqual({ stripe_customer_id: 'cus_local' })
+})
+
+const returningCustomer = {
+  id: 'ws1',
+  plan: 'free',
+  stripe_customer_id: 'cus_local',
+  stripe_subscription_id: null,
+  stripe_subscription_status: 'none',
+}
+const stripeList = (data: unknown[]) => ({
+  object: 'list',
+  data,
+  has_more: false,
+})
+const requestLine = (request: Request) =>
+  `${request.method} ${new URL(request.url).pathname}`
+
+function checkoutForReturningCustomer() {
+  return createCheckoutSession(
+    db,
+    createStripeClient(env),
+    env,
+    returningCustomer,
+    'team',
+    'monthly',
+    'https://app.example.test',
+    'usd',
+    'en',
+  )
+}
+
+test.each(['active', 'trialing', 'past_due', 'unpaid', 'incomplete'])(
+  'checkout for a customer whose subscription is %s opens the billing portal instead of a second subscription',
+  async (status) => {
+    replies.push(
+      { method: 'GET', path: '/v1/checkout/sessions', body: stripeList([]) },
+      {
+        method: 'GET',
+        path: '/v1/subscriptions',
+        body: stripeList([{ ...subscription, id: 'sub_earlier', status }]),
+      },
+      {
+        method: 'POST',
+        path: '/v1/billing_portal/sessions',
+        body: { url: 'https://portal.example.test/local' },
+      },
+    )
+    const result = await checkoutForReturningCustomer()
+    expect(
+      requests.map(requestLine),
+      'no second Checkout session is created',
+    ).not.toContain('POST /v1/checkout/sessions')
+    expect(result).toEqual({
+      kind: 'ok',
+      url: 'https://portal.example.test/local',
+    })
+    expect(
+      new URL(requests[1]!.url).searchParams.get('customer'),
+      'subscriptions are read for the workspace customer',
+    ).toBe('cus_local')
+    expect(
+      Object.fromEntries(new URLSearchParams(await requests[2]!.text())),
+    ).toEqual({
+      customer: 'cus_local',
+      configuration: env.STRIPE_PORTAL_CONFIGURATION,
+      return_url: 'https://app.example.test/settings/billing',
+    })
+  },
+)
+
+test('a new checkout expires the Checkout sessions the customer still has open, so only one can be paid', async () => {
+  replies.push(
+    {
+      method: 'GET',
+      path: '/v1/checkout/sessions',
+      body: stripeList([
+        { id: 'cs_other_tab', object: 'checkout.session', status: 'open' },
+      ]),
+    },
+    {
+      method: 'POST',
+      path: '/v1/checkout/sessions/cs_other_tab/expire',
+      body: {
+        id: 'cs_other_tab',
+        object: 'checkout.session',
+        status: 'expired',
+      },
+    },
+    {
+      method: 'GET',
+      path: '/v1/subscriptions',
+      body: stripeList([
+        { ...subscription, id: 'sub_never_paid', status: 'incomplete_expired' },
+      ]),
+    },
+    {
+      method: 'POST',
+      path: '/v1/checkout/sessions',
+      body: { id: 'cs_local', url: 'https://checkout.example.test/local' },
+    },
+  )
+  const result = await checkoutForReturningCustomer()
+  expect(requests.map(requestLine)).toEqual([
+    'GET /v1/checkout/sessions',
+    'POST /v1/checkout/sessions/cs_other_tab/expire',
+    'GET /v1/subscriptions',
+    'POST /v1/checkout/sessions',
+  ])
+  expect(result).toEqual({
+    kind: 'ok',
+    url: 'https://checkout.example.test/local',
+  })
+  const openSessionQuery = new URL(requests[0]!.url).searchParams
+  expect(openSessionQuery.get('customer')).toBe('cus_local')
+  expect(openSessionQuery.get('status')).toBe('open')
+  expect(new URLSearchParams(await requests[3]!.text()).get('customer')).toBe(
+    'cus_local',
+  )
+})
+
+test('checkout opens no new session when an open one can no longer be expired', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  replies.push(
+    {
+      method: 'GET',
+      path: '/v1/checkout/sessions',
+      body: stripeList([
+        { id: 'cs_other_tab', object: 'checkout.session', status: 'open' },
+      ]),
+    },
+    {
+      // The other tab finished paying between the list and the expire.
+      method: 'POST',
+      path: '/v1/checkout/sessions/cs_other_tab/expire',
+      status: 400,
+      body: {
+        error: {
+          type: 'invalid_request_error',
+          message: 'This Checkout Session is no longer open.',
+        },
+      },
+    },
+    // Stripe would accept a new session, so only the service can refuse it.
+    { method: 'GET', path: '/v1/subscriptions', body: stripeList([]) },
+    {
+      method: 'POST',
+      path: '/v1/checkout/sessions',
+      body: { id: 'cs_local', url: 'https://checkout.example.test/local' },
+    },
+  )
+  const result = await checkoutForReturningCustomer()
+  expect(requests.map(requestLine)).not.toContain('POST /v1/checkout/sessions')
+  expect(result).toEqual({ kind: 'external-failed' })
 })
 
 test('portal uses its dedicated configuration and consumes the session URL', async () => {
