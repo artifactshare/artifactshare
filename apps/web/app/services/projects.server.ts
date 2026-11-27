@@ -29,6 +29,7 @@ import {
   workspaceScopedProjectVisibility,
 } from '~/services/access.server'
 import {
+  activeLinkExpiry,
   isWorkspaceAccessRevoked,
   projectAccessAllowedSql,
   workspaceAccessRevokedSql,
@@ -162,21 +163,6 @@ export type ShareableViewer = {
   emailVerified: boolean
 }
 
-export function validLinkExpirySql(
-  expiresAt: ReturnType<typeof sql.ref>,
-  now: string,
-) {
-  return sql<boolean>`(
-    ${expiresAt} IS NULL OR (
-      (
-        strftime('%Y-%m-%dT%H:%M:%fZ', ${expiresAt}) = ${expiresAt}
-        OR strftime('%Y-%m-%dT%H:%M:%SZ', ${expiresAt}) = ${expiresAt}
-      )
-      AND julianday(${expiresAt}) > julianday(${now})
-    )
-  )`
-}
-
 export function shareableLinkAccessToViewer(
   eb: ExpressionBuilder<DB, 'shareables'>,
   now = nowIso(),
@@ -191,7 +177,7 @@ export function shareableLinkAccessToViewer(
         .whereRef('workspaces.id', '=', 'shareables.workspace_id')
         .where('workspaces.link_sharing_enabled', '=', 1),
     ),
-    validLinkExpirySql(sql.ref('shareables.link_expires_at'), now),
+    activeLinkExpiry(now),
   ])
 }
 
