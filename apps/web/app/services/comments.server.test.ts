@@ -1091,6 +1091,31 @@ describe('comments server', () => {
     ).toEqual([])
   })
 
+  test('static-site threads can be posted on a directory served by its index.html', async () => {
+    const access = await useStaticSite(false)
+    await fixture.db
+      .insertInto('version_files')
+      .values({
+        id: 'file:/guide/index.html',
+        version_id: 'sv1',
+        path: '/guide/index.html',
+        r2_key: 'ws1/s1/sv1/guide/index.html',
+        mime_type: 'text/html',
+        size_bytes: 100,
+        sha256: '/guide/index.html',
+        created_at: '2026-05-29T00:01:00.000Z',
+      })
+      .execute()
+    const result = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Here',
+      { ...siteSelector, targetPath: '/guide' },
+    )
+    expect(result.kind).toBe('ok')
+  })
+
   test('static-site position writes are scoped to the thread location', async () => {
     const access = await useStaticSite(true)
     const ids: Record<string, string> = {}

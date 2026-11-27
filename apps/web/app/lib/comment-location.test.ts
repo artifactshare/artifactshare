@@ -90,6 +90,13 @@ describe('static-site comment locations', () => {
     )
   })
 
+  test('a directory path is served by its index.html with or without fallback', () => {
+    const files = new Set(['/index.html', '/guide/index.html'])
+    expect(isCommentLocationServed('/guide', files, false)).toBe(true)
+    expect(isCommentLocationServed('/guide', files, true)).toBe(true)
+    expect(isCommentLocationServed('/other', files, false)).toBe(false)
+  })
+
   test('posted locations must be canonical and inside the version', () => {
     const files = new Set(['/index.html', '/docs/page.html'])
     expect(isCommentLocationServed('/docs/page.html', files, false)).toBe(true)
