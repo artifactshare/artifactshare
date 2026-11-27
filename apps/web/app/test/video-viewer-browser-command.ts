@@ -11,7 +11,7 @@ import {
   type ViewerPreferences,
 } from '../viewers/shared/preferences'
 import { VIDEO_ORIGINAL_PATH } from '../../workers/lib/video-viewer'
-import { applyBrowserFixtureSchema } from './browser-fixture-schema'
+import { sandboxWorker } from './sandbox-harness'
 import {
   PARENT_PATH,
   parentDocument,
@@ -24,7 +24,6 @@ import {
   type ViewerQueries,
 } from './viewer-queries'
 
-const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'video-viewer-browser-fixture-only-'.repeat(3)
 
 // Every part of the player a reader acts on, by the role it is published
@@ -623,17 +622,7 @@ export const videoViewerScenario = defineBrowserCommand(
     const framed = scenario === 'preferences'
     let parentPage = ''
     const height = touch ? 390 : width < 700 ? 844 : 900
-    const { createTestHarness } = await import('wrangler')
-    const harness = createTestHarness({
-      root: webRoot,
-      workers: [
-        {
-          configPath: 'wrangler.sandbox.jsonc',
-          secrets: { BETTER_AUTH_SECRET: secret },
-        },
-      ],
-    })
-    const sandbox = harness.getWorker<{ DB: D1Database; BUCKET: R2Bucket }>()
+    const sandbox = await sandboxWorker(secret)
     const requests: string[] = []
     const workerStatuses: string[] = []
     let origin = ''
@@ -733,8 +722,6 @@ export const videoViewerScenario = defineBrowserCommand(
     // another one.
     const viewerLocale: Locale = locale === 'ja-JP' ? 'ja' : 'en'
     try {
-      await harness.listen()
-      await applyBrowserFixtureSchema((await sandbox.getEnv()).DB)
       const fixture = scenario === 'playback' ? PLAYABLE_CLIP : FIXTURE
       const signEntry = await seedVideoArtifact(await sandbox.getEnv(), fixture)
       const entry = new URL(await signEntry())
@@ -1412,7 +1399,6 @@ export const videoViewerScenario = defineBrowserCommand(
           server.close((error) => (error ? reject(error) : resolve()))
         })
       }
-      await harness.close()
     }
   },
 )

@@ -12,14 +12,13 @@ import {
   type ViewerPreferences,
 } from '../viewers/shared/preferences'
 import { PDF_ORIGINAL_PATH, PDFJS_ASSET_PREFIX } from '../viewers/pdf/paths'
-import { applyBrowserFixtureSchema } from './browser-fixture-schema'
+import { sandboxWorker } from './sandbox-harness'
 import {
   viewerQueries,
   type ViewerPart,
   type ViewerQueries,
 } from './viewer-queries'
 
-const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'pdf-viewer-browser-fixture-only-'.repeat(3)
 
 // Every part of the viewer a reader acts on, by the role it is published
@@ -1585,17 +1584,7 @@ export const pdfViewerScenario = defineBrowserCommand(
     options: PdfScenarioOptions = {},
   ) => {
     const height = width < 780 ? 844 : 900
-    const { createTestHarness } = await import('wrangler')
-    const harness = createTestHarness({
-      root: webRoot,
-      workers: [
-        {
-          configPath: 'wrangler.sandbox.jsonc',
-          secrets: { BETTER_AUTH_SECRET: secret },
-        },
-      ],
-    })
-    const sandbox = harness.getWorker<{ DB: D1Database; BUCKET: R2Bucket }>()
+    const sandbox = await sandboxWorker(secret)
     const requests: string[] = []
     const workerStatuses: string[] = []
     let origin = ''
@@ -1698,8 +1687,6 @@ export const pdfViewerScenario = defineBrowserCommand(
           reducedMotion: 'reduce',
         })
     try {
-      await harness.listen()
-      await applyBrowserFixtureSchema((await sandbox.getEnv()).DB)
       const signEntry = await seedPdfArtifact(
         await sandbox.getEnv(),
         scenarioPdf(scenario),
@@ -2197,7 +2184,6 @@ export const pdfViewerScenario = defineBrowserCommand(
           server.close((error) => (error ? reject(error) : resolve()))
         })
       }
-      await harness.close()
     }
   },
 )
