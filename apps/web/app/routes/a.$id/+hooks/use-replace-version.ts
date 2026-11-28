@@ -40,7 +40,6 @@ export function useReplaceVersion(
   const translator = useT()
   const revalidator = useRevalidator()
   const pending = useRef(false)
-  // options を ref で保持して、callback identity を毎 render で変えない
   const optionsRef = useLatestRef(options)
 
   return useCallback(
@@ -57,7 +56,6 @@ export function useReplaceVersion(
           toastId,
           deps: {
             // fetch は Window method で、bare reference として渡すと
-            // 呼び出し時に this binding が外れて "Illegal invocation" になる
             fetcher: (resource, init) => fetch(resource, init),
             revalidate: () => revalidator.revalidate(),
             t: translator.t,

@@ -13,8 +13,6 @@ import { loadHomeUpload } from '../+lib/home-upload.server'
 
 export const middleware = [requireUserMiddleware]
 
-// Home's lists under the shared header. The header's data comes from the
-// shell route; this layout reads only what the upload dialog needs.
 export function loader({ context }: Route.LoaderArgs) {
   return loadHomeUpload(createDb(), requireUser(context))
 }

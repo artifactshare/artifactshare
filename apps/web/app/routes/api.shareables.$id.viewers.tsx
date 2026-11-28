@@ -7,9 +7,6 @@ import type { Route } from './+types/api.shareables.$id.viewers'
 
 export const middleware = [requireUserApiMiddleware]
 
-// Every loader response is per-viewer and must never be cached anywhere.
-// (401 comes from the middleware and 405 from the action; those are not
-// loader responses.)
 const noStoreHeaders = { 'Cache-Control': 'private, no-store' } as const
 
 export async function loader({ request, context, params }: Route.LoaderArgs) {

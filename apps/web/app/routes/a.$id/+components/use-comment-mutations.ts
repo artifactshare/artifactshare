@@ -143,7 +143,6 @@ export function useCommentMutations({
         }
         if (result.body?.error?.code === 'version_conflict') {
           if (!isCurrentShareableId(requestShareableId)) return false
-          // A PDF page comment is placed on the page, not on selected text.
           const pagePost =
             'anchor' in payload &&
             payload.anchor !== undefined &&
@@ -175,7 +174,6 @@ export function useCommentMutations({
         })
         throw new Error('comment mutation failed')
       }
-      // A concurrent failure owns its own notification, even for this operation.
       if (priorErrorToastId !== undefined) {
         toast.dismiss(priorErrorToastId)
         if (errorToasts.current.get(operationKey) === priorErrorToastId) {

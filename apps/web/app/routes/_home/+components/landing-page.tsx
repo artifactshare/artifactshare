@@ -21,8 +21,6 @@ import { MCP_CONNECTOR_URL } from '~/lib/mcp-metadata'
 import { cn } from '~/lib/utils'
 import { AiBrandMark } from './landing-icons'
 
-/* Live sample artifacts referenced from the use-case cards and the hero
- * screenshot. Link-shared with no expiry; owned by the product team. */
 const SAMPLES = {
   mock: {
     ja: 'https://artifactshare.com/a/3kfkaseiki',
@@ -197,9 +195,6 @@ function ConnectorButtons() {
   )
 }
 
-/* Interactive product stage: switching AI sources keeps the exact same
- * stable team URL while advancing the revision badge — visualizing the core
- * USV without extra copy. */
 function HeroStage() {
   const { t, locale } = useT()
   const [activeId, setActiveId] = useState<(typeof HERO_SOURCES)[number]['id']>(
@@ -754,7 +749,6 @@ function WorksAndTrustSection() {
           </div>
         </div>
 
-        {/* Editorial 2-column split instead of generic 3-icon cards */}
         <div className="border-border mt-16 grid grid-cols-1 gap-10 border-t pt-14 lg:grid-cols-[340px_1fr] lg:gap-16">
           <div>
             <h2 className={H2}>

@@ -68,7 +68,6 @@ const ERROR_KEYS: Record<string, TKey> = {
 export function botStatus(
   bot: Pick<WorkspaceBotRow, 'botStoppedAt' | 'credentialLive'>,
 ): 'stopped' | 'expired' | 'active' {
-  // Single badge, priority: stopped > expired > active.
   if (bot.botStoppedAt !== null) return 'stopped'
   if (!bot.credentialLive) return 'expired'
   return 'active'
@@ -392,8 +391,6 @@ function BotActionDialog({
 
 function BotDestination({ bot }: { bot: WorkspaceBotRow }) {
   const { t } = useT()
-  // Live project name (follows renames); snapshot + deleted marker after the
-  // destination project is gone. The bot row itself stays listed.
   if (bot.projectName) return <span>{bot.projectName}</span>
   if (bot.projectNameSnapshot) {
     return (
@@ -450,9 +447,6 @@ function FetcherError({
   overrides = {},
 }: {
   fetcher: { state: string; data?: BotActionResponse }
-  // Reissue shares codes with create but needs different copy: the create
-  // hints (pick another project / rename) are impossible advice in a dialog
-  // with no inputs.
   variant?: 'create' | 'reissue'
   overrides?: Record<string, TKey>
 }) {
@@ -706,8 +700,6 @@ function BotCreateDialog({
   const [projects, setProjects] = useState<SelectedDestination[]>([])
   const [primary, setPrimary] = useState('')
   const [dismissedToken, setDismissedToken] = useState<string | null>(null)
-  // Derived: once the action returns a token, the form dialog yields to the
-  // one-time token dialog until the admin confirms storage.
   const token =
     fetcher.state === 'idle' &&
     fetcher.data?.token &&
@@ -819,8 +811,6 @@ export function BotTokenDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        // The copy confirmation gates closing: the token is shown exactly
-        // once, so an accidental dismiss must not lose it.
         if (!open && stored) onClose()
       }}
     >
@@ -845,8 +835,6 @@ export function BotTokenDialog({
             type="button"
             variant="outline"
             onClick={() => {
-              // A false "Copied" here loses the one-time token for good: the
-              // admin ticks the checkbox and closes. Only confirm real writes.
               void writeClipboardText(token).then((ok) => setCopied(ok))
             }}
           >

@@ -85,7 +85,6 @@ function RedesignProjectRow({
         </span>
       </span>
       <Link
-        // アーカイブ済み詳細は 404 のため、行はアーカイブ一覧 (復元の入口) へ
         to={row.archivedAt ? '/projects/archived' : `/projects/${row.id}`}
         className="absolute inset-0 z-0 rounded-[var(--r-sm)]"
         aria-label={row.name}
@@ -151,7 +150,6 @@ export function RedesignedProjectsIndex({
   const fetcher = useFetcher()
   const [showArchived, setShowArchived] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  // 押下直後にその場で「参加中」へ変える (revalidate で節が移る)
   const [justJoined, setJustJoined] = useState<ReadonlySet<string>>(new Set())
 
   const sharedById = useMemo(

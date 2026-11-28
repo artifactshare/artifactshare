@@ -35,7 +35,6 @@ import {
   SheetClose,
 } from '~/components/ui/sheet'
 
-// Each `to` is relative to the Settings shell route that renders the menu.
 const GROUPS: {
   label: TKey
   items: {
@@ -118,7 +117,6 @@ export function SettingsNav(props: SettingsNavProps) {
   const { pathname } = useLocation()
   return <SettingsNavigation {...props} pathname={pathname} />
 }
-/** The menu groups and items a person in this role may open, in order. */
 export function settingsNavGroups({
   currentUserIsAdmin,
   workspaceKind,

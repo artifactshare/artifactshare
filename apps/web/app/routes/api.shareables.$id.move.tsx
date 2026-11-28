@@ -59,8 +59,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   })
 }
 
-// 'inbox' moves to the owner's 未整理; any other non-empty string is a target
-// project container id, validated server-side.
 function parseDestination(value: unknown): MoveDestination | null {
   if (value === 'inbox') return { type: 'inbox' }
   if (typeof value === 'string' && value.length > 0) {

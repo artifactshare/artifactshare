@@ -33,9 +33,6 @@ import { captureFirstTouch } from '~/lib/analytics/first-touch.client'
 import { artifactIdFromReturnPath } from '~/lib/analytics/first-touch'
 type Step = 'email' | 'code'
 
-// The page is a tiny two-step wizard (enter email → enter code). The five
-// pieces of state move together, so a reducer keeps the transitions in one
-// place instead of fanning out across separate setState calls.
 type FormState = {
   step: Step
   email: string
@@ -94,15 +91,11 @@ export default function SignIn() {
     | undefined
   const maintenance = rootData?.maintenance === true
 
-  // OAuth authorize flow (an MCP host is connecting) carries a signed request;
-  // only then do we frame the page as "sign in to connect".
   const isOAuth = params.has('client_id') && params.has('sig')
 
   const [state, dispatch] = useReducer(formReducer, INITIAL_STATE)
   const { step, email, code, error: formError, submitting } = state
 
-  // Focus the code field when the code step appears (the UX `autoFocus` would
-  // give, without the static attribute that disorients users on page load).
   const codeInputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (step === 'code') codeInputRef.current?.focus()
@@ -113,7 +106,6 @@ export default function SignIn() {
     : safeInternalNext(params.get('next'))
 
   // A viewer arriving from a public link on another host brings no readable
-  // first-touch cookie, so record one here before sign-up can complete.
   const shouldLoadAnalytics =
     rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
   useEffect(() => {
@@ -131,8 +123,6 @@ export default function SignIn() {
   const emailInputRef = useRef<HTMLInputElement>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
   // better-auth redirects the unlinkable-account case as ?error=account_not_linked
-  // (lowercase, from "account not linked".split(" ").join("_")), so match
-  // case-insensitively; the AADSTS token is always uppercase from Microsoft.
   const handleSendCode = async (e: FormEvent) => {
     e.preventDefault()
     dispatch({ type: 'submitStart' })

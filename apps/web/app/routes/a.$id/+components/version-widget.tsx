@@ -126,9 +126,6 @@ export function VersionWidget({
       closePopover()
     }
     // 成果物プレビューは iframe。本文クリックの pointerdown は親 document に
-    // 届かないので onPointerDown では拾えない。代わりにフォーカスが iframe へ
-    // 移ったこと (= プレビューを触った合図) で閉じる。focus はプレビューに
-    // 残したいので trigger へは戻さない。
     function onWindowBlur() {
       if (document.activeElement instanceof HTMLIFrameElement) setOpen(false)
     }

@@ -38,8 +38,6 @@ export function compareCommentMessages(
           : 0
 }
 
-/** Compact retained tail coverage by tuple, not by notification count. Existing
- * explicitly fetched pages already cover their rows; don't request them twice. */
 function compactTailPages(
   thread: CommentThreadView,
   pages: CommentPageRequest[],
@@ -49,8 +47,6 @@ function compactTailPages(
   const covered = new Set<string>()
   const explicit = pages.filter((page) => !page.through)
   const rowsFor = (page: CommentPageRequest) => {
-    // Requested limits do not establish coverage: an around lookup near the
-    // latest message may return fewer rows than requested, across a cache gap.
     const lower = page.coverageStart
       ? boundary(page.coverageStart, thread.id)
       : undefined
@@ -80,9 +76,6 @@ function compactTailPages(
   }
   for (const page of explicit)
     for (const message of rowsFor(page)) covered.add(message.id)
-  // Each server window establishes continuity only within its own rows. Local
-  // adjacency can hide a gap after coalesced notifications; join windows only
-  // when they share a row, never merely because they are neighbours in cache.
   const groups: CommentMessageView[][] = []
   const windows = pages.flatMap((page) => (page.through ? [rowsFor(page)] : []))
   windows.push(tail)
@@ -138,10 +131,6 @@ function samePageRequest(a: CommentPageRequest, b?: CommentPageRequest) {
   )
 }
 
-/** Revalidate the stored interval, not just the original requested row count.
- * Insertions can push retained rows out of a bounded response. Seek backwards
- * until the intended lower bound is reached, keeping one owner for the interval.
- * The caller publishes the result only after its request epoch is still current. */
 export async function revalidateCommentPage(
   current: CommentThreadView,
   page: CommentPageRequest,
@@ -159,7 +148,6 @@ export async function revalidateCommentPage(
     const olderCursor = merged.olderCursor
     merged = mergeCommentWindow(merged, incoming, request)
     if (request !== page) {
-      // Continuations belong to the original interval, not independent pages.
       const oldest = incoming.messages[1]
       merged.olderCursor = olderCursor
       merged.loadedPages = owners?.map((owner) =>
@@ -202,8 +190,6 @@ export async function revalidateCommentPage(
   }
 }
 
-/** Replace the covered tuple interval, including vanished rows. Keep other pages,
- * and use the server's promoted first message after first-message deletion. */
 export function mergeCommentWindow(
   current: CommentThreadView | undefined,
   incoming: CommentThreadView,
@@ -271,8 +257,6 @@ export function mergeCommentWindow(
   const messages = new Map(retained.map((message) => [message.id, message]))
   for (const message of incoming.messages) messages.set(message.id, message)
   let pages = [...(current.loadedPages ?? [])]
-  // A latest-window refresh can displace replies that remain displayed. Keep a
-  // stable bounded range for that old tail so later edits/deletions reach it.
   const retainedIds = new Set(retained.map((message) => message.id))
   const latestIds = new Set(current.latestReplyIds)
   const previousTail = current.latestReplyIds
@@ -302,7 +286,6 @@ export function mergeCommentWindow(
         ? { ...incoming.subject, checking: current.subject.checking }
         : incoming.subject,
     messages: [...messages.values()].sort(compareCommentMessages),
-    // Around pages can be disjoint; they must not skip the contiguous older path.
     olderCursor:
       page?.aroundMessageId || page?.through || page?.interiorGap
         ? current.olderCursor
@@ -322,7 +305,6 @@ export function patchCommentThreads(
 ): CommentThreadView[] {
   const byId = new Map(current.map((thread) => [thread.id, thread]))
   for (const thread of incoming) {
-    // A page cannot restore membership removed by an authoritative refresh.
     if (patch.page && !byId.has(thread.id)) continue
     byId.set(
       thread.id,
@@ -346,7 +328,6 @@ export function patchCommentThreads(
   return [...byId.values()]
 }
 
-/** Only a server window proves continuity. Sorted cached rows alone do not. */
 export function commentGapRequests(
   thread: CommentThreadView,
 ): Map<string, CommentPageRequest> {

@@ -39,9 +39,6 @@ export default function DevScenario() {
         data-regression-route-link
         aria-hidden="true"
         tabIndex={-1}
-        // z-50 keeps the harness link above page chrome — the landing header is a
-        // sticky z-40 bar that would otherwise swallow the integration
-        // script's forced click.
         className="fixed top-0 left-0 z-50 size-px opacity-0"
       />
       <ScenarioPage

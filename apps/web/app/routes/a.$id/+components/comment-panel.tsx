@@ -85,8 +85,6 @@ interface CommentPanelProps {
   collapsedFallbackRef?: RefObject<HTMLElement | null>
   requestedFilter?: CommentFilter
   topbarCollapsed?: boolean
-  // 選択範囲からではなく、成果物全体へのコメントを新規作成する composer を
-  // パネル下部に出す（static_site・PDF・動画）。
   showNewThreadComposer?: boolean
 }
 
@@ -354,8 +352,6 @@ function useRevisitCommentFocus({
 >) {
   const autofocusSettled = useRef(false)
   const consumeFocus = useEffectEvent(() => onTargetFocusConsumed?.())
-  // Initial opening is handled by the sheet's autofocus event below. Only an
-  // already-open panel needs a deferred focus request; it cannot race autofocus.
   useEffect(() => {
     if (!open) {
       autofocusSettled.current = false
@@ -446,8 +442,6 @@ function CommentPanelHeader() {
   )
 }
 
-// The empty list's hint matches what the composer below will post: on a PDF
-// with a page shown, a comment on that page.
 function EmptyThreadsBody({ composer }: { composer: boolean }) {
   const { t } = useT()
   const pdfPage = use(PdfPageContext)?.page
@@ -480,8 +474,6 @@ function NewThreadComposer({
   const site = use(CommentLocationsContext)
   const pdfPage = use(PdfPageContext)?.page ?? null
   const [body, setBody] = useState('')
-  // Removing the page keeps this draft on the whole file, wherever the reader
-  // moves next; a posted comment starts the next draft on the page again.
   const [pageRemoved, setPageRemoved] = useState(false)
   const latestDraft = useLatestRef({ body, pageRemoved })
   const attachedPage = pageRemoved ? null : pdfPage
@@ -495,7 +487,6 @@ function NewThreadComposer({
       'button[type="submit"]',
     )
     const textarea = form.querySelector('textarea')
-    // The page is taken when the comment is sent, not when it is saved.
     const anchor = attachedPage
       ? { kind: 'pdf-page' as const, ...attachedPage }
       : undefined
@@ -504,8 +495,6 @@ function NewThreadComposer({
       latestDraft.current.body === submittedBody &&
       latestDraft.current.pageRemoved === submittedPageRemoved
     ) {
-      // Clearing disables Post; keep keyboard focus in this mounted composer
-      // only when the reader has not moved it elsewhere during the request.
       if (
         form.isConnected &&
         form.ownerDocument.activeElement === button &&
@@ -676,9 +665,6 @@ function ThreadCard({
       aria-labelledby={`comment-card-header-${thread.id}`}
       data-new-comment-thread={hasNewMessages || undefined}
       className={threadCardClassName(canNavigateToText, target, thread.status)}
-      // A full-size button below provides the keyboard target. Pointer capture
-      // complements it for taps on non-interactive content without turning the
-      // article containing other controls into a button.
       onPointerDownCapture={(event) => {
         navigationPointerRef.current = null
         if (!canNavigateToText || !event.isPrimary || event.button !== 0) return
@@ -847,9 +833,6 @@ function isThreadNavigationHandledByChild(target: EventTarget | null): boolean {
   )
 }
 
-// A PDF page comment: `p.N` opens the page where it is the same page;
-// otherwise the card names the version it was made on and cannot move the
-// viewer.
 function PdfPageSubject({
   subject,
 }: {
@@ -859,8 +842,6 @@ function PdfPageSubject({
   const bridge = use(PdfPageContext)
   const page = subject.pageNumber
   const target = subject.navigableVersionId
-  // Navigation was decided for the server's current version; a view still
-  // showing another version labels the page instead of moving.
   if (
     subject.canNavigate &&
     bridge &&

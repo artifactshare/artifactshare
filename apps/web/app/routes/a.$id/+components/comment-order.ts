@@ -25,8 +25,6 @@ export function compareCommentThreads(
   right: CommentThreadView,
 ): number {
   const rank = (thread: CommentThreadView) => {
-    // A comment still being checked keeps the attached position, so the
-    // list does not jump when the check finishes.
     if (
       thread.subject.kind === 'text' &&
       (thread.subject.state === 'attached' ||

@@ -68,9 +68,6 @@ import type { Route } from './+types/api.shareables.uploads'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-// This is the admission envelope for the legacy multipart endpoint, not the
-// static-site product contract. Static-site hints use the narrower limits from
-// static-site-upload-response.server before reaching this parser.
 const LEGACY_MULTIPART_MAX_FILES = 50
 export const LEGACY_MULTIPART_UPLOAD_ENVELOPE = {
   maxFiles: LEGACY_MULTIPART_MAX_FILES,
@@ -111,9 +108,6 @@ export async function action({ request, context }: Route.ActionArgs) {
     publish_key: rawPublishKey ?? undefined,
     key_visibility: searchParams.get('key_visibility') ?? undefined,
     expected_version: rawExpectedVersion ?? undefined,
-    // Unknown hints historically fell through to the single-file path. Keep
-    // that compatibility while asserting all recognized query fields through
-    // the shared contract.
     ...(rawKindHint === null || rawKindHint === 'static_site'
       ? { artifact_kind: rawKindHint ?? undefined }
       : {}),
@@ -187,7 +181,6 @@ export async function action({ request, context }: Route.ActionArgs) {
       400,
     )
   }
-  // Preserve the workspace eligibility check before validating file fields.
   const parsedVisibility = ArtifactUploadFormSchema.shape.visibility.safeParse(
     form.get('visibility') ?? undefined,
   )
@@ -643,10 +636,6 @@ async function resolveAndAuthorizeUpload(
   return { kind: 'ok', destination }
 }
 
-// Whether a first-post measurement send may reach Google. Browser posts honor
-// the visitor's analytics consent (same gate as the browser analytics); CLI
-// posts have no browser consent signal and are measured as first-party account
-// actions, so they always send.
 function firstPostShouldSend(
   request: Request,
   channel: 'web' | 'cli',

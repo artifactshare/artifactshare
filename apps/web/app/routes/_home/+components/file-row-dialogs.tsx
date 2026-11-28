@@ -54,9 +54,6 @@ interface SharingContext {
   linkSuspended?: boolean
 }
 
-// 一覧行の ⋯ メニューから開く 4 ダイアログ。viewer の既存ダイアログを再利用し、
-// 実行 API も viewer と同じ経路 (PATCH /api/shareables/:id、DELETE /api/artifacts/:id、
-// /api/shareables/:id/move) を使う。成功後は revalidate で一覧を更新する。
 export function FileRowDialogs({
   active,
   onClose,
@@ -214,8 +211,6 @@ function ListVisibilityDialog({
   onSavingChange: (saving: boolean) => void
 }) {
   const { t } = useT()
-  // 共有範囲ダイアログの値は一覧 loader に積まず、開いたとき owner 限定の
-  // resource route から遅延取得する (grants を非オーナーに配らない)。
   const contextFetcher = useFetcher<SharingContext>()
   const load = contextFetcher.load
   const fetcherState = contextFetcher.state
@@ -225,11 +220,7 @@ function ListVisibilityDialog({
   useEffect(() => {
     void load(endpoint)
   }, [endpoint, load])
-  // 「load が実際に走ったか」を render 中の遷移検知で記録する (loading を見る前に
-  // idle を失敗と誤認しない)
   if (fetcherState === 'loading' && !started) setStarted(true)
-  // 読込失敗で null を返し続けると action が選択されたまま固まるため、
-  // 失敗を検知したらエラーダイアログに切り替える (閉じる / 再試行)
   const failed = started && fetcherState === 'idle' && fetcherData == null
   if (failed) {
     return (

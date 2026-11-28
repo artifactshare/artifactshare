@@ -38,7 +38,6 @@ import type { SlackConnectionListItem } from '~/services/slack.server'
 
 export interface IntegrationsLoaderData {
   connections: SlackConnectionListItem[]
-  /** The code of a Slack install that failed before returning here. */
   launchFailure?: string
 }
 
@@ -82,8 +81,6 @@ export default function IntegrationsPage({
           fetcher={fetcher}
           close={(next) => {
             setOpen(next)
-            // Dismissing ends the attempt: its failure is not repeated on
-            // the page while the connection is still listed.
             if (!next && !pending && result && !result.ok) fetcher.reset()
           }}
         />

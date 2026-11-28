@@ -42,7 +42,6 @@ export async function loader({
   const unavailableTitle = t(locale, 'recent.unavailableTitle')
   const now = new Date().toISOString()
   // `url` has the framework's own bits removed. `request.url` keeps the `.data`
-  // suffix that client navigations carry, and never equals the canonical path.
   const {
     relation,
     unread,

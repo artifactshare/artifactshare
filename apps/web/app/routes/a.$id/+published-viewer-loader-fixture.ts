@@ -7,14 +7,10 @@ import {
 import { loader } from './+loader.server'
 
 const db = vi.hoisted(() => ({ selectFrom: vi.fn() }))
-// A synthetic secret; kept out of the env literal because this fixture is not
-// a test file, which is where the public scan accepts synthetic secrets.
 const testAuthSecret = vi.hoisted(
   () => 'test-secret-with-enough-entropy-for-hmac',
 )
 
-// Keep the loader and its publication/version mapping real. Only external
-// services and persistence are replaced so this fixture also runs in a browser.
 vi.mock('cloudflare:workers', () => ({
   env: {
     APP_ENV: 'production',
@@ -26,8 +22,6 @@ vi.mock('cloudflare:workers', () => ({
 }))
 vi.mock('~/services/db.server', () => ({ createDb: () => db }))
 vi.mock('~/modules/access', async (original) => ({
-  // Loader dependencies also import SQL helpers from this module. Preserve
-  // those exports so the browser can link the complete module graph.
   ...(await original<typeof import('~/modules/access')>()),
   isWorkspaceAccessRevoked: () => Promise.resolve(false),
   facts: (_db: unknown, input: { viewerUserId: string | null }) =>

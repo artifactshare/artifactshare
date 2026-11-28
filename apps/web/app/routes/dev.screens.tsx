@@ -11,10 +11,6 @@ import {
   scenarioRegistry,
 } from './dev.scenarios.$scenario/+components/scenarios'
 
-/**
- * Development only: every fixture screen the dev server can show, so
- * `pnpm screens` captures them without a list of its own.
- */
 export function loader() {
   if (!isViteDev()) throw new Response(null, { status: 404 })
   return Response.json({
@@ -24,7 +20,6 @@ export function loader() {
         return (Object.keys(SETTINGS_PAGE_PATHS) as SettingsPageId[])
           .filter((page) => page in pages)
           .map((page) => ({
-            // A page such as inventoryProjects reads as inventory-projects.
             id: `${page.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}-${state}`,
             path: resolvePath(
               SETTINGS_PAGE_PATHS[page],
@@ -37,7 +32,6 @@ export function loader() {
         id: `scenario-${scenario}`,
         path: `/dev/scenarios/${scenario}`,
         description: scenarioRegistry[scenario].title,
-        // Scenarios take their theme from this parameter, not the cookie.
         themeParameter: true,
       })),
     ],

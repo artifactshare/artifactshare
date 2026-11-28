@@ -172,7 +172,6 @@ function MemberSection({
   const { t } = useT()
   const filtered =
     filters.query !== '' || filters.role !== 'all' || filters.activity !== 'all'
-  // back/forward で filters が変わったとき、key で入力欄を作り直して表示と同期する。
   const filterKey = `${filters.query}|${filters.role}|${filters.activity}`
   return (
     <SettingsSection

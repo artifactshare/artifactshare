@@ -25,8 +25,6 @@ import ExternalAccessPage, {
 // React Router passes loaderData only to a default export declared here.
 export default ExternalAccessPage
 
-// With the shell running in this request, the policy comes from the same
-// workspace read; a policy refresh on its own uses the feature reader.
 export async function loader({
   context,
   request,

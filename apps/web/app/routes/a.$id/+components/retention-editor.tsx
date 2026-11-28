@@ -32,8 +32,6 @@ export function RetentionEditor({
   const { t } = useT()
   const id = useId()
   const revalidator = useRevalidator()
-  // Until edited, follow loader updates without remounting the controls.
-  // A draft also freezes submitted values through pending, confirmation and failure.
   const [draft, setDraft] = useState<{
     limited: boolean
     count: string
@@ -284,7 +282,6 @@ function RetentionConfirmation({
 function retentionProposal(limited: boolean, count: string) {
   const proposed = limited ? Number(count) : null
   // Match the contract's nullable z.number().int().min(1) without a runtime
-  // package import: Zod integer validation also rejects unsafe integers.
   const valid =
     proposed === null ||
     (count.trim() !== '' && Number.isSafeInteger(proposed) && proposed >= 1)

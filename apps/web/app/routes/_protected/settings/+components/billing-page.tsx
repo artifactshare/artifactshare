@@ -86,7 +86,6 @@ type BillingView = UsageLoaderData & {
   monthlyEstimate: MonthlyEstimate | null
 }
 
-/** The plan and storage the page shows come from the Settings shell. */
 export type BillingLoaderData = Omit<
   BillingView,
   'plan' | 'storageUsedBytes' | 'storageQuotaBytes'
@@ -104,8 +103,6 @@ export default function BillingPage({
     storageUsedBytes: shell.workspace.storageUsedBytes,
     storageQuotaBytes: shell.workspace.storageQuotaBytes,
   }
-  // Checkout and Portal submitted before hydration report a failure here; a
-  // success has already moved to Stripe.
   const nativeResult = useActionData<typeof action>()
   const { t, locale } = useT()
   const awaitingCheckoutReflection =
@@ -189,7 +186,6 @@ export default function BillingPage({
   )
 }
 
-// 警告はプランを選ぶ案内を含むため、プランのカードより前(ページの先頭)に出す。
 function StorageNearLimitBanner({
   loaderData,
   presentation,
@@ -381,7 +377,6 @@ function MonthlyEstimate({ estimate }: { estimate: MonthlyEstimate }) {
     : '—'
   const price = (amount: number) => formatPrice(estimate.currency, amount)
   const overageRate = formatStorageOveragePrice(estimate.currency)
-  // SettingsSection owns the sibling gap; this card must not add a second mb-6.
   return (
     <Card size="sm">
       <CardHeader>
@@ -446,8 +441,6 @@ function EstimateRow({
 }) {
   return (
     <div
-      // These rows form one divided breakdown; only each row's upper border
-      // is intentionally flush with the preceding row.
       id={id}
       data-gap-audit-allow-touch
       className={`flex items-center justify-between gap-[var(--spacing-4)] py-[var(--spacing-3)] ${total ? 'bg-muted px-[var(--spacing-3)] font-semibold' : ''}`}
@@ -734,10 +727,6 @@ function ChangeContractOption({
   const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
   const result = change.state === 'idle' ? change.data : undefined
   const open = requestedOpen && !result?.ok
-  // Each opening reads its own estimate, so a late answer to a dismissed
-  // confirmation (including an expired session) never reaches the next one.
-  // It belongs to the history entry it was opened on: a late answer after the
-  // user moved to another entry never sends them to sign in from there.
   const previewId = useId()
   const [opening, setOpening] = useState({ count: 0, entry: '' })
   const preview = useFetcher<PlanChangePreview | SessionExpired>({
@@ -850,7 +839,6 @@ export function DowngradeImpact({
   const plusQuotaBytes = PLAN_STORAGE_QUOTA_BYTES.plus
   const plusProjectLimit = PLAN_PROJECT_LIMITS.plus
   const overStorage = storageUsedBytes > plusQuotaBytes
-  // プロジェクト作成は count >= limit で止まるため、上限ちょうどでも警告する。
   const overProjects =
     plusProjectLimit !== null && activeProjectCount >= plusProjectLimit
 
@@ -912,9 +900,6 @@ function subscriptionStatusLabel(
   return t('billing.subscription.other')
 }
 
-// Checkout refuses a workspace already on a paid plan, so a paid plan without
-// an active subscription gets no purchase controls and no presentation of its
-// own.
 function billingPresentation(
   data: Pick<BillingView, 'plan' | 'hasSubscription'>,
 ) {
@@ -1000,11 +985,9 @@ function planChangePreviewLabels(
           amount: data.prorationAmount,
         }
       : null
-  // 符号は加算・控除の文言で表すため、金額は絶対値で表示する。
   const prorationLabel = proration
     ? formatPrice(proration.currency, Math.abs(proration.amount))
     : null
-  // ダイアログは client でしか開かないので、そのままローカル日付で表示できる。
   const nextInvoiceAtLabel =
     data?.kind === 'ok' && data.nextInvoiceAt
       ? new Date(data.nextInvoiceAt).toLocaleDateString(

@@ -15,8 +15,6 @@ import type {
 } from '../+hooks/use-viewer-list'
 import { AppSidePanel } from '~/components/app/app-side-panel'
 
-// イニシャルは trim 後の先頭 1 文字を大文字化、空なら「?」。
-// `getOwnerInitial` はメールへフォールバックするためここでは使わない。
 export function viewerListInitial(name: string | null): string {
   const trimmed = (name ?? '').trim()
   if (trimmed === '') return '?'
@@ -35,11 +33,7 @@ interface ViewerListPanelProps {
   onLoadMore: () => void
   onRetry: () => void
   returnFocusRef?: RefObject<HTMLElement | null>
-  // 閉鎖理由。'forced' (comments/history 排他や artifact 切替) のときは
-  // フォーカスを入口へ戻さない (直後に開くパネルからフォーカスを奪わない)。
-  // 省略時は user 操作扱い。
   closeReason?: 'user' | 'forced' | null
-  // chrome 折りたたみ中は入口が不可視のためフォーカス復帰をスキップする。
   skipReturnFocus?: boolean
   topbarCollapsed?: boolean
 }
@@ -67,11 +61,6 @@ export function ViewerListPanel({
 
   useEffect(() => {
     if (wasOpenRef.current && !open) {
-      // comment/history パネルは無条件で focus() するが、このパネルは
-      // 意図的に分岐する: 強制閉鎖 (closeReason 'forced' = 排他や artifact
-      // 切替) では直後に開くパネルからフォーカスを奪わない。入口は chrome
-      // 折りたたみで不可視になり、artifact 切替で対象が DOM から外れるため
-      // skipReturnFocus / !isConnected でもスキップする。
       const target = returnFocusRef?.current ?? null
       if (
         closeReasonRef.current !== 'forced' &&
@@ -208,8 +197,6 @@ function ViewerListRowItem({
   const formatRelative = useRelativeTime()
   const trimmedName = (row.name ?? '').trim()
   const name = trimmedName === '' ? t('home.unknownActor') : trimmedName
-  // 非 canonical な日時 (オフセット付き ISO、空白区切りなど) は相対時刻に
-  // せず「—」を表示する (ローカル誤解釈と Invalid Date を防ぐ)。
   const lastViewedLabel = isUtcZTimestamp(row.lastViewedAt)
     ? formatRelative(row.lastViewedAt, locale)
     : '—'

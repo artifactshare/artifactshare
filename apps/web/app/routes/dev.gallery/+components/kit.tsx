@@ -6,7 +6,6 @@ import { Stack } from '~/components/layout/stack'
 export type GallerySection = {
   id: string
   title: string
-  /** 対応する部品ファイル参照。例: `ui/button` / `form/page-header`。parity テストの基準。 */
   file: string
   element: ReactNode
 }

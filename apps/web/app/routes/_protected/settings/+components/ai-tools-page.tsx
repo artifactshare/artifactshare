@@ -25,7 +25,6 @@ export const MAX_TOKEN_NAME_LENGTH = 100
 
 export interface TokensLoaderData {
   tokens: ApiTokenListItem[]
-  // A new secret is shown only from the create action's response.
   createdToken: { name: string; token: string } | null
   cliFamilies: CliRefreshCredentialFamily[]
 }

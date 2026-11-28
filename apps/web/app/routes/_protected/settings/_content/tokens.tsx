@@ -31,8 +31,6 @@ export async function loader({
   const user = requireUser(context)
   const db = createDb()
   const tokens = await listApiTokens(db, user.id)
-  // Keep the existing order: the CLI read starts only after the token list
-  // succeeds, so a failed first read issues no second query.
   // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
   const cliFamilies = await listCliRefreshCredentialFamilies(db, user.id)
   return { tokens, createdToken: null, cliFamilies }

@@ -94,7 +94,6 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const form = await request.formData()
   const intent = form.get('intent')
-  // 参加/離脱は閲覧のみの利用者にも許すため、投稿権限のゲートより前で扱う
   if (intent === 'join-project' || intent === 'leave-project') {
     const projectId = String(form.get('projectId') ?? '')
     if (!projectId) throw new Response('Not found', { status: 404 })
@@ -178,7 +177,6 @@ export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<typeof action>()
   const navigation = useNavigation()
   const { t } = useT()
-  // useT の t は render ごとに新しくなるため deps に入れると再発火する。
   const announceSlackError = useEffectEvent(() => {
     toast.error(t('project.slack.error'))
     setSearchParams(
@@ -298,7 +296,6 @@ function ProjectDialog({
   const { t } = useT()
   const saving = navigation.state !== 'idle'
 
-  // The description is optional, so it stays hidden behind a link until asked for.
   const [showDescription, setShowDescription] = useState(false)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
 

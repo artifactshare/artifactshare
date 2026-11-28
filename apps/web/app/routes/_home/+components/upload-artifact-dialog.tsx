@@ -187,7 +187,6 @@ type ProjectUploadShareDefault = {
 }
 
 // オプトアウトは「今回だけ」の指定。programmatic open では Radix の
-// onOpenChange が呼ばれないため、open prop の変化を render 中に検知して戻す。
 function useSlackNotifyOptOut(open: boolean) {
   const [disabled, setDisabled] = useState(false)
   const [prevOpen, setPrevOpen] = useState(open)
@@ -236,7 +235,6 @@ export function UploadArtifactDialog({
   const homeDestinationLabel = t('project.homeTitle', {
     name: user.name ?? user.email,
   })
-  // Keep the opened dialog seeded from the latest props before children render.
   if (currentState !== state) {
     dispatch({ type: 'props-changed', defaultVisibility, open })
   }
@@ -303,7 +301,6 @@ export function UploadArtifactDialog({
               : isUploadShareableErrorCode(code)
                 ? UPLOAD_SHAREABLE_ERROR_I18N[code]
                 : 'upload.error.generic'
-          // Terminal errors get no action; other errors offer a retry.
           const action =
             code === 'self-upload-disabled'
               ? {
@@ -683,7 +680,6 @@ function UploadProjectAudience({
 }) {
   const { t } = useT()
   const externalCount = defaults.filter((entry) => entry.isExternal).length
-  // 社内全員のプロジェクトは社内全員＋関係者、関係者のみは関係者だけが閲覧できる。
   const description =
     baseVisibility === 'workspace'
       ? t('projectShareDefaults.uploadDescriptionWorkspace')

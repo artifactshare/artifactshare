@@ -91,8 +91,6 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
         artifact_id: id,
         share_url: shareUrl(url.origin, id, access.visibility),
         comments: threads.map(toAgentCommentThread),
-        // loadCommentThreads caps at the limit, so a full page can only signal
-        // ">= limit"; exactly-limit reads as has_more (same as MCP get_artifact).
         has_more:
           page.kind === 'panel' && threads.length >= COMMENT_THREAD_LIST_LIMIT,
       }),
@@ -160,7 +158,6 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       if (result.kind !== 'ok') return actionErrorResponse(result.kind)
 
       if (actionPayload.action === 'delete') {
-        // Unreachable: changeComment's delete operation always returns deleted: true.
         if (!('deleted' in result)) return actionErrorResponse('commit-failed')
         return Response.json(
           CommentDeleteResponseSchema.parse({
@@ -199,7 +196,6 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         : rawPayload
     const parsedPost = CommentPostRequestSchema.safeParse(postPayload)
     if (!parsedPost.success) {
-      // The service historically reports this combination with its own code.
       if (
         parsedPost.error.issues.every(
           (issue) =>

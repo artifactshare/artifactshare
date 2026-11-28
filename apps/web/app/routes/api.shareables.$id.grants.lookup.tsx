@@ -32,8 +32,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   return Response.json({ entries: result.entries })
 }
 
-// SQLite の bound parameter 上限 (~999) を踏まえて余裕を持って 100 件に絞る。
-// UI 側の chip 入力で 1 回に渡る件数は数件〜十数件想定なので運用上問題なし。
 const LOOKUP_EMAIL_LIMIT = 100
 
 function parseEmails(body: { emails?: unknown } | null): string[] | null {

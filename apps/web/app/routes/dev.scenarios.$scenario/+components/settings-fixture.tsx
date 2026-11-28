@@ -12,7 +12,6 @@ export function SettingsFixture({
   credentials?: boolean
 }) {
   const { t } = useT()
-  // The menu resolves its items against the route that renders it.
   const tokensPath = useResolvedPath('tokens').pathname
   return (
     <main

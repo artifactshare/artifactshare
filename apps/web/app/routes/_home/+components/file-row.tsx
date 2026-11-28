@@ -48,19 +48,16 @@ const rowClassName = cn(
 )
 
 // 狭幅 2 列の末尾列幅は行アクション (⋯) の有無で択一適用する。同じ variant の
-// grid-cols を重ねると生成 CSS の順序勝ちになるため、両方を同時に付けない。
 const mobileColsClassName = 'max-wide:grid-cols-[minmax(0,1fr)_40px]'
 const mobileColsActionsClassName = 'max-wide:grid-cols-[minmax(0,1fr)_76px]'
 
 const rowLinkClassName =
   'absolute inset-y-0 left-0 right-12 z-1 rounded-[var(--r-sm)] text-inherit no-underline max-wide:right-13'
 
-// アクション列 (コピー + ⋯) 有効時はオーバーレイの右端逃がしを列幅に合わせる。
 const rowLinkActionsClassName =
   'absolute inset-y-0 left-0 right-22 z-1 rounded-[var(--r-sm)] text-inherit no-underline'
 
 // Home's media and container queries overlap below 780px; important keeps the
-// padding-free 40px action reserve independent of generated CSS order.
 const homeCompactRowLinkClassName =
   'max-stack:!right-10 @max-[theme(--breakpoint-stack)]:right-13 @min-[theme(--breakpoint-stack)]:right-22'
 
@@ -86,8 +83,6 @@ const commentPreviewClassName =
 const mobileMetaClassName =
   'hidden max-wide:grid max-wide:min-w-0 max-wide:grid-cols-[auto_minmax(0,1fr)] max-wide:items-center max-wide:gap-x-2 max-wide:gap-y-1 max-wide:text-xs max-wide:text-muted-foreground'
 
-// grow + basis-23 (92px) so a long owner name shrinks and truncates instead of
-// overflowing into the copy column, matching the original rule's intent.
 const mobileOwnerClassName =
   'inline-flex min-w-0 grow basis-23 items-center gap-1 truncate'
 
@@ -102,34 +97,20 @@ interface FileRowProps {
   showOwner?: boolean
   hideMobileOwner?: boolean
   inlineOwner?: boolean
-  /** 狭幅で既存どおり共有範囲チップを隠す。表示語の選択は変えない。 */
   hideMobileVisibility?: boolean
-  /** 'project' はプロジェクト詳細の行: チップ・更新日を出さず
-   * タイトル + 所有者 + 閲覧/コメント数だけにする (企画の compact 規則)。 */
   variant?: 'default' | 'project'
-  /** 「vN に更新」バッジ (project variant のみ)。null で非表示。 */
   versionBadge?: string | null
-  /** 行末に足す操作 (⋯ メニューなど)。project variant のみ。 */
   menu?: React.ReactNode
-  /** 行アクション (⋯)。true で常設ケバブを出す。 */
   menuEnabled?: boolean
-  /** オーナー行のメニュー項目の実行先。未指定ならコピーのみのメニューになる。 */
   onAction?: (action: 'rename' | 'move' | 'visibility' | 'remove') => void
-  /** プロジェクト文脈のピン留め (hover 直接ボタン + メニュー項目)。 */
   onPinToggle?: () => void
   pinned?: boolean
-  /** 一覧の数値出し分け: 閲覧は常時、コメントは 1 件以上のみ。
-   * 渡さない経路 (フラグ off) は従来の「N · M」連結のまま。 */
   richStats?: boolean
-  /** 一括選択。オーナー行のみ渡す。checkbox は overlay より上に置く。 */
   selectable?: boolean
   selected?: boolean
   onToggleSelect?: () => void
-  /** My files の版情報を未読状態と独立して表示する。 */
   versionDisplay?: 'with-unread' | 'recent'
-  /** 未読ドットと版・コメントのサブ行。 */
   unreadBadges?: boolean
-  /** 閲覧日の見せ方。grouped は行内時刻を省き、with-preview は最新コメントも表示する。 */
   recencyPresentation?: 'row' | 'grouped' | 'grouped-with-preview'
   now?: string
   homeCompact?: boolean
@@ -205,8 +186,6 @@ export function FileRow({
   return (
     <div
       data-slot="file-row"
-      // Divide rows intentionally touch at their upper border; row contents
-      // remain visible to the gap audit.
       data-gap-audit-allow-touch
       className={layout.row}
       style={{
@@ -304,8 +283,6 @@ interface ProjectFileRowSurfaceProps {
   versionBadge: string | null
 }
 
-// プロジェクト詳細の行面: 種別アイコン + タイトル (+「vN に更新」) +
-// 所有者、右端に閲覧数 (常時)・コメント数 (1 件以上)。チップ・更新日・場所は出さない。
 const ProjectFileRowSurface = memo(function ProjectFileRowSurface({
   data,
   title,
@@ -680,7 +657,6 @@ function FileRowActions({
         })
       }
       onAction={data.isOwner ? onAction : undefined}
-      // ピンはプロジェクト側の権限 (canPin) で決まり、行のオーナーかは問わない
       onPinToggle={variant === 'project' ? onPinToggle : undefined}
       pinned={pinned}
     />
@@ -895,7 +871,6 @@ function FileMobileMetadata({
       {(versionDisplay === 'recent' ||
         ((inlineOwner || !hideMobileOwner) && unreadBadges)) &&
       motionSegments.length > 0 ? (
-        // 既存セルの列位置を動かさないよう、動きは 2 列ぶんの独立行にする
         <span className="col-span-2 min-w-0 truncate">
           {motionSegments.join(' · ')}
         </span>

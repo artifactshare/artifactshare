@@ -72,10 +72,6 @@ function parseViewerListRows(value: unknown): ViewerListRowView[] | null {
   return rows
 }
 
-// 閲覧者一覧の取得状態。開くたびに取得 (クライアントキャッシュなし)。
-// 順序の正は request sequence (最後に開始した操作の応答のみ適用) で、
-// AbortController は帯域の最適化。stale 応答 (artifact 切替・クローズ後) は
-// artifactId + open generation 照合で破棄する。
 export function useViewerList({
   artifactId,
   open,
@@ -92,8 +88,6 @@ export function useViewerList({
   const loadMoreInFlightRef = useRef(false)
   const nextCursorRef = useLatestRef(state.nextCursor)
 
-  // artifact 切替はコメント reducer と同じ render-phase 比較で検知し、取得済み
-  // リストを破棄する (stale 応答は generation/seq 照合でも二重に弾かれる)。
   const [trackedArtifactId, setTrackedArtifactId] = useState(artifactId)
   if (trackedArtifactId !== artifactId) {
     setTrackedArtifactId(artifactId)
@@ -150,8 +144,6 @@ export function useViewerList({
           if (mode === 'more' && seq === seqRef.current) {
             loadMoreInFlightRef.current = false
           }
-          // Only the last-started operation's response applies; stale responses
-          // (artifact switched, panel closed/reopened) are discarded.
           if (seq !== seqRef.current) return
           if (generation !== generationRef.current) return
           if (artifactIdRef.current !== requestArtifactId) return
@@ -172,8 +164,7 @@ export function useViewerList({
             setState((current) =>
               mode === 'initial'
                 ? { ...current, status: 'error' }
-                : // 「さらに表示」失敗はボタンを再クリック可能なまま維持する。
-                  { ...current, loadingMore: false },
+                : { ...current, loadingMore: false },
             )
             return
           }
@@ -193,8 +184,6 @@ export function useViewerList({
     [artifactIdRef, nextCursorRef, openRef],
   )
 
-  // パネルを開くイベントで呼ぶ。開くたびに取得し (前回リストは即破棄)、
-  // open generation を進めて閉→開をまたぐ stale 応答を無効化する。
   const openFetch = useCallback(() => {
     generationRef.current += 1
     loadMoreInFlightRef.current = false
@@ -203,8 +192,6 @@ export function useViewerList({
 
   const loadMore = useCallback(() => {
     if (!openRef.current) return
-    // 二重クリックは非重複 (最初の要求のみ)。再試行の連打は seq で最後の
-    // 操作のみ反映される。
     if (loadMoreInFlightRef.current) return
     if (!nextCursorRef.current) return
     runFetch('more')

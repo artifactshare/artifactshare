@@ -23,7 +23,6 @@ const eventIconClasses: Partial<Record<FeedEventRow['type'], string>> = {
   version_published: 'bg-warning-soft text-warning',
 }
 
-// 翻訳済み文字列の placeholder 位置へリンク要素を差し込む ({title} / {project})
 function inline(value: string, name: string, child: ReactNode) {
   const parts = value.split(`{${name}}`)
   return parts.length === 2 ? (

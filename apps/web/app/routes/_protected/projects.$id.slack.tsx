@@ -13,8 +13,6 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const id = params.id
   if (!id || !(await findWorkspaceProject(db, user.workspaceId, id, user)))
     throw new Response('Not found', { status: 404 })
-  // getContainerSlackChannel は webhook_url を select しない (全 loader 共通の
-  // 露出防止)。送信側は自前の join で読む。
   const current = await getContainerSlackChannel(db, id)
   return { current: current ?? null }
 }

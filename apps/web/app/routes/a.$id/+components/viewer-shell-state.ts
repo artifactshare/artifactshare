@@ -1,11 +1,5 @@
-// ViewerShell の UI 状態 reducer。閲覧者パネル (viewer list) との排他は
-// AC 7 に対応する。table テストと browser テストから直接 import できるよう
-// viewer-shell.tsx から分離している (viewer-shell が re-export する)。
 export type ViewerListOpenedFrom = 'meta' | 'menu'
 
-// user: Esc・閉じるボタン・入口トグルなど利用者操作による閉鎖 (フォーカスを
-// 入口へ戻す)。forced: comments/history 排他や artifact 切替による強制閉鎖
-// (直後に開くパネルからフォーカスを奪わない)。
 export type ViewerListCloseReason = 'user' | 'forced'
 
 interface ViewerShellState {
@@ -25,7 +19,6 @@ type ViewerShellAction =
   | {
       type: 'viewer-list-open-changed'
       open: boolean
-      // close (open: false) の理由。省略時は 'user'。
       reason?: ViewerListCloseReason
     }
   | { type: 'artifact-changed'; artifactId: string }
@@ -55,7 +48,6 @@ export function viewerShellReducer(
     case 'chrome-collapsed-changed':
       return { ...state, chromeCollapsed: action.collapsed }
     case 'history-open-changed':
-      // 履歴と閲覧者パネルは排他 (AC 7)。履歴が開くケースでは閲覧者パネルを閉じる。
       return action.open
         ? {
             ...state,
@@ -78,8 +70,6 @@ export function viewerShellReducer(
             viewerListCloseReason: action.reason ?? 'user',
           }
     case 'artifact-changed':
-      // artifact 切替でパネルを閉じる。取得済みリストの破棄は useViewerList 側の
-      // artifactId 照合が担う。
       return {
         ...state,
         artifactId: action.artifactId,

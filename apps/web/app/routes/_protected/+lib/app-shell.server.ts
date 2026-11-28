@@ -8,24 +8,16 @@ import type { JoinedProjectNav } from '~/routes/_home/+components/primary-nav'
 import type { AppShellData } from '../+components/app-shell'
 import { settingsWorkspace } from '../settings/+lib/settings-request.server'
 
-/** How many joined projects the header's projects menu lists. */
 const JOINED_PROJECTS_IN_NAV = 5
 
 export type JoinedProjectRow = Awaited<
   ReturnType<typeof listJoinedProjectsForDropdown>
 >[number]
 
-// Kept in the request's own router context, so a read never outlives its
-// request.
 const joinedProjectsRead = createContext<Promise<JoinedProjectRow[]> | null>(
   null,
 )
 
-/**
- * The viewer's joined projects, newest activity first, as many as the header
- * lists. Read at most once per request, so the shell and a page that shows
- * fewer of them (Home's rail) share one read.
- */
 export function requestJoinedProjects(
   context: Readonly<RouterContextProvider>,
 ): Promise<JoinedProjectRow[]> {
@@ -52,10 +44,6 @@ export function toJoinedProjectNav(
   }))
 }
 
-/**
- * The workspace name the header shows. It comes from the per-request
- * workspace read Settings also uses, so a Settings page reads the row once.
- */
 function shellWorkspaceName(context: Readonly<RouterContextProvider>) {
   return settingsWorkspace(context).then(
     (workspace) => workspace.name,
@@ -63,7 +51,6 @@ function shellWorkspaceName(context: Readonly<RouterContextProvider>) {
   )
 }
 
-/** What the header and the bottom tab bar of every signed-in page show. */
 export async function loadAppShell(
   context: Readonly<RouterContextProvider>,
 ): Promise<AppShellData> {

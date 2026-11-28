@@ -18,8 +18,6 @@ import type { Route } from './+types/api.projects.$id.share-defaults'
 
 export const middleware = [requireUserApiMiddleware]
 
-// 1 リクエストで受け取るメール数の上限。SQLite の bind 変数上限を超える
-// `in (...)` を避けるためのガード (個別共有の lookup と同じ 100)。
 const MAX_EMAILS_PER_REQUEST = 100
 
 export function loader() {

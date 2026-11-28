@@ -270,8 +270,6 @@ function subjectText(
     case 'bot.create':
     case 'bot.stop':
     case 'bot.credential.reissue':
-      // Subject shows the bot's display name; the shared bot badge marks it
-      // in the cell. Token, hash, and generated email never enter details.
       return d.name ?? user ?? ''
     case 'access_request.created':
       return accessRequestDetails(event, t, [

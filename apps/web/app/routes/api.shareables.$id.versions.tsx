@@ -186,9 +186,6 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       ? searchParams.getAll('delete_path')
       : undefined,
     expected_version: searchParams.get('expected_version') ?? undefined,
-    // Unknown hints historically fell through to the single-file path. Keep
-    // that compatibility while asserting recognized query fields through the
-    // shared contract.
     ...(rawKindHint === null || rawKindHint === 'static_site'
       ? { artifact_kind: rawKindHint ?? undefined }
       : {}),

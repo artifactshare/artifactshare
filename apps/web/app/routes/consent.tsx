@@ -18,7 +18,6 @@ import { useT } from '~/hooks/use-t'
 import { FocusedFlowBrand } from '~/components/app/focused-flow-brand'
 import type { TKey } from '~/i18n/messages'
 import { oauthClientInfo, oauthConsent } from '~/lib/auth-client'
-// Known scopes get a human label; anything else falls back to its raw name.
 const SCOPE_LABEL: Record<string, TKey> = {
   openid: 'oa.scope.openid',
   profile: 'oa.scope.profile',
@@ -31,8 +30,6 @@ const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 // OAuth consent page (`consentPage`). Reached after login when the client has
-// no prior consent; the pending request is tracked server-side, so accepting is
-// a single call that redirects back to the client with the authorization code.
 export default function Consent() {
   const { t } = useT()
   const [params] = useSearchParams()

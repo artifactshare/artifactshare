@@ -55,11 +55,8 @@ interface MoveShareableDialogProps {
   shareableId: string
   shareableTitle: string
   homeOwnerName: string
-  // visibility='project' の成果物は所属プロジェクトの関係者を参照するため、
-  // 移動で見える範囲が変わる。移動先に応じて警告を出す。
   isProjectAudience: boolean
   onReviewVisibility?: () => void
-  /** 一覧文脈: 成功時に viewer への navigate の代わりに呼ぶ (revalidate 等)。 */
   onMoved?: () => void
 }
 
@@ -81,7 +78,6 @@ export function MoveShareableDialog({
   const fetcherState = destinationsFetcher.state
   const fetcherData = destinationsFetcher.data
   const endpoint = `/api/shareables/${encodeURIComponent(shareableId)}/move`
-  // Home is shown as "{name} のホーム" across the app; match it here.
   const homeLabel = homeOwnerName
     ? t('project.homeTitle', { name: homeOwnerName })
     : t('move.inbox')
@@ -126,8 +122,6 @@ export function MoveShareableDialog({
 
   const filteredProjects = getFilteredMoveProjects(destinations, query)
 
-  // Selectable rows in render order (the current container is disabled). Drives
-  // roving focus so arrow keys move between options.
   const selectableValues = getSelectableMoveValues(
     destinations,
     filteredProjects,
@@ -137,8 +131,6 @@ export function MoveShareableDialog({
       ? selected
       : (selectableValues[0] ?? null)
 
-  // Search can hide the selected project. Only allow confirming a destination
-  // that is currently visible, so a move never targets an off-screen row.
   const effectiveSelected = getEffectiveMoveSelection(
     selected,
     destinations,
@@ -173,8 +165,6 @@ export function MoveShareableDialog({
     radioRefs.current[nextValue]?.focus()
   }
 
-  // Roving props apply to every row; the disabled current row ignores tabIndex,
-  // focus, and keydown, so it needs no special case.
   const rovingProps = (value: string) => ({
     tabIndex: rovingValue === value ? 0 : -1,
     buttonRef: (el: HTMLButtonElement | null) => {
@@ -198,7 +188,6 @@ export function MoveShareableDialog({
         return
       }
       const body = (await res.json()) as { containerName: string }
-      // The inbox's internal container name is not user-facing; show home label.
       const name =
         effectiveSelected === INBOX_VALUE ? homeLabel : body.containerName
       const reviewAction =
@@ -216,10 +205,6 @@ export function MoveShareableDialog({
         onMoved()
         return
       }
-      // The artifact changed containers, so the captured "back" target is stale.
-      // Replace the entry without nav state and revalidate, letting the viewer's
-      // back link follow the refreshed location (the new project, or home).
-      // preventScrollReset keeps the reader's position in the document.
       navigate(`/a/${encodeURIComponent(shareableId)}`, {
         replace: true,
         preventScrollReset: true,

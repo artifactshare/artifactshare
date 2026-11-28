@@ -8,12 +8,6 @@ import {
 import { StatusBanner } from './settings-banner'
 import type { SettingsLoaderData } from '../_layout'
 
-/**
- * A key that changes only when the user moves through history (Back, Forward
- * or a reload). Submission results, open confirmations and their fetchers
- * belong to the history entry that produced them, so moving to another entry
- * remounts the page; in-app navigations keep it mounted with its form state.
- */
 function useHistoryEntryKey() {
   const location = useLocation()
   const navigationType = useNavigationType()
@@ -38,7 +32,6 @@ const INTEGRATION_RETURNS = [
   'forbidden',
 ]
 
-/** The notice a return from Stripe Checkout or a Slack install asks for. */
 function externalReturn({
   pathname,
   search,
@@ -57,7 +50,6 @@ function externalReturn({
   return params.get('connected') === 'slack' ? 'slack-connected' : null
 }
 
-/** The URL of the return entry without the parameters it consumed. */
 function cleanedSearch({
   pathname,
   search,
@@ -80,7 +72,6 @@ type ReturnNotice = {
   entry: string | null
 }
 
-/** Whether this location is the entry the notice's cleanup replace made. */
 function cleanupLanded(
   notice: ReturnNotice,
   location: { pathname: string; search: string },
@@ -94,18 +85,6 @@ function cleanupLanded(
   )
 }
 
-/**
- * The notice belongs to the return entry. Cleaning its URL takes two steps:
- * the history entry is rewritten at once, so Back, Forward or a reload never
- * read the parameter again, and the router replaces its own location, with
- * no loader revalidation, so later submissions do not carry it. The notice
- * follows the entry that replace produces and is dropped on any other
- * navigation.
- *
- * While Stripe has not reported the new plan, Checkout stays replaced by the
- * pending notice on this page, including its other in-app views, so a second
- * purchase cannot start. Back, Forward and a reload start over.
- */
 function useReturnNotice() {
   const location = useLocation()
   const navigate = useNavigate()

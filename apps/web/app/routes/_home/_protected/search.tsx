@@ -49,14 +49,12 @@ export async function loader({ url, context }: Route.LoaderArgs) {
     },
   )
 }
-/** Going Back to search results continues that search; see continueReturnedSearch. */
 export function clientLoader({
   request,
   serverLoader,
 }: Route.ClientLoaderArgs) {
   return continueReturnedSearch(request, serverLoader)
 }
-// Only the search breakdown passes through; parent headers stay as they are.
 export const headers: HeadersFunction = ({ parentHeaders, loaderHeaders }) => {
   const responseHeaders = new Headers(parentHeaders)
   const timing = loaderHeaders.get('Server-Timing')

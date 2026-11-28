@@ -1,6 +1,5 @@
 type CommentRefreshScope = 'all' | ReadonlySet<string>
 
-/** Immutable snapshots keep a successful request from clearing newer dirtiness. */
 export function createCommentRefreshScope() {
   let scope: CommentRefreshScope = new Set()
   let revision = 0

@@ -53,8 +53,6 @@ export type CommentRecoveryAdoption =
   | { kind: 'mutation-invalidated'; pending: boolean }
   | { kind: 'detached' }
 
-/** Display-owned data and adoption. Socket authorization and UI state stay outside.
- * Construction is read-only: only attach/operations acquire browser resources. */
 export function createCommentSession(options: {
   artifactId: string
   initialThreads: ReadonlyArray<CommentThreadView>
@@ -63,7 +61,6 @@ export function createCommentSession(options: {
   getSelectedThreadId: () => string | null
   acquireRuntime?: () => RuntimeLease
   appliedEchoes?: AppliedCommentMutationEchoes
-  // The adapter can requestRefresh and handle its keep/close result as usual.
   onPageAuthError?: () => void
   onMutationSettled?: (
     detail: CommentMutationSettlement,
@@ -119,7 +116,6 @@ export function createCommentSession(options: {
     const currentSubscribers = [...subscribers]
     for (const subscriber of currentSubscribers) subscriber(replaced)
   }
-  // The enclosing refresh lease spans the summary, selected read and all ranges.
   const fetchCommentThreads = <T>(id: string, signal: AbortSignal) =>
     fetchJsonWithViewerTimeout<T>(
       `/api/shareables/${encodeURIComponent(id)}/comments`,
@@ -143,8 +139,6 @@ export function createCommentSession(options: {
     refreshController = controller
 
     const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
-      // Every mutation can change the server's open-first selected membership.
-      // Reconcile bounded windows, but revalidate history only for dirty threads.
       const requestThreads = () =>
         fetchCommentThreads<{
           threads?: ReadonlyArray<CommentThreadView>
@@ -220,7 +214,6 @@ export function createCommentSession(options: {
           ).catch(() => null)
           if (seq !== generation || !active) return 'transient-error'
           if (selectedId !== getSelectedThreadId()) {
-            // Selection-specific data is obsolete; the independent summary is not.
             const currentSelected = snapshot.threads.find(
               (thread) => thread.id === getSelectedThreadId(),
             )
@@ -253,8 +246,6 @@ export function createCommentSession(options: {
           ) {
             deletedSelectedId = selectedId
           } else {
-            // A targeted read is independent of the valid panel summary. Keep
-            // its cached pages and draft mounted while offering an explicit retry.
             const retained = snapshot.threads.find(
               (thread) => thread.id === selectedId,
             )
@@ -324,8 +315,6 @@ export function createCommentSession(options: {
                   deletedSelectedId = thread.id
                 break
               }
-              // Retain this range and its retry intent, while applying independent
-              // summary updates and any ranges that were successfully refreshed.
               failedIds.add(thread.id)
             }
           }
@@ -333,10 +322,6 @@ export function createCommentSession(options: {
         }
         if (seq !== generation || readLease.hasPending())
           return 'transient-error'
-        // A selection can change during any retained-range request, after the
-        // selected read above. Keep a newly selected cache omitted by the summary
-        // until the scheduler can authoritatively fetch it. Threads present in
-        // incoming already had their result handled, including definitive removal.
         const currentSelectedId = getSelectedThreadId()
         if (
           currentSelectedId &&
@@ -387,8 +372,6 @@ export function createCommentSession(options: {
     scheduler.cancelPending()
     interruptRefresh()
   }
-  /** One handle per mounted thread display. Creation and target updates before
-   * activation are read-only; cleanup is reversible for effect remounts. */
   function createPageConsumer({
     threadId,
     targetMessageId,
@@ -398,7 +381,6 @@ export function createCommentSession(options: {
     threadId: string
     targetMessageId?: string
     onTargetMissing?: (messageId: string) => void
-    // React consumers resume queued work after their settlement render.
     onReady?: () => void
   }) {
     let enabled = false
@@ -544,8 +526,6 @@ export function createCommentSession(options: {
                 ),
               }
             : page
-        // Use current membership, never the list captured when this read began.
-        // Interrupt a refresh that captured older retained ranges before adoption.
         const interrupted = refreshController !== null
         interruptRefresh()
         publish(
@@ -730,8 +710,6 @@ export function createCommentSession(options: {
       if (!active) return false
       const interrupted =
         (patch?.page || patch?.deletedThreadId) && refreshController !== null
-      // Adoption invalidates the active read, but preserves an explicit queued
-      // refresh. Settlement/recovery/detach still intentionally cancel the queue.
       interruptRefresh()
       publish(
         patch ? patchCommentThreads(snapshot.threads, threads, patch) : threads,

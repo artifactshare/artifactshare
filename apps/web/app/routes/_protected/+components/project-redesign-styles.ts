@@ -1,4 +1,3 @@
-// プロジェクト詳細の共有スタイル定数。
 export const redesignSectionClassName = 'mt-7'
 export const redesignPinGridClassName =
   'grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3'

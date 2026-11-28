@@ -18,8 +18,6 @@ import {
 } from '~/services/billing.server'
 import { requireWorkspaceOwner } from '~/services/team-management.server'
 
-// Only the plan change confirmation fetches this, so an expired session is a
-// 401 the confirmation handles, not a redirect to the sign-in page.
 export const middleware = [requireUserApiMiddleware]
 
 export async function loader({
@@ -51,7 +49,6 @@ export async function loader({
       .where('id', '=', user.workspaceId)
       .executeTakeFirstOrThrow(),
   ])
-  // fetcher 呼び出しのため throw せず、UI が「見込み額を取得できない」扱いに落ちる値を返す。
   if (authorized.kind !== 'ok') {
     return { kind: 'external-failed' }
   }
@@ -65,10 +62,6 @@ export async function loader({
   )
 }
 
-// The plan change confirmation loads this estimate with a fetcher. A request
-// that never reached the app is an estimate that could not be read, not an
-// error that replaces the open confirmation. An expired session is answered
-// to the confirmation, which sends the user to sign in.
 export async function loadEstimate(
   serverLoader: () => Promise<PlanChangePreview>,
 ): Promise<PlanChangePreview | SessionExpired> {

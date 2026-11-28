@@ -36,9 +36,6 @@ import type { FileRowData } from './file-data'
 
 type Bulk = ReturnType<typeof useBulkActions>
 
-// 一括操作バー: 1 件以上の選択で画面下に出る。実行は 1 件ずつ順次 API を呼び、
-// 401/403 で残件を中止する (use-bulk-actions)。UI は `max-wide` で出さない
-// (hover 前提のため。⋯ の単発操作で代替)。
 interface BulkBarProps {
   bulk: Bulk
   files: FileRowData[]
@@ -46,7 +43,6 @@ interface BulkBarProps {
 }
 
 // 選択 0 件では hook ごと動かさない (useRevalidator は data router 必須のため、
-// 静的レンダのテストでも安全になる)。
 export function BulkBar(props: BulkBarProps) {
   if (props.bulk.selected.length === 0) return null
   return <BulkBarContent {...props} />
@@ -161,7 +157,6 @@ function BulkBarContent({ bulk, files, homeOwnerName }: BulkBarProps) {
                       bulk.selected,
                       (id) =>
                         fetch(`/api/artifacts/${id}`, { method: 'DELETE' }),
-                      // 既に無いファイルの削除は目的を達しているので成功扱い
                       { notFoundIsSuccess: true },
                     )
                     .then((result) =>
@@ -179,9 +174,6 @@ function BulkBarContent({ bulk, files, homeOwnerName }: BulkBarProps) {
   )
 }
 
-// 一括移動ピッカー: 既存 move dialog と同じ destinations API (先頭の選択 id で
-// 取得) を使ったホーム + プロジェクトのラジオ選択。移動先は 1 つなので社外警告も
-// 集約 1 行にする。
 function BulkMoveDialog({
   bulk,
   files,
@@ -200,8 +192,6 @@ function BulkMoveDialog({
   const load = destinationsFetcher.load
   const [selected, setSelected] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  // 移動先候補は先頭の選択 id の destinations API から取る。オーナー行のみ選択できる
-  // ため候補は同一だが、行ごとの現在地 (isCurrent) が違っても実行はサーバが検証する
   const firstId = bulk.selected[0]
   useEffect(() => {
     void load(`/api/shareables/${encodeURIComponent(firstId)}/move`)
@@ -212,8 +202,6 @@ function BulkMoveDialog({
   const homeLabel = homeOwnerName
     ? t('project.homeTitle', { name: homeOwnerName })
     : t('move.inbox')
-  // 選択が全件同じ場所にあるときだけ、その場所を移動先から外す (全件 no-op を
-  // 「移動しました」と報告しない)。場所が混在するときは部分 no-op を許容する
   const containerKeys = new Set(
     bulk.selected.map((id) => {
       const file = files.find((f) => f.id === id)

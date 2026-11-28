@@ -447,12 +447,8 @@ function useExternalAccessSubmission(maximumDays: number | null) {
     submit,
     confirm,
     clearPreview: () => {
-      // Keep the last preview visible through the dialog exit animation.
-      // submittedDraft alone controls whether it is open and confirmable.
       setSubmittedDraft(null)
     },
-    // Dismissing the confirmation ends that attempt. Its failure stays in
-    // the closing dialog and is not moved to the form.
     dismiss: () => {
       setSubmittedDraft(null)
       setDismissedResult(settled)

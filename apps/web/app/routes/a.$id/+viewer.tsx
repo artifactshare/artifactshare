@@ -169,8 +169,6 @@ export default function ViewerRoute({
     search,
   ])
 
-  // Defer a client-created frame until the router owns the restored fragment.
-  // Hydrated SSR content stays mounted while the callback query is cleaned up.
   if (callbackHash !== null && clientMounted) return null
   return <ViewerContent loaderData={loaderData} />
 }
@@ -243,7 +241,6 @@ function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
         <Unavailable
           reason={loaderData.reason ?? 'missing'}
           user={loaderData.user}
-          // A paused link is an intended state, not a broken capture.
           screenCaptureError={
             loaderData.reason === 'link-suspended'
               ? undefined

@@ -2,7 +2,6 @@ import { createCommentRuntime } from './comment-runtime'
 
 const runtimes = new WeakMap<Window, ReturnType<typeof createCommentRuntime>>()
 
-/** Called by committed effects and browser operations, never during SSR. */
 export function acquireCommentRuntime(artifactId: string) {
   if (typeof window === 'undefined')
     throw new Error('Comment runtime requires a browser environment')

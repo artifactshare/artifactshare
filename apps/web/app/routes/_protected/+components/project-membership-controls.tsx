@@ -21,8 +21,6 @@ export type ParticipantsSummaryData = {
   }[]
 }
 
-// 詳細ヘッダの参加者表示。表示のみでクリック導線は付けない
-// (購読の文脈に閲覧権の関係者一覧を混ぜない)。
 export function ProjectParticipantsSummary({
   participants,
 }: {
@@ -48,8 +46,6 @@ export function ProjectParticipantsSummary({
   )
 }
 
-// 未参加なら「参加する」ボタン、参加中は ⋯ に「参加をやめる」だけを持つ
-// 単独メニュー (編集メニューを持たない閲覧者・共有された関係者向け)。
 export function ProjectMembershipControls({
   joined,
   showMenuWhenJoined = true,

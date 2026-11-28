@@ -327,8 +327,6 @@ function parseClientMutationId(value: unknown): string | undefined {
   return value
 }
 
-// A page anchor carries exactly its kind, page and viewed version: text
-// selector fields or a page count from the browser make it malformed.
 function parsePdfPageAnchor(
   raw: Record<string, unknown>,
 ): PdfPageAnchorInput | null {

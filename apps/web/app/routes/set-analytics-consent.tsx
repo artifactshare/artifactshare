@@ -4,9 +4,6 @@ import type { Route } from './+types/set-analytics-consent'
 
 export async function action({ request }: Route.ActionArgs) {
   // Reject cross-site submissions so a third-party page cannot force a consent
-  // choice. Prefer Fetch Metadata (`Sec-Fetch-Site` is unforgeable across sites
-  // and sent by modern browsers); fall back to an exact Origin match only for
-  // clients that omit it.
   const site = request.headers.get('Sec-Fetch-Site')
   if (site) {
     if (site !== 'same-origin') return data(null, { status: 403 })
