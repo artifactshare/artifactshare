@@ -19,8 +19,8 @@ const KNOWN_FINDINGS = {
 // Narrower scopes where a known finding cannot happen, so a mutation of the
 // code that the finding's invariant guards still has a passing baseline to break.
 const SCOPED_BASELINES = [
-  { invariant: 'ActivityFeedOpens', constants: { JoinEnabled: 'FALSE' } },
-  { invariant: 'RecentOpens', constants: { JoinEnabled: 'FALSE' } },
+  { invariant: 'ActivityFeedOpens', constants: { AudienceStable: 'TRUE' } },
+  { invariant: 'RecentOpens', constants: { AudienceStable: 'TRUE' } },
 ]
 
 const MUTATIONS = [
@@ -95,12 +95,20 @@ const MUTATIONS = [
     breaks: 'ProjectOpenIsListed',
   },
   {
-    name: 'activity-feed-unscoped',
-    code: "listEvents 'mine' drops shareables.workspace_id = user.workspaceId before visibleShareableToViewerSql",
-    find: '    \\/ sameWs /\\ WorkspaceListPredicate\n    \\/ ~sameWs /\\ joined',
-    replace: '    \\/ WorkspaceListPredicate\n    \\/ ~sameWs /\\ joined',
+    name: 'activity-feed-cross-workspace-unfiltered',
+    code: "listFeedEvents 'mine' drops visibleSharedProjectShareableToViewerSql from the cross-workspace branch",
+    find: '       \\/ ~sameWs /\\ joined /\\ (vis = "project" \\/ (shareGrant /\\ verified))',
+    replace: '       \\/ ~sameWs /\\ joined',
     breaks: 'ActivityFeedOpens',
-    constants: { JoinEnabled: 'FALSE' },
+    constants: { AudienceStable: 'TRUE' },
+  },
+  {
+    name: 'recent-cross-workspace-any-visibility',
+    code: "recentShareableAccessPredicate: crossProject loses shareables.visibility = 'project'",
+    find: '            \\/ ~ArchivedContainer /\\ vis = "project" /\\',
+    replace: '            \\/ ~ArchivedContainer /\\',
+    breaks: 'RecentOpens',
+    constants: { AudienceStable: 'TRUE' },
   },
   {
     name: 'recent-grant-ignores-email-verification',
@@ -108,7 +116,7 @@ const MUTATIONS = [
     find: '       \\/ shareGrant /\\ verified                                     \\* direct',
     replace: '       \\/ shareGrant',
     breaks: 'RecentOpens',
-    constants: { JoinEnabled: 'FALSE' },
+    constants: { AudienceStable: 'TRUE' },
   },
 ]
 

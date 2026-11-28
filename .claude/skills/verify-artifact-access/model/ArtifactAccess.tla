@@ -28,7 +28,8 @@
 (***************************************************************************)
 
 CONSTANTS
-    JoinEnabled    \* FALSE: the viewer never joins a project after it is created (a narrower scope)
+    AudienceStable \* TRUE: a viewer from another workspace who has joined a project
+                   \* keeps a verified audience entry (a narrower scope)
 
 Visibilities == {"private", "workspace", "project", "link"}
 (* link_expires_at, by how activeLinkExpiry (SQL) reads it at "now".       *)
@@ -176,7 +177,7 @@ SharedProjectFiles ==
    visibleShareableToDatabaseViewerSql in the viewer's workspace,
    visibleSharedProjectShareableToDatabaseViewerSql outside it. *)
 MemberVisibleInIndex ==
-    \/ ListLinkAccess
+    \/ vis = "link" /\ ~suspended /\ linkSharing /\ ActiveLinkExpiry(expiry)
     \/ vis = "workspace" /\ sameWs /\ ~Revoked
     \/ owner /\ ~Revoked
     \/ verified /\ shareGrant
@@ -194,13 +195,14 @@ ProjectFileCount ==
     /\ \/ sameWs /\ MemberVisibleInIndex
        \/ ~sameWs /\ SharedVisibleInIndex
 
-(* events.server.ts listEvents, slice 'mine': scope
+(* events.server.ts listFeedEvents, slice 'mine': the scope
    (shareables.workspace_id = user.workspaceId OR a project_members row), then
    visibleShareableToViewerSql in the workspace, and outside it a
    project_members row AND visibleSharedProjectShareableToViewerSql. *)
 ActivityFeed ==
-    \/ sameWs /\ WorkspaceListPredicate
-    \/ ~sameWs /\ joined /\ (vis = "project" \/ (shareGrant /\ verified))
+    /\ sameWs \/ joined
+    /\ \/ sameWs /\ WorkspaceListPredicate
+       \/ ~sameWs /\ joined /\ (vis = "project" \/ (shareGrant /\ verified))
 
 (* search-discovery.server.ts discoveryEligibility, with the
    includeArchived = false filter (c.kind IS NOT 'project' OR c.archived_at IS NULL). *)
@@ -333,6 +335,7 @@ ArchiveOrRestoreProject == kind = "project" /\ archived' = ~archived
                    botStopped, verified, shareGrant, projectGrant, suspended, expiry,
                    linkSharing, joined, recency>>
 ChangeAudience == kind = "project" /\ projectGrant' = ~projectGrant
+    /\ ((AudienceStable /\ ~sameWs /\ joined) => projectGrant')
     /\ UNCHANGED <<vis, owner, sameWs, kind, baseVis, creator, archived, member, teamPlan,
                    botStopped, verified, shareGrant, suspended, expiry,
                    linkSharing, joined, recency>>
@@ -355,12 +358,13 @@ StopOrRestartBot == botStopped' = ~botStopped
                    linkSharing, joined, recency>>
 (* Sign-in with a provider that does or does not assert a verified email. *)
 ChangeEmailVerification == verified' = ~verified
+    /\ ((AudienceStable /\ ~sameWs /\ joined) => verified')
     /\ UNCHANGED <<vis, owner, sameWs, kind, baseVis, creator, archived, member, teamPlan,
                    botStopped, shareGrant, projectGrant, suspended, expiry,
                    linkSharing, joined, recency>>
 (* project-membership.server.ts joinProject / leaveProject: both call
    accessibleProject first and return 'not-found' without it. *)
-JoinProject == JoinEnabled /\ Joinable /\ ~joined /\ joined' = TRUE
+JoinProject == Joinable /\ ~joined /\ joined' = TRUE
     /\ UNCHANGED <<Facts, recency>>
 LeaveProject == Joinable /\ joined /\ joined' = FALSE
     /\ UNCHANGED <<Facts, recency>>

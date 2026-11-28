@@ -1,6 +1,6 @@
 ---
 name: verify-artifact-access
-description: Model-check with TLA+ (TLC) that every artifact and project list shows a viewer only what that viewer can open, and that lists keep up with project audience, link suspension, link expiry, archive, and membership changes. Use after a change to an access predicate in apps/web/app/modules/access/facts.ts, access.server.ts, projects.server.ts, project-membership.server.ts, events.server.ts, search-discovery.server.ts, or home.server.ts, and when a list and the artifact page disagree.
+description: Model-check with TLA+ (TLC) that the artifact and project lists show a viewer only what that viewer can open, and that lists keep up with project audience, link suspension, link expiry, archive, and membership changes. Use after a change to an access predicate in apps/web/app/modules/access/facts.ts, access.server.ts, projects.server.ts, project-membership.server.ts, events.server.ts, search-discovery.server.ts, or home.server.ts, and when a list and the artifact page disagree.
 ---
 
 # Verify artifact access
@@ -17,9 +17,9 @@ Each rule is an INVARIANT in `model/ArtifactAccess.tla`. "Open" means `viewerAcc
 | `WorkspaceOpenIsListed` | An artifact in the viewer's workspace that the viewer can open is in those lists. | A live artifact disappears from lists, as a live link with an unusual expiry format did. |
 | `SharedProjectFilesOpen` | Each file on a project page opened by an audience member from another workspace opens for them. | The shared project page leaks files outside the audience's reach. |
 | `ProjectFileCountOpens` | The file count on the projects page counts only files that open for the viewer. | The count reveals that hidden files exist. |
-| `ActivityFeedOpens` | Each artifact in the activity feed (`listFeedEvents`, slice `mine`) opens for the viewer. | The feed shows titles of artifacts the viewer may not see. |
+| `ActivityFeedOpens` | Each artifact in the activity feed (`listFeedEvents`, slice `mine`) opens for the viewer. | The feed shows titles, and comment text, of artifacts the viewer may not see. |
 | `SearchOpens` | Each artifact that search (`discoveryEligibility`) returns opens for the viewer. | Search shows hidden artifacts. |
-| `RecentOpens` | Each artifact in recents (`recentShareableAccessPredicate`) opens for the viewer. | Recents and the search palette show titles the viewer may not see. |
+| `RecentOpens` | Each artifact in recents (`recentShareableAccessPredicate`) opens for the viewer. | Recents show a live row (current title, owner, version and unread counts) for an artifact the viewer may not open, and the search palette matches its current title. |
 | `ProjectListsOpen` | Every unarchived project on the projects page, the shared list, the suggestions, the joined dropdown, and every project the viewer may join or leave has a project page that opens. | Project names leak, or links lead to 404. |
 | `ProjectOpenIsListed` | Every project whose page opens is on the projects page. | A project the viewer can use cannot be found. |
 
@@ -39,10 +39,10 @@ Run the check when a change touches any of these. The model describes them as of
 | same file, `visibleShareableToViewer`; `services/access.server.ts` `workspaceScopedProjectVisibility` | `WorkspaceListPredicate`, `WorkspaceList` |
 | same file, `projectSummaryQuery` via `findWorkspaceProject`, and `sharedProjectSummaryQuery` via `findSharedProjectForViewer` and `listSharedProjects` | `WorkspaceProjectFound`, `SharedProjectFound`, `SharedListed` |
 | same file, `visibleSharedProjectShareableToViewer`; `routes/_protected/projects.$id.tsx` `loader` and `loadSharedProject` | `ProjectOpen`, `SharedProjectFiles` |
-| `services/project-membership.server.ts` `listProjectsForIndex` with `visibleShareableToDatabaseViewerSql` and `visibleSharedProjectShareableToDatabaseViewerSql` | `IndexListed`, `MemberVisibleInIndex`, `SharedVisibleInIndex`, `ProjectFileCount` |
+| `services/project-membership.server.ts` `listProjectsForIndex` with `visibleShareableToDatabaseViewerSql` (its own copy of the link clause) and `visibleSharedProjectShareableToDatabaseViewerSql` | `IndexListed`, `MemberVisibleInIndex`, `SharedVisibleInIndex`, `ProjectFileCount` |
 | same file, `suggestProjects`, `listJoinedProjectsForDropdown`, `visibleProjectContainerToViewerSql` | `SuggestListed`, `DropdownListed`, `Joinable` |
 | same file, `joinProject`, `leaveProject` | `JoinProject`, `LeaveProject` |
-| `services/events.server.ts` `listFeedEvents`, slice `mine` | `ActivityFeed` |
+| `services/events.server.ts` `listFeedEvents`, slice `mine`: the scope filter and the access predicate | `ActivityFeed` |
 | `services/search-discovery.server.ts` `discoveryEligibility` and the `includeArchived` filter in `discoveryQuery` | `Search` |
 | `services/home.server.ts` `recentShareableAccessPredicate` | `Recent` |
 | `services/views.server.ts` `recordViewerRecency` (a row when the viewer opens the page) | `ViewArtifact` |
@@ -69,7 +69,7 @@ The command runs three kinds of check and prints one line each:
 
 1. **baseline**: one full exploration with every rule that should hold. Expect `ok ... pass`.
 2. **known finding**: each rule in `KNOWN_FINDINGS` in `check.mjs`, which the current code breaks. Expect `ok ... violated` with the recorded path.
-3. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail. **scoped baseline** runs a rule with `JoinEnabled = FALSE`, where its known finding cannot happen, so its mutation has a passing baseline to break.
+3. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail. **scoped baseline** runs a rule with `AudienceStable = TRUE`, where a viewer from another workspace who has joined a project keeps a verified audience entry. Its known finding cannot happen there, so its mutations have a passing baseline to break.
 
 It ends with `All checks behaved as recorded.` and exit code 0, or names each check that did not, with the path TLC found and its output file, and exits 1.
 
@@ -100,11 +100,12 @@ Assumed:
 - The artifact and its container are in one workspace, and a project's creator is in that workspace. The model does not move users between workspaces.
 - Email matching is exact. `lowerEmail`, `grantMatchEmail`, and the session's `emailVerified` against the database's `email_verified` are one boolean each.
 - Link expiry is one of four classes, read by `activeLinkExpiry`. The string formats behind them are not in the model. Each list and `facts` read expiry with `activeLinkExpiry`, and `checkAnonymousLinkAccess` reads it with `isValidUtcIso` and `Date.parse`.
-- Every caller of `visibleShareableToViewer` applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check each caller.
+- Every caller of `visibleShareableToViewer` in the coverage table applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check other callers. `listFeedEvents` slice `project` is the known exception, see Left out.
 
 Left out:
 
 - Anonymous viewers (they open only through `AnonymousLinkAllowed`), agent credential scopes (`agentReadableShareableSql`), bot-specific grants, Slack and the comment and access-request paths that call `viewerDisplayCheck`.
+- `listFeedEvents` slice `project` (project page activity). It applies `visibleShareableToViewerSql` to a viewer with an active `workspace_members` row in the project's workspace, not to `users.workspace_id`. That is the same as `sameWs` unless a user holds an active row outside their own workspace, which the model does not represent. A scratch model with such rows breaks it in an initial state, and whether the product can make such a row is unconfirmed.
 - The search palette's own filters and `listRailProjects`. Search index freshness: the model checks the eligibility SQL, not the index.
 - Who may write: the authority checks on visibility, audience, and archive changes. Every write is allowed in the model.
 - Time windows other than link expiry, and the `unread` and `relation` filters on recents.
@@ -115,7 +116,7 @@ Observed, not a rule: `activeLinkExpiry` (SQL) and `checkAnonymousLinkAccess` (T
 
 Both come from one cause: the `project_members` row stays after the viewer leaves the project audience, and two lists accept that row in place of a current audience entry. `viewerAccessAllowed` does not, so the artifact page denies what the list shows.
 
-- `ActivityFeedOpens`: a viewer from another workspace is in a project's audience and joins the project. The host removes them from the audience. The activity feed (slice `mine`) still shows the project's artifacts with their titles, because its cross-workspace branch requires only a `project_members` row and `visibleSharedProjectShareableToViewerSql`, which passes every `project` artifact.
-- `RecentOpens`: the same viewer opens one of those artifacts before the removal. Recents and the search palette keep showing it, because the `crossProject` branch of `recentShareableAccessPredicate` accepts `NOT revoked AND project_members` without an audience entry. A viewer from another workspace has no membership to revoke.
+- `ActivityFeedOpens`: a viewer from another workspace is in a project's audience and joins the project. The host removes them from the audience. The activity feed (slice `mine`) still shows the project's artifacts with their titles, and comment text once the viewer has opened one, because its cross-workspace branch requires only a `project_members` row and `visibleSharedProjectShareableToViewerSql`, which passes every `project` artifact.
+- `RecentOpens`: the same viewer opens one of those artifacts before the removal. Recents keep showing it as a live row with its current title, owner, version and unread counts, and the search palette matches it, because the `crossProject` branch of `recentShareableAccessPredicate` accepts `NOT revoked AND project_members` without an audience entry. A viewer from another workspace has no membership to revoke. The viewer cannot clear the stale row: `leaveProject` returns `not-found` once they are out of the audience.
 
 Reproduced on the real code at the sync commit with a test that seeds both workspaces, calls `joinProject` and `recordViewerRecency`, deletes the viewer's `project_share_defaults` row, and then finds the artifact in `listFeedEvents` and `listRecentArtifactsLimited` while `viewerAccessAllowed` and `findSharedProjectForViewer` deny it. The existing test `cross-workspace joined project flows with shared visibility only` in `services/events.server.test.ts` seeds a `project_members` row with no audience entry and expects the feed to show the artifact, so it encodes this behavior.
