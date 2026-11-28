@@ -26,7 +26,15 @@ export function scanValue(value, filePath, compiled) {
           entry.regex.test(match[0]),
       )
       if (!allowed)
-        findings.push({ category: item.category, pattern: item.pattern })
+        findings.push({
+          category: item.category,
+          pattern: item.pattern,
+          match:
+            item.category === 'credential'
+              ? `${match[0].slice(0, 4)}... (${match[0].length} characters)`
+              : match[0],
+          line: value.slice(0, match.index).split('\n').length,
+        })
     }
   }
   return findings

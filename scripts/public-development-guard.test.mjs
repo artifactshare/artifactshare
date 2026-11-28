@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -412,10 +412,11 @@ test('default guardPush implementation passes a real temporary repository', () =
   const original = process.cwd()
   try {
     fs.mkdirSync(path.join(repo, 'config'))
-    fs.copyFileSync(
-      path.join(original, 'config/repository-boundary.json'),
-      path.join(repo, 'config/repository-boundary.json'),
-    )
+    for (const file of [
+      'config/repository-boundary.json',
+      'config/public-repository-scan.json',
+    ])
+      fs.copyFileSync(path.join(original, file), path.join(repo, file))
     fs.writeFileSync(path.join(repo, 'README.md'), 'safe\n')
     execFileSync('git', ['init', '-q'], { cwd: repo })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], {
@@ -494,10 +495,85 @@ test('default guardPush implementation passes a real temporary repository', () =
           input: `refs/heads/main ${metadataHead} refs/heads/main ${'0'.repeat(40)}\n`,
           branch: 'main',
         }),
-      { code: 'forbidden-metadata' },
+      (error) =>
+        error.code === 'forbidden-metadata' &&
+        error.message.includes(
+          `issue-reference: found \`${'#'}1485\`; remove \`${'#'}1485\` and state the fact in words`,
+        ) &&
+        error.message.includes(`rewrite commit ${metadataHead.slice(0, 12)}`),
     )
   } finally {
     process.chdir(original)
     fs.rmSync(repo, { recursive: true, force: true })
   }
+})
+
+test('metadata files can be checked on their own before a pull request is opened', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-metadata-'))
+  const run = (body) => {
+    const file = path.join(directory, 'pr.txt')
+    fs.writeFileSync(file, body)
+    return spawnSync(
+      process.execPath,
+      ['scripts/public-development-guard.mjs', '--metadata-file', file],
+      { encoding: 'utf8' },
+    )
+  }
+  try {
+    let result = run(
+      'feat(cli): add a flag\n\nThe flag replaces the old one.\n',
+    )
+    assert.equal(result.status, 0, result.stderr)
+
+    result = run(`fix(web): close the gap\n\nFollows ${'#'}123.\n`)
+    assert.equal(result.status, 1)
+    assert.equal(
+      result.stderr,
+      [
+        'forbidden-metadata: pull request',
+        `  issue-reference: found \`${'#'}123\`; remove \`${'#'}123\` and state the fact in words`,
+        '  fix: edit the pull request title or body, then rerun the check',
+        '',
+      ].join('\n'),
+    )
+
+    result = spawnSync(
+      process.execPath,
+      ['scripts/public-development-guard.mjs', '--metadata-file', '--other'],
+      { encoding: 'utf8' },
+    )
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /metadata-file value is required/u)
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('boundary errors name the violation, the matched path, and the fix', () => {
+  for (const [check, code, subject, fix] of [
+    [
+      () => inspectTree([{ path: '.ops.vars', mode: 'file' }], manifest),
+      'outside-manifest',
+      '.ops.vars',
+      /fix: add the path to canonical .* in config\/repository-boundary\.json/u,
+    ],
+    [
+      () => inspectTree([{ path: 'README.md', mode: 'symlink' }], manifest),
+      'unsafe-tree-entry',
+      'README.md',
+      /fix: replace the symlink with a regular file/u,
+    ],
+    [
+      () => assertProposalOnly([{ status: 'M', path: 'README.md' }]),
+      'proposal-document-only',
+      undefined,
+      /fix: an external pull request may add one proposals/u,
+    ],
+  ])
+    assert.throws(check, (error) => {
+      const [first, ...rest] = error.message.split('\n')
+      assert.equal(first, subject ? `${code}: ${subject}` : code)
+      assert.match(rest.join('\n'), fix)
+      return true
+    })
 })

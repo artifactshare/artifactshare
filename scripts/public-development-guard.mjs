@@ -6,9 +6,114 @@ import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
+const manifestFix = (change) =>
+  `fix: ${change} in config/repository-boundary.json`
+const rewriteFix = (sha) =>
+  `fix: rewrite commit ${sha.slice(0, 12)} (git rebase -i, edit or reword); a later commit that removes it does not clear this check`
+
+const metadataFixes = {
+  'issue-reference': (text) => `remove ${text} and state the fact in words`,
+  'private-repository-url': () => 'remove the private repository URL',
+  'artifactshare-spec-url': () =>
+    'remove the artifact URL and describe the artifact in words',
+  'internal-host': () => 'remove the internal host name',
+  'internal-helper': () => 'remove the internal command or helper name',
+}
+
+const contentFixes = {
+  credential: 'remove the credential and rotate it',
+  'personal-data':
+    'replace the address with one at example.com, example.org, or example.test',
+  'private-network':
+    'replace the private address or ssh target with a documentation value',
+  'private-reference':
+    'remove the private path, issue number, or URL and state the fact in words',
+  'production-resource': 'remove the production identifier',
+  'public-ci-reachability':
+    'remove the private runner, secret, deploy, or publish step from the public workflow',
+}
+
+function metadataLocationFix(label) {
+  if (label.startsWith('commit ')) return rewriteFix(label.slice(7))
+  if (label === 'branch')
+    return 'fix: rename the branch (git branch -m <new-name>) and push the new name'
+  if (label === 'pull request')
+    return 'fix: edit the pull request title or body, then rerun the check'
+  return `fix: edit the ${label}`
+}
+
+const boundaryFixes = {
+  'unsupported-boundary-schema': () => [manifestFix('set schema_version to 1')],
+  'unknown-prefix-exclusion': () => [
+    manifestFix(
+      'list the prefix in canonical_prefixes or classification_prefixes, or drop its canonical_prefix_exclusions entry',
+    ),
+  ],
+  'unterminated-boundary-prefix': () => [
+    manifestFix('end every prefix with /'),
+  ],
+  'duplicate-exported-path': () => [manifestFix('list each path once')],
+  'invalid-classification': () => [
+    manifestFix('use canonical, private-overlay, or public-only'),
+  ],
+  'duplicate-boundary-prefix': () => [manifestFix('list the prefix once')],
+  'duplicate-boundary-path': () => [
+    manifestFix('keep the path under one classification'),
+  ],
+  'unexported-boundary-path': () => [
+    manifestFix('add the path to canonical or drop its classification'),
+  ],
+  'unclassified-exported-path': () => [manifestFix('classify the path')],
+  'ambiguous-boundary-prefix': () => [
+    manifestFix('make the prefixes disjoint'),
+  ],
+  'invalid-boundary-exclusion': () => [
+    manifestFix('make each exclusion a path inside its prefix'),
+  ],
+  'ambiguous-boundary-path': () => [
+    manifestFix('classify the path the same way as its prefix'),
+  ],
+  'outside-manifest': () => [
+    manifestFix(
+      'add the path to canonical (or under a canonical_prefixes entry), or remove the file from every outgoing commit',
+    ),
+  ],
+  'unsafe-tree-entry': ({ mode }) => [
+    `fix: replace the ${mode} with a regular file in every outgoing commit`,
+  ],
+  'invalid-tree-entry': () => [
+    'fix: git ls-tree printed an unexpected line; rerun in a clean checkout',
+  ],
+  'proposal-document-only': () => [
+    'fix: an external pull request may add one proposals/<name>.md or .txt file and change nothing else',
+  ],
+  'reclassified-outside-manifest-pr': () => [
+    'fix: move the config/repository-boundary.json change into its own pull request',
+  ],
+  'changed-content-finding': ({ category, match, line, commit }) => [
+    `${category}: found \`${match}\` at line ${line}; ${contentFixes[category] ?? 'remove it'}`,
+    rewriteFix(commit),
+    'fix: if the finding is a false positive, land the allowlist change in config/public-repository-scan.json on main first; the scan reads its policy from main',
+  ],
+  'forbidden-metadata': ({ subject, violations }) => [
+    ...violations.map(
+      ({ id, text }) =>
+        `${id}: found \`${text}\`; ${metadataFixes[id](`\`${text}\``)}`,
+    ),
+    metadataLocationFix(subject),
+  ],
+}
+
 export class BoundaryError extends Error {
   constructor(code, subject, detail) {
-    super(subject === undefined ? code : `${code}: ${subject}`)
+    const fix = boundaryFixes[code]
+    if (!fix) throw new TypeError(`no fix registered for ${code}`)
+    super(
+      [
+        subject === undefined ? code : `${code}: ${subject}`,
+        ...fix({ subject, ...detail }).map((line) => `  ${line}`),
+      ].join('\n'),
+    )
     this.name = 'BoundaryError'
     this.code = code
     this.subject = subject
@@ -254,13 +359,14 @@ export function inspectCommitRange({
       changed[0].path === 'config/repository-boundary.json',
   })
   inspectTree(headTree, headManifest)
+  const scanConfig = loadScanConfig(manifestRepo)
   for (const sha of commits) {
     if (acceptedOnTrustedTip(sha)) continue
     inspectChangedContent({
       git,
       head: sha,
       changed: changedFromParents(git, sha),
-      configRepo: manifestRepo,
+      scanConfig,
     })
     inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
     inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
@@ -269,7 +375,7 @@ export function inspectCommitRange({
     git,
     head,
     changed: reclassified.map((file) => ({ status: 'M', path: file })),
-    configRepo: manifestRepo,
+    scanConfig,
   })
   return commits
 }
@@ -355,8 +461,22 @@ function loadScanConfig(repo) {
   )
 }
 
-export function inspectChangedContent({ git, head, changed, configRepo }) {
-  const compiled = compileScanConfig(loadScanConfig(configRepo))
+function defaultBranchScanConfig(git, remoteName) {
+  try {
+    return JSON.parse(
+      git([
+        'show',
+        `refs/remotes/${remoteName}/main:config/public-repository-scan.json`,
+      ]),
+    )
+  } catch (error) {
+    if (error?.status === undefined) throw error
+    return loadScanConfig(process.cwd())
+  }
+}
+
+export function inspectChangedContent({ git, head, changed, scanConfig }) {
+  const compiled = compileScanConfig(scanConfig)
   for (const { status, path: file } of changed) {
     if (status === 'D') continue
     const value = git(['show', `${head}:${file}`])
@@ -365,12 +485,15 @@ export function inspectChangedContent({ git, head, changed, configRepo }) {
     if (finding)
       throw new BoundaryError('changed-content-finding', file, {
         category: finding.category,
+        match: finding.match,
+        line: finding.line,
+        commit: head,
       })
   }
 }
 
 const forbidden = [
-  { id: 'issue-reference', pattern: /(^|[^\p{L}\p{N}_])#\d+(?!\w)/u },
+  { id: 'issue-reference', pattern: /(?<![\p{L}\p{N}_])#\d+(?!\w)/u },
   {
     id: 'private-repository-url',
     pattern:
@@ -393,9 +516,16 @@ const forbidden = [
 ]
 
 export function inspectMetadata(value, label = 'metadata') {
-  const violations = forbidden
-    .filter(({ pattern }) => pattern.test(value))
-    .map(({ id }) => id)
+  const violations = forbidden.flatMap(({ id, pattern }) =>
+    [
+      ...new Set(
+        Array.from(
+          value.matchAll(new RegExp(pattern, `${pattern.flags}g`)),
+          (match) => match[0].trim(),
+        ),
+      ),
+    ].map((text) => ({ id, text })),
+  )
   if (violations.length)
     throw new BoundaryError('forbidden-metadata', label, { violations })
   return true
@@ -451,9 +581,16 @@ export function guardPush({ input, branch, remoteName = 'origin', git } = {}) {
     throw new Error(`invalid remote name: ${remoteName}`)
   const gitImpl = git ?? defaultGit
   const commits = outgoingCommits(updates, remoteName, gitImpl)
+  const scanConfig = defaultBranchScanConfig(gitImpl, remoteName)
   for (const sha of commits) {
     const message = gitImpl(['show', '-s', '--format=%B', sha])
     inspectMetadata(message, `commit ${sha}`)
+    inspectChangedContent({
+      git: gitImpl,
+      head: sha,
+      changed: changedFromParents(gitImpl, sha),
+      scanConfig,
+    })
     const tree = parseTree(gitImpl(['ls-tree', '-r', sha]))
     inspectTree(tree, manifest)
   }
@@ -473,12 +610,22 @@ if (
     const args = process.argv.slice(2)
     const values = (option) =>
       args.flatMap((arg, index) => (arg === option ? [args[index + 1]] : []))
-    for (const file of values('--metadata-file')) {
+    const metadataFiles = values('--metadata-file')
+    for (const file of metadataFiles) {
       if (!file || file.startsWith('--'))
         throw new Error('metadata-file value is required')
       inspectMetadata(fs.readFileSync(file, 'utf8'), 'pull request')
     }
-    if (process.argv.includes('--ci-pr')) {
+    if (
+      metadataFiles.length > 0 &&
+      args.every((arg, index) =>
+        arg.startsWith('--')
+          ? arg === '--metadata-file'
+          : args[index - 1] === '--metadata-file',
+      )
+    ) {
+      process.stdout.write('pull request metadata passed\n')
+    } else if (process.argv.includes('--ci-pr')) {
       const base = values('--base')[0]
       const head = values('--head')[0]
       const repo = values('--repo')[0] ?? root

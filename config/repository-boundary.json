@@ -87,6 +87,7 @@
     "scripts/public-repository-scan.test.mjs",
     "scripts/public-hook-setup.mjs",
     "scripts/public-hook-setup.test.mjs",
+    "scripts/pre-push.mjs",
     "scripts/public-runtime-smoke.mjs",
     "scripts/verify-validated-sha.mjs",
     "scripts/verify-validated-sha.test.mjs",
