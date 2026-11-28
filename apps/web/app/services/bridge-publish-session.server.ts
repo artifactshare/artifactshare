@@ -62,6 +62,7 @@ import {
   putArtifact,
 } from './storage.server'
 import { validateBundlePath } from '../../workers/lib/path-validator'
+import { chunkArray } from '~/lib/chunk-array'
 
 const PROJECT_NAME_ATTEMPTS = 3
 const REQUEST_LEASE_MS = 60_000
@@ -2414,14 +2415,6 @@ async function ensureReplayGrant(
     .where(lowerEmail('granted_email'), '=', normalizedEmail)
     .executeTakeFirst()
   return Boolean(granted)
-}
-
-function chunkArray<T>(items: readonly T[], size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
 }
 
 function truncateBridgeTitle(value: string): string {

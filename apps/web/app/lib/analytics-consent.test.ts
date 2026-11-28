@@ -1,21 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import {
-  isAnalyticsConsentState,
   isConsentRequiredRegion,
   resolveAnalyticsConsent,
   type AnalyticsConsentState,
 } from './analytics-consent'
-
-describe('isAnalyticsConsentState', () => {
-  test('accepts only consent states', () => {
-    expect(isAnalyticsConsentState('granted')).toBe(true)
-    expect(isAnalyticsConsentState('denied')).toBe(true)
-    expect(isAnalyticsConsentState('unset')).toBe(true)
-    expect(isAnalyticsConsentState('pending')).toBe(false)
-    expect(isAnalyticsConsentState(null)).toBe(false)
-    expect(isAnalyticsConsentState(1)).toBe(false)
-  })
-})
 
 describe('isConsentRequiredRegion', () => {
   test('requires consent in the EU, EEA, UK, and EU outermost regions', () => {

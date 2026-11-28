@@ -6,6 +6,7 @@ import {
 } from '../../app/viewers/pdf/paths'
 import { PDF_VIEWER_SCRIPT } from './pdf-viewer-script.generated'
 import { PDF_VIEWER_STYLE } from './pdf-viewer-style.generated'
+import { escapeHtml } from './escape-html'
 
 export { PDF_ORIGINAL_PATH }
 export const PDF_MIME_TYPE = 'application/pdf'
@@ -92,14 +93,6 @@ export function pdfContentDisposition(
   const name = pdfDownloadFileName(entrypointPath)
   const ascii = name.replace(/[^\x20-\x7e]/g, '_').replaceAll('"', '_')
   return `${attachment ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
 }
 
 export function pdfViewerDocument(entrypointPath: string | null): string {

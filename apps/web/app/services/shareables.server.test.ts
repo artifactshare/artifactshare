@@ -117,7 +117,6 @@ import {
   deleteShareable,
   editShareableSettings,
   generateUniqueShareableId,
-  getOwnedArtifactRef,
   getOwnedShareableSummary,
   listMoveDestinations,
   listOwnedArtifactVersions,
@@ -7145,7 +7144,7 @@ describe('cross-workspace owner operations', () => {
     expect(versionBegun.kind).toBe('ok')
   })
 
-  test('getOwnedShareableSummary and getOwnedArtifactRef return cross-workspace owned artifacts', async () => {
+  test('getOwnedShareableSummary returns cross-workspace owned artifacts', async () => {
     await seedExternalProject(db)
     const uploaded = await uploadShareable(
       db,
@@ -7163,12 +7162,6 @@ describe('cross-workspace owner operations', () => {
     expect(summary).not.toBeNull()
     expect(summary!.id).toBe(uploaded.id)
     expect(summary!.projectId).toBe(EXT_PROJECT)
-
-    const ref = await getOwnedArtifactRef(db, OWNER, uploaded.id)
-    expect(ref).not.toBeNull()
-    expect(ref!.artifactKind).toBe('html_page')
-    expect(ref!.versionId).toBe(uploaded.versionId)
-    expect(ref!.r2Key).not.toBeNull()
   })
 
   test('updateShareableMetadata updates cross-workspace owned artifacts', async () => {
@@ -8045,7 +8038,6 @@ describe('cross-workspace owner operations', () => {
     })
     expect(versionResult).toEqual({ kind: 'not-found' })
     expect(await getOwnedShareableSummary(db, other, uploaded.id)).toBeNull()
-    expect(await getOwnedArtifactRef(db, other, uploaded.id)).toBeNull()
     expect(
       await updateShareableMetadata(db, other, uploaded.id, {
         visibility: 'workspace',
@@ -10157,9 +10149,6 @@ describe('member removal credential blocking', () => {
     await expect(listOwnedShareables(db, removedUser)).resolves.toEqual([])
     await expect(
       getOwnedShareableSummary(db, removedUser, uploaded.id),
-    ).resolves.toBeNull()
-    await expect(
-      getOwnedArtifactRef(db, removedUser, uploaded.id),
     ).resolves.toBeNull()
     await expect(
       listOwnedArtifactVersions(db, removedUser, uploaded.id),

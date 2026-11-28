@@ -12,6 +12,7 @@ import { nowIso } from '~/lib/datetime'
 import {
   LINK_PUBLISH_RATE_WINDOW_MS,
   isLinkPublishLimitedWorkspace,
+  isLinkPublishRateLimited,
   linkPublishRateLimitFromEnv,
   type LinkPublishRateLimit,
 } from '~/lib/link-trust-policy'
@@ -137,7 +138,14 @@ async function checkLinkPublishRateLimit(
     .orderBy('shareable_id')
     .limit(args.rateLimit.dailyLimit)
     .execute()
-  if (published.length < args.rateLimit.dailyLimit) return null
+  if (
+    !isLinkPublishRateLimited({
+      ...policyInput,
+      publishedInWindow: published.length,
+    })
+  ) {
+    return null
+  }
   return await buildLinkPublishRateLimitFailure(db, {
     workspaceId: args.workspaceId,
     refusedShareableId: args.shareableId ?? '',

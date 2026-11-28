@@ -12,9 +12,8 @@ import type { CliAuthority } from './cli-authority.server'
 import { uploadPlacementSql } from './projects.server'
 import { listAgentReadableArtifacts } from './cli-artifacts.server'
 import {
-  isAgentOwnedArtifact,
+  authorizeAgentArtifactRead,
   isAgentPublishableDestination,
-  isAgentReadableArtifact,
 } from './agent-scope.server'
 
 const sqliteRef = vi.hoisted(() => ({
@@ -172,65 +171,65 @@ describe('agent artifact read scope', () => {
   test('allows reads across the workspace read contract', async () => {
     // Workspace-visible artifacts in any non-archived project are readable.
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'approved-artifact'),
-    ).resolves.toBe(true)
+      authorizeAgentArtifactRead(db, user, authority, 'approved-artifact'),
+    ).resolves.toMatchObject({ kind: 'authorized' })
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'other-artifact'),
-    ).resolves.toBe(true)
+      authorizeAgentArtifactRead(db, user, authority, 'other-artifact'),
+    ).resolves.toMatchObject({ kind: 'authorized' })
     // Private project with an audience grant for the approver (viewer role).
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'granted-artifact'),
-    ).resolves.toBe(true)
+      authorizeAgentArtifactRead(db, user, authority, 'granted-artifact'),
+    ).resolves.toMatchObject({ kind: 'authorized' })
   })
 
   test('keeps archived, home, link, ungranted, and foreign artifacts unreadable', async () => {
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'archived-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'archived-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'home-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'home-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'link-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'link-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'ungranted-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'ungranted-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'w2-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'w2-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
   })
 
   test('unverified email never matches a private-project audience grant', async () => {
     const unverified: SessionUser = { ...user, emailVerified: false }
     // Session verification is stale; the database still authorizes the grant.
     await expect(
-      isAgentReadableArtifact(db, unverified, authority, 'other-artifact'),
-    ).resolves.toBe(true)
+      authorizeAgentArtifactRead(db, unverified, authority, 'other-artifact'),
+    ).resolves.toMatchObject({ kind: 'authorized' })
     await expect(
-      isAgentReadableArtifact(db, unverified, authority, 'granted-artifact'),
-    ).resolves.toBe(true)
+      authorizeAgentArtifactRead(db, unverified, authority, 'granted-artifact'),
+    ).resolves.toMatchObject({ kind: 'authorized' })
     sqlite.prepare(`UPDATE users SET email_verified = 0 WHERE id = 'u1'`).run()
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'granted-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'granted-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
   })
 
   test('uses the database workspace when session workspace is stale', async () => {
     await expect(
-      isAgentReadableArtifact(
+      authorizeAgentArtifactRead(
         db,
         { ...user, workspaceId: 'ws2' },
         authority,
         'approved-artifact',
       ),
-    ).resolves.toBe(true)
+    ).resolves.toMatchObject({ kind: 'authorized' })
     sqlite
       .prepare(`UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'`)
       .run()
     await expect(
-      isAgentReadableArtifact(db, user, authority, 'approved-artifact'),
-    ).resolves.toBe(false)
+      authorizeAgentArtifactRead(db, user, authority, 'approved-artifact'),
+    ).resolves.toMatchObject({ kind: 'denied' })
   })
 
   test('lists exactly the readable artifacts and leaks no other titles', async () => {
@@ -546,14 +545,11 @@ describe('agent artifact read scope', () => {
     await expect(
       isAgentPublishableDestination(db, user, authority, 'project-granted'),
     ).resolves.toBe(false)
-    await expect(
-      isAgentOwnedArtifact(db, user, authority, 'other-artifact'),
-    ).resolves.toBe(false)
   })
 
   test('stops mutations when the approved project is archived', async () => {
     await expect(
-      isAgentOwnedArtifact(db, user, authority, 'approved-artifact'),
+      isAgentPublishableDestination(db, user, authority, 'project-1'),
     ).resolves.toBe(true)
 
     sqlite
@@ -565,7 +561,7 @@ describe('agent artifact read scope', () => {
       .run()
 
     await expect(
-      isAgentOwnedArtifact(db, user, authority, 'approved-artifact'),
+      isAgentPublishableDestination(db, user, authority, 'project-1'),
     ).resolves.toBe(false)
   })
 })

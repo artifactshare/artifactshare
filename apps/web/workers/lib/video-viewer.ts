@@ -6,6 +6,7 @@ import {
 } from '../../app/viewers/video/paths'
 import { VIDEO_VIEWER_SCRIPT } from './video-viewer-script.generated'
 import { VIDEO_VIEWER_STYLE } from './video-viewer-style.generated'
+import { escapeHtml } from './escape-html'
 
 export { VIDEO_ORIGINAL_PATH }
 export const VIDEO_MIME_TYPE = 'video/mp4'
@@ -45,14 +46,6 @@ export function videoContentDisposition(
   const name = videoDownloadFileName(entrypointPath)
   const ascii = name.replace(/[^\x20-\x7e]/g, '_').replaceAll('"', '_')
   return `${attachment ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
 }
 
 export function videoPlayerDocument(entrypointPath: string | null): string {

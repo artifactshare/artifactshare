@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest'
 import {
   BOT_EMAIL_DOMAIN,
   generateBotEmail,
-  isBotToken,
   isReservedBotEmailDomain,
   normalizeBotDisplayName,
 } from './bot-account'
@@ -52,13 +51,5 @@ describe('isReservedBotEmailDomain', () => {
     expect(isReservedBotEmailDomain('x@example.com')).toBe(false)
     expect(isReservedBotEmailDomain('x@invalid.test')).toBe(false)
     expect(isReservedBotEmailDomain('no-at-sign')).toBe(false)
-  })
-})
-
-describe('isBotToken', () => {
-  test('detects the asb_ prefix', () => {
-    expect(isBotToken('asb_abc')).toBe(true)
-    expect(isBotToken('asr_abc')).toBe(false)
-    expect(isBotToken('ast_abc')).toBe(false)
   })
 })

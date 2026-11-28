@@ -5,7 +5,7 @@ import {
   normalizeTanStackLanguage,
   TANSTACK_HIGHLIGHT_ALIASES,
   TANSTACK_HIGHLIGHT_LANGUAGES,
-} from './tanstack-highlight.server'
+} from '@artifactshare/viewer-kit/tanstack-highlight'
 
 const INITIAL_LANGUAGES = [
   'css',

@@ -10,11 +10,10 @@ import { loadCommentThreads, type CommentAccess } from './comments.server'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import {
-  buildHomeView,
-  compileRecentArtifactsLimitedQuery,
   compileRecentArtifactsCountQuery,
+  compileRecentArtifactsLimitedQuery,
   countRecentArtifacts,
-  listMyArtifacts,
+  listMyArtifactsLimited,
   listUnopenedOwnedArtifactsLimited,
   listRecentArtifactsLimited,
   listRecentArtifactsPage,
@@ -24,7 +23,7 @@ import { listMyProjects } from './projects.server'
 
 const TS = '2026-06-14T00:00:00.000Z'
 
-describe('listMyArtifacts', () => {
+describe('listMyArtifactsLimited', () => {
   let db: Kysely<DB>
 
   beforeEach(async () => {
@@ -36,26 +35,32 @@ describe('listMyArtifacts', () => {
     await db.destroy()
   })
 
-  test('returns own inbox and project files, not others files, ordered by updated_at desc', async () => {
-    const rows = await listMyArtifacts(db, 'u1', 'ws-a')
+  test('returns own inbox and project files, not others files, ordered by created_at desc', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ created_at: '2026-06-16T00:00:00.000Z' })
+      .where('id', '=', 's-inbox-older')
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ created_at: '2026-06-15T00:00:00.000Z' })
+      .where('id', '=', 's-project-recent')
+      .execute()
 
-    expect(rows.rows.map((r) => r.id)).toEqual([
-      's-inbox-newer',
-      's-project-recent',
+    const rows = await listMyArtifactsLimited(db, 'u1', 'ws-a', 10)
+
+    expect(rows.map((r) => r.id)).toEqual([
       's-inbox-older',
+      's-project-recent',
+      's-inbox-newer',
     ])
-    expect(rows.rows).not.toContainEqual(
-      expect.objectContaining({ id: 's-other-inbox' }),
-    )
-    expect(rows.rows).not.toContainEqual(
-      expect.objectContaining({ id: 's-other-project' }),
-    )
+    expect(await listMyArtifactsLimited(db, 'u1', 'ws-a', 2)).toHaveLength(2)
   })
 
   test('includes project_name and project_kind on each row', async () => {
-    const rows = await listMyArtifacts(db, 'u1', 'ws-a')
-    const inboxRow = rows.rows.find((r) => r.id === 's-inbox-newer')
-    const projectRow = rows.rows.find((r) => r.id === 's-project-recent')
+    const rows = await listMyArtifactsLimited(db, 'u1', 'ws-a', 10)
+    const inboxRow = rows.find((r) => r.id === 's-inbox-newer')
+    const projectRow = rows.find((r) => r.id === 's-project-recent')
 
     expect(inboxRow?.project_id).toBe('inbox-u1')
     expect(inboxRow?.project_name).toBe('未整理')
@@ -257,141 +262,6 @@ describe('listUnopenedOwnedArtifactsLimited', () => {
     const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
 
     expect(result.rows.map((row) => row.id)).not.toContain('s-inbox-newer')
-  })
-})
-
-describe('buildHomeView', () => {
-  const file = (
-    id: string,
-    projectId: string | null,
-    modifiedTime: string,
-  ) => ({
-    id,
-    fileName: id,
-    derivedTitle: null,
-    titleOverride: null,
-    renderType: 'html' as const,
-    ownerEmail: 'owner@example.com',
-    ownerId: 'u1',
-    ownerName: 'Owner',
-    ownerImage: null,
-    ownerInitial: 'O',
-    ownerIsExternal: false,
-    modifiedTime,
-    registeredByMe: true,
-    visibility: 'private' as const,
-    viewCount: 0,
-    commentCount: 0,
-    projectId,
-    projectName: projectId ? 'Project' : null,
-  })
-
-  const project = (id: string, name = id) => ({ id, name })
-
-  test('block fileCount, fileUpdatedAt, and recentFiles come from own files', () => {
-    const files = [
-      file('p1-a', 'proj-1', '2026-06-15T00:00:00.000Z'),
-      file('p1-b', 'proj-1', '2026-06-14T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [project('proj-1', 'Project One')])
-
-    const block = view.projectBlocks[0]
-    expect(block.fileCount).toBe(2)
-    expect(block.fileUpdatedAt).toBe('2026-06-15T00:00:00.000Z')
-    expect(block.recentFiles.map((f) => f.id)).toEqual(['p1-a', 'p1-b'])
-  })
-
-  test('puts project files in recentFiles and slices by perProjectLimit', () => {
-    const files = [
-      file('p1-a', 'proj-1', '2026-06-15T00:00:00.000Z'),
-      file('p1-b', 'proj-1', '2026-06-14T00:00:00.000Z'),
-      file('p1-c', 'proj-1', '2026-06-13T00:00:00.000Z'),
-      file('p1-d', 'proj-1', '2026-06-12T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [project('proj-1')], 3)
-
-    expect(view.projectBlocks[0].recentFiles.map((f) => f.id)).toEqual([
-      'p1-a',
-      'p1-b',
-      'p1-c',
-    ])
-  })
-
-  test('adds inbox block at the end when inbox files exist', () => {
-    const files = [
-      file('inbox-new', null, '2026-06-15T00:00:00.000Z'),
-      file('proj-file', 'proj-1', '2026-06-14T00:00:00.000Z'),
-      file('inbox-old', null, '2026-06-13T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [project('proj-1')])
-
-    expect(view.projectBlocks.map((b) => b.kind)).toEqual(['project', 'inbox'])
-    const inbox = view.projectBlocks[1]
-    expect(inbox.fileCount).toBe(2)
-    expect(inbox.recentFiles.map((f) => f.id)).toEqual([
-      'inbox-new',
-      'inbox-old',
-    ])
-    expect(inbox.fileUpdatedAt).toBe('2026-06-15T00:00:00.000Z')
-  })
-
-  test('omits inbox block when there are no inbox files', () => {
-    const files = [file('proj-file', 'proj-1', '2026-06-14T00:00:00.000Z')]
-    const view = buildHomeView(files, [project('proj-1')])
-
-    expect(view.projectBlocks.every((b) => b.kind === 'project')).toBe(true)
-  })
-
-  test('omits project block when the user has no files in that project', () => {
-    const files = [file('inbox-only', null, '2026-06-14T00:00:00.000Z')]
-    const view = buildHomeView(files, [project('empty-proj')])
-
-    expect(view.projectBlocks.map((b) => b.kind)).toEqual(['inbox'])
-  })
-
-  test('files in projects the user did not create appear in recent only', () => {
-    const files = [
-      file('other-proj-file', 'other-proj', '2026-06-15T00:00:00.000Z'),
-      file('my-proj-file', 'my-proj', '2026-06-14T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [project('my-proj', 'My Project')])
-
-    expect(view.recent.map((f) => f.id)).toEqual([
-      'other-proj-file',
-      'my-proj-file',
-    ])
-    expect(view.projectBlocks).toHaveLength(1)
-    expect(view.projectBlocks[0].id).toBe('my-proj')
-    expect(view.projectBlocks[0].recentFiles.map((f) => f.id)).toEqual([
-      'my-proj-file',
-    ])
-  })
-
-  test('sorts project blocks by latest file activity desc', () => {
-    const files = [
-      file('old-proj', 'proj-old', '2026-06-12T00:00:00.000Z'),
-      file('new-proj', 'proj-new', '2026-06-15T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [
-      project('proj-old'),
-      project('proj-new'),
-    ])
-
-    expect(view.projectBlocks.map((b) => b.id)).toEqual([
-      'proj-new',
-      'proj-old',
-    ])
-  })
-
-  test('preserves input order in recent', () => {
-    const files = [
-      file('a', null, '2026-06-15T00:00:00.000Z'),
-      file('b', 'proj-1', '2026-06-14T00:00:00.000Z'),
-      file('c', null, '2026-06-13T00:00:00.000Z'),
-    ]
-    const view = buildHomeView(files, [])
-
-    expect(view.recent.map((f) => f.id)).toEqual(['a', 'b', 'c'])
   })
 })
 

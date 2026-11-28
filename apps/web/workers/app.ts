@@ -50,7 +50,6 @@ import {
 import { getOwnerInitial } from '../app/lib/user'
 import { MAINTENANCE_REQUEST_HEADER } from '../app/lib/maintenance'
 import { isFlagOn } from '../app/lib/feature-flags.server'
-import { handlePostUploadWorkflowSpike } from './post-upload-workflow-spike'
 import { handleD1BackupWorkflow } from './d1-backup-workflow-route'
 import {
   processSlackNotificationOutbox,
@@ -71,7 +70,6 @@ import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
 export { WorkspaceSearchIndex } from './workspace-search-index'
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
-export { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 export { LinkAbuseJudgmentWorkflow } from './link-abuse-judgment-workflow'
 
 const requestHandler = createRequestHandler(
@@ -318,22 +316,6 @@ export default {
         })(),
       )
       return new Response('reconcile triggered\n', { status: 200 })
-    }
-
-    if (url.pathname === '/__workflows/post-upload-spike') {
-      if (isProduction(env)) {
-        return new Response('not found', { status: 404 })
-      }
-      if (!env.POST_UPLOAD_WORKFLOW) {
-        return Response.json(
-          { error: 'POST_UPLOAD_WORKFLOW binding is not configured' },
-          { status: 500 },
-        )
-      }
-      return handlePostUploadWorkflowSpike(
-        routedRequest,
-        env.POST_UPLOAD_WORKFLOW,
-      )
     }
 
     if (url.pathname === '/__workflows/d1-backup') {

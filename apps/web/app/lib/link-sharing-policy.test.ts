@@ -3,7 +3,7 @@ import {
   canUseExternalPosting,
   canUseLinkSharing,
   linkExpiryStartingColumns,
-  linkSharingPolicyDefaults,
+  LINK_SHARING_PLAN_DEFAULTS,
   resolveLinkExpiry,
   validateLinkExpiryPolicy,
 } from './link-sharing-policy'
@@ -13,28 +13,30 @@ const NOW = '2026-07-20T00:00:00.000Z'
 describe('link sharing policy domain', () => {
   test('provides the plan defaults and gates Free external posting even when stored flags are true', () => {
     const free = {
-      ...linkSharingPolicyDefaults('free'),
+      plan: 'free' as const,
+      ...LINK_SHARING_PLAN_DEFAULTS.free,
       linkSharingEnabled: true,
       externalPostingEnabled: true,
     }
     expect(canUseLinkSharing(free)).toBe(true)
     expect(canUseExternalPosting(free)).toBe(false)
-    expect(linkSharingPolicyDefaults('free')).toMatchObject({
+    expect(LINK_SHARING_PLAN_DEFAULTS.free).toMatchObject({
       linkSharingEnabled: true,
       externalPostingEnabled: false,
     })
-    expect(linkSharingPolicyDefaults('plus')).toMatchObject({
+    expect(LINK_SHARING_PLAN_DEFAULTS.plus).toMatchObject({
       linkSharingEnabled: true,
       externalPostingEnabled: true,
       linkExpiryDefaultDays: 30,
       linkExpiryMaxDays: null,
     })
-    expect(linkSharingPolicyDefaults('team')).toMatchObject({
+    expect(LINK_SHARING_PLAN_DEFAULTS.team).toMatchObject({
       linkSharingEnabled: false,
       externalPostingEnabled: true,
     })
     const plusWithCarriedTeamPolicy = {
-      ...linkSharingPolicyDefaults('plus'),
+      plan: 'plus' as const,
+      ...LINK_SHARING_PLAN_DEFAULTS.plus,
       linkSharingEnabled: false,
       externalPostingEnabled: false,
     }
@@ -74,7 +76,8 @@ describe('link sharing policy domain', () => {
   test('resolves default, explicit, and unlimited UTC expiry', () => {
     // A workspace that set a 90-day maximum; the starting policy has none.
     const policy = {
-      ...linkSharingPolicyDefaults('plus'),
+      plan: 'plus' as const,
+      ...LINK_SHARING_PLAN_DEFAULTS.plus,
       linkExpiryMaxDays: 90,
     }
     expect(resolveLinkExpiry(policy, undefined, NOW)).toEqual({
@@ -110,7 +113,7 @@ describe('link sharing policy domain', () => {
 
   test('every plan starts at a 30-day default with no maximum', () => {
     for (const plan of ['free', 'plus', 'team'] as const)
-      expect(linkSharingPolicyDefaults(plan)).toMatchObject({
+      expect(LINK_SHARING_PLAN_DEFAULTS[plan]).toMatchObject({
         linkExpiryDefaultDays: 30,
         linkExpiryMaxDays: null,
       })

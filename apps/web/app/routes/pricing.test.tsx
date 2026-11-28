@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { PricingPage } from '~/components/app/pricing-page'
 import { pricingCheckoutHref } from '~/lib/pricing-checkout'
-import { pricingLocaleHref, loader, meta } from './_public/($locale)/pricing'
+import { loader, meta } from './_public/($locale)/pricing'
 
 vi.mock('~/components/app/public-footer', () => ({
   PublicFooter: ({ variant = 'full' }: { variant?: string }) => (
@@ -46,13 +46,6 @@ describe('pricing checkout links', () => {
     expect(pricingCheckoutHref('team', 'year', 'usd', true, 'ja')).toBe(
       '/settings/billing?plan=team&interval=yearly&currency=usd',
     )
-  })
-})
-
-describe('pricing locale links', () => {
-  test('links directly between the canonical locale pair', () => {
-    expect(pricingLocaleHref('en')).toBe('/pricing')
-    expect(pricingLocaleHref('ja')).toBe('/ja/pricing')
   })
 })
 

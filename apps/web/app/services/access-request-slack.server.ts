@@ -5,6 +5,8 @@ import type { AccessRequestApprover } from './access-requests.server'
 import { deliverAuditedAccessRequestNotification } from './access-request-audit.server'
 import type { Db } from './db.server'
 import { hasSlackBotScope, postSlackDirectMessage } from './slack.server'
+import { chunkArray } from '~/lib/chunk-array'
+import { escapeSlackText } from '~/lib/slack-escape'
 
 interface SlackAccessRequestClient {
   postMessage(payload: {
@@ -163,7 +165,7 @@ export function accessRequestSlackPayload(input: {
   const requester = normalizeSlackPlainText(input.requester)
   const file = normalizeSlackPlainText(input.shareableTitle)
   const vars = { requester, file }
-  const fallback = escapeSlackMrkdwn(
+  const fallback = escapeSlackText(
     t(input.locale, 'slack.accessRequest.fallback', vars),
   )
   return {
@@ -215,19 +217,4 @@ function normalizeSlackPlainText(value: string): string {
     .join('')
     .replace(/\s+/gu, ' ')
     .trim()
-}
-
-function escapeSlackMrkdwn(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
 }

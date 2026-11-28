@@ -55,7 +55,3 @@ export function normalizeBotDisplayName(input: string): string | null {
   if (FORBIDDEN_NAME_CHARS.test(normalized)) return null
   return normalized
 }
-
-export function isBotToken(token: string): boolean {
-  return token.startsWith(BOT_TOKEN_PREFIX)
-}

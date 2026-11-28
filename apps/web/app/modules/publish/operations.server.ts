@@ -61,6 +61,7 @@ import {
   reserveQuota,
 } from '~/services/shareables.server'
 import { planInTierSql } from '~/lib/plan-tier-sql.server'
+import { chunkArray } from '~/lib/chunk-array'
 
 const MAX_SHAREABLE_ID_ATTEMPTS = 5
 const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
@@ -1688,12 +1689,4 @@ function normalizeGrantEmails(
 function normalizedEmail(email?: string | null): string | null {
   const normalized = normalizeGrantEmail(email)
   return normalized.length > 0 ? normalized : null
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
-  const chunks: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size))
-  }
-  return chunks
 }

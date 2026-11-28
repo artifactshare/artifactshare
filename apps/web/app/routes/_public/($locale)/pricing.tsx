@@ -1,5 +1,4 @@
 import { PricingPage } from '~/components/app/pricing-page'
-import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
 import { socialMeta } from '~/lib/social-meta'
 import { userContext } from '~/middleware/context'
@@ -13,9 +12,6 @@ export function loader({ params, request, context }: Route.LoaderArgs) {
     currency: defaultBillingCurrency(request.cf?.country),
     signedIn: Boolean(context.get(userContext)),
   }
-}
-export function pricingLocaleHref(locale: Locale): string {
-  return locale === 'ja' ? '/ja/pricing' : '/pricing'
 }
 export function meta({ loaderData }: Route.MetaArgs) {
   const c = PRICING_COPY[loaderData?.locale ?? 'en']

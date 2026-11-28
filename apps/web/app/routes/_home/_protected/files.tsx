@@ -54,7 +54,6 @@ type LoaderData = {
   page: number
   now: string
 }
-export const filesDateHeaderKey = 'table.created' as const
 
 export function filesUrl({
   page = 1,

@@ -6,6 +6,7 @@ import { t } from '~/lib/i18n'
 import { deliverAuditedAccessRequestNotification } from './access-request-audit.server'
 import type { Db } from './db.server'
 import { hasSlackBotScope, postSlackDirectMessage } from './slack.server'
+import { escapeSlackText } from '~/lib/slack-escape'
 
 type ResolutionStatus = 'approved' | 'rejected'
 
@@ -268,7 +269,7 @@ export function accessRequestResolutionSlackPayload(input: {
   const vars = { file }
   return {
     channel: input.channel,
-    text: escapeSlackMrkdwn(
+    text: escapeSlackText(
       t(
         input.locale,
         `slack.accessRequestResolution.${statusKey}.fallback`,
@@ -323,11 +324,4 @@ function normalizeSlackPlainText(value: string): string {
     .join('')
     .replace(/\s+/gu, ' ')
     .trim()
-}
-
-function escapeSlackMrkdwn(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
 }

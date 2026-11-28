@@ -28,6 +28,7 @@ import {
 import { isLinkReportReason } from '../app/lib/link-report'
 import { linkOpsUrl, signLinkOpsToken } from '../app/lib/link-ops-token'
 import { nanoid } from 'nanoid'
+import { escapeSlackText } from '../app/lib/slack-escape'
 
 const alertPrefix = 'ops-alerts'
 const authHangLogMarker = 'artifactshare_auth_hang'
@@ -499,13 +500,6 @@ function exceptionSummary(exceptions: TraceException[]): string {
       ? ` +${exceptions.length - names.length}`
       : ''
   return `${names.join(', ')}${suffix}`
-}
-
-function escapeSlackText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
 }
 
 /**

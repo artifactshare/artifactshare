@@ -7,7 +7,7 @@ import { toFileRowData } from '~/routes/_home/+components/file-data'
 import { versionBadgeLabel } from '~/lib/version-badge'
 import { listCliArtifacts } from './cli-artifacts.server'
 import { listProjectPins } from './project-pins.server'
-import { listMyArtifacts, listRecentArtifactsLimited } from './home.server'
+import { listRecentArtifactsLimited } from './home.server'
 import { listOwnedShareables } from './shareables.server'
 import { versionPublishedEventQuery, listFeedEvents } from './events.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
@@ -85,9 +85,6 @@ test('publisher versions preserve interleaved list order and cursor boundaries w
     activityAt: humanTime,
     updatedAt: machineTime,
   })
-  expect(
-    (await listMyArtifacts(fixture.db, 'u1', 'ws1')).rows.map((row) => row.id),
-  ).toEqual(['second', 'abc123def4'])
   expect((await file()).modifiedTime).toBe(humanTime)
   const inventory = await loadWorkspaceInventoryArtifactsPage(
     fixture.db,
@@ -101,7 +98,13 @@ test('publisher versions preserve interleaved list order and cursor boundaries w
   expect(inventory.artifacts[1]?.updatedAt).toBe(humanTime)
   await publish('human', 2, false, '2026-06-11T00:00:00.000Z')
   expect(
-    (await listMyArtifacts(fixture.db, 'u1', 'ws1')).rows.map((row) => row.id),
+    (
+      await loadWorkspaceInventoryArtifactsPage(fixture.db, 'ws1', {
+        visibility: 'all',
+        sort: 'updated',
+        page: 1,
+      })
+    ).artifacts.map((row) => row.id),
   ).toEqual(['abc123def4', 'second'])
 })
 

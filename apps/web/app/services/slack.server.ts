@@ -24,6 +24,7 @@ import {
   requireWorkspaceAdmin,
   type TeamMutationResult,
 } from './team-management.server'
+import { escapeSlackText } from '~/lib/slack-escape'
 
 export interface SlackLinkSharedEvent {
   team_id?: string
@@ -813,13 +814,6 @@ function escapeSlackLinkText(text: string): string {
     truncated = `${truncated}…`
   }
   return escapeSlackText(truncated).replaceAll('|', ' ')
-}
-
-function escapeSlackText(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
 }
 
 function buildRichUnfurlPayload(

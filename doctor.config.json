@@ -73,10 +73,6 @@
         "rules": ["react-doctor/js-set-map-lookups"]
       },
       {
-        "files": ["workers/post-upload-workflow-spike.ts"],
-        "rules": ["react-doctor/server-sequential-independent-await"]
-      },
-      {
         "files": [
           "app/components/ui/input-group.tsx",
           "app/components/ui/input.tsx",

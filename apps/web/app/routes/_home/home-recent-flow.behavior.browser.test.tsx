@@ -45,13 +45,11 @@ vi.mock('~/hooks/use-t', () => ({
 }))
 
 vi.mock('./+components/home-rail', () => ({ HomeRail: () => null }))
-vi.mock('./+components/recent-activity', () => ({ RecentActivity: () => null }))
 vi.mock('./+components/file-row-dialogs', () => ({
   FileRowDialogs: () => null,
   useFileRowActions: () => ({ active: null, open: vi.fn(), close: vi.fn() }),
 }))
 vi.mock('./+hooks/use-bulk-actions', () => ({ useBulkActions: () => ({}) }))
-vi.mock('./+components/home-tabs', () => ({ HomeTabs: () => null }))
 vi.mock('~/components/app/page-breadcrumb', () => ({
   PageBreadcrumb: ({ children, ...props }: { children: ReactNode }) =>
     createElement('nav', props, children),
