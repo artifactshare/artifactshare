@@ -71,13 +71,16 @@ export async function resolveCredential(
 
   const globalConfig = await readGlobalConfig()
   if (profile) {
-    return await resolveProfileCredential(
-      'profile',
-      profile,
+    return bindBaseUrl(
       options,
-      globalConfig,
-      null,
-      null,
+      await resolveProfileCredential(
+        'profile',
+        profile,
+        options,
+        globalConfig,
+        null,
+        null,
+      ),
     )
   }
 
@@ -85,25 +88,31 @@ export async function resolveCredential(
   const projectProfile = nonEmpty(project.config?.default_profile)
   if (projectProfile) {
     const source = project.kind === 'local' ? 'local_config' : 'project_config'
-    return await resolveProfileCredential(
-      source,
-      projectProfile,
+    return bindBaseUrl(
       options,
-      globalConfig,
-      project.path,
-      project.kind,
+      await resolveProfileCredential(
+        source,
+        projectProfile,
+        options,
+        globalConfig,
+        project.path,
+        project.kind,
+      ),
     )
   }
 
   const globalProfile = nonEmpty(globalConfig?.default_profile)
   if (globalProfile)
-    return await resolveProfileCredential(
-      'global_profile',
-      globalProfile,
+    return bindBaseUrl(
       options,
-      globalConfig,
-      null,
-      null,
+      await resolveProfileCredential(
+        'global_profile',
+        globalProfile,
+        options,
+        globalConfig,
+        null,
+        null,
+      ),
     )
 
   return {
@@ -135,6 +144,41 @@ function normalizeProjectInput(
   }
 }
 
+type ProfileCredentialResolution = {
+  resolution: CredentialResolution
+  // The profile's own base URL when the resolution chose it, else null.
+  baseUrlOverride: string | null
+}
+
+// A profile's own base URL wins only when the command named none itself.
+function profileBaseUrlOverride(
+  options: CliOptions,
+  globalConfig: GlobalConfig | null,
+  profile: string,
+): string | null {
+  const profileBaseUrl = nonEmpty(globalConfig?.profiles?.[profile]?.base_url)
+  if (
+    !profileBaseUrl ||
+    nonEmpty(options.baseUrl) ||
+    nonEmpty(process.env.ARTIFACTSHARE_BASE_URL)
+  ) {
+    return null
+  }
+  return profileBaseUrl
+}
+
+// resolveCredential's callers keep reading `options.baseUrl` after it returns,
+// because every later request derives its URL from the same options object. So
+// the chosen base URL is written back here, at the one boundary that owns
+// `options`, and the resolution itself only reads what it was handed.
+function bindBaseUrl(
+  options: CliOptions,
+  resolved: ProfileCredentialResolution,
+): CredentialResolution {
+  if (resolved.baseUrlOverride) options.baseUrl = resolved.baseUrlOverride
+  return resolved.resolution
+}
+
 async function resolveProfileCredential(
   source: Extract<
     CredentialSource,
@@ -145,35 +189,37 @@ async function resolveProfileCredential(
   globalConfig: GlobalConfig | null,
   configPath: string | null,
   configKind: 'local' | 'shared' | null,
-): Promise<CredentialResolution> {
-  const profileBaseUrl = nonEmpty(globalConfig?.profiles?.[profile]?.base_url)
-  if (
-    profileBaseUrl &&
-    !nonEmpty(options.baseUrl) &&
-    !nonEmpty(process.env.ARTIFACTSHARE_BASE_URL)
-  ) {
-    options.baseUrl = profileBaseUrl
-  }
-  const stored = await readProfileToken(profile, options)
+): Promise<ProfileCredentialResolution> {
+  const baseUrlOverride = profileBaseUrlOverride(options, globalConfig, profile)
+  const profileOptions: CliOptions = baseUrlOverride
+    ? { ...options, baseUrl: baseUrlOverride }
+    : options
+  const stored = await readProfileToken(profile, profileOptions)
   if (stored.ok) {
     return {
-      ok: true,
-      source,
-      profile,
-      token: stored.token,
-      profileCredentialKind: stored.credential.kind,
-      botProfile: globalConfig?.profiles?.[profile]?.kind === 'bot',
+      baseUrlOverride,
+      resolution: {
+        ok: true,
+        source,
+        profile,
+        token: stored.token,
+        profileCredentialKind: stored.credential.kind,
+        botProfile: globalConfig?.profiles?.[profile]?.kind === 'bot',
+      },
     }
   }
-  return profileAuthRequired(
-    source,
-    profile,
-    stored.reason,
-    options,
-    globalConfig,
-    configPath,
-    configKind,
-  )
+  return {
+    baseUrlOverride,
+    resolution: await profileAuthRequired(
+      source,
+      profile,
+      stored.reason,
+      profileOptions,
+      globalConfig,
+      configPath,
+      configKind,
+    ),
+  }
 }
 
 async function profileAuthRequired(
