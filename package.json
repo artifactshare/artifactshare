@@ -29,7 +29,7 @@
     "perf:trace": "node scripts/perf-trace.mjs",
     "format": "vp fmt -c .oxfmtrc.json --check",
     "verify": "node scripts/verify.mjs",
-    "lint": "vp lint -c .oxlintrc.json",
+    "lint": "vp lint -c .oxlintrc.json && node scripts/agent-pattern-ratchet.mjs",
     "check:design-tokens": "node scripts/check-design-tokens.mjs",
     "check:migrations": "pnpm --filter @artifactshare/web check:migrations",
     "check:schema": "pnpm --filter @artifactshare/web check:schema",

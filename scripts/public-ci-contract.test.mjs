@@ -442,6 +442,27 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   )
 })
 
+test('pnpm lint runs the agent pattern ratchet against the pull request or merge group base', () => {
+  const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  assert.match(
+    rootPackage.scripts.lint,
+    /&& node scripts\/agent-pattern-ratchet\.mjs$/u,
+  )
+  assert.match(rootPackage.scripts['validate:static'], /&& pnpm lint &&/u)
+  const steps = parsedWorkflow.jobs['static-validation'].steps
+  const validate = steps.find((step) =>
+    /pnpm validate:static/u.test(step.run ?? ''),
+  )
+  assert.equal(
+    validate.env?.AGENT_RATCHET_BASE,
+    '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}',
+  )
+  const checkout = steps.find((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(checkout.with['fetch-depth'], 0)
+})
+
 function laneRunning(pattern) {
   const owners = Object.entries(parsedWorkflow.jobs).filter(([, job]) =>
     (job.steps ?? []).some((step) => pattern.test(step.run ?? '')),

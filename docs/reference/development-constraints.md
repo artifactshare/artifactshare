@@ -40,6 +40,12 @@
   - `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。
 - **復元しない事項**: 機械検査へ置き換わったトークン値や DOM 断片の一覧は復元しません。
 
+## effect・タイマー・コメント
+
+- **機械検査で強制済み**: `pnpm lint` が実行する `scripts/agent-pattern-ratchet.mjs` は、`origin/main` との merge-base（CI では PR とマージキューの base）と比べて、変更したファイル全体で次の数が増えたら失敗します。テストを除く製品コードの `useEffect`・`useLayoutEffect`、`setTimeout`・`setInterval`・`requestAnimationFrame`・`requestIdleCallback`・`queueMicrotask`、製品コードと `scripts/` のコメントブロック（テンプレートリテラル内のインラインスクリプトの `//` を含む）。数えないコメントは、理由つきのツール指示（`oxlint-disable-next-line <rule> -- <理由>`、`react-doctor-disable-next-line <rule> -- <理由>`、`@ts-expect-error <理由>`）、`/// <reference>`、`@vite-ignore`、`.js` の JSDoc 型、スクリプト内の一覧にあるベンダーの `quirk(<vendor>):`、`compat:`、存在するテストを名指しする `invariant: … (test: <path>)` です。行単位の例外は `agent-allow(<rule>): <理由>` で、出力に一覧されます。
+- **人が判断する現行規則**: `agent-allow` は、エラー文が示す直し方（レンダー中の計算、イベントハンドラ、`apps/web/app/hooks` の名前付き hook、観測できる条件での待機、`AbortSignal.timeout`、名前・型・テスト・PR 本文）がどれも当てはまらないときだけ使います。
+- **復元しない事項**: なし。
+
 ## Tests
 
 ブラウザ待機、機能判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
