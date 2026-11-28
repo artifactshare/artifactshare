@@ -85,6 +85,7 @@ vi.mock('~/modules/publish', async (importOriginal) => {
 
 import { defaultVisibilityFor, type ArtifactKind } from '~/lib/shareable-types'
 import { sandboxVersionLabel } from '~/lib/hosts'
+import { MAX_TITLE_OVERRIDE_LENGTH } from '~/lib/product-contracts'
 import { isOrgWorkspace } from '~/lib/user'
 import {
   getOwnedShareableSummary,
@@ -2039,6 +2040,24 @@ describe('headless publish wiring', () => {
         notify: { slack: false },
         auditQuery: expect.any(Function),
       }),
+    )
+  })
+
+  test('share_artifact trims a title and truncates it to the cap', async () => {
+    const body = await callTool(db, 'share_artifact', {
+      content: '<!DOCTYPE html><html><head><title>Long</title></head></html>',
+      title: `  ${'t'.repeat(MAX_TITLE_OVERRIDE_LENGTH + 50)}  `,
+      visibility: 'workspace',
+      slack_notify: false,
+    })
+    expect(body.error).toBeUndefined()
+    const result = body.result as {
+      isError?: boolean
+      structuredContent?: { title?: string | null }
+    }
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent?.title).toBe(
+      't'.repeat(MAX_TITLE_OVERRIDE_LENGTH),
     )
   })
 

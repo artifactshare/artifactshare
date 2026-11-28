@@ -102,7 +102,10 @@ import {
   resolveUploadContainer,
 } from './projects.server'
 import { slackNotificationEnqueueQuery } from './slack-notifications.server'
-import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import {
+  MAX_TITLE_OVERRIDE_LENGTH,
+  STATIC_SITE_UPLOAD_LIMITS,
+} from '~/lib/product-contracts'
 import type { CliAuthority } from './cli-authority.server'
 import { isAgentPublishableDestination } from './agent-scope.server'
 import { PAID_TIERS } from '~/lib/plan-tier'
@@ -115,7 +118,6 @@ const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const MAX_STATIC_SITE_TOTAL_BYTES = STATIC_SITE_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_PATH_CHARS = STATIC_SITE_UPLOAD_LIMITS.pathChars
 const MAX_STATIC_SITE_FOLDER_DEPTH = STATIC_SITE_UPLOAD_LIMITS.folderDepth
-const MAX_TITLE_OVERRIDE_LENGTH = 200
 const VERSION_FILE_INSERT_CHUNK_SIZE = 8
 const IGNORED_STATIC_SITE_FILE_NAMES = new Set([
   '.DS_Store',

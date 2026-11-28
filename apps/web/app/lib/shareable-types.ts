@@ -49,6 +49,25 @@ export function defaultVisibilityFor(
   return isOrg ? 'workspace' : 'private'
 }
 
+/**
+ * The visibility a newly published artifact gets. Naming people to share with
+ * is itself a visibility choice: a grant list makes the artifact private to
+ * that list, instead of taking the account's or the project's default.
+ */
+export function visibilityForNewArtifact(input: {
+  requested: EditableVisibility | null | undefined
+  grantedEmailCount: number
+  isOrg: boolean
+  containerKind: ContainerKind
+}): EditableVisibility {
+  return (
+    input.requested ??
+    (input.grantedEmailCount > 0
+      ? 'private'
+      : defaultVisibilityFor(input.isOrg, input.containerKind))
+  )
+}
+
 export function isVisibility(value: unknown): value is Visibility {
   return (
     value === 'private' ||

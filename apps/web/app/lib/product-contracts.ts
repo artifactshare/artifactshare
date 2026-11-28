@@ -7,6 +7,12 @@ export const ARTIFACT_UPLOAD_LIMITS = {
   totalBytes: 25 * 1024 * 1024,
 } as const
 
+/**
+ * How much of a caller-supplied display title is kept. Every write path trims
+ * and truncates to this, rather than rejecting a longer one.
+ */
+export const MAX_TITLE_OVERRIDE_LENGTH = 200
+
 export const STATIC_SITE_UPLOAD_LIMITS = {
   files: 50,
   totalBytes: ARTIFACT_UPLOAD_LIMITS.totalBytes,
