@@ -1,19 +1,11 @@
-import type { ExpressionBuilder, Kysely } from 'kysely'
+import type { CompiledQuery, ExpressionBuilder, Kysely } from 'kysely'
 import { expressionBuilder, sql } from 'kysely'
-import type {
-  FileRowData,
-  ShareableFileRow,
-} from '~/routes/_home/+components/file-data'
-import type {
-  HomeView,
-  ProjectBlock,
-} from '~/routes/_home/+components/home-view'
+import type { ShareableFileRow } from '~/routes/_home/+components/file-data'
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
 import type { listJoinedProjectsForDropdown } from './project-membership.server'
 import { listMyProjects } from './projects.server'
 import {
-  INBOX_CONTAINER_NAME,
   shareableLinkAccessToViewer,
   visibleShareableToViewerSql,
   type ShareableViewer,
@@ -264,29 +256,6 @@ function artifactSelectQuery(
     .where('shareables.workspace_id', '=', workspaceId)
     .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
     .where('containers.archived_at', 'is', null)
-    .orderBy('shareables.activity_at', 'desc')
-}
-
-export async function listMyArtifacts(
-  db: Kysely<DB>,
-  userId: string,
-  workspaceId: string,
-  ownerEmail?: string | null,
-): Promise<{ rows: ShareableFileRow[]; total: number }> {
-  const base = artifactSelectQuery(db, workspaceId, userId, ownerEmail).where(
-    'shareables.owner_user_id',
-    '=',
-    userId,
-  )
-  const [rows, count] = await Promise.all([
-    base.limit(100).execute(),
-    base
-      .clearSelect()
-      .clearOrderBy()
-      .select((eb) => eb.fn.countAll<number>().as('total'))
-      .executeTakeFirstOrThrow(),
-  ])
-  return { rows, total: Number(count.total) }
 }
 
 export function listMyArtifactsLimited(
@@ -298,7 +267,6 @@ export function listMyArtifactsLimited(
 ) {
   return artifactSelectQuery(db, workspaceId, userId, ownerEmail)
     .where('shareables.owner_user_id', '=', userId)
-    .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
     .limit(limit)
     .execute()
@@ -360,7 +328,6 @@ export async function listUnopenedOwnedArtifactsLimited(
   const filtered = artifactSelectQuery(db, workspaceId, userId, ownerEmail)
     .where('shareables.owner_user_id', '=', userId)
     .where(unopenedOwnedPredicate(userId))
-    .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
     .orderBy('shareables.id', 'asc')
 
@@ -428,18 +395,17 @@ function recentScopePredicate(
   return sql<boolean>`${recentShareableAccessPredicate(user)} AND ${recentFilterPredicate(user, { relation, unread: filters.unread })}`
 }
 
-export function compileRecentArtifactsLimitedQuery(
+function recentArtifactsLimitedQuery(
   db: Kysely<DB>,
   user: ShareableViewer & { id: string; workspaceId: string },
   limit: number,
-): { sql: string; parameters: readonly unknown[] } {
-  const compiled = recentArtifactsQuery(db, user)
-    .where(recentScopePredicate(user))
+  filters: { relation?: RecentRelation; unread?: boolean },
+) {
+  return recentArtifactsQuery(db, user)
+    .where(recentScopePredicate(user, filters))
     .orderBy('recency.last_viewed_at', 'desc')
     .orderBy('shareables.id', 'asc')
     .limit(limit)
-    .compile()
-  return { sql: compiled.sql, parameters: compiled.parameters }
 }
 
 export function listRecentArtifactsLimited(
@@ -448,14 +414,15 @@ export function listRecentArtifactsLimited(
   limit = 5,
   filters: { relation?: RecentRelation; unread?: boolean } = {},
 ) {
-  const scoped = recentArtifactsQuery(db, user).where(
-    recentScopePredicate(user, filters),
-  )
-  return scoped
-    .orderBy('recency.last_viewed_at', 'desc')
-    .orderBy('shareables.id', 'asc')
-    .limit(limit)
-    .execute()
+  return recentArtifactsLimitedQuery(db, user, limit, filters).execute()
+}
+
+export function compileRecentArtifactsLimitedQuery(
+  db: Kysely<DB>,
+  user: ShareableViewer & { id: string; workspaceId: string },
+  limit: number,
+): CompiledQuery {
+  return recentArtifactsLimitedQuery(db, user, limit, {}).compile()
 }
 
 export function listRecentArtifactsPage(
@@ -475,17 +442,28 @@ export function listRecentArtifactsPage(
     .execute()
 }
 
+function recentArtifactsCountQuery(
+  db: Kysely<DB>,
+  user: ShareableViewer & { id: string; workspaceId: string },
+  filters: { relation?: RecentRelation; unread?: boolean },
+) {
+  return recentArtifactsQuery(db, user)
+    .where(recentScopePredicate(user, filters))
+    .clearSelect()
+    .clearOrderBy()
+    .select((eb) => eb.fn.countAll<number>().as('total'))
+}
+
 export async function countRecentArtifacts(
   db: Kysely<DB>,
   user: ShareableViewer & { id: string; workspaceId: string },
   filters: { relation?: RecentRelation; unread?: boolean } = {},
 ) {
-  const row = await recentArtifactsQuery(db, user)
-    .where(recentScopePredicate(user, filters))
-    .clearSelect()
-    .clearOrderBy()
-    .select((eb) => eb.fn.countAll<number>().as('total'))
-    .executeTakeFirst()
+  const row = await recentArtifactsCountQuery(
+    db,
+    user,
+    filters,
+  ).executeTakeFirst()
   return Number(row?.total ?? 0)
 }
 
@@ -493,13 +471,8 @@ export function compileRecentArtifactsCountQuery(
   db: Kysely<DB>,
   user: ShareableViewer & { id: string; workspaceId: string },
   filters: { relation?: RecentRelation; unread?: boolean } = {},
-): { sql: string; parameters: readonly unknown[] } {
-  return recentArtifactsQuery(db, user)
-    .where(recentScopePredicate(user, filters))
-    .clearSelect()
-    .clearOrderBy()
-    .select((eb) => eb.fn.countAll<number>().as('total'))
-    .compile()
+): CompiledQuery {
+  return recentArtifactsCountQuery(db, user, filters).compile()
 }
 
 export async function recentHistoryCardinality(
@@ -514,49 +487,6 @@ export async function recentHistoryCardinality(
     .limit(2)
     .execute()
   return rows.length
-}
-
-export function buildHomeView(
-  files: FileRowData[],
-  projects: { id: string; name: string }[],
-  perProjectLimit = 3,
-): HomeView {
-  const nameById = new Map(projects.map((p) => [p.id, p.name]))
-  const byProject = new Map<string, FileRowData[]>()
-  const inboxFiles: FileRowData[] = []
-  for (const f of files) {
-    if (f.projectId == null) {
-      inboxFiles.push(f)
-    } else if (nameById.has(f.projectId)) {
-      const list = byProject.get(f.projectId)
-      if (list) list.push(f)
-      else byProject.set(f.projectId, [f])
-    }
-  }
-  const projectBlocks: ProjectBlock[] = [...byProject.entries()].map(
-    ([id, pf]) => ({
-      id,
-      kind: 'project',
-      name: nameById.get(id) ?? '',
-      fileCount: pf.length,
-      fileUpdatedAt: pf[0]?.modifiedTime ?? null,
-      recentFiles: pf.slice(0, perProjectLimit),
-    }),
-  )
-  projectBlocks.sort((a, b) =>
-    (b.fileUpdatedAt ?? '').localeCompare(a.fileUpdatedAt ?? ''),
-  )
-  if (inboxFiles.length > 0) {
-    projectBlocks.push({
-      id: null,
-      kind: 'inbox',
-      name: INBOX_CONTAINER_NAME,
-      fileCount: inboxFiles.length,
-      fileUpdatedAt: inboxFiles[0]?.modifiedTime ?? null,
-      recentFiles: inboxFiles.slice(0, perProjectLimit),
-    })
-  }
-  return { recent: files, projectBlocks }
 }
 
 export type RailProject = {

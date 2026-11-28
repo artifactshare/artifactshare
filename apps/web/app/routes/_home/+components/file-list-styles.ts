@@ -41,9 +41,3 @@ export const fileDateHeadingClassName =
   'text-faint mt-4 mb-1 px-3 text-xs font-normal'
 
 export const sectionClassName = 'mb-6'
-export const sectionHeadClassName = 'flex items-center justify-between mb-2'
-export const sectionTitleClassName =
-  'inline-flex items-baseline gap-2 text-sm font-semibold text-foreground'
-export const sectionCountClassName = 'text-xs font-medium text-faint'
-export const seeAllClassName =
-  'text-sm text-muted-foreground no-underline hover:text-foreground after:content-["_→"]'
