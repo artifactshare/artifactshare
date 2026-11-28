@@ -1,8 +1,28 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-const VERSION_HEADING = /^## (\S+) - (\d{4}-\d{2}-\d{2})$/
-const LOOSE_HEADING = /^## (\S+) - (.*)$/
+// The CLI's own changelog parser decides what a version heading is; the
+// `artifactshare changelog` command finds the section for its version with it.
+// Read that pattern instead of restating it, so this check cannot start
+// accepting headings the command will not find.
+const CLI_CHANGELOG_PARSER = new URL(
+  '../packages/cli/src/changelog.ts',
+  import.meta.url,
+)
+export const VERSION_HEADING = (() => {
+  const pattern = readFileSync(CLI_CHANGELOG_PARSER, 'utf8').match(
+    /^const SECTION_HEADING = \/(.+)\/[a-z]*$/mu,
+  )?.[1]
+  if (!pattern)
+    throw new Error(
+      `Could not read SECTION_HEADING from ${CLI_CHANGELOG_PARSER.pathname}`,
+    )
+  return new RegExp(pattern, 'u')
+})()
+// This check's own wider net: a line shaped like a version heading, so a
+// heading with a bad date is reported instead of silently ignored. Every line
+// VERSION_HEADING accepts must match this too; a test holds that.
+export const LOOSE_HEADING = /^## (\S+) - (.*)$/u
 const EXPECTED_NAME = '@artifactshare/cli'
 const EXPECTED_REPOSITORY =
   'git+https://github.com/artifactshare/artifactshare.git'
