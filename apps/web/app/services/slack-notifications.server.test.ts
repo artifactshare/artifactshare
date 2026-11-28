@@ -1,4 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
+import { sql } from 'kysely'
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import {
   slackNotificationEnqueueQuery,
   processSlackNotificationOutbox,
@@ -7,6 +9,7 @@ import {
 
 const postSlackWebhook = vi.fn()
 vi.mock('./slack.server', () => ({ postSlackWebhook }))
+vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 type OutboxRow = {
   id: string
@@ -421,5 +424,131 @@ describe('processSlackNotificationOutbox', () => {
     const db = await process([row, other], [row])
     expect(db.deleted.map((r: OutboxRow) => r.id)).toEqual(['1'])
     expect(other.claim_token).toBe('token-b')
+  })
+})
+
+describe('processSlackNotificationOutbox は送信時点の公開範囲で判断する', () => {
+  const now = new Date('2026-05-22T00:00:00.000Z')
+
+  async function seed(state: {
+    visibility?: string
+    containerId?: string
+    linkSuspendedAt?: string | null
+    linkExpiresAt?: string | null
+    linkSharingEnabled?: number
+  }) {
+    const { db } = createMigratedInMemoryDb()
+    const at = '2026-05-21T23:00:00.000Z'
+    await sql`INSERT INTO workspaces (id, hd, name, created_at, link_sharing_enabled)
+      VALUES ('ws1', 'example.com', 'Example', ${at}, ${state.linkSharingEnabled ?? 1})`.execute(
+      db,
+    )
+    await sql`INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id)
+      VALUES ('owner', 'owner@example.com', 1, 'Owner', ${at}, ${at}, 'ws1')`.execute(
+      db,
+    )
+    for (const project of ['project-a', 'project-b']) {
+      await sql`INSERT INTO artifact_containers (id, workspace_id, kind, created_by_id, name, created_at, updated_at)
+        VALUES (${project}, 'ws1', 'project', 'owner', ${project}, ${at}, ${at})`.execute(
+        db,
+      )
+      await sql`INSERT INTO container_slack_channels (container_id, webhook_url, channel_id, channel_name, slack_team_id, slack_team_name, created_at, updated_at)
+        VALUES (${project}, ${`https://hooks.slack.test/${project}`}, ${`C-${project}`}, ${project}, 'T1', 'Team', ${at}, ${at})`.execute(
+        db,
+      )
+    }
+    await sql`INSERT INTO shareables (id, workspace_id, owner_user_id, name, derived_title, artifact_kind, visibility, created_at, updated_at, container_id, link_suspended_at, link_expires_at)
+      VALUES ('share-1', 'ws1', 'owner', 'plan.md', 'Launch plan', 'markdown_page',
+        ${state.visibility ?? 'workspace'}, ${at}, ${at}, ${state.containerId ?? 'project-a'},
+        ${state.linkSuspendedAt ?? null}, ${state.linkExpiresAt ?? null})`.execute(
+      db,
+    )
+    await sql`INSERT INTO slack_notification_outbox (id, container_id, shareable_id, created_at)
+      VALUES ('row-1', 'project-a', 'share-1', ${at})`.execute(db)
+    return db
+  }
+
+  async function send(
+    db: Awaited<ReturnType<typeof seed>>,
+    at: Date,
+    status = 200,
+  ) {
+    postSlackWebhook.mockReset()
+    postSlackWebhook.mockResolvedValue({ ok: status === 200, status })
+    await processSlackNotificationOutbox(db, {
+      origin: 'https://example.test',
+      now: at,
+      claimToken: `token-${at.getTime()}`,
+    })
+    return {
+      posts: postSlackWebhook.mock.calls.map(([url, text]) => ({ url, text })),
+      remaining: await db
+        .selectFrom('slack_notification_outbox')
+        .select('id')
+        .execute(),
+    }
+  }
+
+  async function outboxAfterSend(state: Parameters<typeof seed>[0]) {
+    const db = await seed(state)
+    const result = await send(db, now)
+    await db.destroy()
+    return result
+  }
+
+  test.each([
+    ['workspace', {}],
+    ['project', { visibility: 'project' }],
+    [
+      '有効なリンク',
+      { visibility: 'link', linkExpiresAt: '2026-06-01T00:00:00.000Z' },
+    ],
+  ])('%s の作品はタイトルを送る', async (_label, state) => {
+    const { posts, remaining } = await outboxAfterSend(state)
+    expect(posts).toEqual([
+      {
+        url: 'https://hooks.slack.test/project-a',
+        text: expect.stringContaining('Launch plan'),
+      },
+    ])
+    expect(remaining).toEqual([])
+  })
+
+  test.each([
+    ['private に変わった', { visibility: 'private' }],
+    [
+      'リンクが停止された',
+      { visibility: 'link', linkSuspendedAt: '2026-05-21T23:30:00.000Z' },
+    ],
+    [
+      'リンクの期限が切れた',
+      { visibility: 'link', linkExpiresAt: '2026-05-21T23:59:00.000Z' },
+    ],
+    [
+      'ワークスペースがリンク共有を止めた',
+      { visibility: 'link', linkSharingEnabled: 0 },
+    ],
+    ['別のプロジェクトへ移動した', { containerId: 'project-b' }],
+  ])('%s作品は送らず、行を消す', async (_label, state) => {
+    const { posts, remaining } = await outboxAfterSend(state)
+    expect(posts).toEqual([])
+    expect(remaining).toEqual([])
+  })
+
+  test('再試行に回った行も、次の送信時点で private なら送らない', async () => {
+    const db = await seed({})
+    const first = await send(db, now, 500)
+    expect(first.posts).toHaveLength(1)
+    expect(first.remaining).toEqual([{ id: 'row-1' }])
+
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', 'share-1')
+      .execute()
+    const retry = await send(db, new Date(now.getTime() + 20 * 60 * 1000))
+    await db.destroy()
+    expect(retry.posts).toEqual([])
+    expect(retry.remaining).toEqual([])
   })
 })

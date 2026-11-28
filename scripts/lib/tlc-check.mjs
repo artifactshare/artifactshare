@@ -73,7 +73,7 @@ function mutate(spec, mutation) {
 
 function runTlc(MODULE, jar, root, label, specText, configText, workers = '1') {
   const dir = join(root, label)
-  mkdirSync(dir, { recursive: true })
+  mkdirSync(join(dir, 'tmp'), { recursive: true })
   writeFileSync(join(dir, `${MODULE}.tla`), specText)
   writeFileSync(join(dir, `${MODULE}.cfg`), configText)
   return new Promise((resolve) => {
@@ -81,6 +81,7 @@ function runTlc(MODULE, jar, root, label, specText, configText, workers = '1') {
       'java',
       [
         '-XX:+UseParallelGC',
+        `-Djava.io.tmpdir=${join(dir, 'tmp')}`,
         '-cp',
         jar,
         'tlc2.TLC',
