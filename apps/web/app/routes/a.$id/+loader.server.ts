@@ -239,10 +239,13 @@ export type LoaderData =
       }
     }
 
+// The signed-in path decides from the access facts alone, so it only ever
+// reaches these two outcomes. The narrow return type keeps the caller from
+// branching on outcomes it cannot get.
 function displayCheckFromFacts(
   accessFacts: Parameters<typeof viewerAccessAllowed>[0] | null,
   meta: ArtifactSnapshot,
-): ViewerDisplayCheck {
+): Extract<ViewerDisplayCheck, { kind: 'access-granted' | 'access-denied' }> {
   return accessFacts && viewerAccessAllowed(accessFacts)
     ? { kind: 'access-granted', meta }
     : { kind: 'access-denied' }
@@ -447,10 +450,7 @@ export async function loader({
     })
   }
 
-  if (
-    displayCheck.kind === 'access-denied' ||
-    displayCheck.kind === 'link-suspended'
-  ) {
+  if (displayCheck.kind === 'access-denied') {
     if (ownerManagementAccess) {
       return forbidden({
         kind: 'source-missing',
@@ -487,17 +487,6 @@ export async function loader({
       emailVerified: user.emailVerified,
       requestStatus,
     })
-  }
-
-  if (displayCheck.kind === 'meta-unavailable') {
-    if (ownerManagementAccess) {
-      return forbidden({
-        kind: 'source-missing',
-        user: userInfo,
-        artifact: { id: shareable.id },
-      })
-    }
-    return forbidden({ kind: 'unavailable', user: userInfo })
   }
 
   const selectedVersion = requestedVersionId
@@ -610,7 +599,12 @@ export async function loader({
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
   })
-  const viewerListGate = Boolean(detectedRenderType) && !isHistoricalVersion
+  // detectedRenderType is still nullable here: the unsupported-artifact
+  // response is returned further down, after this fan-out. So both the
+  // revisit context and the viewer-list count are asked for only when this
+  // request will actually render the current version in a viewer.
+  const rendersCurrentVersion =
+    Boolean(detectedRenderType) && !isHistoricalVersion
   const [
     comments,
     latestCommentCreatedAt,
@@ -624,7 +618,7 @@ export async function loader({
     isHistoricalVersion
       ? Promise.resolve(null)
       : latestOtherCommentCreatedAt(db, shareable.id, user.id),
-    detectedRenderType && !isHistoricalVersion
+    rendersCurrentVersion
       ? loadViewerRevisitContext(db, {
           shareableId: shareable.id,
           viewerUserId: user.id,
@@ -635,7 +629,7 @@ export async function loader({
           return null
         })
       : Promise.resolve(null),
-    viewerListGate
+    rendersCurrentVersion
       ? countShareableViewers(db, {
           shareableId: shareable.id,
           requesterUserId: user.id,
