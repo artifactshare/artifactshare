@@ -21,9 +21,9 @@
   - スキーマとマイグレーションの整合は `apps/web/check-schema.mjs`、危険なマイグレーション操作と新しい `PRAGMA foreign_keys` 設定は `apps/web/check-migrations.mjs` が検査します。スキーマの基準ファイルは `apps/web/db/schema.sql` です。
   - Kysely プラグインは、クエリビルダーが組み立てた最終の `OperationNode` を実行・コンパイル前に検査し、変数や配列を経由した場合も含めて 6 項以上の compound SELECT と 101 個以上のバインドパラメーターを拒否します。このプラグインは本番 D1 接続とテスト用 SQLite 接続の両方に入れます。
   - `scripts/check-d1-compatibility.mjs` は、本番コードの Kysely 接続にこのプラグインが組み込まれていることを強制し、同じ式に直接書かれた生 SQL・カスタムコンパイル・D1 `prepare`・`join` を AST で検査します（データフローは追わず、クエリビルダーの組み立ては実行時プラグインが検査します）。制限内の compound SELECT は `EXISTS` や raw interpolation を含めて許可されます。
-  - 利用者入力による部分一致検索では、50 バイトのパターン上限がある `LIKE`/`GLOB` ではなく `instr()` を使い、入力全文の意味を保ちます。
   - Wrangler Test Harness の D1 スイートは、既存の Wrangler 設定から全マイグレーションを適用し、D1 固有の SQL 境界とデータ入りテーブルの再構築を CI で検証します。
 - **人が判断する現行規則**:
+  - 利用者入力による部分一致検索では、50 バイトのパターン上限がある `LIKE`/`GLOB` ではなく `instr()` を使い、入力全文の意味を保ちます。
   - TypeScript の型より先に、スキーマとマイグレーションの `CHECK`・`UNIQUE`・外部キー制約を確認します。マイグレーション番号は作成時点の `main` の最新番号に続け、`UNIQUE` 列へ重複インデックスを作りません。
   - 既存行をバックフィルするマイグレーションでは、移行時点の値（`now` やその時点の権限・名前）ではなく、元データから導ける値を書き込みます。元データから導けない値は、列が NULL を許すなら NULL のまま欠測として扱います。
   - D1 と SQLite の差異が絡む変更では、constraint error の `cause` 確認と再照会を組み合わせます。メールアドレスの照合には `apps/web/app/lib/grant-emails.server.ts` の `lowerEmail` を使います。D1 とテスト用 SQLite では制約の効き方が異なるため、型検査や SQLite テストが通っただけで互換性を断定しません。
@@ -37,7 +37,7 @@
   - hydration 前後で DOM 構造が変わる場合は hydration gate を置きます。CLI が呼ぶ API ルートには Bearer トークン対応ミドルウェアを付けます。
   - 「表示されないこと」を確かめるテストでは、条件を反転した負の対照も実行します。
   - fake timers 下では `Response` の `text()`・`json()`・`arrayBuffer()` が microtask だけで完了すると前提にしません。本文の読み取りに実タスクが必要なことがあるため、`apps/web/app/test/wait-for-real-task-condition.ts` の共通ヘルパーで観測可能な結果を待ちます。
-  - `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。query で取得した要素の `click()`・`focus()`・`dispatchEvent()` は optional chaining で呼び出してはいけません。
+  - `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。
 - **復元しない事項**: 機械検査へ置き換わったトークン値や DOM 断片の一覧は復元しません。
 
 ## Tests
@@ -45,9 +45,10 @@
 ブラウザ待機、機能判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
 
 - **機械検査で強制済み**: Public CI の `changed-browser-repetitions` ジョブ（チェック名 `Changed browser behavior repetitions`）と `Flaky detector` ワークフロー（`.github/workflows/flaky-detector.yml`）が、反復実行によって不安定なテストを検出します。
+- **機械検査で強制済み**: `scripts/test-reliability-lint-plugin.mjs` は、テストで query した要素の `click()`・`focus()`・`dispatchEvent()` を optional chaining で呼ぶことと、観測できる条件を待たない `setTimeout` の待機を拒否します。経過時間そのものを確かめる待機だけは `test-wait: elapsed-time — 理由` を付けて許可します。
 - **機械検査で強制済み**: PR、マージキュー、ローカルの `pnpm test:behavior-browser` は Chromium と WebKit だけでブラウザテストを回します。Firefox は毎晩の `Flaky detector` だけで回します（`scripts/public-ci-contract.test.mjs`）。Firefox で確かめたいときは `pnpm test:behavior-browser --project=firefox` を使います。
 - **人が判断する現行規則**:
-  - sheet や dialog の開閉後にフォーカスや開閉状態を検証するときは、マウント・アンマウントとアニメーション完了を待ちます。固定時間の `sleep` は使わず、`[data-slot="sheet-content"]` の出現・消失など観測可能な条件で待ちます。
+  - sheet や dialog の開閉後にフォーカスや開閉状態を検証するときは、マウント・アンマウントとアニメーション完了を待ちます。`[data-slot="sheet-content"]` の出現・消失など観測可能な条件で待ちます。
   - `vi.waitFor` で重い処理（大きな文書、多数のコメント、マイグレーションを再適用する D1 リセット）や既定の 1 秒を超え得る条件を待つ場合は、CI ランナーがローカルの約 2 倍かかることを見込んで明示的な timeout を指定します（短時間で終わる条件は既定値のままで構いません）。重いフィクスチャを使うテストにも同様に明示的な timeout を設定します。D1 スイートのテストとフックの timeout は `apps/web/app/test/vitest.d1.config.ts` を参照します。
   - サブピクセルのレイアウト値は、根拠を明記した許容誤差で比較します。一時ディレクトリはテストごとに固有のものを使います。
   - ブラウザテストでは、まず iframe 自体にフォーカスを当ててから内部要素へフォーカスを移します（Firefox ではフレームの browsing context にフォーカスがないと、内部要素で `focus()` を呼んでも `<body>` にフォーカスが残ることがあるためです）。
