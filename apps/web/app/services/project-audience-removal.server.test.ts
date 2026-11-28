@@ -156,6 +156,41 @@ async function seed() {
       })
       .execute()
   }
+  await db
+    .insertInto('comment_threads')
+    .values({
+      id: 'memo-thread',
+      shareable_id: 'memo',
+      status: 'open',
+      created_by_id: 'host',
+      created_at: ADDED_AT,
+      updated_at: ADDED_AT,
+      message_count: 1,
+    })
+    .execute()
+  await db
+    .insertInto('comment_messages')
+    .values({
+      id: 'memo-comment',
+      thread_id: 'memo-thread',
+      body: 'Numbers for the board',
+      created_by_id: 'host',
+      created_at: ADDED_AT,
+      updated_at: ADDED_AT,
+    })
+    .execute()
+  await db
+    .insertInto('events')
+    .values({
+      id: 'memo-commented',
+      workspace_id: 'w-host',
+      type: 'comment_posted',
+      shareable_id: 'memo',
+      actor_user_id: 'host',
+      subject_id: 'memo-comment',
+      created_at: ADDED_AT,
+    })
+    .execute()
   // The brief stays shared with the guest directly, so it must stay listed.
   await db
     .insertInto('shareable_grants')
@@ -190,8 +225,10 @@ async function lists(db: Kysely<DB>) {
   const palette = await searchPalette(db, guest, 'Board', NOW)
   return {
     feed: feed.rows.map((row) => ({
+      type: row.type,
       shareableId: row.shareableId,
       addCount: row.addCount,
+      commentBody: row.commentBody,
     })),
     recent: recent.map((row) => [row.id, Boolean(row.visible)] as const).sort(),
     palette: palette.recent.map((row) => row.id).sort(),
@@ -208,7 +245,12 @@ describe('a guest removed from a project audience', () => {
       await recordViewerRecency(db, id, guest.id, { now: ADDED_AT })
 
     const before = await lists(db)
-    expect(before.feed.map((row) => row.addCount)).toEqual([3])
+    expect(
+      before.feed.map((row) => [row.type, row.addCount, row.commentBody]),
+    ).toEqual([
+      ['artifact_created', 3, null],
+      ['comment_posted', null, 'Numbers for the board'],
+    ])
     expect(before.recent).toEqual([
       ['brief', true],
       ['memo', true],
@@ -225,7 +267,14 @@ describe('a guest removed from a project audience', () => {
     expect(await canOpen(db, 'plan')).toBe(false)
     expect(await canOpen(db, 'brief')).toBe(true)
     expect(await lists(db)).toEqual({
-      feed: [{ shareableId: 'brief', addCount: null }],
+      feed: [
+        {
+          type: 'artifact_created',
+          shareableId: 'brief',
+          addCount: null,
+          commentBody: null,
+        },
+      ],
       recent: [
         ['brief', true],
         ['memo', false],
