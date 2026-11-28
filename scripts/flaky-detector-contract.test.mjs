@@ -55,6 +55,21 @@ test('the detector runs nightly and by hand, and on no other event', () => {
   assert.deepEqual(workflow.on.schedule, [{ cron: '17 2 * * *' }])
 })
 
+test('a repetition timeout leaves room inside the worker job budget', async () => {
+  const { repetitionTimeoutMs } = await import('./ci/flaky-runs.mjs')
+  const jobBudgetMs = workflow.jobs.worker['timeout-minutes'] * 60_000
+  assert.equal(typeof workflow.jobs.worker['timeout-minutes'], 'number')
+  assert.ok(repetitionTimeoutMs > 0)
+  // A repetition that times out must leave the job time to finish the rest of
+  // the repetitions and upload its results, so the runner never kills the job
+  // mid-run and loses them. Three full repetition budgets is that room; either
+  // value moving without the other trips this.
+  assert.ok(
+    repetitionTimeoutMs * 3 <= jobBudgetMs,
+    `repetition timeout ${repetitionTimeoutMs}ms does not fit three times into the worker job budget ${jobBudgetMs}ms`,
+  )
+})
+
 test('the detector never cancels a run in progress', () => {
   assert.deepEqual(workflow.concurrency, {
     group: 'flaky-detector',
