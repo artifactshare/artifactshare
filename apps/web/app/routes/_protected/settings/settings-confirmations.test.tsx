@@ -59,7 +59,7 @@ vi.mock('~/services/team-management.server', () => ({
   removeWorkspaceMember: mutate,
   restoreWorkspaceMember: mutate,
   transferRemovedMemberAssets: mutate,
-  requireWorkspaceBillingOwner: () => ({ kind: 'ok' }),
+  requireWorkspaceOwner: () => ({ kind: 'ok' }),
 }))
 vi.mock('~/services/bot-members.server', () => ({
   cancelWorkspaceBot: mutate,

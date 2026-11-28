@@ -67,7 +67,7 @@ vi.mock('~/services/db.server', () => ({
 vi.mock('~/services/team-management.server', async (original) => ({
   ...(await original<typeof import('~/services/team-management.server')>()),
   updateWorkspaceName,
-  requireWorkspaceBillingOwner: () => ({ kind: 'ok' }),
+  requireWorkspaceOwner: () => ({ kind: 'ok' }),
 }))
 vi.mock('~/services/api-tokens.server', async (original) => ({
   ...(await original<typeof import('~/services/api-tokens.server')>()),

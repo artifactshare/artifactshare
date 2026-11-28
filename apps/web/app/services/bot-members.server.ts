@@ -23,6 +23,7 @@ import { planInTierSql } from '~/lib/plan-tier-sql.server'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { REFRESH_CREDENTIAL_TTL_MS } from '~/lib/product-contracts'
 import { computeTextSha256Hex } from '~/lib/sha256'
+import { workspaceAdminQuery } from '~/services/access.server'
 import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
 
@@ -631,14 +632,11 @@ export async function createWorkspaceBot(
     .where('id', '=', botUserId)
     .executeTakeFirst()
   if (!created) {
-    const stillAdmin = await db
-      .selectFrom('workspace_members')
-      .select('user_id')
-      .where('workspace_id', '=', actor.workspaceId)
-      .where('user_id', '=', actor.id)
-      .where('role', 'in', ['owner', 'admin'])
-      .where('status', '=', 'active')
-      .executeTakeFirst()
+    const stillAdmin = await workspaceAdminQuery(
+      db,
+      actor.id,
+      actor.workspaceId,
+    ).executeTakeFirst()
     if (!stillAdmin) return { kind: 'forbidden' }
     const destination = await db
       .selectFrom('artifact_containers')

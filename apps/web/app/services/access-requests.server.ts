@@ -8,7 +8,7 @@ import type { DB } from '~/types/db'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import { isExternalPostingEnabledForWorkspace } from '~/lib/project-external-posting.server'
 import { canEditProjectContainer } from './projects.server'
-import { viewerDisplayCheck } from './access.server'
+import { viewerDisplayCheck, workspaceAdminQuery } from './access.server'
 import {
   isWorkspaceAccessRevoked,
   workspaceAccessRevokedSql,
@@ -719,14 +719,11 @@ async function isActiveWorkspaceAdmin(
   workspaceId: string,
   userId: string,
 ): Promise<boolean> {
-  const row = await db
-    .selectFrom('workspace_members')
-    .select('user_id')
-    .where('workspace_id', '=', workspaceId)
-    .where('user_id', '=', userId)
-    .where('role', 'in', ['owner', 'admin'])
-    .where('status', '=', 'active')
-    .executeTakeFirst()
+  const row = await workspaceAdminQuery(
+    db,
+    userId,
+    workspaceId,
+  ).executeTakeFirst()
   return Boolean(row)
 }
 
