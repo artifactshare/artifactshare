@@ -234,4 +234,78 @@ describe('a guest removed from a project audience', () => {
       palette: ['brief'],
     })
   })
+
+  test('still sees activity on an artifact they own in the project', async () => {
+    const db = await seed()
+    expect(await joinProject(db, { containerId: 'p', user: guest })).toBe(
+      'joined',
+    )
+    await db
+      .insertInto('shareables')
+      .values({
+        id: 'post',
+        workspace_id: 'w-host',
+        owner_user_id: 'guest',
+        name: 'Guest post',
+        artifact_kind: 'markdown_page',
+        visibility: 'project',
+        container_id: 'p',
+        created_at: T,
+        updated_at: T,
+      })
+      .execute()
+    await db
+      .insertInto('comment_threads')
+      .values({
+        id: 'thread',
+        shareable_id: 'post',
+        status: 'open',
+        created_by_id: 'host',
+        created_at: ADDED_AT,
+        updated_at: ADDED_AT,
+        message_count: 1,
+      })
+      .execute()
+    await db
+      .insertInto('comment_messages')
+      .values({
+        id: 'reply',
+        thread_id: 'thread',
+        body: 'Looks good',
+        created_by_id: 'host',
+        created_at: ADDED_AT,
+        updated_at: ADDED_AT,
+      })
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: 'reply-posted',
+        workspace_id: 'w-host',
+        type: 'comment_posted',
+        shareable_id: 'post',
+        actor_user_id: 'host',
+        subject_id: 'reply',
+        created_at: ADDED_AT,
+      })
+      .execute()
+    await db
+      .deleteFrom('project_share_defaults')
+      .where('id', '=', 'audience')
+      .execute()
+
+    expect(await canOpen(db, 'post')).toBe(true)
+    const feed = await listFeedEvents(db, {
+      user: guest,
+      timeZone: 'UTC',
+      slice: 'mine',
+      targetRows: 20,
+      maxRawEvents: 100,
+    })
+    expect(
+      feed.rows
+        .filter((row) => row.shareableId === 'post')
+        .map((row) => row.type),
+    ).toEqual(['comment_posted'])
+  })
 })
