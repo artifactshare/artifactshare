@@ -39,6 +39,7 @@ export function projectFileRowsQuery(
       'shareables.artifact_kind',
       'shareables.owner_user_id',
       'users.email as owner_email',
+      'users.kind as owner_kind',
       'users.name as owner_name',
       'users.image as owner_image',
       'shareables.visibility',

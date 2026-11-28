@@ -14,7 +14,7 @@ import {
 } from '~/lib/artifact-type'
 import * as access from '~/modules/access'
 import { type CommentThreadView } from '~/lib/comments'
-import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
+import { isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
@@ -239,10 +239,13 @@ export type LoaderData =
       }
     }
 
+// The signed-in path decides from the access facts alone, so it only ever
+// reaches these two outcomes. The narrow return type keeps the caller from
+// branching on outcomes it cannot get.
 function displayCheckFromFacts(
   accessFacts: Parameters<typeof viewerAccessAllowed>[0] | null,
   meta: ArtifactSnapshot,
-): ViewerDisplayCheck {
+): Extract<ViewerDisplayCheck, { kind: 'access-granted' | 'access-denied' }> {
   return accessFacts && viewerAccessAllowed(accessFacts)
     ? { kind: 'access-granted', meta }
     : { kind: 'access-denied' }
@@ -447,10 +450,7 @@ export async function loader({
     })
   }
 
-  if (
-    displayCheck.kind === 'access-denied' ||
-    displayCheck.kind === 'link-suspended'
-  ) {
+  if (displayCheck.kind === 'access-denied') {
     if (ownerManagementAccess) {
       return forbidden({
         kind: 'source-missing',
@@ -487,17 +487,6 @@ export async function loader({
       emailVerified: user.emailVerified,
       requestStatus,
     })
-  }
-
-  if (displayCheck.kind === 'meta-unavailable') {
-    if (ownerManagementAccess) {
-      return forbidden({
-        kind: 'source-missing',
-        user: userInfo,
-        artifact: { id: shareable.id },
-      })
-    }
-    return forbidden({ kind: 'unavailable', user: userInfo })
   }
 
   const selectedVersion = requestedVersionId
@@ -610,7 +599,12 @@ export async function loader({
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
   })
-  const viewerListGate = Boolean(detectedRenderType) && !isHistoricalVersion
+  // detectedRenderType is still nullable here: the unsupported-artifact
+  // response is returned further down, after this fan-out. So both the
+  // revisit context and the viewer-list count are asked for only when this
+  // request will actually render the current version in a viewer.
+  const rendersCurrentVersion =
+    Boolean(detectedRenderType) && !isHistoricalVersion
   const [
     comments,
     latestCommentCreatedAt,
@@ -624,7 +618,7 @@ export async function loader({
     isHistoricalVersion
       ? Promise.resolve(null)
       : latestOtherCommentCreatedAt(db, shareable.id, user.id),
-    detectedRenderType && !isHistoricalVersion
+    rendersCurrentVersion
       ? loadViewerRevisitContext(db, {
           shareableId: shareable.id,
           viewerUserId: user.id,
@@ -635,7 +629,7 @@ export async function loader({
           return null
         })
       : Promise.resolve(null),
-    viewerListGate
+    rendersCurrentVersion
       ? countShareableViewers(db, {
           shareableId: shareable.id,
           requesterUserId: user.id,
@@ -890,6 +884,7 @@ async function buildLinkAnonymousResponse(
     description: string | null
     owner_user_id: string
     owner_email: string | null
+    owner_kind: 'human' | 'bot'
     owner_name: string | null
     owner_image: string | null
     owner_created_at: string
@@ -977,9 +972,10 @@ async function buildLinkAnonymousResponse(
 
   const { modifiedTime, name: fileName } = displayCheck.meta
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
-  const bridgeAttribution = isReservedBotEmail(shareable.owner_email ?? '')
-    ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
-    : null
+  const bridgeAttribution =
+    shareable.owner_kind === 'bot'
+      ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
+      : null
   const ownerName = shareable.owner_name
   const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email ?? '')
   const bridgeRequester = await bridgeRequesterPresentation(
@@ -1006,9 +1002,7 @@ async function buildLinkAnonymousResponse(
     ownerImage: shareable.owner_image,
     ownerInitial,
     ownerIsExternal: bridgeRequester.isExternal,
-    ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
-      ? ('bot' as const)
-      : ('human' as const),
+    ownerKind: shareable.owner_kind,
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility as Visibility,

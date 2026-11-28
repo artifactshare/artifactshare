@@ -22,6 +22,8 @@ import {
   findLiteralBracketViolations,
   findNumericBreakpointVariants,
   findRawWidthMediaQueries,
+  findScriptedWidthMediaQueries,
+  collectThemeBreakpointPixels,
   findUndefinedThemeBreakpointReferences,
   findUnknownBreakpointVariants,
   collectThemeContainerNames,
@@ -1109,6 +1111,43 @@ export function Example() {
 }
 `
   assert.deepEqual(findLayoutPrimitiveClassNameViolations(functionReturn), [])
+})
+
+test('a matchMedia width must sit just below a theme breakpoint', () => {
+  const theme = `@theme {
+  --breakpoint-phone: 520px;
+  --breakpoint-nav: 600px;
+}`
+  const pixels = collectThemeBreakpointPixels(theme)
+  assert.deepEqual(
+    [...pixels],
+    [
+      ['phone', 520],
+      ['nav', 600],
+    ],
+  )
+  for (const accepted of [
+    "window.matchMedia('(max-width: 519.98px)')",
+    "window.matchMedia('(max-width: 599px)')",
+  ])
+    assert.deepEqual(findScriptedWidthMediaQueries(accepted, pixels), [])
+  // A query a breakpoint move left behind, one above a breakpoint, and one
+  // between breakpoints are all reported, once each.
+  assert.deepEqual(
+    findScriptedWidthMediaQueries(
+      "matchMedia('(max-width: 519.98px)');matchMedia('(max-width: 520px)');matchMedia('(max-width: 560px)');matchMedia('(max-width: 560px)')",
+      collectThemeBreakpointPixels('@theme { --breakpoint-nav: 600px; }'),
+    ),
+    ['(max-width: 519.98px)', '(max-width: 520px)', '(max-width: 560px)'],
+  )
+  // A commented-out query is not code.
+  assert.deepEqual(
+    findScriptedWidthMediaQueries(
+      "// matchMedia('(max-width: 400px)')\n",
+      pixels,
+    ),
+    [],
+  )
 })
 
 test('check 6: denies numeric breakpoint variants and allows semantic names', () => {

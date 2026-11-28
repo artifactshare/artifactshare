@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 import {
+  LOOSE_HEADING,
+  VERSION_HEADING,
   checkCliChangelogAtRoot,
   findVersionHeadings,
   validateCliChangelog,
@@ -192,4 +194,20 @@ test('can be imported without a script argv', () => {
   assert.equal(result.status, 0)
   assert.equal(result.stdout.trim(), 'ok')
   assert.equal(result.stderr, '')
+})
+
+test('the heading pattern is the CLI parser pattern, and the loose net covers it', () => {
+  const parser = readFileSync(
+    new URL('../packages/cli/src/changelog.ts', import.meta.url),
+    'utf8',
+  )
+  assert.ok(parser.includes(`/${VERSION_HEADING.source}/`))
+  const accepted = ['## 1.2.3 - 2026-06-01', '## 0.0.0-rc.1 - 2026-12-31']
+  for (const line of accepted) {
+    assert.ok(VERSION_HEADING.test(line), line)
+    assert.ok(LOOSE_HEADING.test(line), line)
+  }
+  // Negative control: the loose net still reports a heading with a bad date.
+  assert.equal(VERSION_HEADING.test('## 1.2.3 - June 2026'), false)
+  assert.ok(LOOSE_HEADING.test('## 1.2.3 - June 2026'))
 })

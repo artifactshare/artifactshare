@@ -1,6 +1,11 @@
 import { isBotEmailDomain } from '~/lib/bot-account'
 export const MAX_GRANT_EMAILS = 50
 
+// Request-body cap for the email arrays the grant and project-audience APIs
+// accept. It bounds one request, so it sits above MAX_GRANT_EMAILS: a client
+// may look up more addresses than it can finally grant.
+export const MAX_EMAILS_PER_REQUEST = 100
+
 export function isValidGrantEmail(email: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
 }

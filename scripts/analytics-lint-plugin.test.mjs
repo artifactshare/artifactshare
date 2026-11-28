@@ -4,6 +4,7 @@ import { join, relative, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import plugin from './analytics-lint-plugin.mjs'
+import { lintFixturePrefix } from './lib/lint-fixture-paths.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -163,9 +164,7 @@ test('preserves app TS/TSX scan scope and test exclusions', () => {
 })
 
 test('supported lint configuration executes the rule for member access and parenthesized callees', () => {
-  const directory = mkdtempSync(
-    join(root, 'apps/web/app/analytics-lint-fixture-'),
-  )
+  const directory = mkdtempSync(join(root, lintFixturePrefix('analytics')))
   try {
     const rejected = [
       ...memberEvents,
@@ -195,9 +194,7 @@ test('supported lint configuration executes the rule for member access and paren
 })
 
 test('plugin detects extracted senders with lexical scope and preserves file exclusions', () => {
-  const directory = mkdtempSync(
-    join(root, 'apps/web/app/analytics-lint-fixture-'),
-  )
+  const directory = mkdtempSync(join(root, lintFixturePrefix('analytics')))
   try {
     const config = join(directory, 'oxlint.json')
     writeFileSync(

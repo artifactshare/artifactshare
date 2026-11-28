@@ -25,6 +25,9 @@ import {
   repository,
   skillVersion,
   fingerprint,
+  usage,
+  efforts,
+  personas,
 } from './lib/skill-eval/plan.mjs'
 import {
   temporary,
@@ -2166,11 +2169,11 @@ test('combinations preserve defaults and validate optional provider effort', asy
       ),
     )
   }
-  for (const [agent, model, efforts] of [
+  for (const [agent, model, supported] of [
     ['claude', 'claude-sonnet-5-5', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['codex', 'gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh']],
   ]) {
-    for (const effort of efforts) {
+    for (const effort of supported) {
       const id = `${agent}:${model}:${effort}`
       assert.deepEqual(parseCombination(id), { agent, model, effort })
       const command = agentCommand(id, 20)
@@ -2559,4 +2562,29 @@ test('reads inside pipelines and command lists count as reads', () => {
     '/work/skills/artifactshare/references/comments.md',
   ])
   assert.ok(record.reads.some((item) => item.path === '/work/notes.txt'))
+})
+
+test('the usage line lists every option the planner parses', async (t) => {
+  const { source } = await fixture(t)
+  // A flag the usage line omits is a flag nobody can discover, and a flag the
+  // usage line invents is one the planner rejects. Prove both ways round.
+  for (const flag of usage.matchAll(/\[(--[a-z-]+)/gu)) {
+    await assert.doesNotReject(
+      plan([
+        '--skill-version',
+        source,
+        ...(flag[1] === '--dry-run' ? [flag[1]] : []),
+      ]),
+      flag[1],
+    )
+    if (flag[1] === '--dry-run') continue
+    await assert.rejects(
+      plan([flag[1]]),
+      /Invalid or missing argument/u,
+      `${flag[1]} is parsed`,
+    )
+  }
+  await assert.rejects(plan(['--unknown', 'x']), /Invalid or missing argument/u)
+  for (const value of [...personas, ...efforts])
+    assert.ok(usage.includes(value), value)
 })

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import test from 'node:test'
 import plugin, { isPlanTierScope } from './plan-tier-lint-plugin.mjs'
+import { lintFixturePrefix } from './lib/lint-fixture-paths.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -85,9 +86,7 @@ test('scopes the rule to app code outside billing and tests', () => {
 })
 
 test('the configured lint reports a plan name comparison in app code', () => {
-  const directory = mkdtempSync(
-    join(root, 'apps/web/app/plan-tier-lint-fixture-'),
-  )
+  const directory = mkdtempSync(join(root, lintFixturePrefix('plan-tier')))
   try {
     const file = join(directory, 'example.server.ts')
     writeFileSync(

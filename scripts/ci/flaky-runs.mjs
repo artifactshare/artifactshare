@@ -86,6 +86,9 @@ export function suiteCommand(lane, report, root) {
   }
 }
 
+// One repetition must be cut by this timeout, with the remaining repetitions
+// and the artifact upload still inside the worker job's own timeout-minutes in
+// .github/workflows/flaky-detector.yml. The contract test holds the two apart.
 export const repetitionTimeoutMs = 20 * 60 * 1000
 
 const ownershipVariable = 'ARTIFACTSHARE_FLAKY_REPETITION'

@@ -1,6 +1,6 @@
 import type { ArtifactType } from '~/lib/artifact-type'
 import { renderTypeFromKind } from '~/lib/artifact-type'
-import { isExternalAuthorEmail, isReservedBotEmail } from '~/lib/grant-emails'
+import { isExternalAuthorEmail } from '~/lib/grant-emails'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
 import { getOwnerInitial } from '~/lib/user'
 
@@ -56,6 +56,7 @@ export interface ShareableFileRow {
   artifact_kind: ArtifactKind
   owner_user_id: string
   owner_email: string
+  owner_kind: 'human' | 'bot'
   owner_name: string | null
   owner_image: string | null
   is_unopened?: number | boolean | null
@@ -143,7 +144,7 @@ export function toFileRowData(
     ownerName: row.owner_name,
     ownerImage: row.owner_image,
     ownerInitial: getOwnerInitial(row.owner_name, row.owner_email),
-    ownerIsBot: isReservedBotEmail(row.owner_email),
+    ownerIsBot: row.owner_kind === 'bot',
     ownerIsExternal: options.externalContext
       ? isExternalAuthorEmail(
           row.owner_email,
