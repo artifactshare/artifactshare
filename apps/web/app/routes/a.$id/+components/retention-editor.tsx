@@ -281,7 +281,6 @@ function RetentionConfirmation({
 
 function retentionProposal(limited: boolean, count: string) {
   const proposed = limited ? Number(count) : null
-  // Match the contract's nullable z.number().int().min(1) without a runtime
   const valid =
     proposed === null ||
     (count.trim() !== '' && Number.isSafeInteger(proposed) && proposed >= 1)

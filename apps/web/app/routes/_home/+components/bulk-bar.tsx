@@ -42,7 +42,6 @@ interface BulkBarProps {
   homeOwnerName: string
 }
 
-// 選択 0 件では hook ごと動かさない (useRevalidator は data router 必須のため、
 export function BulkBar(props: BulkBarProps) {
   if (props.bulk.selected.length === 0) return null
   return <BulkBarContent {...props} />

@@ -7,6 +7,8 @@ import { toUserInfo, type UserInfo } from '~/lib/user'
 import SettingsLayout from './+components/settings-layout'
 
 // The view lives in +components so development fixtures can render it without
+// this module's server code. React Router passes loaderData only to a default
+// export declared in the route module, so `export { default } from` would not.
 export default SettingsLayout
 
 export type SettingsLoaderData = SettingsShellData & {

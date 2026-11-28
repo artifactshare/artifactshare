@@ -105,7 +105,6 @@ export default function SignIn() {
     ? `${oauthAuthorizePath}?${params.toString()}`
     : safeInternalNext(params.get('next'))
 
-  // A viewer arriving from a public link on another host brings no readable
   const shouldLoadAnalytics =
     rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
   useEffect(() => {
@@ -122,7 +121,6 @@ export default function SignIn() {
   const [emailOpen, setEmailOpen] = useState(method === 'email')
   const emailInputRef = useRef<HTMLInputElement>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
-  // better-auth redirects the unlinkable-account case as ?error=account_not_linked
   const handleSendCode = async (e: FormEvent) => {
     e.preventDefault()
     dispatch({ type: 'submitStart' })

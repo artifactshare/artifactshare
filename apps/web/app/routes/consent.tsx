@@ -29,7 +29,6 @@ const SCOPE_LABEL: Record<string, TKey> = {
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect
 
-// OAuth consent page (`consentPage`). Reached after login when the client has
 export default function Consent() {
   const { t } = useT()
   const [params] = useSearchParams()

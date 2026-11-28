@@ -111,7 +111,6 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return connectMeta(loaderData?.locale ?? 'en')
 }
 
-// Brand accent for the host marker dot. These are external product brand
 const HOST_DOT: Record<string, string> = {
   claude: '#d97757',
   chatgpt: '#10a37f',
@@ -265,6 +264,9 @@ function ConnectHostSection({
               className={connectOneClickCtaClassName}
               href={host.oneClick.href}
               // Web connector links (Claude) open in a new tab so the setup
+              // guide stays put. App-scheme links (Cursor's cursor://) stay
+              // in this tab — the OS handles them and a new tab would just be
+              // left blank.
               {...(host.oneClick.href.startsWith('http')
                 ? { target: '_blank', rel: 'noopener noreferrer' }
                 : {})}
