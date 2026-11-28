@@ -1142,12 +1142,12 @@ export async function removeWorkspaceMember(
     .executeTakeFirst()
 
   if (!target) return { kind: 'not-found' }
-  if (
-    target.status === 'removed' &&
-    target.workspace_id !== actor.workspaceId
-  ) {
-    return { kind: 'not-found' }
-  }
+  // A retried removal converges: the target query already proves this
+  // workspace holds a removed human membership for the target, which is the
+  // end state the caller asked for. requireWorkspaceAdmin above needs the
+  // actor's own membership to be active, so the target is never the actor
+  // here, and the guarded batch below would write nothing anyway.
+  if (target.status === 'removed') return { kind: 'ok' }
   if (targetUserId === actor.id) return { kind: 'self-forbidden' }
   if (target.role === 'owner' || target.role === 'admin') {
     return { kind: 'not-found' }
@@ -1686,23 +1686,6 @@ async function loadUser(db: Kysely<DB>, userId: string): Promise<TeamMember> {
     .where('id', '=', userId)
     .executeTakeFirstOrThrow()
   return row
-}
-
-export async function isRemovedWorkspaceMember(
-  db: Kysely<DB>,
-  workspaceId: string,
-  userId: string,
-): Promise<boolean> {
-  const row = await db
-    .selectFrom('workspace_members')
-    .innerJoin('users', 'users.id', 'workspace_members.user_id')
-    .select('workspace_members.user_id')
-    .where('workspace_members.workspace_id', '=', workspaceId)
-    .where('workspace_members.user_id', '=', userId)
-    .where('workspace_members.status', '=', 'removed')
-    .where('users.kind', '=', 'human')
-    .executeTakeFirst()
-  return row !== undefined
 }
 
 export async function loadRemovedWorkspaceMembers(

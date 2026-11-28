@@ -33,7 +33,6 @@ import {
   countWorkspaceContributors,
   ensureWorkspaceAdmin,
   grantWorkspaceAdmin,
-  isRemovedWorkspaceMember,
   loadAuditEventsPage,
   loadRemovedWorkspaceMembers,
   loadWorkspaceOwner,
@@ -997,7 +996,7 @@ describe('team-management service', () => {
     })
   })
 
-  test('a repeated removal is refused, and the member reads as already removed', async () => {
+  test('a repeated removal converges on the one removed membership', async () => {
     seedWorkspace(sqlite, 'team')
     seedUser(sqlite, 'u1')
     seedUser(sqlite, 'u2')
@@ -1005,16 +1004,20 @@ describe('team-management service', () => {
     seedContributor(sqlite, 'u2')
     seedOwner(sqlite, 'u1')
 
-    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u2')).toBe(false)
+    expect(readMembershipStatus(sqlite, 'u2', 'ws1')).toBe('active')
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
       kind: 'ok',
     })
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(readMembershipStatus(sqlite, 'u2', 'ws1')).toBe('removed')
+    expect(readMembershipStatus(sqlite, 'u1', 'ws1')).toBe('active')
+    expect(readAuditEvents(sqlite, 'ws1')).toHaveLength(1)
+    // Negative control: a user this workspace never held stays not-found.
+    expect(await removeWorkspaceMember(db, user('u1'), 'u3')).toEqual({
       kind: 'not-found',
     })
-    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u2')).toBe(true)
-    expect(await isRemovedWorkspaceMember(db, 'ws1', 'u1')).toBe(false)
-    expect(await isRemovedWorkspaceMember(db, 'other', 'u2')).toBe(false)
   })
 
   test('revokes all stored credentials, counts final-batch rows, and permits fresh personal tokens', async () => {
@@ -1108,7 +1111,7 @@ describe('team-management service', () => {
       workspace_id: readUserWorkspaceId(sqlite, 'u2'),
     })
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
-      kind: 'not-found',
+      kind: 'ok',
     })
     expect(
       readAuditEvents(sqlite, 'ws1').filter(
@@ -1222,7 +1225,7 @@ describe('team-management service', () => {
         ).toEqual({ oauth_token_version: 1 })
         const fresh = await createApiToken(db, 'u2', 'personal')
         expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
-          kind: 'not-found',
+          kind: 'ok',
         })
         expect(await findUserByApiToken(db, fresh.token)).not.toBeNull()
       }
@@ -1492,7 +1495,7 @@ describe('team-management service', () => {
         .get(),
     ).toEqual({ n: 0 })
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
-      kind: 'not-found',
+      kind: 'ok',
     })
     expect(
       readAuditEvents(sqlite, 'ws1').filter(
@@ -1811,7 +1814,7 @@ describe('team-management service', () => {
       kind: 'ok',
     })
     await expect(removeWorkspaceMember(db, user('u1'), 'u2')).resolves.toEqual({
-      kind: 'not-found',
+      kind: 'ok',
     })
     expect(
       readAuditEvents(sqlite, 'ws1')
