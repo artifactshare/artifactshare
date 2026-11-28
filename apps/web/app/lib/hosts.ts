@@ -13,12 +13,7 @@ export function artifactDeliveryEnabled(env: {
   return !isProduction(env) || env.ARTIFACT_DELIVERY_STAGE === 'usercontent'
 }
 
-// Origins where MCP hosts render app widgets. An embed-token preview frames the
-// artifact's sandbox content from inside one of these, so the content's
-// `frame-ancestors` must allow them — but only for embed tokens
-// (`app/lib/sandbox-token.ts`), never the normal viewer path. The embed token
-// is the real access gate (a bearer secret), so naming the host chain here is
-// defence in depth, not the primary control. Verified per host via the host's
+// Origins where MCP hosts render app widgets. Verified per host via the host's
 // frame-ancestors console error:
 // - ChatGPT: widget under `<domain>.web-sandbox.oaiusercontent.com`, top
 //   `chatgpt.com`.
@@ -35,8 +30,6 @@ export const MCP_EMBED_FRAME_ANCESTORS = [
   'vscode-webview:',
 ]
 
-// Embed tokens outlive the 60s viewer token so the host can re-render the
-// widget during a conversation without the preview breaking.
 export const SANDBOX_EMBED_TTL_SECONDS = 1800
 
 export function isProduction(env: { APP_ENV: string }): boolean {
@@ -68,12 +61,6 @@ export function requestHostname(
 export const APP_DEV_PORT = 5173
 export const BUNDLE_SANDBOX_DEV_PORT = 5174
 
-/**
- * Development-only port overrides. `pnpm dev` leaves them unset; a private
- * local stack started on other ports passes them to both Workers. Production
- * never reads them, so a stray value there cannot change or break a
- * production URL.
- */
 export type DevTopologyEnv = {
   APP_ENV: string
   DEV_APP_PORT?: string
@@ -81,7 +68,6 @@ export type DevTopologyEnv = {
 }
 
 /**
- * Reads an explicit development port; unset or empty means "use the default".
  * Ports below 1024 are rejected: they need privileges, and a default port
  * such as 443 disappears from `https://localhost:443`, so links would silently
  * point at another stack.
@@ -116,15 +102,13 @@ export function devSandboxPort(env: DevTopologyEnv): number {
   return devPort(env, 'DEV_SANDBOX_PORT', BUNDLE_SANDBOX_DEV_PORT)
 }
 
-/** The development app origin that sandbox pages link back to and accept. */
 export function devAppOrigin(env: DevTopologyEnv): string {
   return `https://localhost:${devAppPort(env)}`
 }
 
 /**
- * Build the iframe src URL for a published version's sandboxed entrypoint.
- * The hostname is scoped to both the shareable and the exact version. Version
- * ids use nanoid's DNS-unsafe alphabet, so encode their UTF-8 bytes as hex.
+ * Version ids use nanoid's DNS-unsafe alphabet, so encode their UTF-8 bytes
+ * as hex.
  */
 export function artifactSandboxUrl(
   env: DevTopologyEnv & { ARTIFACT_DELIVERY_STAGE?: string },
@@ -145,7 +129,6 @@ export function artifactSandboxUrl(
     : `https://${label}${SANDBOX_DEV_SUFFIX}:${devSandboxPort(env)}${path}${query}`
 }
 
-/** In development the per-ID viewer shares the app's port (`appPort`). */
 export function linkViewerOrigin(
   production: boolean,
   shareableId: string,
@@ -238,7 +221,6 @@ export function sandboxVersionIdentityFromHostname(
   }
 }
 
-/** The signed audience is the exact delivery hostname, independent of access. */
 export function sandboxAuthority(
   env: DevTopologyEnv,
   uid: string | null,

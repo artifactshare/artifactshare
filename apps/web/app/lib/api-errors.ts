@@ -17,10 +17,6 @@ export function errorResponse(
   )
 }
 
-/**
- * Shared failure shape for CLI artifact read / download routes. An artifact the
- * caller may not see resolves to `not-found` so existence never leaks.
- */
 export type CliArtifactErrorResult =
   | { kind: 'version-removed' }
   | { kind: 'not-found' }

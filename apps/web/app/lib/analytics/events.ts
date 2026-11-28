@@ -1,5 +1,3 @@
-// client と Node Admin スクリプトの両方が import する純粋モジュール。window/server を参照しない
-
 type SameAnalyticsValue<Left, Right> = [Left] extends [Right]
   ? [Right] extends [Left]
     ? true
@@ -144,7 +142,6 @@ export const ANALYTICS_KEY_EVENTS: ReadonlyArray<AnalyticsEventName> = [
 ]
 // GA4 が web/mobile ストリームで自動 mark する既定キーイベント。逆方向 drift の対象外。
 // convert_lead は GA4 に存在しないため入れない。
-// Node の .mjs consumer は React source graph に現れないため抑制する。
 // react-doctor-disable-next-line deslop/unused-export
 export const GA4_DEFAULT_KEY_EVENTS = [
   'purchase',
@@ -160,7 +157,6 @@ export const GA4_DEFAULT_KEY_EVENTS = [
   'close_unconvert_lead',
 ] as const
 
-// Public compatibility export for consumers that enumerate dimension exclusions.
 // react-doctor-disable-next-line deslop/unused-export
 export const NON_DIMENSION_PARAMS: readonly string[] = []
 
@@ -226,7 +222,6 @@ export const ANALYTICS_CUSTOM_DIMENSIONS = defineAnalyticsDimensions([
     displayName: 'Account State',
   },
 ] as const)
-// Node の .mjs consumer は React source graph に現れないため抑制する。
 // react-doctor-disable-next-line deslop/unused-export
 export const ANALYTICS_DATA_RETENTION = {
   eventDataRetention: 'FOURTEEN_MONTHS',

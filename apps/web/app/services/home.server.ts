@@ -25,8 +25,6 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
 import { commentThreadWindowExpression } from './comment-thread-window.server'
 
-// ファイル行のコメント数。ホームのレール 2 区画 (自分のファイル / 最近見た
-// もの) が同じ画面に並ぶため、数え方は必ずこの 1 箇所で変える。
 function commentCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
   return eb
     .selectFrom('comment_threads')
@@ -44,7 +42,6 @@ export function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
     .as('version_count')
 }
 
-// Badges follow the current pointer; human activity keeps its own ordering.
 export function currentVersionNumberSelect(
   eb: ExpressionBuilder<DB, 'shareables'>,
 ) {
@@ -76,8 +73,6 @@ export function latestPublishedAtSelect(
     .as('latest_published_at')
 }
 
-// 未読は「自分が見た後の他者の動き」。自分の版・自分のコメントは数えない
-// (コメント側と揃える。自分の更新で自分の行にドットが立たない)
 function unreadVersionCountSelect(
   eb: ExpressionBuilder<DB, 'shareables'>,
   userId: string,
@@ -150,7 +145,6 @@ function recentAttributeExpression(
     ELSE NULL END`
 }
 
-/** Recency rows are deliberately filtered without a workspace-first query. */
 export function recentShareableAccessPredicate(
   user: ShareableViewer & { workspaceId: string },
   containerAlias = 'containers',
@@ -213,10 +207,6 @@ export function recentFilterPredicate(
   return sql<boolean>`(${relationPredicate}) AND ${unread}`
 }
 
-// `/recent` loader と listRecentArtifactsLimited で共有。
-// **呼び出し側が `shareable_viewer_recency as recency` で join していることを前提にする**
-// (未読 2 列の生 SQL が `recency.*_seen_through_at` を参照する)。別名で join している
-// 箇所 (search-palette.server.ts は `as r`) から呼ぶと実行時に落ちる。
 export function recentRowActivitySelects(
   eb: ExpressionBuilder<DB, 'shareables'>,
   userId: string,
@@ -349,7 +339,6 @@ export function unopenedOwnedPredicate(userId: string) {
   ])
 }
 
-// Owner-only display evidence; callers keep their existing access predicates.
 export function directGrantsSelect(userId: string, ownerEmail?: string | null) {
   const email = normalizeGrantEmail(ownerEmail)
   return sql<number | null>`CASE WHEN shareables.owner_user_id = ${userId}
@@ -583,9 +572,6 @@ export type RailProject = {
 
 const RAIL_PROJECTS = 3
 
-// ホームのレール「プロジェクト」区画: 参加中を優先して最大 3 件。参加 0 件は
-// 現行どおり自分が作成したプロジェクト名だけを返す。参加中の一覧は上のバーと
-// 同じ読み込み (新しい順) を受け取り、先頭の 3 件を使う。
 export async function listRailProjects(
   db: Kysely<DB>,
   user: SessionUser,

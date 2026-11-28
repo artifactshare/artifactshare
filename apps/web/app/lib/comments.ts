@@ -2,8 +2,6 @@ export const MAX_COMMENT_BODY_LENGTH = 4000
 
 export type CommentThreadStatus = 'open' | 'resolved'
 
-// Unknown-count bound for PDF page numbers: versions keep no page count, so
-// the server accepts any page up to this; the viewer enforces the real count.
 export const MAX_PDF_PAGE_NUMBER = 100_000
 
 export function isPdfPageNumber(value: unknown): value is number {
@@ -18,16 +16,11 @@ export function isPdfPageNumber(value: unknown): value is number {
 export type CommentThreadSubject =
   | { kind: 'artifact' }
   | {
-      // A PDF comment on the page open when it was posted. versionId is the
-      // posting version (null once deleted); canNavigate is true only when
-      // that page can be opened in the displayed version.
       kind: 'pdf-page'
       pageNumber: number
       versionId: string | null
       versionNumber: number | null
       canNavigate: boolean
-      // The version canNavigate was decided for (the server's current
-      // version), so a view still showing another version never opens it.
       navigableVersionId: string | null
     }
   | {
@@ -72,15 +65,12 @@ export interface CommentThreadView {
   messageCount: number
   replyCount: number
   olderCursor: string | null
-  /** Client-only latest server window, excluding disjoint around-page rows. */
   latestReplyIds?: string[]
-  /** Client-only bounded page requests retained for revalidation. */
   loadedPages?: Array<{
     through?: string
     before?: string
     aroundMessageId?: string
     limit?: number
-    /** Lower tuple of the retained interval; refreshes may need continuation pages. */
     coverageStart?: string | null
   }>
   id: string

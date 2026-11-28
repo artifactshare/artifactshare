@@ -20,7 +20,6 @@ export function isExternalPostingAllowedForWorkspace(
   return isExternalPostingEnabledForWorkspace(db, workspaceId)
 }
 
-/** Live counterpart of canUseExternalPosting for guarded mutations. */
 export function externalPostingAllowedSql(
   workspaceId: string | RawBuilder<unknown>,
 ): RawBuilder<boolean> {

@@ -124,7 +124,6 @@ export interface TeamMember {
   email: string
   name: string | null
   image: string | null
-  /** 'bot' marks automation members; rendered with the shared bot badge. */
   kind?: 'human' | 'bot'
 }
 

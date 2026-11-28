@@ -20,8 +20,7 @@ const ERROR_NAMES = new Set([
 ])
 const METHODS = ['GET', 'POST', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 // D1 and SQLite put a result code such as `D1_ERROR` or `SQLITE_CONSTRAINT`
-// in the message. Only codes from this fixed list are logged, so the value
-// never carries text from the message itself.
+// in the message.
 const RESULT_CODES = new Set([
   'D1_ERROR',
   'D1_EXEC_ERROR',
@@ -45,8 +44,6 @@ const RESULT_CODES = new Set([
 ])
 const RESULT_CODE = /\b(?:SQLITE|D1)_[A-Z_]+\b/g
 // A stack frame is `at name (file:line:column)` or `at file:line:column`.
-// The frame keeps the function name and the source location without any
-// query or fragment.
 const STACK_FRAME =
   /^\s*at\s+(?:(\S.*?)\s+\()?([^()\s]+?)(?:[?#][^:()\s]*)?(:\d+:\d+)\)?\s*$/
 const MAX_FRAMES = 5
@@ -56,8 +53,6 @@ function errorName(error: unknown) {
   return ERROR_NAMES.has(error.name) ? error.name : 'Error'
 }
 
-// An extended SQLite code such as `SQLITE_CONSTRAINT_UNIQUE` is logged as its
-// listed base code.
 function resultCode(error: unknown) {
   if (!(error instanceof Error)) return undefined
   for (const token of error.message.match(RESULT_CODE) ?? []) {
@@ -70,9 +65,7 @@ function resultCode(error: unknown) {
 }
 
 // The stack starts with `name: message` (the name the error had when it was
-// created), and the message can span lines that look like frames. Frames are
-// read only after the message, and only when the stack starts that way, so no
-// message text is taken for a frame.
+// created), and the message can span lines that look like frames.
 function stackFrames(error: Error) {
   const stack = error.stack ?? ''
   const marker = error.message ? `: ${error.message}` : ''
@@ -93,9 +86,6 @@ function stackFrames(error: Error) {
   return frames
 }
 
-// Exception messages, custom fields and request URLs can all contain request
-// data, so a diagnostic carries only fixed vocabularies: the error name, a
-// D1/SQLite result code, the source frames, the method and the static route id.
 export function logErrorDiagnostic(
   operation: string,
   error: unknown,

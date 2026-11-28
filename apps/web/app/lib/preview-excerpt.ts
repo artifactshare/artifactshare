@@ -46,8 +46,6 @@ function htmlToPlain(source: string): string {
   return decodeBasicHtmlEntities(text)
 }
 
-// og:description など、最小長ゲートなしで HTML から抜粋を取りたい呼び出し向け。
-// ブロック要素の境界だけ空白にし、インラインタグは詰めて句読点前の空白を避ける。
 export function htmlExcerpt(source: string, maxChars: number): string {
   const withBlockBreaks = source.replace(
     /<\/(?:p|li|h[1-6]|blockquote|pre|tr|div)>/gi,

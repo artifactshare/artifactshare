@@ -1,9 +1,3 @@
-/*
- * better-auth wiring — Cloudflare Workers + D1. The auth instance is built once
- * per isolate (see `createAuth` at the bottom): the `cloudflare:workers` env and
- * its D1 binding are stable for the isolate's lifetime.
- */
-
 import {
   getCurrentAuthContextAsyncLocalStorage,
   getRequestStateAsyncLocalStorage,
@@ -165,8 +159,6 @@ function buildAuth() {
     // leak into createAuth's inferred return type (TS2883, non-portable). The
     // OAuth/JWT endpoints are served through `.handler`, not typed `.api`.
     plugins: [
-      // Signs OAuth access tokens as JWTs and stores keys in `jwks`. MCP
-      // verifies signatures locally and reads the user token version from D1.
       jwt(),
       // OAuth 2.1 authorization server. MCP hosts self-register via dynamic
       // client registration (no pre-shared credentials), so unauthenticated
@@ -193,8 +185,6 @@ function buildAuth() {
         // /mcp. Only this protected resource is registered.
         resources: [mcpResourceUrl(env.BETTER_AUTH_URL)],
         enforcePerClientResources: true,
-        // Every MCP connector is allowed to use our single protected resource.
-        // Keep per-client checks enabled and bind newly registered clients.
         clientRegistrationDefaultResources: [
           mcpResourceUrl(env.BETTER_AUTH_URL),
         ],
@@ -207,30 +197,21 @@ function buildAuth() {
         // construction. An empty object is a no-op for mergeSchema.
         schema: {},
       }),
-      // Passwordless email sign-in for recipients whose tenant blocks both
-      // Google and Microsoft SSO. A one-time code (not a magic link) so the
-      // login survives corporate email link-scanners pre-fetching URLs and
-      // works when the code is read on a different device than the browser.
-      // First sign-in auto-creates the user (disableSignUp left false), which
-      // runs databaseHooks.user.create.before → a personal workspace; access
-      // is then granted by email-matched shares.
+      // A one-time code (not a magic link) so the login survives corporate
+      // email link-scanners pre-fetching URLs and works when the code is read
+      // on a different device than the browser.
       emailOTP({
         otpLength: 6,
-        // Corporate mail can be delayed; give the round-trip 10 minutes.
         expiresIn: 600,
         allowedAttempts: 5,
         sendVerificationOTP: async ({ email, otp }) => {
-          // Defense in depth: the reserved bot domain is unreachable and bot
-          // users never sign in, so refuse before sending anything.
           await assertBotSignInAllowedForEmail(db, email)
           await sendOtpEmail(email, otp)
         },
       }),
-      // Record the method used on each sign-in in a 30-day cookie
-      // (better-auth.last_used_login_method), so the sign-in screen can show a
-      // "last used" hint. The default resolver maps OAuth callbacks to the
-      // provider id (google / microsoft); our email-code endpoint
-      // (/sign-in/email-otp) isn't recognized, so map it to "email" ourselves.
+      // The default resolver maps OAuth callbacks to the provider id
+      // (google / microsoft); our email-code endpoint (/sign-in/email-otp)
+      // isn't recognized, so map it to "email" ourselves.
       lastLoginMethod({
         customResolveMethod: (ctx) =>
           ctx.path === '/sign-in/email-otp' ? 'email' : null,
@@ -266,8 +247,7 @@ function buildAuth() {
               tenantId: 'organizations',
               prompt: 'select_account',
               // Custom getUserInfo skips Better Auth's built-in Graph photo fetch on
-              // every login. Profile photos are still fetched once on account create
-              // via databaseHooks.account.create.after.
+              // every login.
               disableProfilePhoto: true,
               getUserInfo: getMicrosoftUserInfo,
             },
@@ -381,8 +361,6 @@ function buildAuth() {
       session: {
         create: {
           before: async (session, context) => {
-            // Invariant backstop: no auth entry point may mint a session for
-            // a bot user, whatever route it came through.
             await assertBotSignInAllowedForUserId(
               db,
               (session as { userId?: unknown }).userId,
@@ -430,9 +408,6 @@ function buildAuth() {
               emailVerified?: boolean | null
               kind?: unknown
             }
-            // External sign-up paths can never create a bot row or claim an
-            // address under the reserved bot email domain (users.email is
-            // UNIQUE, so a pre-claimed row would block bot creation).
             if (u.kind === 'bot' || isReservedBotEmailDomain(u.email)) {
               throw botSignInRejectedError()
             }
@@ -483,11 +458,7 @@ function buildAuth() {
                   workspaceCreated: signup.workspaceCreated,
                   now: nowIso(),
                 })
-              } catch {
-                // Analytics is best-effort (approximately-once): a pending-row
-                // write failure must not block the membership/admin provisioning
-                // below or fail the sign-up request.
-              }
+              } catch {}
             }
             const row = await db
               .selectFrom('users')
@@ -515,7 +486,6 @@ function buildAuth() {
       account: {
         create: {
           before: async (account) => {
-            // OAuth account linking must never attach to a bot user.
             await assertBotSignInAllowedForUserId(
               db,
               (account as { userId?: unknown }).userId,
@@ -540,8 +510,6 @@ function buildAuth() {
                   userId: account.userId,
                   idToken: account.idToken ?? null,
                 })
-              // Moved into an existing domain-claimed workspace ⇒ domain-join,
-              // not a self-serve creation ⇒ workspace_created must not fire.
               await clearWorkspaceCreatedIfMoved(db, {
                 userId: account.userId,
                 originalWorkspaceId,
@@ -592,8 +560,6 @@ async function syncMicrosoftAvatar(
       'https://graph.microsoft.com/v1.0/me/photos/48x48/$value',
       {
         headers: { Authorization: `Bearer ${account.accessToken}` },
-        // This hook is awaited on the login critical path; cap a slow or
-        // hanging Graph call so it can't stall sign-in.
         signal: AbortSignal.timeout(2500),
       },
     )
@@ -602,19 +568,13 @@ async function syncMicrosoftAvatar(
     await env.BUCKET.put(avatarKey, photoBuffer, {
       httpMetadata: { contentType: 'image/jpeg' },
     })
-    // Only fill an empty avatar: if the user already has a photo (for example
-    // from a linked Google account), don't replace it with the Microsoft one.
-    // The R2 put above still repairs a missing Microsoft avatar object when the
-    // existing URL already points at this route.
     await db
       .updateTable('users')
       .set({ image: avatarUrl, updated_at: nowIso() })
       .where('id', '=', account.userId)
       .where('image', 'is', null)
       .execute()
-  } catch {
-    // A failed (or timed-out) photo fetch must not block login.
-  }
+  } catch {}
 }
 
 export async function enableWorkspaceSelfUploadForOAuthAccount(
@@ -855,9 +815,6 @@ export function anchorAuthInit(ctx: ExecutionContext): void {
   lazyInitAnchored = true
   ctx.waitUntil(
     initAuthLazyState().catch(() => {
-      // Allow the next request to retry the anchoring; the instance itself is
-      // kept so a deterministic init failure stays a cheap cached rejection
-      // instead of a per-request rebuild.
       lazyInitAnchored = false
     }),
   )
@@ -867,16 +824,11 @@ async function initAuthLazyState(): Promise<void> {
   await getCurrentAuthContextAsyncLocalStorage()
   await getRequestStateAsyncLocalStorage()
   const auth = createAuth()
-  // Bound the anchor await: if this instance is already poisoned, an
-  // unbounded await would keep the anchoring invocation pending forever.
   const ready = await raceHang(
     (auth as unknown as { $context: Promise<unknown> }).$context,
     ANCHOR_HANG_MS,
   )
   if (ready === HANG) {
-    // A hung init never recovers; drop the instance so direct auth callers
-    // rebuild instead of reusing it. Plain rejections stay cached: they are
-    // cheap to re-await and eviction would rebuild on every request.
     if (cachedAuth === auth) cachedAuth = undefined
     throw new Error('auth lazy init hang')
   }
@@ -892,9 +844,7 @@ const AUTH_HANDLER_HANG_MS = 30_000
 
 /**
  * Resolve to HANG when `promise` stays pending past `ms`, without cancelling
- * it (better-auth calls expose no abort signal). The loser's eventual
- * rejection is swallowed so an abandoned attempt cannot surface as an
- * unrelated uncaught error.
+ * it (better-auth calls expose no abort signal).
  */
 async function raceHang<T>(
   promise: Promise<T>,
@@ -913,16 +863,9 @@ async function raceHang<T>(
 }
 
 /**
- * Read the session for a request. Returns null if unauthenticated.
- *
  * A client abort can leave a lazily-cached promise inside the shared auth
  * instance permanently pending; awaiting it would hang every later call in
- * the isolate. Detect the hang, rebuild the instance once, and fail null
- * rather than hang. The structured log keeps the recovery observable and
- * feeds the Slack alert. Thresholds: a healthy getSession is tens of
- * milliseconds; a D1 tail spike is well under a second. A false positive
- * costs one instance rebuild, not a user-visible error, as long as the
- * second window resolves.
+ * the isolate.
  */
 async function getSession(headers: Headers) {
   if (!env.BETTER_AUTH_SECRET) return null
@@ -933,16 +876,10 @@ async function getSession(headers: Headers) {
   )
   if (first !== HANG) return first
 
-  // Only drop the instance we found hanging: a concurrent request may have
-  // already rebuilt the cache, and rebuilding again would stampede. Re-arm
-  // the anchor so the replacement instance gets anchored too.
   if (cachedAuth === (auth as unknown as ReturnType<typeof buildAuth>)) {
     cachedAuth = undefined
     lazyInitAnchored = false
   }
-  // The rebuilt instance initializes inside this request without an anchor;
-  // if this request also aborts, the next request detects the hang again and
-  // rebuilds once more, so poisoning cannot stick.
   const fresh = createAuth()
   const second = await raceHang(
     fresh.api.getSession({ headers }),
@@ -1015,9 +952,7 @@ export async function getLocalJwksWithHangDetection(): Promise<unknown> {
 
 /**
  * Root-level `/.well-known/oauth-authorization-server` handler. The plugin
- * serves it under `/api/auth`, but MCP clients look for it at the site root,
- * so this builds the same metadata for a root route. The cast bridges the
- * erased plugin types on `createAuth()`; the method exists at runtime.
+ * serves it under `/api/auth`, but MCP clients look for it at the site root.
  */
 export function oauthAuthServerMetadataHandler(
   request: Request,
@@ -1134,10 +1069,6 @@ async function resolveBrowserSessionContext(
   try {
     const context = await loadWorkspaceContextByUserId(getDb(), sessionUser.id)
     if (!context) return null
-    // Invariant: cookie-derived session resolution never returns a bot user.
-    // Bots authenticate only through bearer CLI sessions with an agent
-    // authority; any cookie session that maps onto a bot row is treated as
-    // unauthenticated regardless of entry point.
     if (context.kind === 'bot') return null
     // The cookie cache can hold a stale emailVerified=false right after an
     // email-code sign-in promotes the DB row (better-auth writes the cookie from
@@ -1230,31 +1161,18 @@ async function loadBearerSessionUser(
   }
 }
 
-/**
- * Returns the typed app user, or null if unauthenticated. Centralizes the
- * cast from better-auth's user shape to our `SessionUser`.
- */
 export function getSessionUser(request: Request): Promise<SessionUser | null> {
   return getBrowserSessionContext(request).then((context) =>
     context ? context.user : null,
   )
 }
 
-/**
- * Resolve the authenticated browser user together with the usable expiry from
- * the same Better Auth session result. This remains cookie-only; bearer callers
- * continue through getSessionUserFromBearer.
- */
 export function getBrowserSessionContext(
   request: Request,
 ): Promise<BrowserSessionContext | null> {
   return resolveBrowserSessionContext(request.headers)
 }
 
-/**
- * Resolve a CLI bearer session token without enabling bearer auth globally.
- * Only call from explicit CLI / upload API boundaries.
- */
 export function getSessionUserFromBearer(
   request: Request,
 ): Promise<SessionUser | null> {
@@ -1262,8 +1180,6 @@ export function getSessionUserFromBearer(
   if (!token) return Promise.resolve(null)
   return loadBearerSessionUser(token)
 }
-
-// ── internals ────────────────────────────────────────────────────
 
 async function readEmailVerified(
   db: Kysely<DB>,
@@ -1399,8 +1315,6 @@ function workspaceCreationValues(policy: WorkspaceCreationPolicy): {
     ...linkExpiryStartingColumns(),
     self_upload_enabled: policy.selfUploadEnabled ? 1 : 0,
     storage_quota_bytes: policy.storageQuotaBytes,
-    // Workspaces created here start on the Free plan; the column default is
-    // still 0, so apply the plan default explicitly.
     link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
       ? 1
       : 0,
@@ -1499,7 +1413,6 @@ export async function ensureWorkspace(
       now,
       creation: provisioning,
     })
-    // Microsoft verified-domain signup does not reach this path; keep false conservatively.
     if (workspaceId) return { workspaceId, created: false }
   }
 
@@ -1993,8 +1906,6 @@ function devSignInPlugin(db: Kysely<DB>): BetterAuthPlugin {
           message: 'Dev user not found',
         })
       }
-      // Dev sign-in is still a sign-in entry point: never mint a browser
-      // session for a bot user.
       await assertBotSignInAllowedForUserId(db, signIn.userId)
 
       const session = await ctx.context.internalAdapter.createSession(
@@ -2046,12 +1957,6 @@ async function sendOtpEmail(to: string, otp: string): Promise<void> {
   })
 }
 
-// ── bot sign-in rejection ────────────────────────────────────
-
-/**
- * 403 error used by every human auth entry point that detects a bot user or
- * the reserved bot email domain.
- */
 export function botSignInRejectedError(): APIError {
   return new APIError('FORBIDDEN', {
     message: 'Bot accounts cannot sign in.',
@@ -2059,11 +1964,6 @@ export function botSignInRejectedError(): APIError {
   })
 }
 
-/**
- * Throws when the address sits under the reserved bot email domain or already
- * belongs to a bot user. Used by OTP send/verify and other email-first entry
- * points; the session/user create hooks remain the authoritative invariant.
- */
 export async function assertBotSignInAllowedForEmail(
   db: Kysely<DB>,
   email: string,
@@ -2077,7 +1977,6 @@ export async function assertBotSignInAllowedForEmail(
   if (row?.kind === 'bot') throw botSignInRejectedError()
 }
 
-/** Throws when the user id resolves to a bot user. */
 export async function assertBotSignInAllowedForUserId(
   db: Kysely<DB>,
   userId: unknown,

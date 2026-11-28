@@ -1,4 +1,3 @@
-/** Only pass destinations constructed from trusted host configuration. */
 export function bodyRecoveryHtml(viewerUrl: string, expired = false): string {
   const escape = (value: string) =>
     value

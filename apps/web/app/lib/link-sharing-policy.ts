@@ -21,9 +21,6 @@ export type LinkExpiryPolicyValidation =
   | { kind: 'ok' }
   | { kind: 'invalid'; field: 'default' | 'max' | 'relationship' }
 
-// Link expiry is a workspace setting, not a plan entitlement: every plan
-// starts at a 30-day default with no maximum (so "no expiration" is
-// selectable at once), and a plan change never rewrites it.
 const LINK_EXPIRY_STARTING_POLICY = {
   linkExpiryDefaultDays: 30,
   linkExpiryMaxDays: null,
@@ -47,12 +44,6 @@ export const LINK_SHARING_PLAN_DEFAULTS = {
   },
 } as const satisfies Record<BillingPlan, Omit<WorkspaceLinkPolicy, 'plan'>>
 
-/**
- * The expiry columns every workspace insert must set explicitly. The SQLite
- * column default is still 90 days (changing it would mean rebuilding the
- * table), so an insert that omits these columns would silently start with a
- * maximum; the tests on each insert path guard against that.
- */
 export function linkExpiryStartingColumns(): {
   link_expiry_default_days: number | null
   link_expiry_max_days: number | null

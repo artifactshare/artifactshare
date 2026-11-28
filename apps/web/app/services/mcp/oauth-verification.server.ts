@@ -94,7 +94,6 @@ export async function verifyOAuthBinding(
       .select('user_id')
       .where('id', '=', sessionId)
       .executeTakeFirst()
-    // OAuth refresh may outlive session expiry; removal/ownership is the binding.
     if (!session || session.user_id !== userId) return false
   }
   return true

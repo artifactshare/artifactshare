@@ -1,7 +1,6 @@
 import type { DB } from '~/types/db'
 import type { CliAuthority } from '~/services/cli-authority.server'
 
-/** Existing local read policy; middleware separately limits reachable routes. */
 export function cliReadAuthority(authority: CliAuthority | null | undefined) {
   if (!authority) return null
   switch (authority.kind) {
@@ -21,7 +20,6 @@ export function cliReadAuthority(authority: CliAuthority | null | undefined) {
   }
 }
 
-/** Browser users and the historical bootstrap lookup use human write rules. */
 export function cliWriteAuthority(authority: CliAuthority | null | undefined) {
   if (!authority) return null
   switch (authority.kind) {

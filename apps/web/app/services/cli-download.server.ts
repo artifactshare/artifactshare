@@ -44,9 +44,6 @@ export type CliDownloadManifest = {
   project_id: string | null
 }
 
-// Kinds downloaded as one stored original file. Text kinds come from
-// singleFileFormat; a PDF or video is binary and never goes through that
-// text-only readback helper, so it is listed here explicitly.
 const SINGLE_FILE_DOWNLOAD_KINDS = [
   'html_page',
   'markdown_page',
@@ -259,7 +256,6 @@ function shareUrl(baseUrl: string, id: string, visibility: string): string {
   )
 }
 
-/** Publisher's exact download endpoint returns source bytes, never a manifest. */
 export async function getPublisherDownloadFile(
   db: Kysely<DB>,
   user: SessionUser,

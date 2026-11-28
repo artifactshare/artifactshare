@@ -1,6 +1,3 @@
-// Shared Open Graph + Twitter card tags for the marketing pages (home, privacy,
-// terms). Each page passes its own title, description, URL, and card image; the
-// fixed tag shape lives here so the pages can't drift apart.
 interface SocialMetaInput {
   title: string
   description: string

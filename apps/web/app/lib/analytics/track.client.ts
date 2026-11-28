@@ -1,4 +1,3 @@
-// client 限定の GA4 sender。同意 (shouldLoadAnalytics) を毎回確認し、false なら送らない
 import type { AnalyticsEventName, AnalyticsEventParams } from './events'
 type GtagFn = (...args: unknown[]) => void
 interface AnalyticsWindow {
@@ -14,8 +13,6 @@ export function setAnalyticsRuntimeState(state: {
   runtimeConsentAllows = state.shouldLoadAnalytics
   runtimeMeasurementId = state.measurementId
 }
-// Returns whether the event was actually pushed (true) or suppressed (false)
-// because consent is not granted, the Measurement ID is unset, or gtag is absent.
 type ExactAnalyticsParams<Allowed, Candidate extends Allowed> = Candidate & {
   [Key in Exclude<keyof Candidate, keyof Allowed>]: never
 }

@@ -103,19 +103,9 @@ export interface CommentAnchorInput {
   textStart: number | null
   textEnd: number | null
   cssPath: string | null
-  /**
-   * Static sites: the page location (file or route path, plus a hash route).
-   * Validated against the version; HTML and Markdown use their entry page.
-   */
   targetPath?: string
 }
 
-/**
- * A PDF page comment from the browser panel: the page open in the viewer and
- * the version that page was read on. The server checks the version is the
- * current one; the page needs only the unknown-count bound (versions keep no
- * page count, and a count reported by the browser is not trusted).
- */
 export interface PdfPageAnchorInput {
   kind: 'pdf-page'
   pageNumber: number
@@ -130,7 +120,6 @@ function isPdfPageAnchorInput(
   return 'kind' in anchor && anchor.kind === 'pdf-page'
 }
 
-// Agent selectors are measured only when a viewer opens the artifact.
 export interface QuoteAnchorInput {
   quote: string
   before?: string
@@ -139,7 +128,6 @@ export interface QuoteAnchorInput {
 
 export type BuildQuoteAnchorResult =
   | { kind: 'ok'; anchor: CommentAnchorInput }
-  // The artifact kind has no single anchorable text (a multi-file bundle).
   | { kind: 'unsupported' }
   | { kind: 'invalid' }
 
@@ -153,11 +141,8 @@ export interface CommentAccess {
   artifactKind: string
   entrypointPath: string | null
   r2Key: string | null
-  // Owner-only comment moderation requires live access to the artifact's
-  // workspace. A separate viewer grant must not inherit owner authority.
   isOwner: boolean
   isTeamWorkspaceAdmin: boolean
-  // Only loadCommentAccess derives placement; other constructors leave it out.
   projectId?: string | null
 }
 
@@ -193,10 +178,6 @@ export type CommentMutationResult =
   | { kind: 'closed-thread' }
   | { kind: 'commit-failed' }
 
-// createCommentThread additionally reports the id of the thread it created, so a
-// caller can point at the new thread without re-deriving it from `threads` (its
-// position there isn't contractual). Additive over the shared ok variant; other
-// callers ignore it.
 export type CreateCommentThreadResult =
   | (Extract<CommentMutationResult, { kind: 'ok' }> & { threadId: string })
   | { kind: 'version-conflict' }
@@ -246,10 +227,6 @@ type CommentMutationStepResult =
   | { kind: 'ok' }
   | Exclude<CommentMutationResult, { kind: 'ok' }>
 
-// Resolve comment access from a thread id, so tools that act on a thread (the
-// MCP update_comment / delete_comment) don't need the artifact id. Returns null
-// when the thread doesn't exist or the user can't view its artifact — the two
-// are indistinguishable to the caller by design.
 export async function loadCommentAccessForThread(
   db: Kysely<DB>,
   user: SessionUser,
@@ -264,9 +241,6 @@ export async function loadCommentAccessForThread(
   return loadCommentAccess(db, user, row.shareable_id)
 }
 
-// The shareable fields loadShareableViewAccess resolves once the viewer's
-// display access is verified. Callers that need feature-specific access shapes
-// (comments, viewer list) derive them from this.
 export interface ShareableViewAccess {
   title: string
   id: string
@@ -282,9 +256,6 @@ export interface ShareableViewAccess {
   projectContainerKind: string | null
 }
 
-// Shareable lookup + viewerDisplayCheck + r2_key existence. Returns null when
-// the shareable doesn't exist, has no stored source, or the user can't view it
-// — the three are indistinguishable to the caller by design.
 export async function loadShareableViewAccess(
   db: Kysely<DB>,
   user: SessionUser,
@@ -520,8 +491,6 @@ function loadCommentThreadRow(
     .executeTakeFirst()
 }
 
-/** Callers must resolve current access before requesting a page. Thread ownership
- * is checked before parsing cursors, so inaccessible IDs reveal no cursor errors. */
 export async function loadCommentThreadPage(
   db: Kysely<DB>,
   access: CommentAccess,
@@ -624,8 +593,6 @@ export async function createCommentThread(
     rawAnchor && isPdfPageAnchorInput(rawAnchor) ? rawAnchor : null
   if (pageAnchor && !isValidPdfPageAnchor(access, pageAnchor))
     return { kind: 'invalid-anchor' }
-  // The page was read on the version the reader viewed; a replacement since
-  // then must not receive it.
   if (pageAnchor && pageAnchor.versionId !== access.currentVersionId)
     return { kind: 'version-conflict' }
   const textAnchor = rawAnchor && !pageAnchor ? rawAnchor : null
@@ -689,8 +656,6 @@ export async function createCommentThread(
     }),
   ]
   if (pageAnchor) {
-    // Text columns are NOT NULL; a page row keeps empty placeholders that are
-    // never read as text.
     queries.push(
       db.insertInto('comment_anchors').values({
         id: nanoid(),
@@ -1266,7 +1231,6 @@ async function changedThreadWindow(
       ...(changedMessage ? { changedMessage } : {}),
     }
   } catch {
-    // A committed write stays successful when advisory readback fails.
     return {
       threads: [] as CommentThreadView[],
       changedMessage: undefined,
@@ -1290,9 +1254,7 @@ async function scheduleCommentThreadsChanged(
   if (options?.waitUntil) {
     try {
       options.waitUntil(promise)
-    } catch {
-      /* Advisory delivery cannot undo the commit. */
-    }
+    } catch {}
     return
   }
   await promise
@@ -1312,9 +1274,7 @@ export async function notifyCommentThreadsChanged(
     await live
       .getByName(shareableId)
       .notifyCommentsChanged(originMutationId, originUserId, threadId)
-  } catch {
-    // Realtime delivery is advisory; D1 remains the source of truth.
-  }
+  } catch {}
 }
 
 function canResolveCommentThread(
@@ -1421,10 +1381,6 @@ function normalizeCommentAnchor(
     return null
   let targetPath = access.entrypointPath ?? '/index.html'
   if (access.artifactKind === 'static_site') {
-    // Static-site anchors are browser selections on a captured location. The
-    // posted location must already be canonical; the caller checks version
-    // files and which root form (`/` with fallback, else `/index.html`) the
-    // version uses.
     const canonical = [false, true].some(
       (fallbackToIndex) =>
         parseCommentLocation(rawAnchor.targetPath, fallbackToIndex)
@@ -1449,18 +1405,12 @@ function normalizeCommentAnchor(
   }
 }
 
-/**
- * A static-site location is a file of the version or, when the version falls
- * back to index, an extensionless route. Only the pathname selects files.
- */
 async function isStaticSiteLocationServed(
   db: Kysely<DB>,
   shareableId: string,
   versionId: string | null,
   location: string,
 ): Promise<boolean> {
-  // The root `/` reads as `/index.html` here, so its file is among the
-  // candidates; the version's fallback flag decides which form is canonical.
   const parsed = parseCommentLocation(location)
   if (!versionId || !parsed) return false
   const { direct, fallback } = staticSitePathCandidates(parsed.pathname)
@@ -1506,14 +1456,12 @@ function validTextHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
-// Browser selections: single-file pages and static-site locations.
 function canUseTextAnchors(access: CommentAccess): boolean {
   if (access.artifactKind === 'static_site')
     return Boolean(access.currentVersionId)
   return canUseQuoteAnchors(access)
 }
 
-// Agent quotes need one anchorable text, so static sites stay excluded.
 function canUseQuoteAnchors(access: CommentAccess): boolean {
   return (
     (access.artifactKind === 'html_page' ||
@@ -1547,7 +1495,6 @@ async function resolveCommentSubjects(
   access: CommentAccess,
   allAnchors: AnchorRow[],
 ): Promise<Map<string, CommentThreadSubject>> {
-  // Page comments are not text: they never enter text-position resolution.
   const subjects = await resolvePdfPageSubjects(
     db,
     access,
@@ -1585,8 +1532,6 @@ async function resolveCommentSubjects(
   }
   for (const anchor of anchors) {
     const results = resultsByAnchor.get(anchor.id) ?? []
-    // Static-site anchors are located on their own page location; single-file
-    // pages on the displayed entry page.
     const resultPath =
       access.artifactKind === 'static_site'
         ? anchor.target_path
@@ -1628,12 +1573,6 @@ async function resolveCommentSubjects(
   return subjects
 }
 
-/**
- * A page comment opens its page only where that is the same page: on the
- * posting version itself, or on a version with the same original bytes. A
- * deleted posting version, or one with other bytes, shows where the comment
- * was made without moving the viewer. Only this shareable's versions are read.
- */
 async function resolvePdfPageSubjects(
   db: Kysely<DB>,
   access: CommentAccess,
@@ -1686,7 +1625,6 @@ async function resolvePdfPageSubjects(
   return subjects
 }
 
-/** Quote creation deliberately does not read or interpret artifact content. */
 export function buildQuoteAnchor(
   access: CommentAccess,
   input: QuoteAnchorInput,
@@ -1749,7 +1687,6 @@ export function isAnchorResolution(
   )
 }
 
-/** Position-only writes: verified viewer access, no editing or unread events. */
 export async function storeAnchorResolutions(
   db: Kysely<DB>,
   access: CommentAccess,
@@ -1774,7 +1711,6 @@ export async function storeAnchorResolutions(
     return false
   const staticSite = access.artifactKind === 'static_site'
   if (staticSite) {
-    // A static-site location must be served by that version of this artifact.
     if (
       !(await isStaticSiteLocationServed(
         db,
@@ -1819,22 +1755,19 @@ export async function storeAnchorResolutions(
           'in',
           input.results.map((result) => result.threadId),
         )
-        // Page comments have no text position to record.
         .where('comment_anchors.page_number', 'is', null)
         .execute()
     : []
   const anchorsByThread = new Map(
     anchors.map((anchor) => [anchor.thread_id, anchor]),
   )
-  // Check the whole batch before any write: one location's verdicts cannot
-  // be saved for another location's thread.
   for (const anchor of anchors) {
     if (anchor.shareable_id !== access.shareableId) return false
     if (staticSite && anchor.target_path !== input.targetPath) return false
   }
   for (const result of input.results) {
     const anchor = anchorsByThread.get(result.threadId)
-    if (!anchor) continue // A deleted thread must not discard the remaining batch.
+    if (!anchor) continue
     if (anchor.shareable_id !== access.shareableId) return false
     const quote =
       anchor.selector_format === 'normalized-v1'
@@ -1888,8 +1821,6 @@ export async function storeAnchorResolutions(
                     input.generation,
                   ),
                 ]),
-                // Different frames have no shared generation order. A missing
-                // position in one must not overwrite another frame's attachment.
                 eb.and([
                   eb(
                     'comment_anchor_results.frame_token',
@@ -1958,11 +1889,6 @@ export type PostArtifactCommentResult =
   | { kind: 'quote-not-found' }
   | Exclude<CommentMutationResult, { kind: 'ok' }>
 
-/**
- * Shared post pipeline for the agent surfaces (MCP post_comment and the CLI
- * comments route) so input rules, anchor handling, and failure kinds cannot
- * drift between them. Transports map kinds to their own error shapes.
- */
 export async function postArtifactComment(
   db: Kysely<DB>,
   user: SessionUser,
@@ -1970,14 +1896,10 @@ export async function postArtifactComment(
   input: PostArtifactCommentInput,
   options?: CommentMutationOptions,
 ): Promise<PostArtifactCommentResult> {
-  // A quote anchors a span on a brand-new thread; a reply joins an existing
-  // thread's anchor, so the two can't be combined.
   if (input.quote !== undefined && input.replyTo !== undefined) {
     return { kind: 'quote-on-reply' }
   }
 
-  // Workspace-scoped view check: anyone who can view the artifact can comment
-  // on it, and a non-viewable (or absent) id refuses without leaking which.
   const access = await loadCommentAccess(
     db,
     user,
@@ -1986,7 +1908,6 @@ export async function postArtifactComment(
   )
   if (!access) return { kind: 'not-found' }
 
-  // The viewer resolves agent-supplied quotes when the document is opened.
   let anchor: CommentAnchorInput | undefined
   if (input.quote !== undefined) {
     const built = await buildQuoteAnchor(access, {
@@ -2039,7 +1960,6 @@ export async function postArtifactComment(
     refreshRequired = result.refreshRequired
   }
 
-  // Readback is restricted to this thread, independently of panel membership.
   const thread = threads.find((candidate) => candidate.id === threadId)
   return {
     kind: 'ok',

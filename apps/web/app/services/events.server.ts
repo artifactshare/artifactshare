@@ -83,9 +83,6 @@ export type FeedEventsResult = {
   hasMore: boolean
 }
 
-// The 'mine' slice: in the viewer's workspace, what visibleShareableToViewer
-// lists; outside it, artifacts of a joined project that open for the viewer:
-// shared with them now, or their own.
 function mineFeedVisibleSql(user: FeedUser) {
   return sql<boolean>`((shareables.workspace_id = ${user.workspaceId} AND ${visibleShareableToViewerSql(user)}) OR (shareables.workspace_id <> ${user.workspaceId} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id=shareables.container_id AND pm.user_id=${user.id}) AND (${visibleSharedProjectShareableToViewerSql(user)} OR (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}))))`
 }
@@ -150,8 +147,6 @@ export async function listFeedEvents(
         'projectContainers.kind as containerKind',
         'projectContainers.owner_user_id as containerOwnerId',
       ])
-      // Operational safety events live in the same append-only table but are
-      // not user-facing activity-feed entries.
       .where('events.type', 'in', FEED_EVENT_TYPES)
       .where((eb) =>
         slice === 'project'
@@ -177,7 +172,6 @@ export async function listFeedEvents(
             ? mineFeedVisibleSql(user)
             : visibleShareableToViewerSql(user),
       )
-      // 削除済みの comment / version は join が外れたら表示しない (events.md)
       .where((eb) =>
         eb.or([
           eb('events.type', '<>', 'comment_posted'),
@@ -679,9 +673,6 @@ export async function listFeedEvents(
     }
     let stoppedMidBatch = false
     for (const [index, row] of batch.entries()) {
-      // 集約に畳まれて出力しない行も「消費済み」としてカーソルを進める。
-      // push 時だけ進めると、読み飛ばした同日 view を跨がずにカーソルが
-      // 確定し、同じ集約が次ページへ再出現する。
       current = {
         createdAt: row.createdAt,
         id: row.id,
@@ -773,8 +764,6 @@ export async function listFeedEvents(
         addCount: addCount >= 2 ? addCount : null,
       })
       if (rows.length >= targetRows) {
-        // batch の途中で目標行数に達した場合、残りの行はカーソル以降に
-        // 未消費で残っている。batch が SQL limit 未満でも続きがある。
         stoppedMidBatch = index < batch.length - 1
         break
       }

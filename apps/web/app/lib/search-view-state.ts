@@ -1,5 +1,4 @@
 import { searchApiParams } from './search-query'
-/** Navigation metadata only. Never cache titles, snippets or other result bodies. */
 export type SearchViewState = {
   depth: number
   expanded: string[]
@@ -7,7 +6,6 @@ export type SearchViewState = {
   anchor: string
   position: number
   offset: number
-  /** The result the user opened last; kept when the scroll anchor moves. */
   opened?: string
 }
 const entries = new Map<string, SearchViewState>()
@@ -18,21 +16,10 @@ export function recallSearchView(key: string) {
   return entries.get(key)
 }
 
-/**
- * The search a history entry showed, so going Back to it continues that
- * search instead of starting a new one. The token is bound to the viewer and
- * expires; it is navigation metadata, not result content.
- */
 const searches = new Map<string, { resume: string; actor: string }>()
 export function rememberSearch(key: string, resume: string, actor: string) {
   searches.set(key, { resume, actor })
 }
-/**
- * Navigation state for moves the app makes into or within search. It counts
- * the history entries pushed since leaving the page before search, so leaving
- * search (mobile Cancel) can step back to that page with its scroll and state,
- * and keeps that page's path for when the count is unknown.
- */
 export function searchNavigationState(
   from: { pathname: string; search: string; state?: unknown },
   extra: Record<string, unknown> = {},
@@ -55,10 +42,6 @@ export function searchNavigationState(
   return { searchFromApp: true, searchReturnTo, searchDepth, ...extra }
 }
 
-/**
- * How to leave search: step back through the counted entries when known,
- * otherwise replace the entry with the page before search, else Home.
- */
 export function searchExit(state: unknown): { back: number } | { to: string } {
   const value = (state ?? {}) as {
     searchReturnTo?: unknown
@@ -80,10 +63,6 @@ export function searchExit(state: unknown): { back: number } | { to: string } {
   }
 }
 
-// The history entry whose search results are on screen, if any. A load for
-// a different remembered entry is a return to it with Back or Forward: a new
-// search, even for the same words, starts from the entry on screen, because
-// the browser adds the new entry only after the load.
 let shown: string | undefined
 export function showSearch(key: string) {
   shown = key
@@ -104,11 +83,6 @@ function returnedSearch(url: URL) {
   return searches.get(key)
 }
 
-/**
- * Going Back to search results continues the search that entry showed: the
- * same log and no new daily count, with access checked again on the server.
- * Every other load, including a reload, is a new search on the server.
- */
 export async function continueReturnedSearch<
   T extends { result: unknown; actor: string },
 >(request: Request, serverLoader: () => Promise<T>): Promise<T> {
@@ -121,10 +95,7 @@ export async function continueReturnedSearch<
     const response = await fetch(`/api/search?${api}`, {
       signal: request.signal,
     })
-    // Signing in again is the server loader's job.
     if (response.status === 401) return serverLoader()
-    // Any other failure is shown as the page's error, never retried as a
-    // second, counted search.
     const payload = (
       response.ok
         ? await response.json()

@@ -24,7 +24,6 @@ const SESSION_TOKEN_PREFIX = 'ass_'
 const TOKEN_RANDOM_BYTES = 32
 const SESSION_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const ROTATION_RETRY_TTL_MS = 10 * 60 * 1000
-// A linkage marker for CLI-family cleanup, not proof of a distinct authority.
 export const CLI_DEVICE_SESSION_USER_AGENT = 'artifactshare-cli-device'
 
 export type IssuedCliRefreshCredential = {
@@ -375,8 +374,6 @@ export async function issueCliRefreshCredential(
         .where('user_id', '=', userId)
         .where('device_id', '=', deviceId)
         .where('family_id', 'is not', null)
-        // Caller-controlled device ids must never supersede another preset's
-        // publisher identity, including when issuing an unrestricted/agent family.
         .$if(!publisherBootstrap, (query) =>
           query.where(
             'family_id',
@@ -884,10 +881,6 @@ async function refreshLegacyCliSession(
       'publisher',
     ])
     .where(publisherFamilyIdentitySql())
-    // Bot tokens must go through the rotation-consuming path; the legacy
-    // route would let a leaked bot token mint sessions indefinitely without
-    // consuming the family-root credential. Rejected as an ordinary invalid
-    // token (401 envelope) so this route stays a non-oracle.
     .where('users.kind', '=', 'human')
     .whereRef(
       'cli_refresh_credentials.id',
@@ -1082,8 +1075,6 @@ export async function listCliRefreshCredentialFamilies(
     ])
     .where('credential.user_id', '=', userId)
     .where('credential.family_id', 'is not', null)
-    // Apply the live-family predicate after grouping so its correlated
-    // subqueries run once per family instead of once per rotated credential.
     .having(({ exists, or, selectFrom }) =>
       or([
         exists(
@@ -1261,8 +1252,6 @@ export function buildCliRefreshCredentialRevocationStatements(
 ): Compilable<unknown>[] {
   // Keep this set-based path separate from single-family revocation: selecting
   // family IDs before the batch would let a concurrently issued family survive.
-  // Token-based logout uses the presented credential ID as its audit subject in
-  // the separate single-family path below.
   const now = nowIso()
   const revocationBatchId = nanoid()
   const activeFamilies = (dedupe = true) => {
@@ -1357,9 +1346,6 @@ export function buildCliRefreshCredentialRevocationStatements(
 }
 
 function unlinkedCliSessionIds(db: Kysely<DB>, userId: string) {
-  // Pre-link CLI sessions cannot be attributed to one family. A revoke that
-  // promises to terminate CLI access therefore removes them user-wide while
-  // preserving browser sessions and sessions linked to another family.
   return db
     .selectFrom('sessions')
     .select('sessions.id')

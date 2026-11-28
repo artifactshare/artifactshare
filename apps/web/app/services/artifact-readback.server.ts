@@ -6,8 +6,6 @@ import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 
 export type ArtifactSourceFormat = 'html' | 'markdown'
 
-// Single-file docs agents edit sit well under this; the cap keeps one outsized
-// artifact from flooding a model context while allowing chunked continuation.
 export const MAX_ARTIFACT_SOURCE_CHARS = 200_000
 
 export function singleFileFormat(
@@ -31,8 +29,6 @@ export function capSource(
   const end = Math.min(start + MAX_ARTIFACT_SOURCE_CHARS, body.length)
   let content = body.slice(start, end)
   const truncated = end < body.length
-  // Do not end a truncated chunk on a lone high surrogate. The next read
-  // re-includes the pair from nextOffset, so callers do not lose a character.
   if (truncated) {
     const lastUnit = content.charCodeAt(content.length - 1)
     if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) {
@@ -66,8 +62,6 @@ export function toAgentCommentThread(thread: CommentThreadView) {
             quote_after: thread.subject.suffixText,
             ...(thread.subject.locus ? { locus: thread.subject.locus } : {}),
             version_id: thread.subject.versionId,
-            // The page location: a static-site file or route path, plus a
-            // `#/…` or `#!/…` hash route; single-file pages use the entry page.
             target_path: thread.subject.targetPath,
             ...(thread.subject.selectorFormat === 'normalized-v1'
               ? { ambiguous_at_creation: thread.subject.ambiguousAtCreation }

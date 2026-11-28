@@ -16,20 +16,10 @@ const URL_ATTRIBUTES: ReadonlyArray<readonly [selector: string, attr: string]> =
     ['form[action]', 'action'],
   ]
 
-/**
- * Extracts the judgment input with the runtime's HTML tokenizer (HTMLRewriter,
- * i.e. lol-html) so comments, quoted attributes, raw-text elements, and
- * script/style bodies are handled by a spec-compliant parser instead of hand
- * written scanning. The document is streamed once; text is kept up to the
- * text budget and hosts up to the domain budget. Falls back to the scanning extractor where HTMLRewriter is
- * unavailable (unit tests outside the Workers runtime).
- */
 export async function extractLinkAbuseContentFromHtml(
   html: string,
 ): Promise<ExtractedLinkAbuseContent> {
   if (typeof HTMLRewriter === 'undefined') return extractLinkAbuseContent(html)
-  // Bound the work like the scanning extractor does; the judgment only needs
-  // the first budgets' worth of content anyway.
   if (html.length > LINK_ABUSE_ENTRYPOINT_LIMIT) {
     html = html.slice(0, LINK_ABUSE_ENTRYPOINT_LIMIT)
   }

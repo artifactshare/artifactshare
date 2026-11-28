@@ -1,12 +1,3 @@
-/*
- * Signed-URL tokens for the sandbox subdomain.
- *
- * The apex worker signs after verifying access; the sandbox worker verifies
- * the signature before checking the one-time nonce and current version in D1.
- *
- * Token = base64url(payload) "." base64url(hmac-sha256(secret, payload))
- */
-
 import { artifactSandboxUrl, sandboxAuthority } from './hosts'
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import type { ArtifactType } from './artifact-type'
@@ -25,20 +16,10 @@ export interface SandboxPayload {
   vid: string
   fid: string
   mt: string | null
-  /** Carried in the token so the cache lookup can skip the DB on hit. */
   t: ArtifactType
   jti: string
-  /**
-   * Embed token: minted for previewing an artifact inside an MCP host
-   * (ChatGPT / Claude). Unlike a viewer token it is reusable within its TTL
-   * (the host may re-render the widget) and widens the content's
-   * `frame-ancestors` to the host's sandbox origin. Absent / false on the
-   * normal viewer path.
-   */
   emb?: boolean
-  /** Single-use HTML, Markdown or static-site body opening without the viewer frame. */
   standalone?: true
-  /** Unix seconds. */
   exp: number
 }
 
@@ -58,7 +39,6 @@ export function signSandboxToken(
   )
 }
 
-/** Sign and route from one authorization decision. */
 export async function signSandboxUrl(
   payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
   secret: string,
@@ -98,7 +78,6 @@ export type SandboxTokenResult =
   | {
       ok: false
       failure: 'expired'
-      /** Verified claims for comparison only; expired tokens never grant access. */
       payload: SandboxPayload
       expiredBySeconds: number
     }

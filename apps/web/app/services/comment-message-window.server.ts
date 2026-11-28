@@ -45,7 +45,6 @@ function replyMessageIds(
     .limit(limit)
 }
 
-/** Select IDs using the covering tuple index before loading bodies and authors. */
 export async function loadMessageWindow(
   db: Kysely<DB>,
   threadId: string,
@@ -94,8 +93,6 @@ export async function loadMessageWindow(
     .select('id')
     .unionAll(db.selectFrom(replyIds.as('replies')).select('id'))
   if (around && boundary) {
-    // Around pages seek forward, so include one preceding ID as the older
-    // sentinel in this same statement (the target lookup remains separate).
     const olderId = replyMessageIds(db, threadId, 1).where(
       sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
     )
@@ -224,8 +221,6 @@ function messageView(
   }
 }
 
-/** Each indexed subquery visits only the first row or latest four replies.
- * The extra reply establishes continuation; batching avoids per-thread RPCs. */
 export async function loadInitialMessageWindows(
   db: Kysely<DB>,
   threadIds: string[],

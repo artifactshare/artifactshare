@@ -46,13 +46,10 @@ export function isLowTrustLinkWorkspace(args: {
 }
 
 export const DEFAULT_LINK_NEW_ACCOUNT_LINK_PUBLISH_DAILY_LIMIT = 20
-/** The rolling window the daily publish limit is counted over. */
 export const LINK_PUBLISH_RATE_WINDOW_MS = 24 * 60 * 60 * 1000
 
 export type LinkPublishRateLimit = {
-  /** Shared with the low-trust policy: a Free workspace younger than this is "new". */
   accountAgeDays: number
-  /** New link publications allowed per rolling 24 hours; 0 disables the limit. */
   dailyLimit: number
 }
 
@@ -69,11 +66,6 @@ export function linkPublishRateLimitFromEnv(env: {
   }
 }
 
-/**
- * Whether the publish limit applies to this workspace at all: a Free
- * workspace younger than the account age threshold, with the limit enabled.
- * Plus and Team are never limited; an unparsable date counts as new.
- */
 export function isLinkPublishLimitedWorkspace(args: {
   plan: string | null | undefined
   workspaceCreatedAt: string
@@ -91,7 +83,6 @@ export function isLinkPublishLimitedWorkspace(args: {
   )
 }
 
-/** Whether a limited workspace has used up its daily link publications. */
 export function isLinkPublishRateLimited(args: {
   plan: string | null | undefined
   workspaceCreatedAt: string

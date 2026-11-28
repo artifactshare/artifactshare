@@ -12,12 +12,6 @@ export async function recordFirstArtifactPost(
   user: { id: string },
   opts: {
     channel: 'web' | 'cli' | 'mcp'
-    // Whether this send is permitted to reach Google. Browser posts (channel
-    // 'web') pass the visitor's analytics-consent decision here; CLI/MCP have
-    // no browser consent signal and are measured as first-party account
-    // actions, so they pass true. When false we still claim the row (internal
-    // dedup, never sent to Google) so a later post is not mislabeled as first,
-    // but we do not send the event.
     sendToGa: boolean
     waitUntil?: (p: Promise<unknown>) => void
   },
@@ -56,8 +50,6 @@ export async function recordFirstArtifactPost(
     if (opts.waitUntil) opts.waitUntil(send.catch(onSendError))
     else await send.catch(onSendError)
   } catch (error) {
-    // Non-invasive: analytics must not affect publishing. Log for operability
-    // (claim/hmac/config errors here carry no secret).
     console.error(
       'first_artifact_posted_record_failed',
       error instanceof Error ? error.message : error,

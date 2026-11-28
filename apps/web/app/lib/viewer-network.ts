@@ -155,7 +155,6 @@ export type CommentNetworkResult =
   | 'invalid-json'
   | 'network-error'
 
-/** One start and one terminal event per attempt, without URLs, IDs or content. */
 export function startCommentNetworkOperation(
   diagnostic: CommentNetworkDiagnostic,
 ) {

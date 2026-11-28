@@ -2,8 +2,6 @@ import { sql, type Kysely } from 'kysely'
 import type { ArtifactVersionSummary } from '@artifactshare/contract'
 import type { DB } from '~/types/db'
 
-// Call only with authorized IDs. A list page has at most 50 IDs.
-// Match static-site history visibility while retaining zero-history rows.
 export async function loadArtifactVersionSummaries(
   db: Kysely<DB>,
   ids: string[],

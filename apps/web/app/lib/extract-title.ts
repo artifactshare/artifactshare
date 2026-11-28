@@ -73,9 +73,7 @@ function decodeUtf8Prefix(buffer: ArrayBuffer, byteLimit: number): string {
     for (let trim = 1; trim <= 3 && end - trim >= 0; trim++) {
       try {
         return decoder.decode(buffer.slice(0, end - trim))
-      } catch {
-        // Keep trimming only the possible trailing partial code point.
-      }
+      } catch {}
     }
     throw err
   }

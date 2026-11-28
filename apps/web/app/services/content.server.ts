@@ -16,8 +16,6 @@ export async function fetchAndRenderContent(args: {
   r2Key: string
   renderType: ArtifactType
 }): Promise<FetchAndRenderContentResult> {
-  // A PDF or video has no text source to render; never decode its bytes as
-  // UTF-8.
   if (args.renderType === 'pdf' || args.renderType === 'video')
     return { kind: 'not-found' }
   const object = await getArtifact(env.BUCKET, args.r2Key)
@@ -33,9 +31,6 @@ export type FetchArtifactSourceResult =
   | { kind: 'ok'; body: string; sizeBytes: number }
   | { kind: 'not-found' }
 
-// The raw stored source, with no markdown render. The MCP `get_artifact` tool
-// hands this back so an agent can read the exact bytes it would round-trip
-// through `update_artifact` — rendering to HTML would corrupt that loop.
 export async function loadPreviewExcerpt(
   r2Key: string,
   kind: ArtifactKind,

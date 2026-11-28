@@ -5,8 +5,6 @@ export function isValidGrantEmail(email: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
 }
 
-// メール群を正規化・検証・重複排除する。owner を渡すと自分を除外する。
-// 文字列入力 (parseGrantEmails) と配列入力 (サーバー側の保存) の両方で使う。
 export function normalizeGrantEmailList(
   emails: Iterable<string>,
   ownerEmail?: string | null,
@@ -35,16 +33,10 @@ export function normalizeGrantEmail(email?: string | null): string {
   return email?.trim().toLowerCase() ?? ''
 }
 
-// Bot アドレス (予約 `.invalid` ドメイン) は workspace 内の自動化メンバーなので
-// 社外扱いにしない。判定 3 箇所 (isExternalEmail / isExternalAuthorEmail /
-// externalGrantDomainSql) すべてでこの除外を共有する。
 export function isReservedBotEmail(email: string): boolean {
-  // Exact bot domain only: a stray third-party `.invalid` grant must keep
-  // its external tag (sign-up rejection stays broad, see bot-account.ts).
   return isBotEmailDomain(email)
 }
 
-// workspace のドメイン (hd) を持たない、または別ドメインなら組織外とみなす。
 export function isExternalEmail(
   email: string,
   workspaceHd?: string | null,

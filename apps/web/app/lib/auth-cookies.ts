@@ -30,7 +30,6 @@ const LAST_LOGIN_METHOD_COOKIE_NAMES = new Set<string>([
   '__Secure-better-auth.last_used_login_method',
 ])
 
-/** Read the last-used login method ('google' | 'microsoft' | 'email' | …) from a Cookie header. */
 export function readLastLoginMethod(
   cookieHeader: string | null,
 ): string | null {
@@ -39,8 +38,6 @@ export function readLastLoginMethod(
     const [rawName, ...rawValue] = part.split('=')
     const name = rawName?.trim()
     if (name && LAST_LOGIN_METHOD_COOKIE_NAMES.has(name)) {
-      // The cookie is client-controlled (not httpOnly); a malformed percent
-      // escape would otherwise throw and 500 the whole root loader.
       try {
         return decodeURIComponent(rawValue.join('=').trim()) || null
       } catch {

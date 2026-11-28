@@ -25,7 +25,6 @@ function isGatedArtifactKind(kind: string): kind is GatedArtifactKind {
   return (GATED_ARTIFACT_KINDS as readonly string[]).includes(kind)
 }
 
-// True when the kind is known to every client or named by this one.
 function understoodBy(
   kind: ArtifactKind | undefined,
   named: Set<string>,

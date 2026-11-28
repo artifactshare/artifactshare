@@ -223,8 +223,6 @@ export async function updateWorkspaceBotDestinations(
           updated_at: marker,
         })
         .where('family_id', '=', family.family_id),
-      // Sessions resolve authorization through the family, but their placement
-      // metadata must not keep a removed primary pinned by its foreign key.
       db
         .updateTable('cli_session_authorities')
         .set({ project_id: input.projectId })

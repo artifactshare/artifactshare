@@ -90,10 +90,6 @@ export async function listCliArtifacts(
       : await findSharedProjectForViewer(db, projectId, user)
     if (!project && !shared) return { kind: 'invalid-project' }
 
-    // The visibility predicates reference the unaliased `shareables` table, so
-    // this query must not alias it. The workspace boundary is applied before
-    // the visibility predicate; audience members from other workspaces only
-    // see 'project' visibility and their own grants.
     const workspaceId = project ? user.workspaceId : shared!.workspaceId
     const visible = project
       ? visibleShareableToViewerSql(user)
@@ -241,9 +237,6 @@ export async function listAgentReadableArtifacts(
   const invalidCursor = Boolean(
     args.cursor && (!decoded || decoded.filter !== fingerprint),
   )
-  // Reuse one DB-owned viewer row for both status and authorization. The
-  // outer join happens after pagination, so an empty-page marker never
-  // consumes a slot or changes has_more.
   const result = await db
     .with(
       (cte) => cte('access_viewer').materialized(),
@@ -273,8 +266,6 @@ export async function listAgentReadableArtifacts(
         ])
         .where(agentReadableShareableSql('access_viewer', authority))
         .where(sql<boolean>`${invalidCursor ? 0 : 1} = 1`)
-      // '' means the home filter on the human path; agents cannot read home, so
-      // an empty project id must yield an empty list, not the workspace listing.
       if (args.projectId !== undefined && args.projectId !== null) {
         query = query.where('shareables.container_id', '=', args.projectId)
       }
@@ -306,10 +297,7 @@ export async function listAgentReadableArtifacts(
   if (viewer.viewer_workspace_id !== authority.workspaceId) {
     return { kind: 'invalid-project' }
   }
-  // Preserve viewer-error precedence even for corrupt or mismatched cursors.
   if (invalidCursor) return { kind: 'invalid-cursor' }
-  // A non-null primary key means the entire page row joined successfully;
-  // only the LEFT JOIN can null these schema-required columns.
   const rows = result.filter(
     (
       row,
@@ -434,8 +422,6 @@ export async function searchCliArtifacts(
     if (args[key] !== undefined) params.set(key, args[key])
   const input = parseSearchInput(params)
   if ('error' in input) return { kind: 'invalid-input' }
-  // Sealed continuations are validated by the search token reader, not the
-  // web URL parser's 200-character input limit. Legacy cursors remain separate.
   input.cursor = args.cursor
   if (args.authority) input.filters.credentialScope = args.authority
   let result

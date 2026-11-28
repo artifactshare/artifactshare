@@ -1,7 +1,6 @@
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 
-/** Call only after authorizing access to the artifact. Explicit reads have no age limit. */
 export async function selectArtifactVersion(
   db: Kysely<DB>,
   artifactId: string,

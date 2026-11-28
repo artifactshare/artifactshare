@@ -3,9 +3,6 @@ import { isPublicPagePath, pathGuideLocale } from './guide-locale'
 import { getLocale } from './i18n.server'
 import { hasSafeArtifactInviteNext } from './safe-next'
 
-// The document language for a request. The root loader and the server entry
-// both use it, so the root error page keeps the language the page would have
-// had when the root loader fails.
 export function documentLocale(
   request: Request,
   {

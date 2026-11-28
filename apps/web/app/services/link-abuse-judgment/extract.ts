@@ -10,10 +10,6 @@ export interface ExtractedLinkAbuseContent {
 export function extractLinkAbuseContent(
   html: string,
 ): ExtractedLinkAbuseContent {
-  // Large documents are sampled as a head window and a tail window. Each
-  // window is stripped and mined on its own with its own share of the text
-  // and domain budgets, so neither a runaway block in the head nor a script
-  // the tail starts inside can crowd out the other window's evidence.
   const halfLimit = LINK_ABUSE_ENTRYPOINT_LIMIT / 2
   const windows: Array<{ html: string; startsInsideBlock: boolean }> =
     html.length <= LINK_ABUSE_ENTRYPOINT_LIMIT
@@ -58,8 +54,6 @@ function extractExternalDomains(
   externalDomains: string[],
   limit: number,
 ): void {
-  // Attribute URLs are read only inside tags, so script-like assignments in
-  // active text (`el.src = "https://…"`) are not harvested as attributes.
   for (const tag of value.matchAll(/<[a-z][^>]*>/giu)) {
     for (const match of tag[0].matchAll(
       /\b(?:href|src|action)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/giu,
@@ -93,13 +87,6 @@ function extractExternalDomains(
 
 const INACTIVE_TAG_NAMES = ['script', 'style'] as const
 
-/**
- * Removes `<script>` and `<style>` blocks in one forward pass over a window.
- * Every `<` is visited at most once, so the work is linear however many
- * openers lack a closer. An unclosed opener drops the rest of the window
- * (the tail window is scanned separately, so evidence there survives), and a
- * window that starts inside a block drops everything up to its first closer.
- */
 export function stripInactiveContent(
   html: string,
   startsInsideBlock = false,
@@ -133,7 +120,7 @@ export function stripInactiveContent(
         continue
       }
     } else if (
-      html.charCodeAt(cursor + 1) === 47 /* / */ &&
+      html.charCodeAt(cursor + 1) === 47 &&
       tagNameMatches(html, cursor + 2, inside)
     ) {
       emitFrom = tagEnd(html, cursor + 2 + inside.length)

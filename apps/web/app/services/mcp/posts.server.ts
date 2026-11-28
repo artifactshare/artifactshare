@@ -9,19 +9,11 @@ export interface RecordArtifactPostInput {
   shareableId: string
   userId: string
   workspaceId: string
-  /** OAuth client that posted; null for the dev-token bypass. */
   clientId: string | null
   action: McpPostAction
-  /** sha256 of the canonical request payload. */
   contentHash: string
 }
 
-/**
- * Append the minimal record of one MCP post: which client / user posted what,
- * when. Callers run this best-effort after the artifact is already committed —
- * a failed insert must not fail the publish; it only means a later resend won't
- * be deduped (degraded idempotency, never a crash).
- */
 export async function recordArtifactPost(
   db: Kysely<DB>,
   input: RecordArtifactPostInput,
@@ -41,12 +33,6 @@ export async function recordArtifactPost(
     .execute()
 }
 
-/**
- * Find a recent identical publish by the same user, for idempotent resends. The
- * shareable FK is `ON DELETE CASCADE`, so a returned row's shareable still
- * exists. `since` bounds the window: a host's timeout-retry lands within
- * seconds, while a deliberate re-publish much later should make a new artifact.
- */
 export async function findRecentPublish(
   db: Kysely<DB>,
   args: { userId: string; contentHash: string; since: string },

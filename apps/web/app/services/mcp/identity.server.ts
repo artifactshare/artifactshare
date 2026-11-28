@@ -2,53 +2,28 @@ import { type Kysely, sql } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 
-/** Resolved caller identity for one MCP request. */
 export interface McpIdentity {
-  /** better-auth user id (the access token's `sub`). */
   userId: string
-  /** OAuth client that holds the token (the `azp` claim); null for the dev bypass. */
   clientId: string | null
-  /** Scopes granted to the token. */
   scopes: string[]
-  /** How the caller authenticated. `dev` is the local-only bypass. */
   mode: 'oauth' | 'dev'
 }
 
-/**
- * The slice of Cloudflare's native Rate Limiting binding the tools use. Kept
- * structural so the binding (`env.MCP_RATELIMIT_*`) satisfies it directly and a
- * fake can stand in for tests.
- */
 export interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
 
-/** Everything one stateless MCP request needs to serve its tools. */
 export interface McpRequestContext {
   identity: McpIdentity
   db: Kysely<DB>
   executionContext: ExecutionContext
-  /** App origin (BETTER_AUTH_URL); the base for `/a/:id` share links. */
   baseUrl: string
-  // Per-caller and per-workspace rate limiters. null disables a limit (tests, or
-  // a not-yet-configured binding) — the guard treats a missing limiter as allow.
   rateLimiters: {
     perUser: RateLimiter | null
     perWorkspace: RateLimiter | null
   }
 }
 
-/**
- * The full user the tools need, reconstructed from the token's `userId`.
- *
- * The route layer gets this from the session cookie; without a cookie the MCP
- * handler reads it from D1. `loadWorkspaceContextByUserId` (auth.server) only
- * returns workspaceId + hd, so this query additionally pulls email / name /
- * locale and the workspace plan + storage for `whoami`.
- */
-// The identity fields are exactly `SessionUser` (minus the avatar `image`, which
-// the tools never need), so they share one definition; the rest is the workspace
-// summary `whoami` reports.
 export type McpUser = Omit<SessionUser, 'image'> & {
   plan: string
   workspaceName: string
@@ -100,8 +75,6 @@ export async function loadMcpUser(
     .where('users.id', '=', userId)
     .executeTakeFirst()
   if (!row) return null
-  // MCP OAuth is cookie-session based; a bot identity here is impossible via
-  // the product flows and is rejected outright as defense in depth.
   if (row.kind === 'bot') return null
   return {
     kind: row.kind,
@@ -121,10 +94,6 @@ export async function loadMcpUser(
   }
 }
 
-// The comments service is written against the cookie-session `SessionUser`; the
-// MCP identity is the same minus the avatar `image` the tools never load. Fill
-// it with null so comment access checks (which key off id / workspace / email)
-// run unchanged.
 export function mcpUserAsSessionUser(user: McpUser): SessionUser {
   return { ...user, image: null }
 }

@@ -1,6 +1,3 @@
-// Server-side cookie helpers shared by UI-preference routes (locale, view mode).
-// Cookies are host-only (no Domain attr) so they never reach the sandbox subdomain.
-
 export function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get('cookie')
   if (!header) return null

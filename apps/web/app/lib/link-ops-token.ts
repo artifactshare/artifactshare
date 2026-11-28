@@ -1,12 +1,6 @@
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import { constantTimeEqual, hmacSha256Base64Url } from './hmac'
 
-// A signed, expiring token that lets an operator act on one link share from
-// the Slack judgment notification without an account. The token names the
-// shareable only; the action (pause, resume, no action) is chosen on the
-// page it opens, so a leaked link cannot be replayed into a different move.
-// Two days: long enough to act on a notification after a weekend, short
-// enough that a copied link does not stay a credential for long.
 export const LINK_OPS_TOKEN_TTL_SECONDS = 2 * 24 * 60 * 60
 
 export type LinkOpsTokenPayload = {

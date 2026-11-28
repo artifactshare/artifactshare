@@ -2,8 +2,6 @@ import type { FileRowData } from '~/routes/_home/+components/file-data'
 
 const VERSION_BADGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
-// 「vN に更新」は人による最新公開版が v2 以上、かつ発行から 7 日以内。
-// Undefined preserves older synthetic rows; null explicitly means no eligible version.
 export function versionBadgeLabel(
   file: FileRowData,
   now: string,

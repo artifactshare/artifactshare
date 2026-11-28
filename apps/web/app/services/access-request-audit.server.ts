@@ -151,11 +151,7 @@ async function persistNotificationOutcome(
         .where('action', '=', `access_request.${input.channel}.attempting`)
         .execute()
       return
-    } catch {
-      // The provider delivery is never retried. Only this idempotent audit
-      // update is repeated; a reserved row becomes "unknown" in the UI when
-      // it remains attempting beyond the bounded window.
-    }
+    } catch {}
   }
   console.error(
     JSON.stringify({

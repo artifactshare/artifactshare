@@ -1,20 +1,12 @@
-// Shared bot-account primitives: the reserved email domain, display-name
-// normalization, and the bot token prefix. Server code, routes, and tests all
-// use these helpers so validation cannot drift between layers.
-
-/** Prefix for one-time bot tokens (parallel to asr_/ass_/ast_). */
 export const BOT_TOKEN_PREFIX = 'asb_'
 
 /**
  * Reserved (RFC 2606 `.invalid`) domain for generated bot addresses. The
  * domain is unobtainable, so nobody can register the address at a mail
- * provider and impersonate a bot. Sign-in and sign-up reject the whole
- * `.invalid` TLD so a human cannot pre-claim a future bot address either
- * (users.email is UNIQUE; a pre-claimed row would break bot creation).
+ * provider and impersonate a bot.
  */
 export const BOT_EMAIL_DOMAIN = 'bots.artifactshare.invalid'
 
-/** True only for the exact bot address domain (external-tag exemption). */
 export function isBotEmailDomain(email: string): boolean {
   const at = email.lastIndexOf('@')
   if (at === -1) return false
@@ -26,7 +18,6 @@ export function isBotEmailDomain(email: string): boolean {
   )
 }
 
-/** True when the address (or any address) sits under the reserved TLD. */
 export function isReservedBotEmailDomain(email: string): boolean {
   const at = email.lastIndexOf('@')
   if (at === -1) return false
@@ -37,9 +28,6 @@ export function isReservedBotEmailDomain(email: string): boolean {
   return domain === 'invalid' || domain.endsWith('.invalid')
 }
 
-// Lowercase-only alphabet for the random local part. Grant matching compares
-// emails lowercased; generating from a mixed-case alphabet could collapse two
-// distinct ids into one address and trip the users.email UNIQUE constraint.
 const BOT_EMAIL_LOCAL_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const BOT_EMAIL_LOCAL_LENGTH = 20
 
@@ -58,15 +46,8 @@ export function generateBotEmail(
 const BOT_NAME_MIN_LENGTH = 1
 const BOT_NAME_MAX_LENGTH = 30
 
-// Unicode General Category Cc (control) and Cf (format / zero-width).
 const FORBIDDEN_NAME_CHARS = /[\p{Cc}\p{Cf}]/u
 
-/**
- * Normalize a bot display name: trim, NFC. Returns null when invalid (empty,
- * longer than 30 code points after NFC, or containing control/format
- * characters). The stored value, validation, and tests all go through this
- * single helper; uniqueness is exact match on the stored value.
- */
 export function normalizeBotDisplayName(input: string): string | null {
   const normalized = input.trim().normalize('NFC')
   const length = [...normalized].length

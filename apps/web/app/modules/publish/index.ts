@@ -29,7 +29,6 @@ import { executeBridgePublishIntent } from '~/services/bridge-publish-session.se
 import type { BridgePublishResult } from '~/services/bridge-publish-types.server'
 import type { DB } from '~/types/db'
 
-/** The user-shaped data required by the existing publish service. */
 export type PublishUser = {
   id: string
   kind: 'human' | 'bot'
@@ -41,14 +40,6 @@ export type PublishUser = {
   selfUploadEnabled?: boolean
 }
 
-/**
- * The identity that initiated a publish.
- *
- * The optional authority is deliberately kept on the principal rather than
- * reconstructed in the publish service. This lets the bridge and restricted
- * agent paths carry their existing authorization facts through the common
- * entry point without changing their meaning.
- */
 type UnrestrictedAuthority = Extract<CliAuthority, { kind: 'unrestricted' }>
 type BootstrapAuthority = Extract<CliAuthority, { kind: 'bootstrap' }>
 type PublisherAuthority = Extract<CliAuthority, { kind: 'publisher' }>
@@ -141,7 +132,6 @@ export type PublishContent =
     }
   | {
       kind: 'append'
-      /** Read and validate transport input only after append authorization. */
       content: string | (() => Promise<string | null>)
     }
 
@@ -163,7 +153,6 @@ export type StaticSiteContentSessionContext = {
   waitUntil?: (promise: Promise<unknown>) => void
 }
 
-/** Internal outcome returned by a streaming static-site content adapter. */
 export type StaticSiteContentSessionResult =
   | UploadStaticSiteBundleResult
   | UpdateStaticSiteBundleResult
@@ -183,18 +172,15 @@ export type StaticSiteContentSessionResult =
   | { kind: 'too-many-parts' }
   | { kind: 'invalid-form-data' }
 
-/** Transport adapter used to feed a static-site upload session. */
 export type StaticSiteContentSessionAdapter = {
   publish(
     context: StaticSiteContentSessionContext,
   ): Promise<StaticSiteContentSessionResult>
 }
 
-/** The single intent shape shared by all publish entry points. */
 type PublishIntentBase = {
   actor: Principal
 
-  /** Server-only execution context; omitted callers use the Worker DB. */
   db?: Kysely<DB>
   waitUntil?: (promise: Promise<unknown>) => void
   auditQuery?: PublishAuditQuery
@@ -266,14 +252,6 @@ type PublishBoundaryFailure =
   | { kind: 'forbidden' }
   | { kind: 'expected-version-required' }
 
-/**
- * Publish through the common boundary.
- *
- * This first implementation is intentionally an adapter: the existing
- * service remains the source of behavior while callers migrate to the
- * intent-shaped API. Later migrations can move the transaction and recovery
- * implementation behind this function without changing an entry point again.
- */
 export function publish(
   intent: PublishCreateIntent & { content: FileContent },
 ): Promise<UploadShareableResult | PublishBoundaryFailure>

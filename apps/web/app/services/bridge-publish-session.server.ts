@@ -2205,8 +2205,6 @@ async function readBridgeResult(
       )`,
     )
     .where(
-      // Completed publish requests retain their version id as a tombstone even
-      // when retention cascades away the version and its operation provenance.
       sql<boolean>`(request.result_version_id IS NOT NULL OR EXISTS (
         SELECT 1
         FROM bridge_operations provenance

@@ -6,8 +6,6 @@ import {
   MCP_CONNECTOR_URL,
 } from './mcp-metadata'
 
-// Install links are built from the MCP server URL so they can never drift from
-// MCP_CONNECTOR_URL.
 export const CLAUDE_INSTALL_URL = claudeCustomConnectorUrl(
   'Artifact Share',
   MCP_CONNECTOR_URL,
@@ -28,7 +26,6 @@ const aiAgentSnippetCommands = {
   ci: 'ARTIFACTSHARE_TOKEN=your_token npx --yes @artifactshare/cli share ./report.html',
 }
 
-// Step numbers match the AI agents section's step order.
 const enAiAgentSnippets = [
   { step: 1, code: aiAgentSnippetCommands.init, name: 'Prompt' },
 ]
@@ -70,7 +67,6 @@ export type ConnectStep =
 interface Host {
   id: string
   heading: string
-  /** Optional install-link block shown before the manual steps. */
   oneClick?: {
     lead: string
     label: string
@@ -78,24 +74,16 @@ interface Host {
     dialog: string
     fallbackLead: string
   }
-  /** Eligibility paragraph shown before the steps. */
   lead?: string
-  /** Additional caution shown before the steps. */
   note?: string
   steps: ConnectStep[]
-  /** Cursor only: the `mcp.json` form. */
   codeBlock?: string
-  /** Filename label shown on the code block's tab. */
   codeBlockName?: string
-  /** 1-based step number to place the code block under. */
   codeBlockStep?: number
-  /** 1-based step number to place the MCP server URL under. */
   urlStep?: number
-  /** Shell command snippets attached to specific steps (1-based). */
   snippets?: { step: number; code: string; name: string }[]
 }
 
-/** Open Graph copy for the /connect page: the meta tags and the social card. */
 interface OgContent {
   title: string
   description: string
@@ -111,7 +99,6 @@ interface GuideFreshnessContent {
 export interface ConnectContent {
   title: string
   intro: string
-  /** One line on what the connector can do, beyond publishing. */
   capabilities: string
   guideFreshness: GuideFreshnessContent
   choiceHeading: string
