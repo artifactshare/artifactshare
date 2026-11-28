@@ -3,6 +3,8 @@ import {
   READY_CHECK_MESSAGE_SOURCE,
   READY_CHECK_MESSAGE_KIND,
 } from './reporter-constants.js'
+import { MAX_PDF_PAGE_COUNT } from './pdf-page-limits.js'
+export { MAX_PDF_PAGE_COUNT } from './pdf-page-limits.js'
 export {
   VIOLATION_REPORTER_SCRIPT_BODY,
   VIOLATION_REPORTER_SHA256,
@@ -208,7 +210,6 @@ export interface HashChangedMessage {
   token: string
 }
 
-export const MAX_PDF_PAGE_COUNT = 100_000
 export type PdfPageChangedMessage =
   | {
       source: 'artifactshare'

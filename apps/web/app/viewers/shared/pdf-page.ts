@@ -1,4 +1,4 @@
-export const MAX_PDF_PAGE = 100_000
+import { MAX_PDF_PAGE_COUNT } from '@artifactshare/viewer-kit/pdf-page-limits'
 
 const REPORT_SOURCE = 'artifactshare'
 const REPORT_KIND = 'pdf-page-changed'
@@ -6,7 +6,7 @@ const COMMAND_SOURCE = 'artifactshare-parent'
 const COMMAND_KIND = 'pdf-open-page'
 const SYNC_KIND = 'pdf-page-sync'
 
-function isPage(value: unknown, max = MAX_PDF_PAGE): value is number {
+function isPage(value: unknown, max = MAX_PDF_PAGE_COUNT): value is number {
   return (
     typeof value === 'number' &&
     Number.isSafeInteger(value) &&
