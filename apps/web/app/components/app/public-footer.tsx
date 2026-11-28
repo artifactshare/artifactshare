@@ -64,7 +64,6 @@ export function PublicFooter({
       </Link>
     ))
   const barePath = location.pathname.replace(/^\/ja(?=\/|$)/, '') || '/'
-  // Minimal invite footers keep their existing compact navigation.
   const showLocaleSwitch = variant === 'full' && isPublicPagePath(barePath)
   const localeHref = (code: Locale) =>
     `${withLang(barePath, code)}${location.search}${location.hash}`

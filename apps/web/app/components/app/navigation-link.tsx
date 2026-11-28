@@ -18,7 +18,6 @@ interface NavigationLinkProps extends Omit<
   variant: 'topbar'
   to: string
   end?: boolean
-  /** 省略時はテキストのみの PC 一級ナビ。 */
   icon?: TablerIcon
   label: string
   className?: string

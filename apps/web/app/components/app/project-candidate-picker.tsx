@@ -1,8 +1,3 @@
-/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4
- * component: project picker · genre: modern-minimal · theme: existing product system
- * states: default · hover · focus · active · disabled · loading · error · success
- * contrast: inherited product tokens
- */
 import {
   useEffect,
   useEffectEvent,
@@ -98,8 +93,6 @@ export function ProjectCandidatePicker({
     setSearch((state) => ({ ...state, loadMoreError: false }))
   }
 
-  // useFetcher forwards thrown loader/transport errors to the route
-  // ErrorBoundary, while this picker must keep them in its inline error state.
   // react-doctor-disable-next-line no-fetch-in-effect
   useEffect(() => {
     const current = ++generation.current

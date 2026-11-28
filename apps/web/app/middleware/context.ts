@@ -2,10 +2,6 @@ import { createContext, type RouterContextProvider } from 'react-router'
 import type { SessionUser } from '~/lib/user'
 import type { CliAuthority } from '~/services/cli-authority.server'
 
-/**
- * Resolved session user for the current request, or null if anonymous.
- * Populated by `sessionMiddleware` at the root layer.
- */
 export const userContext = createContext<SessionUser | null>(null)
 export const authSourceContext = createContext<'cookie' | 'bearer' | null>(null)
 export const cliAuthorityContext = createContext<CliAuthority | null>(null)
@@ -13,17 +9,8 @@ export const linkDomainContext = createContext<{ shareableId: string } | null>(
   null,
 )
 
-/**
- * The Worker's ExecutionContext for this request — used for `waitUntil` to
- * fire-and-forget background tasks safely. Populated in workers/app.ts.
- */
 export const ctxContext = createContext<ExecutionContext>()
 
-/**
- * Read the user from a route protected by `requireUserMiddleware`.
- * Throws loud if called from a route lacking the middleware — better than
- * `!` assertions silently coercing null.
- */
 export function requireUser(
   context: Readonly<RouterContextProvider>,
 ): SessionUser {

@@ -88,7 +88,6 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   else
     try {
       url = new ctx.win.URL(rawHref, ctx.win.location.href)
-      // A full URL to this same document with a fragment is a fragment link.
       if (altAsPlain && url.hash) {
         let here = new ctx.win.URL(ctx.win.location.href)
         let there = new ctx.win.URL(url.href)
@@ -130,13 +129,10 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
     })
     ctx.primordials.weakMapSet(ctx.pendingLinkClicks, event, pending)
   } catch (e) {
-    // If the event cannot be wrapped, suppress navigation rather than bypass the gate.
     ctx.primordials.preventDefault(event)
     return
   }
   ctx.primordials.preventDefault(event)
-  // A fragment is followed once the page's handlers had their turn, even if
-  // one of them stops the click before it reaches the window.
   if (fragment)
     ctx.win.setTimeout(() => {
       if (ctx.primordials.weakMapGet(ctx.pendingLinkClicks, event) !== pending)
@@ -148,7 +144,6 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
 
 export function finishLinkClick(ctx: ReporterState, event: MouseEvent) {
   let pending = ctx.primordials.weakMapGet(ctx.pendingLinkClicks, event)
-  // Fragments are followed by the task queued in prepareLinkClick.
   if (!pending || pending.fragment) return
   ctx.primordials.weakMapDelete(ctx.pendingLinkClicks, event)
   if (pending.artifactPrevented) return

@@ -28,7 +28,6 @@ const connectorUrlCopyButtonClassName = cn(
   guideFocusRingClassName,
 )
 
-/** The connector URL plus a copy button. Used on the `/connect` setup page. */
 export function ConnectorUrlCopy({
   url,
   labels,

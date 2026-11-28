@@ -17,8 +17,6 @@ export function AnalyticsAuthTracker({
   signup: AnalyticsSignupPayload | null
   shouldLoadAnalytics: boolean
 }): null {
-  // OAuth and OTP completion arrive through navigation/session state rather
-  // than a component-owned event handler, so an effect is the event boundary.
   useEffect(() => {
     if (!authenticated) return
     let currentArtifactId: string | undefined

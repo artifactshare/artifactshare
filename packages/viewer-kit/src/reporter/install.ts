@@ -49,10 +49,8 @@ export function installReporter(win: ReporterWindow) {
   installHashTracking(ctx)
   installScreenTracking(ctx)
   installAnchorObserver(ctx)
-  // Before any other window listener, so none of them sees edit input.
   installInlineEditGuard(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
-    // A page kept for back/forward must come back as authored.
     endInlineEdit(ctx)
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)
       return
@@ -96,23 +94,17 @@ export function installReporter(win: ReporterWindow) {
       onAnnotateClick(ctx, event),
     true,
   )
-  // Mark an Alt/Option click as operating the page before any document
-  // listener runs (window capture comes first), so clicks a page handler
-  // causes from there are not picks either.
   ctx.primordials.addEventListener(
     ctx.win,
     'click',
     (event: MouseEvent) => markOperating(ctx, event),
     true,
   )
-  // Holding Alt/Option means the next click operates the page.
   ctx.doc.addEventListener('keydown', function (event) {
     if (event.key === 'Alt' && ctx.annotateModeEnabled) clearAnnotateHover(ctx)
   })
   installMessageListener(ctx)
-  // Queued selection work belongs to the location it was started on.
   const queueSelection = function (event: Event) {
-    // An Alt/Option click operates the page; it does not offer a selection.
     if (
       ctx.previewCapability &&
       ((event.type === 'mouseup' && (event as MouseEvent).altKey) ||

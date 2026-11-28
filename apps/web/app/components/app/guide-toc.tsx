@@ -16,8 +16,6 @@ const guideRailClassName = 'sticky top-20 max-lg:hidden'
 const guideRailTitleClassName =
   'm-0 mb-3 pl-3 text-xs font-semibold tracking-wide text-faint'
 
-// Mobile chip table of contents, shown above the body below the rail breakpoint.
-// Plain anchors, no live highlight.
 export function GuideTocMobile({
   items,
   title,
@@ -38,9 +36,6 @@ export function GuideTocMobile({
   )
 }
 
-// Sticky rail table of contents with a scroll-linked active marker. Shared by
-// the guide pages (/connect, /share-with-ai). The active section comes from
-// useGuideToc, so the marker logic lives in one place.
 export function GuideRail({
   items,
   title,

@@ -57,11 +57,9 @@ type Text = (key: ViewerKey, vars?: Record<string, number>) => string
 type Surface = 'settings' | 'search' | 'pages' | null
 type DownloadHandler = (event: ReactMouseEvent<HTMLAnchorElement>) => void
 
-// Toolbar controls: icon buttons, 44px touch targets on phones.
 const CONTROL =
   'h-10 min-w-9 gap-2 px-2.5 max-stack:size-11 max-stack:min-w-11 max-stack:px-0'
 const ICON = 'size-4.5'
-// Labels next to toolbar icons, shown only where the row has room for them.
 const WIDE_LABEL = 'max-wide:hidden'
 
 function isPageLayout(value: string): value is PageLayout {
@@ -80,8 +78,6 @@ function isEditable(target: EventTarget | null) {
   )
 }
 
-// Choosing a display option keeps the menu open, so layout and size can both
-// be set; Escape, the button or a click elsewhere closes it.
 function keepMenuOpen(event: Event) {
   event.preventDefault()
 }
@@ -105,10 +101,6 @@ function statusText(text: Text, state: PdfState) {
   return text(`pdfViewer.${state}`)
 }
 
-// On the narrowest phones the row cannot hold every touch target; the
-// download then leaves the row and stays one tap away in the page list. The
-// row decides from what it holds, not from a width breakpoint: the space left
-// in the whole row once every visible control has its own width.
 function useDownloadFitsRow(
   pager: RefObject<HTMLDivElement | null>,
   download: RefObject<HTMLAnchorElement | null>,
@@ -146,8 +138,6 @@ function useDownloadFitsRow(
         groups.reduce((width, group) => width + contentWidth(group), 0) +
         columnGap * Math.max(0, groups.length - 1)
       const spare = inner - needed
-      // Coming back also brings its gap to the neighbouring control, so
-      // the threshold includes it and the row cannot flip back and forth.
       const endGap = downloadElement.parentElement
         ? parseFloat(
             getComputedStyle(downloadElement.parentElement).columnGap,
@@ -179,8 +169,6 @@ export function PdfViewerApp({
   fileName: string
   downloadHref: string
 }) {
-  // The viewer UI follows the app's language and theme; the PDF content
-  // keeps its own language (see the page area below).
   const { locale } = useViewerPreferences(preferences)
   const viewer = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const text: Text = (key, vars) => t(locale, key, vars)
@@ -201,8 +189,6 @@ export function PdfViewerApp({
     return () => runtime.stop()
   }, [runtime])
 
-  // Only one surface is open at a time: opening one closes any other it
-  // would overlap. Closing the search ends it.
   const changeSurface = (next: Surface) => {
     runtime.setSearchOpen(next === 'search')
     runtime.setSettingsOpen(next === 'settings')
@@ -235,7 +221,6 @@ export function PdfViewerApp({
       closeSearch(true)
       return
     }
-    // Ctrl/Cmd+F inside the viewer opens its own search.
     if (
       ready &&
       (event.ctrlKey || event.metaKey) &&
@@ -361,10 +346,6 @@ export function PdfViewerApp({
   )
 }
 
-// One row of controls: the page list, the pager in the middle, then the
-// display settings, search and download. The app header's collapse handle
-// overlaps the frame's top-right corner, so the controls stay clear of it:
-// beside it on wider frames, below it on phones.
 function Toolbar({
   runtime,
   viewer,
@@ -511,8 +492,6 @@ function Toolbar({
   )
 }
 
-// The search bar sits below the control row and the document area shrinks.
-// On phones a long message wraps and the bar grows to hold it.
 function SearchBar({
   runtime,
   open,
@@ -558,8 +537,6 @@ function SearchBar({
         value={query}
         onChange={(event) => {
           onQuery(event.target.value)
-          // Text being composed (Japanese input) is searched once it is
-          // confirmed.
           const native = event.nativeEvent
           if (!(native instanceof InputEvent && native.isComposing))
             runtime.find(event.target.value, '', false)
@@ -684,8 +661,6 @@ function DisplaySettings({
         align="end"
         collisionPadding={8}
         data-pdf-settings=""
-        // Closing returns focus to the button only when nothing else has
-        // taken it, such as the search field opened with Ctrl/Cmd+F.
         onCloseAutoFocus={(event) => {
           const active = document.activeElement
           if (
@@ -748,8 +723,6 @@ function DisplaySettings({
   )
 }
 
-// The page list opens from the side, over the pages; on phones it covers
-// the frame. It opens at the current page and returns focus to its button.
 function PagesSheet({
   runtime,
   open,
@@ -797,8 +770,6 @@ function PagesSheet({
           pagesButtonRef.current?.focus()
         }}
       >
-        {/* Clear of the app header's collapse handle over the frame's
-            top-right corner. */}
         <div className="flex shrink-0 items-center justify-between gap-4 px-4 pt-5 pb-2">
           <SheetTitle className="text-base">
             {text('pdfViewer.pages')}
@@ -857,8 +828,6 @@ function PageList({
   onChoose: (page: number) => void
 }) {
   const listRef = useRef<HTMLElement>(null)
-  // The runtime draws thumbnails into each item's first child while the
-  // list is open.
   useEffect(() => {
     const list = listRef.current
     if (!list) return

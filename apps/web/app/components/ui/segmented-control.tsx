@@ -4,7 +4,6 @@ export function SegmentedControlGroup({
   className,
   ...props
 }: ComponentProps<'div'>) {
-  // A segmented control joins mutually exclusive choices into one control.
   return (
     <div
       data-slot="segmented-control-group"

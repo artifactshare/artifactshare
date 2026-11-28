@@ -27,10 +27,6 @@ type AuthObservationOptions = {
   phase: 'session' | 'bearer_api'
 }
 
-/**
- * Resolve the session user once per request and stash it in context.
- * Apply at the root so child middlewares + loaders share a single lookup.
- */
 export const sessionMiddleware = settingsSubmissionMiddleware(
   async ({ request, context, url }, next) => {
     const user = await getSessionUser(request)
@@ -48,10 +44,6 @@ export const sessionMiddleware = settingsSubmissionMiddleware(
   },
 )
 
-/**
- * Protect a route subtree: throw redirect to / if no session.
- * Must run after `sessionMiddleware` (declared higher in the tree).
- */
 export const requireUserMiddleware = settingsSubmissionMiddleware(
   ({ context, url }) => {
     if (context.get(userContext)) return
@@ -59,22 +51,11 @@ export const requireUserMiddleware = settingsSubmissionMiddleware(
   },
 )
 
-/**
- * Same as `requireUserMiddleware` but returns 401 JSON for API routes —
- * fetchers don't need to follow a redirect to /.
- */
 export const requireUserApiMiddleware: MiddlewareFunction = ({ context }) => {
   if (context.get(userContext)) return
   throw new Response('Unauthorized', { status: 401 })
 }
 
-/**
- * API routes that accept CLI bearer session tokens in addition to cookies.
- * Cookie sessions are resolved by root `sessionMiddleware`, but an explicit
- * bearer credential takes precedence. Never fall back to a cookie when bearer
- * validation fails: doing so could upgrade a scoped CLI request to the wider
- * authority of a browser session.
- */
 export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   { request, context, url },
   next,
@@ -87,9 +68,6 @@ export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   if (bearerToken) {
     bearerChecked = true
     const bearerUser = await getSessionUserFromBearer(request)
-    // Bots never hold API tokens (a DB trigger blocks the row) and their
-    // sessions must resolve to a live agent family authority; `denied` from
-    // the resolver is an explicit authentication failure, never a fallback.
     const resolution = bearerUser
       ? isApiToken(bearerToken)
         ? bearerUser.kind === 'bot'

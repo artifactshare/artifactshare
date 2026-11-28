@@ -5,12 +5,6 @@ function hasFileExtension(path: string): boolean {
   return /\.[^./]+$/.test(lastSegment)
 }
 
-/**
- * The version files that can serve a static-site path. `direct` lists the
- * path itself and, for an extensionless path, its directory index, most
- * specific first. `fallback` is the root index, which serves an extensionless
- * path only when the version falls back to index.
- */
 export function staticSitePathCandidates(path: string): {
   direct: string[]
   fallback: typeof ROOT_INDEX_PATH | null

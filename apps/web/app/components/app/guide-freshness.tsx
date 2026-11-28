@@ -58,7 +58,6 @@ export function GuideHtmlWithFreshness({
   if (closingHeading < 0) {
     return (
       <div
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: server-rendered from checked-in Markdown only.
         // react-doctor-disable-next-line react-doctor/dangerous-html-sink
         dangerouslySetInnerHTML={{ __html: html }}
       />
@@ -69,13 +68,11 @@ export function GuideHtmlWithFreshness({
   return (
     <>
       <div
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: server-rendered from checked-in Markdown only.
         // react-doctor-disable-next-line react-doctor/dangerous-html-sink
         dangerouslySetInnerHTML={{ __html: html.slice(0, headingEnd) }}
       />
       <GuideFreshness {...freshness} />
       <div
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: server-rendered from checked-in Markdown only.
         // react-doctor-disable-next-line react-doctor/dangerous-html-sink
         dangerouslySetInnerHTML={{ __html: html.slice(headingEnd) }}
       />

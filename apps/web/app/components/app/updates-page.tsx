@@ -64,11 +64,7 @@ function parseUpdateDate(date: string): Date {
 function UpdatesEntryHtml({ html }: { html: string }) {
   return (
     // react-doctor-disable-next-line react-doctor/dangerous-html-sink
-    <GuideProse
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: server-rendered from
-      // checked-in markdown entries, no user input.
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <GuideProse dangerouslySetInnerHTML={{ __html: html }} />
   )
 }
 

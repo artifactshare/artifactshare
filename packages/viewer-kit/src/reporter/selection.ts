@@ -38,8 +38,6 @@ export function anchorRoot(ctx: ReporterState) {
 export function sendSelection(ctx: ReporterState) {
   if (!ctx.textAnchorsEnabled) return
   let selection = ctx.win.getSelection()
-  // The caret and selections inside the text being edited are the edit, not
-  // a quote; a selection elsewhere still offers a new comment.
   const editing = ctx.previewEdit && ctx.previewEdit.element
   if (
     editing &&
@@ -69,9 +67,6 @@ export function sendSelection(ctx: ReporterState) {
   } catch {
     // Optional metadata must not prevent a valid selection from being sent.
   }
-  // Static-site selections carry the document's own location, never a label
-  // the parent may still hold from a previous route. Single-file pages keep
-  // their existing message shape.
   let targetPath = ctx.locationScoped ? liveCommentLocation(ctx) : undefined
   if (ctx.locationScoped && !targetPath) {
     send(ctx, { kind: 'text-selection-cleared' })

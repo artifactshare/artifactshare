@@ -84,8 +84,6 @@ export const middleware = [sandboxBlockReportMiddleware, sessionMiddleware]
 export async function loader({ request, url, context }: Route.LoaderArgs) {
   const linkDomainState = context.get(linkDomainContext)
   const linkDomain = linkDomainState !== null
-  // Keep direct internal viewer navigation canonical on link hosts.
-  // Root loads render and hydrate at `/` without changing browser history.
   const linkViewerPath = linkDomainState
     ? `/a/${linkDomainState.shareableId}`
     : null
@@ -109,9 +107,6 @@ export async function loader({ request, url, context }: Route.LoaderArgs) {
     getAnalyticsConsent(request),
     request.cf?.country as string | undefined,
   )
-  // Gate the pseudonymous id on consent, not just its forwarding to gtag: a
-  // signed-in visitor who has not granted consent must not receive the value in
-  // the loader payload at all (pre-consent in the EU, or after withdrawal).
   const analyticsUserId =
     user && analyticsConsent.shouldLoadAnalytics && env.BETTER_AUTH_SECRET
       ? await hmacSha256Base64Url(env.BETTER_AUTH_SECRET, 'ga4:' + user.id)

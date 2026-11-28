@@ -2,7 +2,6 @@ import { useHydrated } from '~/hooks/use-hydrated'
 import { useT } from '~/hooks/use-t'
 import { useRelativeTime } from '~/components/app/render-clock'
 
-/** Stable initial text across server/browser clocks, time zones, and ICU versions. */
 export function PublicationTime({ publishedAt }: { publishedAt: string }) {
   const formatRelative = useRelativeTime()
   const { locale } = useT()

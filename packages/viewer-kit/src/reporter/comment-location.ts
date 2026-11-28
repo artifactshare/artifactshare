@@ -1,19 +1,3 @@
-// Comment locations on static sites: the served file or route pathname, plus
-// the fragment only when it is a hash route (`#/…` or `#!/…`). Every other
-// fragment is an in-page anchor and is not part of the location. The rule
-// reads the URL only, never the DOM, so a saved location cannot change after
-// posting. Shared by the injected reporter, the viewer and the server.
-//
-// The pathname is stored decoded, as delivery resolves it (root and
-// single-segment index aliases, NFC). Route fragments are stored with each
-// slash-delimited segment decoded once and re-encoded with encodeURIComponent;
-// a route query keeps its literal `?`, `&`, `=` and `+` separators.
-//
-// The site root `/` is stored as `/index.html` on ordinary multi-page sites.
-// A version with fallback to index keeps `/` as the route the SPA saw, since
-// its router may treat `/index.html` as another route; only the served-file
-// check maps it to `/index.html`.
-
 import { staticSitePathCandidates } from './static-site-paths.js'
 
 export const MAX_COMMENT_LOCATION_LENGTH = 1000
@@ -26,7 +10,6 @@ function hasControlCharacter(value: string): boolean {
   return false
 }
 
-/** A decoded pathname in the form delivery serves, or null when unservable. */
 export function canonicalCommentPathname(
   decoded: string,
   fallbackToIndex = false,
@@ -42,7 +25,6 @@ export function canonicalCommentPathname(
   }
   const parts = decoded.replaceAll('\\', '/').split('/')
   if (parts.includes('..')) return null
-  // Delivery refuses these extensions (see the bundle path validator).
   if (/\.(?:exe|sh|php|py|rb|bat|cmd|dll|so)$/i.test(decoded)) return null
   const segments = parts.filter((segment) => segment !== '' && segment !== '.')
   if (segments.length === 0) return fallbackToIndex ? '/' : '/index.html'
@@ -53,7 +35,6 @@ export function canonicalCommentPathname(
   return `/${segments.join('/')}`.normalize('NFC')
 }
 
-/** Decodes once and re-encodes, or null for malformed or unencodable text. */
 function recodeComponent(component: string): string | null {
   try {
     const decoded = decodeURIComponent(component)
@@ -65,7 +46,6 @@ function recodeComponent(component: string): string | null {
   }
 }
 
-/** Recodes each piece between literal separators, keeping the separators. */
 function recodeJoined(value: string, separators: string): string | null {
   if (!separators) return recodeComponent(value)
   const parts: string[] = []
@@ -77,12 +57,6 @@ function recodeJoined(value: string, separators: string): string | null {
   return parts.join(separators[0])
 }
 
-/**
- * The canonical route fragment, '' for in-page (native) fragments, or null
- * for a route fragment with a malformed percent escape or unencodable text.
- * A literal `?` starts the route's query, whose `&`, `=` and `+` stay literal,
- * so reopening the location gives the router the same path and query.
- */
 export function canonicalCommentRouteHash(hash: string): string | null {
   if (typeof hash !== 'string') return null
   const prefix = hash.startsWith('#/')
@@ -103,7 +77,6 @@ export function canonicalCommentRouteHash(hash: string): string | null {
   return query === null ? null : `${prefix}${path}?${query}`
 }
 
-/** The location for a browser URL's pathname (encoded) and hash. */
 export function commentLocationFromUrl(
   pathname: string,
   hash: string,
@@ -122,7 +95,6 @@ export function commentLocationFromUrl(
   return location.length <= MAX_COMMENT_LOCATION_LENGTH ? location : null
 }
 
-/** Splits a stored or posted location into its canonical parts. */
 export function parseCommentLocation(
   location: unknown,
   fallbackToIndex = false,
@@ -145,7 +117,6 @@ export function parseCommentLocation(
   return { pathname, hash, location: pathname + hash }
 }
 
-/** The in-frame URL path (pathname plus route hash) that opens a location. */
 export function commentLocationHref(
   location: string,
   fallbackToIndex = false,
@@ -159,7 +130,6 @@ export function commentLocationHref(
   return pathname + parsed.hash
 }
 
-/** A location is served by a version file or, with fallback, by the root index. */
 export function isCommentLocationServed(
   location: string,
   files: { has(path: string): boolean },

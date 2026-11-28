@@ -96,8 +96,6 @@ export function AudienceRoleProvider({
   )
 }
 
-// GrantEditorSection の各行メタ枠でレンダリングする。役割編集の共有状態は
-// AudienceRoleProvider から読むため、行ごとに渡すのは entry だけで済む。
 export function AudienceEntryMeta({ entry }: { entry: GrantEditorEntry }) {
   const { t } = useT()
   const roleLabel = useRoleLabel()
@@ -131,8 +129,6 @@ export function AudienceEntryMeta({ entry }: { entry: GrantEditorEntry }) {
             }
             ctx.setRoleChanges((prev) => {
               const next = { ...prev }
-              // 現在の役割へ戻したら変更として残さない
-              // (無駄な UPDATE と「変更あり」誤判定を避ける)。
               if (role === ctx.getDefaultRole(entry.email)) {
                 delete next[entry.email]
               } else {

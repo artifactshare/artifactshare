@@ -4,10 +4,6 @@ import { FocusedFlowBrand } from '~/components/app/focused-flow-brand'
 import { Inline } from '~/components/layout/inline'
 import { Stack } from '~/components/layout/stack'
 
-/**
- * Card frame shared by /sign-in and /dev/sign-in: centers a narrow column on
- * the warm background, then renders an optional full-width footer.
- */
 export function AuthCard({
   mark = false,
   title,
@@ -40,7 +36,6 @@ export function AuthCard({
   )
 }
 
-/** Sign-in provider block under the landing hero or pre-auth card. */
 export function AuthBlock({ children }: { children: ReactNode }) {
   return (
     <div className="max-w-auth-block-max mx-auto w-full">
@@ -49,7 +44,6 @@ export function AuthBlock({ children }: { children: ReactNode }) {
   )
 }
 
-/** Page-level error notice under the card title (provider / send failures). */
 export function AuthAlert({ children }: { children: ReactNode }) {
   return (
     <Alert variant="destructive" className="mt-4 text-left">
@@ -58,7 +52,6 @@ export function AuthAlert({ children }: { children: ReactNode }) {
   )
 }
 
-/** Vertical rhythm for a form (or form-like) block under the card title/sub. */
 export function AuthFormStack({ children, ...props }: ComponentProps<'div'>) {
   return (
     <div className="mt-5">
@@ -69,17 +62,10 @@ export function AuthFormStack({ children, ...props }: ComponentProps<'div'>) {
   )
 }
 
-/**
- * Vertical rhythm for the provider group under the card title/sub.
- * AuthBlock owns width (280px) + inner gap for the landing hero and the
- * viewer pre-auth gate; AuthProviders owns only the top rhythm inside
- * AuthCard and has no width constraint.
- */
 export function AuthProviders({ children }: { children: ReactNode }) {
   return <div className="mt-5">{children}</div>
 }
 
-/** Row of secondary link-style actions (resend / change email). */
 export function AuthLinksRow({ children }: { children: ReactNode }) {
   return (
     <div className="mt-2">
@@ -90,7 +76,6 @@ export function AuthLinksRow({ children }: { children: ReactNode }) {
   )
 }
 
-/** "or" divider between the email form and the OAuth provider buttons. */
 export function AuthDivider({ children }: { children: ReactNode }) {
   return (
     <div className="mt-5">
@@ -105,19 +90,16 @@ export function AuthDivider({ children }: { children: ReactNode }) {
   )
 }
 
-/** Small muted note above the OTP code field ("sent to <email>"). */
 export function AuthHint({ children }: { children: ReactNode }) {
   return (
     <p className="text-muted-foreground mb-1 text-left text-xs">{children}</p>
   )
 }
 
-/** Card footnote rhythm owner for hint / toggle-link blocks after a divider or email form. */
 export function AuthFootnote({ children }: { children: ReactNode }) {
   return <div className="mt-5">{children}</div>
 }
 
-/** Maintenance-mode notice under the sign-in card. */
 export function AuthMaintenanceNotice({ children }: { children: ReactNode }) {
   return <p className="text-muted-foreground mt-4 text-xs">{children}</p>
 }

@@ -114,8 +114,6 @@ export function SearchResults({
     location = useLocation(),
     navigate = useNavigate()
   const params = new URLSearchParams(location.search)
-  // Retrying repeats the same URL; it can only help when the failure was
-  // not caused by the search itself (too broad or malformed).
   const limited = 'error' in result && result.error.code === SEARCH_DAILY_LIMIT
   const retryable =
     !limited &&
@@ -126,7 +124,6 @@ export function SearchResults({
     return (
       <div className="space-y-3">
         <h1 className="text-xl font-semibold tracking-tight">
-          {/* A failed search has no owner names to show. */}
           {searchHeading(params.get('q') ?? '', [], '', t)}
         </h1>
         <p role="alert">{searchErrorMessage(result.error, t, locale)}</p>
@@ -301,8 +298,6 @@ function SearchFilterBar({
       update={update}
     />
   )
-  // Owner and project show as chips; the other conditions live in the sheet,
-  // so name them next to its button.
   const mobileConditions = searchConditionParts(params, selectedScope, t, {
     includeSort: true,
   })
@@ -721,7 +716,6 @@ function SearchResultRow({
     onRestored,
     restartSearch,
   )
-  // Same rule as Home: UTC until hydrated, then the viewer's time zone.
   const { timeZone } = useViewerCalendar()
   const formatter = useMemo(
     () =>
@@ -1069,8 +1063,6 @@ function FilterMenu({
       <PopoverContent
         align="start"
         className="max-h-96 overflow-y-auto"
-        // Sort is a single choice: picking one is done, so close the menu to
-        // show the re-sorted list. The other menus allow several changes.
         onClick={
           sort
             ? (event) => {
@@ -1499,8 +1491,6 @@ function SearchResultListing({
             anchor.getBoundingClientRect().top -
             restore.offset,
         })
-        // Returning from a file: keyboard users continue from the result they
-        // opened, unless something else already took focus.
         if (restore.opened && document.activeElement === document.body)
           document
             .getElementById(`search-file-${restore.opened}`)
@@ -1529,7 +1519,6 @@ function SearchResultListing({
       anchor,
       position: items.findIndex((item) => item.id === parent),
       offset: element?.getBoundingClientRect().top ?? 0,
-      // Scroll saves move the anchor; only opening a result sets this.
       opened: opened ?? recallSearchView(location.key)?.opened,
     }
     rememberSearchView(location.key, view)

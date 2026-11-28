@@ -1,5 +1,3 @@
-// Relative imports: the viewers' browser test fixtures load this protocol in
-// Node.
 import { isAppTheme, type AppTheme } from '../../lib/app-theme'
 import {
   DEFAULT_LOCALE,
@@ -7,11 +5,6 @@ import {
   type Locale,
 } from '../../i18n/messages'
 
-// Display preferences the app hands to a common viewer (PDF or video) in its
-// sandbox frame.
-// They are presentation only: no token, no access decision and no reporter
-// state rides on them, so the viewer accepts them from its parent window
-// alone and ignores anything malformed.
 export type ViewerPreferences = { locale: Locale; theme: AppTheme }
 
 export const DEFAULT_VIEWER_PREFERENCES: ViewerPreferences = {

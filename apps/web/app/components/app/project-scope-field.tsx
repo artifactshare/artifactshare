@@ -6,8 +6,6 @@ import { Stack } from '~/components/layout/stack'
 import { useT } from '~/hooks/use-t'
 import type { ProjectBaseVisibility } from '~/lib/shareable-types'
 
-// プロジェクトの共有範囲 (社内全員 / 関係者のみ) を選ぶラジオ。作成と編集の
-// 両ダイアログで使う。name="base_visibility" で送信する。
 const SCOPES: ReadonlyArray<ProjectBaseVisibility> = ['workspace', 'private']
 
 export function ProjectScopeField({

@@ -39,7 +39,6 @@ export function send(ctx: ReporterState, message: Record<string, unknown>) {
 
 export function ready(ctx: ReporterState) {
   if (ctx.readyChallenge && ctx.documentToken) {
-    // Preview: say that an in-place edit is still open in this document.
     if (ctx.previewEdit)
       send(ctx, {
         kind: 'ready',
@@ -55,7 +54,6 @@ export function ready(ctx: ReporterState) {
       })
     reportHash(ctx, true)
     reportScreen(ctx, true)
-    // A newer handshake drops older messages: say the draft text again.
     sendInlineEditText(ctx)
   }
 }
@@ -71,8 +69,6 @@ export function onReadyCheck(ctx: ReporterState, event: MessageEvent) {
   )
     return
   if (typeof message.challenge !== 'string' || !message.challenge) return
-  // The parent may have rejected an earlier verdict before registering the
-  // document token. A new handshake must let that same verdict be sent again.
   if (ctx.readyChallenge !== message.challenge) ctx.lastResolutionSignature = ''
   ctx.readyChallenge = message.challenge
   for (let index = 0; index < ctx.pendingCspViolationCount; index++) {
@@ -123,7 +119,6 @@ export function installMessageListener(ctx: ReporterState) {
     ) {
       return
     }
-    // Preview is opt-in. Hosted viewers retain their existing protocol.
     // WebKit fires the frame's load event on a same-document hash change, so
     // the parent may start a newer handshake for this same document; follow
     // it rather than ignoring every later parent message.
@@ -151,7 +146,6 @@ export function installMessageListener(ctx: ReporterState) {
       ctx.previewReceiveSequence = data.sequence
     }
     if (data.kind === READY_CHECK_MESSAGE_KIND) {
-      // Scope first, so the ready report records this document's location.
       ctx.locationScoped = data.locationScoped === true
       ctx.fallbackToIndex = data.fallbackToIndex === true
       onReadyCheck(ctx, event)

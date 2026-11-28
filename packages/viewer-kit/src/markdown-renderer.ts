@@ -11,8 +11,6 @@ import {
 
 const markdownExtensions = [markdownDisclosureExtension, httpAutolinkExtension]
 
-/** `legacy` keeps the original per-base counters, which can repeat an ID such
- * as `same-2`; `unique` also skips every ID already used in the document. */
 export type HeadingIdStrategy = 'legacy' | 'unique'
 
 export function renderMarkdownBody(

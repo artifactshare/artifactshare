@@ -49,7 +49,6 @@ export function CopyableCodeBlock({
   secret = false,
 }: {
   code: string
-  /** Keeps a one-time secret out of capture diagnostics; it still renders. */
   secret?: boolean
   name: string
   labels: CopyableCodeLabels
@@ -120,8 +119,6 @@ export function CopyableCodeBlock({
               {state === 'copied' ? (
                 <IconCheck
                   aria-hidden="true"
-                  // size-auto opts out of Button's [&_svg:not([class*='size-'])]:size-4,
-                  // letting the SVG's own 15px width/height attributes apply.
                   className="text-success size-auto"
                   size={15}
                   strokeWidth={2.4}
@@ -150,7 +147,6 @@ export function CopyableCodeBlock({
           {content}
         </pre>
       ) : (
-        // Horizontal scrolling needs keyboard focus on the scroll container.
         // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex
         <pre
           data-gap-audit-allow-touch

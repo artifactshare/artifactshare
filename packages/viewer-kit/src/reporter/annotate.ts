@@ -87,7 +87,6 @@ export function verifyAnchors(
 ) {
   ctx.anchorSnapshotGeneration++
   ctx.pendingAnchors = anchors || []
-  // An in-place edit is a draft: anchors are measured once the text is back.
   if (ctx.previewEdit) return
   if (!ctx.pendingAnchors.length) {
     ctx.checkingAnchors = []
@@ -96,8 +95,6 @@ export function verifyAnchors(
   }
   let checking: number[] = []
   let verdicts = []
-  // Preview: a comment made on another screen is neither here nor missing.
-  // The parent hears this screen before the verdicts that depend on it.
   let screen = ctx.previewCapability ? previewScreen(ctx) : null
   if (screen !== null) reportScreen(ctx)
   if (!engine) {
@@ -152,7 +149,6 @@ export function findElement(
   anchor: Extract<VerificationAnchor, { kind: 'element' }>,
 ) {
   if (anchor.ownTextHash === undefined && !anchor.ownText) {
-    // Nothing to search for, so the selector is all there is.
     try {
       return ctx.doc.querySelector(anchor.selector)
     } catch (error) {
@@ -180,9 +176,6 @@ export function findElement(
     if (annotateContextText(ctx, matches[j]) === anchor.contextText)
       return matches[j]
   }
-  // Several identical candidates and none in the captured surroundings:
-  // saying "attached" here would point the comment at content nobody wrote
-  // it about.
   return null
 }
 
@@ -192,7 +185,6 @@ export function ownText(ctx: ReporterState, el: Element) {
 
 export function setAnnotateMode(ctx: ReporterState, enabled: unknown) {
   ctx.annotateModeEnabled = enabled === true
-  // Turning comments off gives the page back; the parent keeps the draft.
   if (!ctx.annotateModeEnabled) endInlineEdit(ctx)
   if (ctx.annotateModeEnabled) {
     ensureAnnotateStyles(ctx)
@@ -236,7 +228,6 @@ export function flashElement(ctx: ReporterState, selector: unknown) {
 
 export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
-  // Alt/Option operates the page, so nothing is offered for a comment.
   if (event.altKey) {
     clearAnnotateHover(ctx)
     return
@@ -250,7 +241,6 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   if (!target || (ctx.previewEdit && ctx.previewEdit.element === target)) return
   ctx.annotateHoverElement = target
   target.classList.add('as-preview-annotate-hover')
-  // A text cursor says the click edits the text itself.
   if (inlineEditable(ctx, target))
     target.classList.add('as-preview-annotate-text')
 }
@@ -265,10 +255,6 @@ export function markOperating(ctx: ReporterState, event: MouseEvent) {
 
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
-  // Alt/Option+click uses the page: the real click reaches the document
-  // untouched, and clicks it causes in the same task (a label activating its
-  // control, a handler calling el.click()) are not picks either. The link gate
-  // treats it as an unmodified click.
   if (ctx.previewCapability && event.altKey) {
     markOperating(ctx, event)
     return
@@ -287,7 +273,6 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   let selected = ctx.win.getSelection()
   if (selected && !selected.isCollapsed && selected.toString().trim()) return
   let rect = target.getBoundingClientRect()
-  // The parent stamps the pick with the screen reported just before it.
   reportScreen(ctx)
   send(ctx, {
     kind: 'element-annotate',
@@ -321,7 +306,6 @@ function eligibleElementHash(text: string) {
   return true
 }
 
-/** Keep normal captures byte-compatible; only oversized text needs hashing. */
 export function elementTextIdentity(text: string) {
   const cut =
     text.charCodeAt(15_999) >= 0xd800 &&
@@ -335,8 +319,6 @@ export function elementTextIdentity(text: string) {
     : { ownTextHash: textHash(text), ownTextExcerpt: text.slice(0, cut) }
 }
 
-// Retain actual picked nodes, never resolve a geometry request by selector.
-// Only the latest offer and the parent-accepted pick are retained.
 export function retainPreviewPick(ctx: ReporterState, target: Element | Range) {
   if (ctx.previewCapability)
     ctx.previewPick = {
@@ -351,7 +333,6 @@ export function retainPreviewPick(ctx: ReporterState, target: Element | Range) {
 
 export function trackPreviewPick(ctx: ReporterState, sequence: unknown) {
   if (!ctx.previewCapability) return
-  // Another accepted pick (or none) ends an edit of an earlier one.
   if (ctx.previewEdit && ctx.previewEdit.sequence !== sequence)
     endInlineEdit(ctx)
   if (sequence !== null && sequence !== ctx.previewPick?.sequence) return

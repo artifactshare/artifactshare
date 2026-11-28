@@ -1,21 +1,11 @@
 export type ComponentCatalogEntry = {
-  /** 部品ファイル参照。例: 'ui/button' / 'form/page-header'。parity と gallery 共通の基準。 */
   file: string
   name: string
-  /** いつ使うか。1 文の用途。 */
   purpose: string
-  /** 提供する variant / size。無ければ空配列。値は各部品の cva 定義から裏取りする。 */
   variants: string[]
-  /** shadcn 公式からの独自差分。公式に対応が無い自前部品や差分なしは null。 */
   upstreamDiff: string | null
 }
 
-/**
- * `components/ui/`、`components/form/`、`components/layout/` の部品カタログ。
- * app 部品は用途固有のため parity 対象外で、代表形を /dev/gallery の app-sections に掲載する。
- * 「何があり、いつ使い、どの variant を持ち、公式から何が違うか」を機械可読に持つ。
- * design-system.md は語彙と意図を、値は @theme / 部品コードを、部品一覧はこのカタログを正本にする。
- */
 export const componentCatalog: ComponentCatalogEntry[] = [
   {
     file: 'ui/popover',

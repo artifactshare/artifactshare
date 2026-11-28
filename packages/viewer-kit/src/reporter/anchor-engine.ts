@@ -96,7 +96,6 @@ export function createTextAnchorEngine(
     const element = node.nodeType === 1 ? (node as Element) : node.parentElement
     if (!element || element.closest(TEXT_ANCHOR_EXCLUDED_SELECTOR)) continue
     if (node.nodeType === 1) {
-      // Void boundaries have no text children for the block comparison below.
       if (
         ((node as Element).localName === 'br' ||
           (node as Element).localName === 'hr') &&
@@ -172,9 +171,6 @@ export function createTextAnchorEngine(
     const suffix = normalize(selector.suffixText || '')
     if (!quote.trim()) return null
     if (legacy || selector.selectorFormat === 'quote-v1') {
-      // Old writers trimmed context edges, and agents pass context as the
-      // text just before/after the quote. Restore only those joins, never
-      // guess at missing separators inside context (e.g. old block text 'ab').
       const positions = new Set<number>()
       for (const before of prefix && !prefix.endsWith(' ') ? ['', ' '] : [''])
         for (const after of suffix && !suffix.startsWith(' ')
@@ -227,8 +223,6 @@ export function createTextAnchorEngine(
       return range
     })
   }
-  // Reverse index for live painted endpoints: one document pass, then constant
-  // time endpoint lookup per comment, including inserts between painted pieces.
   const sourceIndexes = new WeakMap<Node, number[]>()
   const sourceSegments: { segment: TextUnit; index: number }[] = []
   units.forEach((segments, index) => {
@@ -256,8 +250,6 @@ export function createTextAnchorEngine(
       range.collapsed
     )
       return null
-    // Text endpoints use the existing reverse index. Element endpoints and
-    // excluded gaps use binary search in document order, not a character scan.
     function boundary(boundaryNode: Node, offset: number, isEnd: boolean) {
       const direct =
         sourceIndexes.get(boundaryNode)?.[isEnd ? offset - 1 : offset]
@@ -297,7 +289,6 @@ export function createTextAnchorEngine(
       quotedText: strings.stringSlice(text, start, end),
     }
   }
-  // Creation-only context: never participates in resolution or painting.
   function locus(range: Range) {
     const mapped = mappedSlice(range)
     if (!mapped) return undefined
@@ -319,7 +310,6 @@ export function createTextAnchorEngine(
       while (path.length && path[path.length - 1]!.rank >= rank) path.length--
       path[path.length] = { rank, element: heading }
     }
-    // Read only the final (at most six) labels, even for nested heading DOM.
     const headings: string[] = []
     for (let i = 0; i < path.length; i++) {
       headings[i] = strings.stringSlice(
@@ -348,7 +338,6 @@ export function createTextAnchorEngine(
     while ((blockNode = nodes.nextNode())) {
       const offsets = sourceIndexes.get(blockNode)
       if (!offsets) continue
-      // Sparse leading whitespace has no mapped index.
       let start: number | undefined
       for (let i = 0; i < offsets.length; i++) {
         if (offsets[i] !== undefined) {
