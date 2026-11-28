@@ -33,6 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from '~/components/ui/table'
+import { useCopyState } from '~/hooks/use-copy-state'
+import { useFetcherResult } from '~/hooks/use-fetcher-result'
 import { useT } from '~/hooks/use-t'
 import { useRelativeTime } from '~/components/app/render-clock'
 import { writeClipboardText } from '~/lib/clipboard'
@@ -328,9 +330,9 @@ function BotActionDialog({
   const pending = fetcher.state !== 'idle'
   const complete = !pending && fetcher.data?.ok
   const token = complete ? fetcher.data?.token : undefined
-  useEffect(() => {
-    if (complete && !token) onClose()
-  }, [complete, token, onClose])
+  useFetcherResult(fetcher, (data) => {
+    if (data.ok && !data.token) onClose()
+  })
   if (token)
     return (
       <BotTokenDialog
@@ -419,24 +421,16 @@ function BotStatusBadge({
 
 function CopyableEmail({ email }: { email: string }) {
   const { t } = useT()
-  const [copied, setCopied] = useState(false)
+  const { state, copy } = useCopyState(email, { resetMs: 1500 })
   return (
     <Button
       type="button"
       variant="link"
       className="text-muted-foreground h-auto w-fit max-w-full justify-start p-0 text-left text-xs font-normal [overflow-wrap:anywhere] whitespace-normal"
       title={t('team.bots.copyEmail')}
-      onClick={() => {
-        void writeClipboardText(email)
-          .then((ok) => {
-            if (!ok) return
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          })
-          .catch(() => undefined)
-      }}
+      onClick={copy}
     >
-      {copied ? t('team.bots.emailCopied') : email}
+      {state === 'copied' ? t('team.bots.emailCopied') : email}
     </Button>
   )
 }
@@ -599,9 +593,9 @@ function BotDestinationDialog({
   )
   const [primary, setPrimary] = useState(bot.projectId ?? '')
   const pending = fetcher.state !== 'idle'
-  useEffect(() => {
-    if (fetcher.data?.ok && fetcher.state === 'idle') onClose()
-  }, [fetcher.data, fetcher.state, onClose])
+  useFetcherResult(fetcher, (data) => {
+    if (data.ok) onClose()
+  })
   useEffect(() => {
     if (
       fetcher.data?.intent === 'destinations' &&

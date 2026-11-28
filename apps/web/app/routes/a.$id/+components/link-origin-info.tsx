@@ -1,5 +1,5 @@
 import { IconInfoCircle } from '@tabler/icons-react'
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useRef, useState } from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { Button } from '~/components/ui/button'
 import {
@@ -11,6 +11,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '~/components/ui/sheet'
+import { useMediaQuery } from '~/hooks/use-media-query'
 import { useT } from '~/hooks/use-t'
 import { LinkReportDialog } from './link-report-dialog'
 
@@ -20,23 +21,9 @@ import { LinkReportDialog } from './link-report-dialog'
 // breakpoint.
 const PHONE_QUERY = '(max-width: 519.98px)'
 
-function subscribePhone(onChange: () => void) {
-  const media = window.matchMedia(PHONE_QUERY)
-  media.addEventListener('change', onChange)
-  return () => media.removeEventListener('change', onChange)
-}
-
-function useIsPhone(): boolean {
-  return useSyncExternalStore(
-    subscribePhone,
-    () => window.matchMedia(PHONE_QUERY).matches,
-    () => false,
-  )
-}
-
 export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   const { t } = useT()
-  const isPhone = useIsPhone()
+  const isPhone = useMediaQuery(PHONE_QUERY)
   const [open, setOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)

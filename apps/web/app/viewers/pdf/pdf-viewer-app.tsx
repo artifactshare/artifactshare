@@ -10,7 +10,6 @@ import {
 } from '@tabler/icons-react'
 import {
   useEffect,
-  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -22,6 +21,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { Button } from '~/components/ui/button'
+import { useEventListener } from '~/hooks/use-event-listener'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -207,7 +207,7 @@ export function PdfViewerApp({
     if (returnFocus) searchToggleRef.current?.focus()
   }
 
-  const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
+  useEventListener('document', 'keydown', (event) => {
     const target = event.target
     // Keys that confirm or cancel text being composed (Japanese input)
     // belong to the input method.
@@ -256,12 +256,6 @@ export function PdfViewerApp({
     else return
     event.preventDefault()
   })
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => onKeyDown(event)
-    document.addEventListener('keydown', listener)
-    return () => document.removeEventListener('keydown', listener)
-  }, [])
-
   const download: DownloadHandler = (event) =>
     runtime.download(event, event.currentTarget)
 

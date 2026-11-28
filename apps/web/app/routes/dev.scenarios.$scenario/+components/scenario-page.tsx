@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useDocumentAttribute } from '~/hooks/use-document-attribute'
 import { ScenarioContent } from './scenario-content'
 import type { RegressionTheme } from '../index'
 import type { ScenarioId } from './scenarios'
@@ -10,20 +10,7 @@ export function ScenarioPage({
   scenario: ScenarioId
   theme?: RegressionTheme
 }) {
-  const originalTheme = useRef<string | undefined>(undefined)
-
-  useEffect(() => {
-    originalTheme.current = document.documentElement.dataset.theme
-    return () => {
-      const html = document.documentElement
-      if (originalTheme.current === undefined) delete html.dataset.theme
-      else html.dataset.theme = originalTheme.current
-    }
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-  }, [theme])
+  useDocumentAttribute('data-theme', theme)
 
   return (
     <div

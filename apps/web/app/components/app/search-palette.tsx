@@ -35,6 +35,8 @@ import { Button } from '~/components/ui/button'
 import { cn } from '~/lib/utils'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
+import { useEventListener } from '~/hooks/use-event-listener'
+import { useMediaQuery } from '~/hooks/use-media-query'
 import { useT } from '~/hooks/use-t'
 import { searchExit, searchNavigationState } from '~/lib/search-view-state'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
@@ -62,28 +64,17 @@ export function SearchPalette({
   const trigger = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [editQuery, setEditQuery] = useState<string>()
-  const [mobile, setMobile] = useState(false)
+  const mobile = useMediaQuery('(max-width: 599px)')
   const resultsPage = results || /\/search$/.test(location.pathname)
   const currentQuery = resultsPage
     ? (new URLSearchParams(location.search).get('q') ?? '')
     : ''
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 599px)')
-    const sync = () => setMobile(media.matches)
-    sync()
-    media.addEventListener('change', sync)
-    const edit = (event: Event) => {
-      if (!(event instanceof CustomEvent) || typeof event.detail !== 'string')
-        return
-      setEditQuery(event.detail)
-      setOpen(true)
-    }
-    window.addEventListener('search:edit', edit)
-    return () => {
-      media.removeEventListener('change', sync)
-      window.removeEventListener('search:edit', edit)
-    }
-  }, [])
+  useEventListener('window', 'search:edit', (event) => {
+    if (!(event instanceof CustomEvent) || typeof event.detail !== 'string')
+      return
+    setEditQuery(event.detail)
+    setOpen(true)
+  })
   const keepFocus = useRef(false)
   const close = (restoreFocus = true) => {
     setOpen(false)
@@ -256,30 +247,26 @@ function MobileSearch({
 }
 
 function useSearchShortcuts(setOpen: Dispatch<SetStateAction<boolean>>) {
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      if (event.isComposing) return
-      const shortcut =
-        event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)
-      const editable =
-        event.target instanceof Element &&
-        event.target.closest(
-          'input,textarea,select,[contenteditable]:not([contenteditable="false"])',
-        )
-      const slash =
-        event.key === '/' &&
-        !editable &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      if (shortcut || slash) {
-        event.preventDefault()
-        setOpen((value) => !value)
-      }
+  useEventListener('window', 'keydown', (event) => {
+    if (event.isComposing) return
+    const shortcut =
+      event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)
+    const editable =
+      event.target instanceof Element &&
+      event.target.closest(
+        'input,textarea,select,[contenteditable]:not([contenteditable="false"])',
+      )
+    const slash =
+      event.key === '/' &&
+      !editable &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    if (shortcut || slash) {
+      event.preventDefault()
+      setOpen((value) => !value)
     }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [setOpen])
+  })
 }
 
 function usePaletteScope(initialParams: string, project?: SearchProject) {

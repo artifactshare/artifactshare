@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { Button } from '~/components/ui/button'
 import { Inline } from '~/components/layout/inline'
 import { Stack } from '~/components/layout/stack'
+import { useDocumentAttribute } from '~/hooks/use-document-attribute'
 import { isViteDev } from '~/lib/is-vite-dev'
 import { gallerySections } from './+components/registry'
 
@@ -28,20 +28,7 @@ export function meta() {
 export default function DevGallery() {
   const [searchParams, setSearchParams] = useSearchParams()
   const theme = parseTheme(searchParams.get('theme'))
-  const originalTheme = useRef<string | undefined>(undefined)
-
-  useEffect(() => {
-    originalTheme.current = document.documentElement.dataset.theme
-    return () => {
-      const html = document.documentElement
-      if (originalTheme.current === undefined) delete html.dataset.theme
-      else html.dataset.theme = originalTheme.current
-    }
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-  }, [theme])
+  useDocumentAttribute('data-theme', theme)
 
   return (
     <div id="gallery-top" className="bg-background text-foreground min-h-dvh">

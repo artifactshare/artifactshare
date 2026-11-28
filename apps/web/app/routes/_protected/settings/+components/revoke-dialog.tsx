@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
 import { useFetcher } from 'react-router'
+import { useFetcherResult } from '~/hooks/use-fetcher-result'
 import { useT } from '~/hooks/use-t'
 import type { action } from '../_content/tokens'
 import { ConfirmActionDialog } from './confirm-action-dialog'
@@ -28,11 +28,11 @@ export function RevokeDialog({
   const { t } = useT()
   const fetcher = useFetcher<typeof action>()
   const result = fetcher.state === 'idle' ? fetcher.data?.code : undefined
-  useEffect(() => {
-    if (result === 'revoked') onRevoked()
-    if (result === 'cli-revoke-noop') onAlreadyRevoked?.()
-    if (result === 'revoked' || result === 'cli-revoke-noop') onClose()
-  }, [result, onAlreadyRevoked, onRevoked, onClose])
+  useFetcherResult(fetcher, ({ code }) => {
+    if (code === 'revoked') onRevoked()
+    if (code === 'cli-revoke-noop') onAlreadyRevoked?.()
+    if (code === 'revoked' || code === 'cli-revoke-noop') onClose()
+  })
   const all = target.intent === 'revoke-all-cli-families'
   const unavailable = result === 'revoke-unavailable'
   let actionLabel: string | null = t(

@@ -10,15 +10,16 @@ import {
 } from '@tabler/icons-react'
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
+  type RefObject,
 } from 'react'
 import { toast } from 'sonner'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
+import { useEventListener } from '~/hooks/use-event-listener'
 import { useT } from '~/hooks/use-t'
 import { cn } from '~/lib/utils'
 import { ReplaceVersionDropzone } from './replace-version-dropzone'
@@ -48,6 +49,46 @@ interface VersionWidgetProps {
     requestedFilter?: 'all',
     newCommentMessages?: ReadonlyArray<NewCommentMessage>,
   ) => void
+}
+
+function usePopoverDismiss({
+  open,
+  hidden,
+  rootRef,
+  closePopover,
+  setOpen,
+}: {
+  open: boolean
+  hidden: boolean
+  rootRef: RefObject<HTMLElement | null>
+  closePopover: () => void
+  setOpen: (open: boolean) => void
+}) {
+  const enabled = open && !hidden
+  const target = enabled ? 'document' : null
+  useEventListener(
+    target,
+    'keydown',
+    (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      closePopover()
+    },
+    { capture: true },
+  )
+  useEventListener(target, 'pointerdown', (event) => {
+    const root = rootRef.current
+    if (!root || root.contains(event.target as Node)) return
+    closePopover()
+  })
+  // 成果物プレビューは iframe。本文クリックの pointerdown は親 document に
+  // 届かないので上の pointerdown では拾えない。代わりにフォーカスが iframe へ
+  // 移ったこと (= プレビューを触った合図) で閉じる。focus はプレビューに
+  // 残したいので trigger へは戻さない。
+  useEventListener(enabled ? 'window' : null, 'blur', () => {
+    if (document.activeElement instanceof HTMLIFrameElement) setOpen(false)
+  })
 }
 
 export function VersionWidget({
@@ -112,35 +153,7 @@ export function VersionWidget({
     if (open) closeButtonRef.current?.focus()
   }, [open])
 
-  useEffect(() => {
-    if (!open || hidden) return
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      closePopover()
-    }
-    function onPointerDown(event: PointerEvent) {
-      const root = rootRef.current
-      if (!root || root.contains(event.target as Node)) return
-      closePopover()
-    }
-    // 成果物プレビューは iframe。本文クリックの pointerdown は親 document に
-    // 届かないので onPointerDown では拾えない。代わりにフォーカスが iframe へ
-    // 移ったこと (= プレビューを触った合図) で閉じる。focus はプレビューに
-    // 残したいので trigger へは戻さない。
-    function onWindowBlur() {
-      if (document.activeElement instanceof HTMLIFrameElement) setOpen(false)
-    }
-    document.addEventListener('keydown', onKeyDown, { capture: true })
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('blur', onWindowBlur)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, { capture: true })
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('blur', onWindowBlur)
-    }
-  }, [closePopover, hidden, open])
+  usePopoverDismiss({ open, hidden, rootRef, closePopover, setOpen })
 
   if (!canViewHistory)
     return (
