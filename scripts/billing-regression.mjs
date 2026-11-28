@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
@@ -705,8 +706,28 @@ function countSubscriptionItems(subscription) {
   return subscription.items.data.length
 }
 
+// The invoice-item description the regression looks for is the product's, so
+// read its template out of the service instead of restating it here. A wording
+// change then breaks this script loudly rather than silently failing to find
+// the invoice line.
+const OVERAGE_DESCRIPTION_SOURCE = join(
+  WEB_DIR,
+  'app/services/billing-usage.server.ts',
+)
+const OVERAGE_DESCRIPTION_TEMPLATE = (() => {
+  const source = readFileSync(OVERAGE_DESCRIPTION_SOURCE, 'utf8')
+  const template = source.match(
+    /function overageDescription\(month: string\): string \{\s*return `([^`]*)`/u,
+  )?.[1]
+  if (!template?.includes('${month}'))
+    throw new Error(
+      `Could not read the overage description template from ${OVERAGE_DESCRIPTION_SOURCE}`,
+    )
+  return template
+})()
+
 function overageDescription(month) {
-  return `Storage overage for ${month}`
+  return OVERAGE_DESCRIPTION_TEMPLATE.replaceAll('${month}', () => month)
 }
 
 async function attachDefaultPaymentMethod(stripe, customerId) {
@@ -1712,6 +1733,7 @@ export {
   assertRequiredEnv,
   assertTestStripeKey,
   cleanupStripeResources,
+  overageDescription,
   parseArgs,
   redact,
   registerSecretValues,

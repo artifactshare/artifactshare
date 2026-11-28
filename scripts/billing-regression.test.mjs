@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   assertRequiredEnv,
   assertTestStripeKey,
   cleanupStripeResources,
+  overageDescription,
   parseArgs,
   redact,
   registerSecretValues,
@@ -116,4 +118,19 @@ test('vars parser supports quotes, equals signs, and inline comments', () => {
     parseVarsFile("A='one two'\nB=value=with=equals\nC=value # note\n"),
     { A: 'one two', B: 'value=with=equals', C: 'value' },
   )
+})
+
+test('the overage description is the product wording, not a copy', () => {
+  const service = readFileSync(
+    new URL(
+      '../apps/web/app/services/billing-usage.server.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  const expected = overageDescription('2026-06')
+  // The service builds the same string for the same month, so its source must
+  // contain the fixed part of what this script looks for on the invoice.
+  assert.ok(service.includes(expected.replace('2026-06', '${month}')), expected)
+  assert.notEqual(overageDescription('2026-07'), expected)
 })
