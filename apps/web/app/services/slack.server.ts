@@ -196,8 +196,6 @@ export async function processSlackLinkShared(
     )
     if (displayCheck.kind !== 'access-granted') continue
 
-    // 本文抜粋は広い共有範囲だけ出す。種別アイコン (中身を晒さない) は
-    // buildRichUnfurlPayload 側で全共有範囲に付ける。
     const excerpt = bodyPreviewEligible(
       shareable.visibility,
       shareable.container_base_visibility,
@@ -347,8 +345,6 @@ export async function verifySlackLinkState(
   return { team_id: payload.team_id, slack_user_id: payload.slack_user_id }
 }
 
-// workspace install 用の signed state (CSRF / なりすまし防止)。spec §5.5.3。
-// `purpose` claim で per-user link state と区別、同じ SLACK_LINK_STATE_SECRET を流用。
 export async function signSlackInstallState(
   payload: {
     admin_user_id: string
@@ -782,17 +778,13 @@ function resolveOwnerName(shareable: ShareableForUnfurl): string {
   return ''
 }
 
-// 種別 → 配信する種別アイコン (apps/web/public/file-types/<icon>.png)。
-// Record で全 ArtifactKind を網羅し、kind 追加時に型で漏れを検出する。
 const TYPE_ICON: Record<ArtifactKind, 'html' | 'md' | 'site'> = {
   markdown_page: 'md',
   html_page: 'html',
   static_site: 'site',
   spa: 'site',
   workspace_app: 'site',
-  // No PDF icon is published yet; the document icon is the closest match.
   pdf: 'md',
-  // No video icon is published yet either.
   video: 'md',
 }
 

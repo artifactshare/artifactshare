@@ -169,9 +169,6 @@ export async function listProjectCandidates(input: {
       .limit(PROJECT_CANDIDATE_PAGE_SIZE + 1)
       .execute()
   })
-  // Keep the preferred project in the legacy projects array so browser tabs
-  // running the previous client bundle can still select it across a deploy.
-  // The current client deduplicates it when prepending preferredProject.
   const ordinaryPageSize =
     preferredProject === null
       ? PROJECT_CANDIDATE_PAGE_SIZE

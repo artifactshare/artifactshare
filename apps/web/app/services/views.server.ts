@@ -170,9 +170,7 @@ export async function notifyViewCountChanged(
   if (!live) return
   try {
     await live.getByName(shareableId).notifyViewCountChanged(viewCount)
-  } catch {
-    // Realtime delivery is advisory; D1 remains the source of truth.
-  }
+  } catch {}
 }
 
 export async function recordViewAndNotifyViewCount(

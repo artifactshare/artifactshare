@@ -24,7 +24,6 @@ export type DiscoveryFilters = {
 }
 export type DiscoveryInput = DiscoveryFilters & {
   viewerUserId: string
-  /** The viewer row the operation already read for viewerUserId. */
   viewer?: DiscoveryViewer
   now?: string
   excludeWorkspaceId?: string
@@ -58,10 +57,6 @@ function viewerQuery(db: Kysely<DB>, viewerUserId: string) {
     .where('u.id', '=', viewerUserId)
 }
 declare const liveViewer: unique symbol
-/**
- * The viewer's live identity and own-workspace membership. Only
- * this module produces it from viewerQuery, so callers cannot pass session claims.
- */
 export type DiscoveryViewer = {
   id: string
   workspace_id: string
@@ -69,10 +64,6 @@ export type DiscoveryViewer = {
   email_verified: number
   member_status: 'active' | 'removed' | null
 } & { readonly [liveViewer]: true }
-/**
- * Read the viewer from D1 on every call. An operation reads it once and
- * hands it to later checks as DiscoveryInput.viewer.
- */
 export async function loadDiscoveryViewer(
   db: Kysely<DB>,
   viewerUserId: string,
@@ -81,7 +72,6 @@ export async function loadDiscoveryViewer(
     await viewerQuery(db, viewerUserId).executeTakeFirst()
   return row as DiscoveryViewer | undefined
 }
-/** Reuse the operation's viewer row; read it only when the caller has none. */
 function inputViewer(
   db: Kysely<DB>,
   input: Pick<DiscoveryInput, 'viewerUserId' | 'viewer'>,
@@ -91,7 +81,6 @@ function inputViewer(
     : loadDiscoveryViewer(db, input.viewerUserId)
 }
 
-/** Fixed aliases are owned by this module, never supplied by the caller. */
 function discoveryEligibility(
   viewer: DiscoveryViewer,
   now: string,
@@ -149,9 +138,6 @@ function discoveryQuery(
       WHERE search_viewer.id = ${viewer.id}
         AND ${agentReadableShareableSql('search_viewer', filters.credentialScope, 's')}
     )`)
-  // All other non-administrative opening grounds already occur above as
-  // independent discovery grounds. Thus creator + live membership is the only
-  // additional membership case; a join alone (even for an admin) cannot open.
   if (!filters.includeArchived)
     query = query.where(
       sql<boolean>`(c.kind IS NOT 'project' OR c.archived_at IS NULL)`,
@@ -177,7 +163,6 @@ function discoveryQuery(
       SELECT r.last_viewed_at FROM shareable_viewer_recency r
       WHERE r.shareable_id = s.id AND r.viewer_user_id = ${viewer.id}
     )`
-    // Normalize stored UTC timestamps to the bounds' millisecond precision.
     const canonicalValue = sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${value})`
     if (date.from !== undefined)
       query = query.where(
@@ -191,7 +176,6 @@ function discoveryQuery(
   return query
 }
 
-/** Production builder shared by execution and D1 plan/read-cost tests. */
 export function buildCandidateDiscoveryQuery(
   db: Kysely<DB>,
   viewer: DiscoveryViewer,
@@ -216,11 +200,6 @@ export async function discoverCandidates(
   if (!input.candidateIds.length) return []
   let viewer = await inputViewer(db, input)
   if (!viewer) return []
-  // Read the current identity in the same statement as the ID-leading check.
-  // Normally the request snapshot still matches, with no extra round trip. If
-  // it changed during an index await, reuse the trusted row and normalize its
-  // email in JS before checking once more. Repeated identity churn is capacity,
-  // never an exact empty result based on stale claims.
   for (let attempt = 0; attempt < 2; attempt++) {
     const query = buildCandidateDiscoveryQuery(db, viewer, input, now)
     const result = await sql<{
@@ -255,7 +234,6 @@ export async function discoverCandidates(
   throw new SearchCapacityError()
 }
 
-/** Sparse domain only: active members use indexed candidates for their workspace. */
 export function buildSparseDiscoveryQuery(
   db: Kysely<DB>,
   viewer: DiscoveryViewer,
@@ -410,7 +388,6 @@ export async function enumerateSuggestionIds(
   return domain
 }
 
-/** Full-inventory oracle; full-text request paths never use this enumeration. */
 export function buildMemberDiscoveryQuery(
   db: Kysely<DB>,
   viewer: DiscoveryViewer,
@@ -439,7 +416,6 @@ export async function enumerateMemberDiscoverableIds(
   )
 }
 
-/** Bound every D1 response while preserving the full eligible universe. */
 async function drainDiscoveryIds(
   query: DiscoveryQuery,
 ): Promise<DiscoveredId[]> {
@@ -457,7 +433,6 @@ async function drainDiscoveryIds(
   }
 }
 
-/** Candidates for typeahead retain the narrower owned/viewed/shared domain. */
 export async function discoverSuggestionCandidates(
   db: Kysely<DB>,
   input: CandidateDiscoveryInput,
@@ -525,7 +500,6 @@ export function buildSuggestionOwnersQuery(
     .limit(3)
 }
 
-/** Selected labels are resolved from live discoverable files, never from history snapshots. */
 export async function resolveSearchSelections(
   db: Kysely<DB>,
   actor: string,

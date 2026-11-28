@@ -78,8 +78,6 @@ export async function adoptPublisherArtifact(
       .returning('id'),
   )
   if (batchRows(result).length) return { kind: 'ok' }
-  // A changed assignment conflicts; loss of ownership, membership or the
-  // target client remains indistinguishable from a missing artifact.
   const stillEligible = await db
     .selectFrom('shareables')
     .select('id')

@@ -408,9 +408,6 @@ type UploadDestination = {
   containerId: string
   containerKind: 'inbox' | 'project'
   workspaceId: string
-  // True only for cross-workspace posting into another workspace's project.
-  // Drives accounting: such uploads bill the project's workspace while the
-  // upload guardrail remains a separate upload-only concern.
   isExternalPosting: boolean
 }
 
@@ -459,7 +456,6 @@ export type MoveDestinationOption = {
   fileCount: number
   isCurrent: boolean
   baseVisibility: ProjectBaseVisibility
-  /** 社外ドメインの関係者数。一括移動の集約警告に使う。 */
   externalCount: number
 }
 
@@ -620,8 +616,6 @@ async function commitSharingChanges(
   const owned = await findOwnedShareableForGrants(db, user, shareableId)
   if (!owned) return { kind: 'not-found' }
 
-  // CLI edits require the requested audience to survive the commit's fresh
-  // placement read. Dialog callers retain their existing coercion behavior.
   let containerKind = owned.container_kind
   if (projectEdit?.projectId !== undefined) {
     if (owned.workspace_id !== user.workspaceId) return { kind: 'not-found' }
@@ -939,8 +933,6 @@ export async function beginStaticSiteBundleUploadSession(
       user.workspaceId !== options.authority.workspaceId)
   )
     return { kind: 'invalid-container' }
-  // Resolve the destination first: cross-workspace posting bills the project's
-  // workspace, so the quota snapshot and R2 prefix below must use the destination.
   const destination = await resolveUploadContainer(
     db,
     user,
@@ -1064,10 +1056,6 @@ export async function beginStaticSiteBundleVersionUploadSession(
     user.workspaceId,
   )
   if (externalPosting.kind !== 'ok') return externalPosting
-  // A version bills the artifact's workspace, not the poster's, and consumes no
-  // contributor slot. findOwnedShareable no longer scopes to the poster's
-  // workspace, so cross-workspace external posts account storage against the
-  // project's workspace.
   const accounting = {
     workspaceId: shareable.workspace_id,
     contributorGuardrailLimit: CONTRIBUTOR_GUARDRAIL_LIMIT,
@@ -1217,9 +1205,6 @@ export async function updateShareableMetadata(
     .where('id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return { kind: 'not-found' }
-  // Owner-only, with one extension: workspace admins act as the owner for
-  // bot-owned artifacts (a stopped bot's metadata would otherwise be frozen
-  // forever). Human owners must retain live access to the artifact workspace.
   const ownerAuthorized =
     (shareable.owner_user_id === user.id &&
       !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))) ||
@@ -1407,9 +1392,6 @@ export async function deleteShareable(
   }
   if (!authorized) return { kind: 'not-found' }
 
-  // static_site bundles keep all asset keys (CSS / JS / images) in
-  // version_files. Fetch them before the D1 batch — CASCADE will drop the rows
-  // and we'd lose the keys needed to clean R2.
   const [versions, versionFiles] = await Promise.all([
     db
       .selectFrom('versions')
@@ -1657,10 +1639,6 @@ function deleteMutationReceipt(
   return 'invalid'
 }
 
-// 管理者による投稿成果物の削除可否。外部投稿が許可されたプロジェクトで、対象が manager の
-// 閲覧できる成果物 (visibility='project' か本人へ個別共有) のときだけ true。
-// visibility='private' の他人の成果物は対象外。canEditProjectContainer が
-// 作成者・ワークスペース管理者・role='manager' を一括で判定する。
 async function canManagerDeleteProjectShareable(
   db: Kysely<DB>,
   user: { id: string; email?: string | null; emailVerified: boolean },
@@ -1689,8 +1667,6 @@ async function canManagerDeleteProjectShareable(
 
   if (target.visibility === 'project') return true
 
-  // visibility='workspace'/'private' は project 関係者の live 判定では見えないので、
-  // 個別共有 (shareable_grants) されている場合だけ管理者が閲覧でき、削除できる。
   const normalized = normalizedEmail(email)
   if (!normalized) return false
   const granted = await db
@@ -1702,10 +1678,6 @@ async function canManagerDeleteProjectShareable(
   return granted !== undefined
 }
 
-// Re-parent a shareable to another container in the same workspace. Only the
-// container_id (and updated_at) change: visibility, grants, versions, comments,
-// and contributor counts are untouched, and project share defaults are not
-// applied to the moved shareable.
 export async function moveShareableContainer(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -1728,9 +1700,6 @@ export async function moveShareableContainer(
     .executeTakeFirst()
   if (!shareable) return { kind: 'not-found' }
 
-  // Only the owner or a workspace admin may move it; hide existence otherwise.
-  // Bot-owned artifacts accept any workspace admin regardless of plan, same
-  // as metadata edit and delete (bots exist on free workspaces too).
   const privileged =
     (shareable.owner_user_id === user.id &&
       !(await isWorkspaceAccessRevoked(db, user.workspaceId, user.id))) ||
@@ -1746,16 +1715,12 @@ export async function moveShareableContainer(
   let destContainerId: string
   let destName: string
   if (destination.type === 'inbox') {
-    // Bots have no home: reject before the implicit inbox creation below
-    // would mint one for the bot owner.
     const owner = await db
       .selectFrom('users')
       .select('kind')
       .where('id', '=', shareable.owner_user_id)
       .executeTakeFirst()
     if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
-    // Inbox targets the shareable owner's home, so the file returns to its
-    // owner's unsorted area rather than the actor's when an admin moves it.
     destContainerId = await getOrCreateInboxContainerId(
       db,
       user.workspaceId,
@@ -1873,9 +1838,6 @@ export async function moveShareableContainer(
   }
 }
 
-// Destinations for the move picker: the owner's 未整理 plus the workspace's
-// non-archived projects, with the shareable's current container flagged so the
-// UI can mark it and block a no-op move.
 export async function listMoveDestinations(
   db: Kysely<DB>,
   user: {
@@ -1907,8 +1869,6 @@ export async function listMoveDestinations(
     (shareable.owner_user_id === user.id &&
       !(await isWorkspaceAccessRevoked(db, user.workspaceId, user.id))) ||
     (await isTeamWorkspaceAdmin(db, user, user.workspaceId)) ||
-    // Same bot-owner exception as moveShareableContainer, or the move UI
-    // 404s on free/plus workspaces while the POST would succeed.
     (await isBotOwnedArtifactAdmin(db, user, shareable.owner_user_id)) ||
     (await findWritableShareable(db, user, shareableId, null)) !== null
   if (!allowed) return { kind: 'not-found' }
@@ -1946,8 +1906,6 @@ export async function listMoveDestinations(
         titleOverride: shareable.title_override,
       }),
     },
-    // Bots have no home: moveShareableContainer rejects the inbox
-    // destination for bot-owned artifacts, so don't advertise it.
     inbox:
       (await db
         .selectFrom('users')
@@ -2096,9 +2054,6 @@ export class StaticSiteBundleUploadSession {
     if (nextTotalSize > MAX_STATIC_SITE_TOTAL_BYTES) {
       return { kind: 'too-large', limitBytes: MAX_STATIC_SITE_TOTAL_BYTES }
     }
-    // Session quota is a best-effort snapshot from begin time. reserveQuota in
-    // commit remains the atomic source of truth; concurrent uploads can still
-    // fail there after earlier files have been staged to R2.
     if (nextTotalSize > this.quotaRemainingBytes) {
       return { kind: 'quota-exceeded' }
     }
@@ -3071,11 +3026,6 @@ async function compensateStaticSiteR2(
   })
 }
 
-// Normalize an uploaded file path into the form we store and use as the
-// suffix of an R2 key. Collapses repeated `/`, drops `.` segments, strips
-// trailing `/`, applies NFC Unicode normalization, and ensures a leading `/`.
-// `..` segments are rejected upstream by validateBundlePath so are not
-// expected to appear here.
 export function normalizeBundlePath(path: string): string {
   const slashOnly = path.replaceAll('\\', '/')
   const segments = slashOnly.split('/').filter((s) => s !== '' && s !== '.')
@@ -3231,24 +3181,10 @@ export async function prepareUpload(
   if (!nameType) return { kind: 'unsupported-type' } as const
   const pathValidation = validateBundlePath(logicalFile.name)
   const entrypointPath = normalizeBundlePath(logicalFile.name)
-  // A name such as "", "." or "/" keeps no segment and would store the root
-  // itself as the file path.
   if (pathValidation.kind === 'blocked' || entrypointPath === '/') {
     return { kind: 'invalid-path' } as const
   }
 
-  // Broad pre-check before allocating the 25 MB buffer / running SHA-256 /
-  // UTF-8 decode. reserveQuota stays the atomic source of truth; this SELECT
-  // is best-effort. Two consequences are accepted by design:
-  // - The inequality below must stay the strict negation of reserveQuota's
-  //   `<= storage_quota_bytes` WHERE. Keep `>` here in sync if the SQL side
-  //   changes; otherwise the pre-check and the atomic check disagree at the
-  //   equality boundary.
-  // - A concurrent delete / releaseQuota that frees space between this SELECT
-  //   and reserveQuota's UPDATE can produce a false reject (retry succeeds).
-  //   Accepted to keep the optimization simple; the UX cost is one retry.
-  // Active paid-plan overage bypasses the hard quota limit, so skip the
-  // pre-check for that path; reserveQuota still accounts bytes unconditionally.
   const workspaceRow = await db
     .selectFrom('workspaces')
     .select([
@@ -3272,11 +3208,6 @@ export async function prepareUpload(
   }
 
   const buffer = await file.arrayBuffer()
-  // A PDF needs both the `.pdf` name and `%PDF-` bytes. Text under a `.pdf`
-  // name (for example Markdown appended to an artifact still named
-  // deck.pdf) is classified by its MIME type instead; anything else is
-  // rejected before any quota reservation or R2 write.
-  // A video likewise needs both the `.mp4` name and an `ftyp` box at offset 4.
   const signatureMismatch =
     (nameType === 'pdf' && !hasPdfMagic(new Uint8Array(buffer))) ||
     (nameType === 'video' && !hasMp4Signature(new Uint8Array(buffer)))
@@ -3284,8 +3215,6 @@ export async function prepareUpload(
     ? detectArtifactType(logicalFile.type, logicalFile.name)
     : nameType
   if (!renderType) return { kind: 'unsupported-type' } as const
-  // PDF and video bytes are never decoded as text; a null derived title falls
-  // back to the file name like an html / md file without a title.
   const derivedTitle =
     renderType === 'pdf' || renderType === 'video'
       ? null
@@ -3329,8 +3258,6 @@ async function reserveContributorSlot(
 ): Promise<
   'ok' | 'workspace-access-revoked' | 'over-limit' | 'workspace-missing'
 > {
-  // Bots bypass the contributor slot machinery as a set (reserve, finalize,
-  // release are all kind-aware) so they never enter the guardrail denominator.
   const [, uploader, workspaceAccessRevoked] = await Promise.all([
     cleanupStaleContributorReservations(db, workspaceId, now),
     db
@@ -3341,9 +3268,6 @@ async function reserveContributorSlot(
     isWorkspaceAccessRevoked(db, workspaceId, userId),
   ])
   if (workspaceAccessRevoked) {
-    // A cross-workspace project grant is an independent posting authority.
-    // It must not recreate a removed membership row, but a stopped bot still
-    // fails the shared revocation check even when a caller reaches this path.
     if (!externalPosting || uploader?.kind !== 'human') {
       return 'workspace-access-revoked'
     }
@@ -3356,11 +3280,6 @@ async function reserveContributorSlot(
   }
   if (uploader?.kind === 'bot') return 'ok'
 
-  // Existing contributors remain eligible; only a new contributor consumes the
-  // upload guardrail slot. External posting still records the contributor in the
-  // project's workspace.
-  // Defense in depth: even a manually seeded bot member row never counts
-  // toward the contributor guardrail denominator.
   const contributorCountPredicate = sql`
     status != 'removed'
     AND (
@@ -3443,12 +3362,6 @@ async function reserveContributorSlot(
   return exists ? 'over-limit' : 'workspace-missing'
 }
 
-/**
- * Artifact-level individual grants never target bots: the agent read
- * predicate only consults workspace visibility and project audiences, so such
- * a grant would silently do nothing. Rejecting it avoids the misleading
- * no-op. Returns true when any of the emails belongs to a bot user.
- */
 async function containsBotGrantEmail(
   db: Kysely<DB>,
   emails: ReadonlyArray<string>,
@@ -3465,10 +3378,6 @@ async function containsBotGrantEmail(
   return row !== undefined
 }
 
-/**
- * Workspace admins act as the owner of bot-owned artifacts (metadata edit,
- * delete, move) so a stopped bot's output stays manageable.
- */
 async function isBotOwnedArtifactAdmin(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -3482,8 +3391,6 @@ async function isBotOwnedArtifactAdmin(
     .where('workspace_id', '=', user.workspaceId)
     .executeTakeFirst()
   if (!owner) return false
-  // Plan-independent: bots exist on free workspaces too, and a stopped bot's
-  // artifacts must stay manageable there as well.
   const admin = await workspaceAdminQuery(
     db,
     user.id,
@@ -3516,24 +3423,20 @@ function finalizeContributorSlotQuery(
   userId: string,
   now: string,
 ): Compilable<unknown> {
-  return (
-    db
-      .updateTable('workspace_members')
-      .set({
-        pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
-        first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
-        last_contributed_at: now,
-        updated_at: now,
-      })
-      .where('workspace_id', '=', workspaceId)
-      .where('user_id', '=', userId)
-      .where('status', '!=', 'removed')
-      // Paired with the bot bypass in reserveContributorSlot: finalize must
-      // never set first_contributed_at on a bot member row.
-      .where(
-        sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
-      )
-  )
+  return db
+    .updateTable('workspace_members')
+    .set({
+      pending_uploads: sql<number>`MAX(pending_uploads - 1, 0)`,
+      first_contributed_at: sql<string>`COALESCE(first_contributed_at, ${now})`,
+      last_contributed_at: now,
+      updated_at: now,
+    })
+    .where('workspace_id', '=', workspaceId)
+    .where('user_id', '=', userId)
+    .where('status', '!=', 'removed')
+    .where(
+      sql<boolean>`EXISTS (SELECT 1 FROM users WHERE users.id = ${userId} AND users.kind = 'human')`,
+    )
 }
 
 async function releaseContributorSlot(
@@ -3554,13 +3457,6 @@ async function releaseContributorSlot(
   `.execute(db)
 }
 
-// Reserve quota atomically: increments storage_used_bytes only if the
-// post-increment value would still fit under the workspace quota. Team plan
-// allows overage unconditionally. The conditional WHERE makes concurrent
-// uploads race on a single-row UPDATE rather than on a SELECT-then-UPDATE
-// TOCTOU. Returns 'workspace-missing' when the workspace row is absent (auth
-// state / DB skew) so callers don't mis-report it as 'over-quota' — the two
-// states need different UX and ops signals.
 function quotaRemainingBytesForSession(
   plan: string | null | undefined,
   subscriptionStatus: string,
@@ -3589,8 +3485,6 @@ export async function reserveQuota(
   const activeStatuses = sql.join(
     ACTIVE_SUBSCRIPTION_STATUSES.map((status) => sql`${status}`),
   )
-  // Active paid plans are unbounded; inactive paid plans and Free use the
-  // stored included quota.
   const result = await sql`
     UPDATE workspaces
     SET storage_used_bytes = storage_used_bytes + ${sizeBytes},
@@ -3914,25 +3808,18 @@ export async function canUpdateShareableVersion(
 }
 
 export interface OwnedShareableSummary {
-  /** Internal list boundary; public updated_at remains the actual mutation time. */
   activityAt: string
   id: string
   title: string
   visibility: Visibility
   linkExpiresAt: string | null
   updatedAt: string
-  // The project the artifact is filed under, or null when it sits in the
-  // unfiled inbox (or has no container). Lets the MCP edit_artifact /
-  // list_artifacts tools report and filter by placement without a second read.
   projectId: string | null
   artifactKind: ArtifactKind
 }
 
 const OWNED_SHAREABLE_LIST_LIMIT = 50
 
-// Owner-scoped summary read, joined to the container so placement comes back in
-// the same query. The inbox container has kind 'inbox', so only a 'project'
-// container yields a project id; everything else is the unfiled inbox.
 function ownedShareableSummaryQuery(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -4016,10 +3903,6 @@ async function getShareableSummaryById(
   return row ? toOwnedShareableSummary(row) : null
 }
 
-// The shareables a user owns in their workspace, newest first. Used by the MCP
-// `list_artifacts` tool to let an agent pick an update target; bounded so the
-// response stays small. `projectId` filters by placement (a project id, or ''
-// for the unfiled inbox); `query` is a case-insensitive title substring match.
 export async function listOwnedShareables(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -4039,7 +3922,6 @@ export async function listOwnedShareables(
       : qb.where('c.kind', '=', 'inbox')
   }
   if (opts.query) {
-    // Match displayTitle's precedence without treating %, _, or \\ as patterns.
     const term = opts.query.toLowerCase()
     qb = qb.where(
       sql<boolean>`instr(lower(coalesce(shareables.title_override, shareables.derived_title, shareables.name)), ${term}) > 0`,
@@ -4096,8 +3978,6 @@ export async function editShareableSettings(
     payload.linkExpiresAt !== undefined ||
     payload.addEmails !== undefined ||
     payload.removeEmails !== undefined
-  // Collaborators may rename and move workspace-visible artifacts, but sharing
-  // controls remain owner-only. Reject mixed requests before applying any edit.
   if (
     isCollaborativeEdit &&
     (wantsShareChange ||
@@ -4149,7 +4029,6 @@ export async function editShareableSettings(
         .where('id', '=', current.owner_user_id)
         .executeTakeFirst()
       if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
-      // Refuse explicit project visibility before creating an owner home.
       if (payload.visibility === 'project')
         return { kind: 'invalid-visibility' }
       targetContainerId = await getOrCreateInboxContainerId(
@@ -4484,10 +4363,6 @@ export async function editShareableSettings(
   return { kind: 'ok', shareable: after ?? before }
 }
 
-// The current version's storage handle for an artifact the user owns. Used by
-// the MCP `get_artifact` tool to read the source back. Returns null when the id
-// isn't owned in this workspace; the version fields are null when no version is
-// current yet (mid-upload) — the caller distinguishes those from a missing row.
 export interface OwnedArtifactRef {
   artifactKind: ArtifactKind
   versionId: string | null
@@ -4518,8 +4393,6 @@ export async function getOwnedArtifactRef(
     .executeTakeFirst()
   if (!row) return null
   return {
-    // The column is unconstrained TEXT; an unknown value falls through
-    // singleFileFormat / renderTypeFromKind to null, so the cast is safe.
     artifactKind: row.artifact_kind as ArtifactKind,
     versionId: row.version_id ?? null,
     r2Key: row.r2_key ?? null,
@@ -4549,11 +4422,6 @@ export interface OwnedArtifactVersions {
   hasMore: boolean
 }
 
-// Version history for an artifact the user owns, newest first. Returns null when
-// the id isn't owned in this workspace (distinct from an owned artifact with no
-// versions, which is an empty list). Versions are retained, so an old artifact
-// can exceed the cap; `hasMore` tells the MCP `list_versions` tool whether older
-// versions were dropped (probe one past the cap, like listOwnedShareables).
 export async function listOwnedArtifactVersions(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -4598,8 +4466,6 @@ export async function listArtifactVersions(
     )
   const rows = await query
     .orderBy('versions.created_at', 'desc')
-    // Tiebreaker: rapid updates can share a millisecond timestamp, so order by
-    // id too to keep the list (and the has_more cut) deterministic across calls.
     .orderBy('versions.id', 'desc')
     .limit(OWNED_VERSION_LIST_LIMIT + 1)
     .execute()
@@ -4678,8 +4544,6 @@ async function loadGrantEntries(
   const normalizedOwnerEmail = normalizedEmail(ownerEmail)
   const rows = await db
     .selectFrom('shareable_grants as g')
-    // 保存値の大文字小文字は DB 制約では保証されないので、user プロフィール解決の
-    // join も両側を小文字化して照合する (素の等価だと大文字混じり行で user=null になる)。
     .leftJoin('users as u', (join) =>
       join.on(
         sql<boolean>`${lowerEmail('u.email')} = ${lowerEmail('g.granted_email')}`,

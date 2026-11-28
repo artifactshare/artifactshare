@@ -68,7 +68,6 @@ export async function admitDeceptionSignal(
     WHERE (SELECT count(*) FROM security_deception_signals WHERE day_bucket = ${day}) < 1000
     ON CONFLICT DO NOTHING RETURNING id`.execute(db)
   if (inserted.rows.length) {
-    // Mark saturation at admission, even if no later suppressed hit arrives.
     await markSaturated(db, day)
     console.log('security_deception_admitted', { correlation_id: id })
     return 'admitted' as const
@@ -94,7 +93,6 @@ async function markSaturated(db: Db, day: string) {
   )
 }
 
-/** Atomic actual-time reservation, only when due eligible work exists. */
 export async function reserveDeceptionDelivery(
   db: Db,
   now: number,
@@ -136,7 +134,6 @@ function displayed(value: string | null, limit = 128) {
 export function deceptionDigest(rows: Signal[]) {
   const heading =
     'Suspicious authenticated API exploration — investigation required; this is not proof of AI use, malice or compromise.\ncredential_inventory_v1 authenticated_decoy_probe\n'
-  // All ten correlations remain visible even with oversized verified IDs.
   const budget = Math.floor((4000 - heading.length) / Math.max(rows.length, 1))
   return (
     heading +
@@ -205,7 +202,6 @@ export async function drainDeceptionSignals(
             .where('lease_expires_at', '>', iso(clock()))
             .execute()
         } else {
-          // Persist attempts and fence the single dispatch immediately beforehand.
           const start = clock()
           const attempted = (
             await sql<Signal>`UPDATE security_deception_signals SET attempt_count = attempt_count + 1, last_attempt_at = ${iso(start)}
@@ -303,8 +299,6 @@ export async function drainDeceptionSignals(
               rows
                 .filter((claimed) => !sentIds.has(claimed.id))
                 .map(async (row) => {
-                  // Only an observed no-send can undo a persisted attempt. A crash or
-                  // unknown transport result leaves conservative accounting intact.
                   currentFailure = true
                   const incremented = attempted.some(
                     (attempt) => attempt.id === row.id,

@@ -76,7 +76,6 @@ async function cookieToken(request: Request): Promise<string | null> {
     : null
 }
 
-/** This boundary never calls a session endpoint or product resolver. */
 export async function resolveDeceptionIdentity(
   db: Db,
   request: Request,
@@ -98,7 +97,6 @@ export async function resolveDeceptionIdentity(
         return { kind: 'unauthenticated' }
       }
       if (!raw) return { kind: 'unauthenticated' }
-      // JWTs must never be truncated into a session credential.
       if (raw.split('.').length >= 3) {
         const result = await verifyOAuthJwt(raw, env.BETTER_AUTH_URL, () =>
           readOnlyOAuthKeys(db),

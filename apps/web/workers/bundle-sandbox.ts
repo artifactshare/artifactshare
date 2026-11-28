@@ -72,8 +72,6 @@ import {
 
 const COOKIE_NAME = '__Host-as_bnd'
 const COOKIE_CHECK_PARAM = '__as_cookie_check'
-// Cookies bound token lifetime; every asset request rechecks D1 access and
-// resolves the immutable version manifest, including inherited object keys.
 const COOKIE_TTL_SECONDS = 10 * 60
 const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
@@ -196,8 +194,6 @@ async function handleSandboxRequest(
       identity,
     )
   }
-  // Fresh entry authority can replace an unverifiable cookie after rotation.
-  // Only a verified, matching cookie can grant the same-bundle replay exception.
   if (token !== null) {
     return await handleEntrypointRequest(
       request,
@@ -212,8 +208,6 @@ async function handleSandboxRequest(
   if (cookieResult.kind === 'valid') {
     if (url.searchParams.get(COOKIE_CHECK_PARAM) === '1') {
       url.search = withoutSearchParameters(url.search, [COOKIE_CHECK_PARAM])
-      // Only verified host-bound authority reaches this redirect. The clean
-      // request still runs current-access and manifest checks before delivery.
       return contentResponse(
         null,
         'text/plain; charset=utf-8',
@@ -330,9 +324,6 @@ async function handleEntrypointRequest(
     env.BETTER_AUTH_SECRET,
   )
   if (!verified.ok) {
-    // History/reload may retain the entry URL beyond its token's TTL. Recover
-    // only through independently valid, matching cookie authority; the asset
-    // path still rechecks current access and the immutable version manifest.
     if (
       verified.failure === 'expired' &&
       !verified.payload.standalone &&
@@ -365,8 +356,6 @@ async function handleEntrypointRequest(
             identity,
           )
         }
-        // Retain the validated subpage, query, and fragment. Follow-up delivery
-        // rechecks cookie authority and resolves the destination's manifest file.
         return contentResponse(
           null,
           'text/plain; charset=utf-8',
@@ -476,10 +465,6 @@ async function handleEntrypointRequest(
   }
 
   const db = createDb()
-  // Embed tokens (MCP host preview) are reusable within their TTL — the host
-  // may re-render the widget — so they skip the one-time nonce. The signature,
-  // expiry, and current-version checks below still gate them. Viewer tokens
-  // stay one-time.
   if (!payload.emb) {
     const consumed = await consumeJti(
       db,
@@ -525,9 +510,6 @@ async function handleEntrypointRequest(
   }
 
   if (entrypoint.renderType === 'pdf' || entrypoint.renderType === 'video') {
-    // The generated viewer is our code, not the artifact's, so it is served
-    // directly. Its original-file and asset requests carry only the bound
-    // cookie, and each one rechecks current access and the version.
     const response = await serveEntrypoint(entrypoint, payload.emb === true)
     if (!response.ok) return response
     response.headers.append('Set-Cookie', await bundleCookieFor(payload))
@@ -539,9 +521,6 @@ async function handleEntrypointRequest(
 
   const cookie = await bundleCookieFor(payload)
   const redirectTarget = sameOriginRedirectTarget(url)
-  // Check browser document navigations before any artifact code or assets run.
-  // The next request has no viewer token: only the exact host's bound cookie
-  // can authorize it, with the usual current-access and manifest checks.
   const destination = request.headers.get('Sec-Fetch-Dest')
   if (destination === 'iframe' || destination === 'document') {
     const target = new URL(
@@ -581,8 +560,6 @@ async function handleEntrypointRequest(
 }
 
 function redirectPath(url: URL, validatedPath: string): string {
-  // Manifest lookup maps the root to index.html; navigation must retain the
-  // root so client routers still see /. All other paths use the validated form.
   const decoded = decodeURIComponent(url.pathname)
   return decoded === '' || decoded === '/' ? '/' : encodeURI(validatedPath)
 }
@@ -623,8 +600,6 @@ interface Entrypoint {
   entrypointPath: string | null
 }
 
-// Kinds whose entry document loads further same-origin resources that only
-// the host-bound cookie can authorize.
 function usesBundleCookie(renderType: ArtifactType): boolean {
   return (
     renderType === 'static_site' ||
@@ -700,8 +675,6 @@ async function bundleCookieFor(payload: SandboxPayload): Promise<string> {
     exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
   }
   const value = await signBundleCookie(cookiePayload, env.BETTER_AUTH_SECRET)
-  // Expiry is rounded down on the server; expire the browser cookie earlier
-  // so it does not reject a fresh viewer token at the signed expiry boundary.
   return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS - 5}; HttpOnly; Secure; SameSite=None; Partitioned`
 }
 
@@ -735,8 +708,6 @@ async function serveEntrypoint(
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
   if (entrypoint.renderType === 'pdf') {
-    // The entry document is generated; the PDF bytes are fetched separately
-    // from PDF_ORIGINAL_PATH and never pass through the reporter rewriter.
     return documentResponse(
       pdfViewerDocument(entrypoint.entrypointPath),
       'text/html; charset=utf-8',
@@ -744,7 +715,6 @@ async function serveEntrypoint(
     )
   }
   if (entrypoint.renderType === 'video') {
-    // Likewise generated; the player streams VIDEO_ORIGINAL_PATH with Range.
     return documentResponse(
       videoPlayerDocument(entrypoint.entrypointPath),
       'text/html; charset=utf-8',
@@ -814,8 +784,6 @@ async function serveBundleAsset(
     .where('versions.published_at', 'is not', null)
     .where('versions.artifact_kind', '=', 'static_site')
     .execute()
-  // No static-site version matched: the bundle may be a PDF or video version,
-  // whose virtual resources exist only there and never shadow static-site paths.
   if (files.length === 0) {
     const viewerResponse = await serveViewerResource(
       db,
@@ -861,8 +829,6 @@ async function serveBundleAsset(
     )
   const requested = direct.map(stored).find((file) => file !== undefined)
   const url = new URL(request.url)
-  // Like other static hosts, serve a directory index only at the slash URL so
-  // the page's relative links resolve inside its directory.
   if (requested && requested.path !== path && !url.pathname.endsWith('/')) {
     return contentResponse(
       null,
@@ -892,9 +858,6 @@ async function serveBundleAsset(
   return await serveBundleFile(fallbackFile, request, responseDomain)
 }
 
-// A PDF or video version is a virtual bundle: a generated viewer page at the
-// entrypoint, the shared viewer files, and the original at a fixed path.
-// These names exist only for such versions and never shadow static-site paths.
 const VIEWER_KINDS = {
   pdf: {
     document: pdfViewerDocument,
@@ -1397,7 +1360,6 @@ function cookieValue(header: string | null, name: string): string | null {
     const [rawName, ...rawValue] = part.trim().split('=')
     return rawName === name ? [rawValue.join('=')] : []
   })
-  // An ambiguous presented authority is invalid, never missing.
   return values.length > 1 ? '' : (values[0] ?? null)
 }
 

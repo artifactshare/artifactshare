@@ -1,9 +1,3 @@
-// The sandbox serves a video artifact as a virtual bundle on its own sandbox
-// origin: a generated player page at the entrypoint path, the shared player
-// script and style, and the original MP4. Only the original carries artifact
-// bytes; the page, script and style are the same on every origin and are
-// never stored or charged per artifact. The player is the browser's native
-// <video> element with our own controls below it.
 import {
   VIDEO_ORIGINAL_PATH,
   VIDEO_PLAYBACK_RATES,
@@ -26,8 +20,6 @@ export interface VideoPlayerAsset {
   contentType: string
 }
 
-// The player's own script and style, built from apps/web/app/viewers/video
-// by apps/web/scripts/build-viewers.mjs.
 export function videoPlayerAsset(path: string): VideoPlayerAsset | null {
   if (path === VIDEO_PLAYER_SCRIPT_PATH)
     return {
@@ -39,8 +31,6 @@ export function videoPlayerAsset(path: string): VideoPlayerAsset | null {
   return null
 }
 
-// A safe download name: the entrypoint's last segment, reduced to characters
-// that need no quoting, always ending in .mp4.
 export function videoDownloadFileName(entrypointPath: string | null): string {
   const base = (entrypointPath ?? '').split('/').at(-1) ?? ''
   const stem = base
@@ -70,14 +60,6 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;')
 }
 
-// The generated page: a mount point for the player script with the download
-// name and link. It holds the <video> element with native controls and a
-// download link, so the video still plays and downloads if the script cannot
-// run; the player then takes the element over. The document never contains
-// artifact content other than its escaped file name, and the video never
-// autoplays. It starts in the app's default language and the inherited color
-// scheme; the player follows the app's preferences once its parent sends
-// them.
 export function videoPlayerDocument(entrypointPath: string | null): string {
   const fileName = escapeHtml(videoDownloadFileName(entrypointPath))
   const download = `${VIDEO_ORIGINAL_PATH}?download=1`

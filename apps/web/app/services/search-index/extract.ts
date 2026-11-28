@@ -9,7 +9,6 @@ export interface ExtractedText {
   body: string
   script: string
 }
-// WHATWG named references, generated from Python's standard-library html.entities.html5.
 const namedEntities: Readonly<Record<string, string>> = htmlEntities
 const maximumEntityLength = Math.max(
   ...Object.keys(namedEntities).map((name) => name.length),
@@ -80,7 +79,6 @@ function entities(value: string, attribute = false): string {
 }
 
 const INDEXED_ATTRIBUTES = ['alt', 'title', 'aria-label', 'placeholder']
-// Elements whose content the HTML tokenizer reads as text, not markup.
 const RAW_TEXT_ELEMENTS = new Set([
   'script',
   'style',
@@ -141,7 +139,6 @@ export function withoutLongAttributeValues(html: string): string {
       if (html.startsWith('>', open + 4)) at = open + 5
       else if (html.startsWith('->', open + 4)) at = open + 6
       else {
-        // Each marker is searched for again only once the scan passes it.
         if (bangEnd === -2 || (bangEnd !== -1 && bangEnd < open + 4))
           bangEnd = html.indexOf('--!>', open + 4)
         const end = skipTo('-->', open + 4)
@@ -242,8 +239,6 @@ export async function extractHtml(html: string): Promise<ExtractedText> {
   try {
     return await extractParsedHtml(html)
   } catch (error) {
-    // Only a page the parser rejects for a start tag over its memory limit is
-    // rewritten, so pages that already index are never affected by the scan.
     if (
       !(error instanceof TypeError) ||
       !error.message.includes('memory limit has been exceeded')

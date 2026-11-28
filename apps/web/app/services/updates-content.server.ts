@@ -150,7 +150,6 @@ export function parseUpdateFrontmatter(raw: string): {
   frontmatter: UpdateFrontmatter
   body: string
 } {
-  // CRLF の entry 1 件で全ページが落ちないよう、行末は LF に正規化して扱う。
   raw = raw.replace(/\r\n/g, '\n')
   if (!raw.startsWith('---\n') && raw !== '---') {
     throw new Error('Frontmatter must start with --- on line 1')
@@ -289,7 +288,6 @@ function metaKey(record: {
 }): string {
   return JSON.stringify({
     date: record.date,
-    // 言語対の一致判定は集合として比較する (並び順の違いを不一致にしない)。
     products: record.products.toSorted(),
     kind: record.kind,
     flag: record.flag ?? null,

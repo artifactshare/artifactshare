@@ -37,10 +37,8 @@ export class SearchDailyLimitError extends Error {
   }
 }
 
-/** Searches one person may run in a UTC day. */
 const DAILY_SEARCH_LIMIT = 1000
 
-/** Returning to a search adds nothing, but is refused once the day's limit is reached. */
 export async function checkSearchAllowance(db: Db, actor: string, now: string) {
   const row = await db
     .selectFrom('search_actor_daily_usage')
@@ -52,7 +50,6 @@ export async function checkSearchAllowance(db: Db, actor: string, now: string) {
     throw new SearchDailyLimitError(now)
 }
 
-/** One atomic indexed write; a storage exception deliberately remains an exception. */
 export async function admitSearch(db: Db, actor: string, now: string) {
   const row = await db
     .insertInto('search_actor_daily_usage')
@@ -70,7 +67,6 @@ export async function admitSearch(db: Db, actor: string, now: string) {
   if (!row) throw new SearchDailyLimitError(now)
 }
 
-/** Count actual index invocations, once per workspace, including failed/empty queries. */
 export function meterSearchIndexes(
   db: Db,
   indexes: SearchIndexes,
@@ -103,8 +99,6 @@ export function meterSearchIndexes(
     return pending
   }
   async function invoke<T>(workspace: string, run: () => Promise<T>) {
-    // Store handled outcomes immediately so a failed write cannot reject unobserved
-    // while the index query is still running.
     count(workspace)
     let result: T
     try {
@@ -113,7 +107,6 @@ export function meterSearchIndexes(
       await Promise.all(counted.values())
       throw error
     }
-    // Include every workspace already invoked before this call settled.
     const failures = await Promise.all(counted.values())
     const failure = failures.find((error) => error !== null)
     if (failure) throw failure
@@ -131,7 +124,6 @@ export function meterSearchIndexes(
 }
 
 export async function pruneSearchUsage(db: Db, cutoff: string, now: string) {
-  // Each table has its own indexed, bounded batch. Callers repeat while full.
   const actor = await sql`DELETE FROM search_actor_daily_usage WHERE rowid IN (
     SELECT rowid FROM search_actor_daily_usage WHERE day < ${now.slice(0, 10)} ORDER BY day LIMIT 500
   ) RETURNING actor_id`.execute(db)

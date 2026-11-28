@@ -3,8 +3,6 @@ import type { DB } from '~/types/db'
 import type { AnalyticsAuthMethod } from '~/lib/analytics/events'
 
 export type SignupMethod = AnalyticsAuthMethod
-// Default claim lease. Module-private: claimPendingSignup applies it internally
-// and callers rely on the default, so it is not part of the module's API.
 const PENDING_SIGNUP_LEASE_MS = 5 * 60 * 1000
 
 export async function insertPendingSignup(
@@ -41,9 +39,6 @@ export async function clearPendingSignupWorkspaceCreated(
     .execute()
 }
 
-// When an OAuth user is moved off their just-created personal workspace into an
-// existing (domain-claimed) one, that is a domain-join rather than a self-serve
-// creation, so workspace_created must not fire. Returns whether a move was seen.
 export async function clearWorkspaceCreatedIfMoved(
   db: Kysely<DB>,
   input: {

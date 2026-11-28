@@ -38,7 +38,6 @@ export function candidates(shareableId: string, proposed?: number | null) {
       ))`
 }
 
-// Complete published ordering, independent of the visible history page.
 export async function hasExtraProtectedCurrentVersion(
   db: Kysely<DB>,
   shareableId: string,
@@ -151,7 +150,6 @@ export async function pruneVersions(
   ) {
     chunks.push(pendingKeys.slice(offset, offset + OBJECT_REFERENCE_CHUNK))
   }
-  // Each worker finishes reference checking and deletion before its next chunk.
   const cleanupWorkers = Array.from({ length: 8 }, () => Promise.resolve())
   chunks.forEach((chunk, index) => {
     const worker = index % cleanupWorkers.length
@@ -174,9 +172,6 @@ export async function pruneVersions(
   return deletedCount
 }
 
-// Publication is already durable. A cleanup failure must not invite callers to
-// retry the publish or prevent the version-changed notification. Settings edits
-// still use pruneVersions directly so they cannot report a false deletion count.
 export async function pruneVersionsAfterPublish(
   db: Kysely<DB>,
   shareableId: string,

@@ -170,7 +170,6 @@ async function metadata(
     }),
   )
 }
-/** The searching user, with the live viewer row read once per operation. */
 type SearchActor = { id: string; viewer?: DiscoveryViewer }
 async function loadSearchActor(db: Db, id: string): Promise<SearchActor> {
   return { id, viewer: await loadDiscoveryViewer(db, id) }
@@ -242,8 +241,6 @@ async function collect(
   let incomplete = false
   let activeDocumentCount: number | null = null
   const method = 'candidates' as const
-  // Metadata is read alongside the live discovery check and kept only for
-  // the rows that check accepts.
   const check = async (rows: Hit[]) => {
     const [visible, rowsMetadata] = await Promise.all([
       accepted(db, actor, input.filters, now, rows),
@@ -370,7 +367,6 @@ async function completePageGroups(
         const rows = page.items
           .slice(offset, offset + 2000)
           .map((row) => ({ ...row, workspaceId: workspace }))
-        // Metadata is read alongside the live check; only accepted rows count.
         const [visible, rowsMetadata] = await Promise.all([
           accepted(db, actor, input.filters, now, rows),
           metadata(
@@ -399,7 +395,6 @@ async function completePageGroups(
   return { members, incomplete, workspaceById }
 }
 
-/** One final ID-leading check after all index awaits, including details. */
 async function finalVisibleIds(
   db: Db,
   actor: SearchActor,
@@ -417,7 +412,6 @@ async function finalVisibleIds(
     [...workspaces].map(async ([workspaceId, ids]) => {
       const acceptedIds: string[] = []
       for (let offset = 0; offset < ids.length; offset += 2000) {
-        // Bound response memory and outstanding D1 work to one candidate batch per workspace.
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
         const rows = await discoverCandidates(db, {
           ...filters,
@@ -533,7 +527,6 @@ export async function search(
   let anchor = new Date(now)
   let position = 0,
     searchLogId: string | undefined
-  // Only the screen returns to a search through its history entry.
   const resumeToken = source === 'screen' ? input.resume : undefined
   const [searchActor, cursor, resumed] = await Promise.all([
     loadSearchActor(db, actor),
@@ -543,13 +536,8 @@ export async function search(
     resumeToken
       ? readSearchToken(db, actor, resumeToken, 'resume', now)
       : undefined,
-    // Authentication and deterministic parsing are complete at the boundary.
-    // A continuation or a return must first authenticate its token below.
     input.cursor || resumeToken ? undefined : admitSearch(db, actor, now),
   ])
-  // Returning to the same search (going Back to the results) reuses its log
-  // and is not a new search: no new log row and no daily search count. An
-  // expired, foreign or mismatched token makes it a new search instead.
   if (resumeToken) {
     if (
       resumed &&
@@ -612,7 +600,6 @@ export async function search(
       !filters.includeArchived ? 'archive' : '',
       filters.date ? 'date' : '',
     ].filter((dimension) => Boolean(dimension) && !input.cursor)
-    // Each relaxed search is independent of the others.
     const relaxedResults = await Promise.all(
       dimensions.map((dimension) => {
         const relaxed = { ...filters }
@@ -646,7 +633,6 @@ export async function search(
     position,
     Math.min(1000, position + input.pageSize),
   )
-  // Group sizes and the page's details do not depend on each other.
   const complete = () =>
     selected.length
       ? completePageGroups(
@@ -745,8 +731,6 @@ export async function search(
       }),
     ])
   let [finalIds, selectedRows] = await reauthorize()
-  // Retry only this page. Each promotion needs details and group completion,
-  // followed by another live check after those awaits. Unchanged pages do no extra work.
   let finalSelected = selected
   const discarded = new Set<string>()
   for (let attempt = 0; ; attempt++) {
@@ -763,8 +747,6 @@ export async function search(
       },
     )
     if (missing.length) {
-      // A transient details omission must not shift the next cursor. Remove
-      // an ID only after the current index also stops returning it as a match.
       await Promise.all(
         missing.map(async ({ workspace, ids }) => {
           const page = await indexPage(indexes(workspace), {
@@ -796,7 +778,6 @@ export async function search(
       )
     )
       break
-    // A moving page or missing details must never consume an unseen cursor slot.
     if (attempt >= 2) throw new SearchCapacityError()
     selected = finalSelected
     ;[completion, pages] = await Promise.all([complete(), materialize()])
@@ -862,8 +843,6 @@ export async function search(
     }
   }
   items.sort((a, b) => a.rank - b.rank)
-  // Candidate work is live-accepted files, not an enumerated inventory.
-  // active_document_count remains diagnostic and never supplies UI counts.
   let logged: Promise<unknown> = Promise.resolve()
   if (!searchLogId) {
     searchLogId = crypto.randomUUID()
@@ -936,7 +915,6 @@ export async function searchSuggestions(
     await admitSearch(db, user.id, now)
     indexes = meterSearchIndexes(db, indexes, now)
   }
-  // Project names do not depend on the viewer row, so read them alongside it.
   const [viewer, projects] = await Promise.all([
     loadDiscoveryViewer(db, user.id),
     input.query.trim()
@@ -949,8 +927,6 @@ export async function searchSuggestions(
     viewer,
     now,
   }
-  // An empty query shows only recently opened files, so skip the index and
-  // name lookups whose results the palette would discard.
   if (!input.query.trim())
     return {
       files: [],
@@ -974,8 +950,6 @@ export async function searchSuggestions(
               maxResults: 7,
             })
             const candidateIds = page.items.map((row) => row.id)
-            // Metadata is read alongside the live check and used only for the
-            // rows that check allows.
             const [discovered, rowsMetadata] = await Promise.all([
               discoverSuggestionCandidates(db, {
                 ...discoveryInput,
@@ -1030,8 +1004,6 @@ export async function searchSuggestions(
   return { files: files.map(ownedBy(user.id)), owners, projects, recent: [] }
 }
 
-// The palette has no session; mark the viewer's own files so it can say
-// "Me" like the results page.
 const ownedBy =
   (viewerId: string) =>
   <T extends { ownerId: string }>(row: T) => ({
@@ -1039,7 +1011,6 @@ const ownedBy =
     ownedByViewer: row.ownerId === viewerId,
   })
 
-/** The six most recently opened files the viewer can still discover. */
 async function recentSuggestions(
   db: Db,
   viewerId: string,
@@ -1049,7 +1020,6 @@ async function recentSuggestions(
   >,
 ) {
   const recent: Metadata[] = []
-  // Bound history reads while filling the six currently discoverable slots.
   for (let offset = 0; offset < 500 && recent.length < 6; offset += 50) {
     const candidates = await db
       .selectFrom('shareable_viewer_recency as r')

@@ -83,8 +83,6 @@ function wrapSegments(
     }
   }
 
-  // More than three lines are required. Keep the longest token-safe prefix
-  // that fits and mark the omission without splitting a URL or identifier.
   const lineGroups: string[][] = []
   let line: string[] = []
   for (const segment of wrappableSegments) {

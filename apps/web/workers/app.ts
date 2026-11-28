@@ -74,8 +74,6 @@ export { D1BackupWorkflow } from './d1-backup-workflow'
 export { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 export { LinkAbuseJudgmentWorkflow } from './link-abuse-judgment-workflow'
 
-// React Router resolves this virtual module and generates the Wrangler config
-// consumed by production deployment; raw wrangler.production.jsonc is build-only.
 const requestHandler = createRequestHandler(
   () => import('virtual:react-router/server-build'),
   import.meta.env.MODE,
@@ -540,8 +538,6 @@ function anchorServerBuild(ctx: ExecutionContext): void {
     import('virtual:react-router/server-build').then(
       () => {},
       () => {
-        // Retry the anchoring next request; the real failure surfaces through
-        // requestHandler on routes that need the build.
         serverBuildAnchored = false
       },
     ),
@@ -602,7 +598,6 @@ async function handleArtifactLiveRequest(
       new Request(liveUrl, request),
     )
   } catch {
-    // Includes constructor/storage failure before the room can return a response.
     console.error('artifact_live_admission_failed')
     return new Response('Live connection unavailable', {
       status: 503,

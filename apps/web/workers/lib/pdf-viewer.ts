@@ -1,8 +1,3 @@
-// The sandbox serves a PDF artifact as a virtual bundle on its own sandbox
-// origin: a generated viewer page at the entrypoint path, the shared viewer
-// script and style, the pdf.js library files, and the original file. Only the
-// original carries artifact bytes; everything else is the same on every origin
-// and is never stored or charged per artifact.
 import {
   PDF_ORIGINAL_PATH,
   PDF_VIEWER_SCRIPT_PATH,
@@ -25,10 +20,6 @@ export interface PdfViewerAsset {
   contentType: string
 }
 
-// The viewer's own script and style, built from apps/web/app/viewers/pdf by
-// apps/web/scripts/build-viewers.mjs. pdf.js files under
-// PDFJS_ASSET_PREFIX come from the pinned pdfjs-dist package through
-// pdfjsAsset().
 export function pdfViewerAsset(path: string): PdfViewerAsset | null {
   if (path === PDF_VIEWER_SCRIPT_PATH)
     return {
@@ -40,10 +31,6 @@ export function pdfViewerAsset(path: string): PdfViewerAsset | null {
   return null
 }
 
-// The pinned pdfjs-dist package is the sandbox Worker's static-asset directory
-// (binding PDFJS_ASSETS, never served directly). Only these files are reachable
-// under PDFJS_ASSET_PREFIX: the library, its worker, the viewer component and
-// its stylesheet images, and the CMap, standard-font, WASM and ICC data.
 const PDFJS_FILES: Record<string, string> = {
   'pdf.min.mjs': '/build/pdf.min.mjs',
   'pdf.worker.min.mjs': '/build/pdf.worker.min.mjs',
@@ -91,8 +78,6 @@ export function pdfjsAssetSource(path: string): PdfjsAssetSource | null {
   }
 }
 
-// A safe download name: the entrypoint's last segment, reduced to characters
-// that need no quoting, always ending in .pdf.
 export function pdfDownloadFileName(entrypointPath: string | null): string {
   const base = (entrypointPath ?? '').split('/').at(-1) ?? ''
   const stem = base
@@ -122,10 +107,6 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;')
 }
 
-// The generated page: a mount point for the viewer script with the download
-// name and link. The document never contains artifact content. It starts in
-// the app's default language and the inherited color scheme; the viewer
-// follows the app's preferences once its parent sends them.
 export function pdfViewerDocument(entrypointPath: string | null): string {
   const fileName = escapeHtml(pdfDownloadFileName(entrypointPath))
   const download = `${PDF_ORIGINAL_PATH}?download=1`

@@ -152,7 +152,6 @@ export async function pruneSearchLogs(db: Db, cutoff: string) {
   return result.length
 }
 
-/** A per-search key lives only on the actor-bound log. */
 export const newSearchTokenKey = () => randomBytes(32).toString('base64url')
 type SearchTokenPayload = {
   kind: 'cursor' | 'open' | 'group-cursor' | 'resume'
@@ -216,7 +215,6 @@ export async function readSearchToken(
     if (
       payload.kind !== kind ||
       !Number.isSafeInteger(payload.rank) ||
-      // A resume token starts its search over from the first rank.
       payload.rank < (kind === 'resume' ? 0 : 1)
     )
       return null

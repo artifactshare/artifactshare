@@ -9,7 +9,6 @@ export type SearchEnvironment = {
   WORKSPACE_SEARCH_INDEX?: DurableObjectNamespace<WorkspaceSearchIndex>
 }
 
-/** A notification contains only identity; D1 supplies all content and metadata. */
 export function scheduleWorkspaceSearch(
   workspaceId: string,
   background?: (promise: Promise<unknown>) => void,
@@ -31,7 +30,6 @@ export function scheduleWorkspaceSearch(
   }
 }
 
-/** One bounded seed page per invocation; completed targets remain rollback fences. */
 export async function seedSearchRebuild(
   db: Db,
   supported = INDEX_FORMAT_VERSION,
@@ -77,7 +75,6 @@ export async function seedSearchRebuild(
       )
       .execute()
   }
-  // Retrying an interrupted page cannot reset a completed workspace target.
   await db
     .updateTable('search_index_rebuilds')
     .set(
@@ -92,7 +89,6 @@ export async function seedSearchRebuild(
   return true
 }
 
-/** Only durable ready rows are rotated, including deleted workspaces. */
 export async function dispatchWorkspaceSearch(
   db: Db,
   bindings: SearchEnvironment,
@@ -102,11 +98,8 @@ export async function dispatchWorkspaceSearch(
   try {
     if (!(await seedSearchRebuild(db))) return
   } catch (error) {
-    // A failed seed page must not block unrelated ready work. Keep the page
-    // cursor unchanged and report the failure after the bounded dispatch.
     failures.push(error)
   }
-  // Recheck even after a failed page: a concurrent migration may have fenced us.
   const latest = await db
     .selectFrom('search_index_rebuilds')
     .select('target')
@@ -127,7 +120,6 @@ export async function dispatchWorkspaceSearch(
     .execute()
   await Promise.all(
     rows.map(async (row) => {
-      // Advance even when one workspace is broken, so it cannot starve others.
       try {
         await db
           .updateTable('search_index_ready')

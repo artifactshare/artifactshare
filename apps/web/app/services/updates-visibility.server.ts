@@ -57,8 +57,6 @@ async function filterByFlagVisibility(
   })
 }
 
-// 内部の flag key を公開 loader データへ流さない (hydration payload 経由で
-// 匿名閲覧者に内部名が見えるため)。
 function withoutFlag(entry: UpdateEntry): UpdateEntry {
   const { flag: _flag, notice: _notice, ...publicEntry } = entry
   return publicEntry

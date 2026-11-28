@@ -172,11 +172,6 @@ type PlanSnapshot = {
   blockingResources: OAuthWorkspaceIntegrationPlan['blockingResources']
 }
 
-/**
- * Build a safe, read-only plan for moving one OAuth user to a domain claim.
- * A missing claim is represented by a proposed workspace id; this keeps a
- * dry-run free of writes while allowing apply to create the claim atomically.
- */
 export function planOAuthWorkspaceIntegration(
   db: Kysely<DB>,
   input: {

@@ -33,7 +33,6 @@ export async function unreferencedObjectKeys(db: Kysely<DB>, keys: string[]) {
   return keys.filter((key) => !referenced.has(key))
 }
 
-// Callers scope versions explicitly, including their own publication policy.
 export function physicalVersionBytes(
   versions: SelectQueryBuilder<DB, 'versions', { id: string }>,
 ) {

@@ -1,6 +1,5 @@
 import { bindAllowedIds, SearchCapacityError } from './query'
 
-/** Candidate hints only. Every result still requires live D1 discovery. */
 export type SearchVisibility = {
   protocol: 1
   actor: string
@@ -17,7 +16,6 @@ export type SearchVisibility = {
   agent?: boolean
 }
 
-/** Fixed aliases and byte-bounded relation bindings; never interpolate caller SQL. */
 export function visibilityPredicate(input: SearchVisibility) {
   if (input.protocol !== 1) throw new SearchCapacityError()
   const bindings: Array<string | number> = []

@@ -38,14 +38,8 @@ export interface QuotaReconcileResult {
   duration_ms: number
   workspaces_checked: number
   diffs_found: number
-  // Split positive (recorded > actual: we shrunk the recorded value down) and
-  // negative (recorded < actual: we lifted the recorded value up) corrections
-  // into two scalars so a daily log can be summed without sign cancellation.
   bytes_over_corrected: number
   bytes_under_corrected: number
-  // Number of diffs we detected at SELECT time but skipped at UPDATE time
-  // because the row changed in the gap (reserveQuota / releaseQuota /
-  // deleteShareable raced us). Non-zero is benign — next cron picks them up.
   race_skipped: number
   top_diffs: QuotaDiff[]
 }
@@ -134,8 +128,6 @@ export async function reconcileQuota(
     }
   }
 
-  // Sort by |delta| desc so "top" actually means "largest drift" — operators
-  // looking at the log want to see the worst offenders first.
   diffs.sort(
     (a, b) => Math.abs(b.recorded - b.actual) - Math.abs(a.recorded - a.actual),
   )
@@ -159,16 +151,6 @@ export async function reconcileR2Orphans(
   const start = Date.now()
   const graceCutoff = new Date(now.getTime() - R2_GRACE_MS)
 
-  // Build the "in use" set from non-terminal-failure versions only. Terminal
-  // statuses ('failed' / 'blocked') won't transition further, so their r2_key
-  // is fair game for reclamation if R2 still holds the object. uploading /
-  // scanning / published all count as "in use" — uploading and scanning are
-  // mid-flight and their r2_key must be protected (see spec §4.3).
-  //
-  // Include version_files keys too: static_site bundles store the entrypoint
-  // key in versions.r2_key but all asset keys (CSS / JS / images) live only in
-  // version_files. Without this join the cron would classify every asset as
-  // an orphan and delete the published site's assets after R2_GRACE_MS.
   const [versionRows, versionFileRows] = await Promise.all([
     db
       .selectFrom('versions')
@@ -190,14 +172,6 @@ export async function reconcileR2Orphans(
   const orphans: string[] = []
   let scanned = 0
   let skippedGrace = 0
-  // Scan the bucket once to keep R2 subrequests bounded, but only classify
-  // namespaces owned by artifact storage. Unknown top-level prefixes are
-  // non-artifact data by default and must never become eligible for deletion
-  // merely because no versions row references them. Single-file artifacts use
-  // artifacts/. Static-site keys encode the current generated id contracts:
-  // 21-char workspace / 10-char shareable / 16-char version / relative path.
-  // Classifying that structure rather than joining live workspaces keeps leaked
-  // bundles collectible after an empty workspace row has been removed.
   const staticSiteKeyPattern =
     /^[A-Za-z0-9_-]{21}\/[0-9a-z]{10}\/[A-Za-z0-9_-]{16}\/.+/
   let cursor: string | null = null
