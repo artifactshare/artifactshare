@@ -8,6 +8,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import type { Plugin } from 'vite'
 import { APP_DEV_PORT, parseDevPort } from './app/lib/hosts.js'
+import { resolveAlias } from './resolve-alias.js'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../..')
 
@@ -244,15 +245,7 @@ export default defineConfig(({ command, isPreview }) => {
       tailwindcss(),
       reactRouter(),
     ],
-    resolve: {
-      alias: {
-        '@artifactshare/contract': path.resolve(
-          REPO_ROOT,
-          'packages/contract/src/index.ts',
-        ),
-      },
-      tsconfigPaths: true,
-    },
+    resolve: { alias: resolveAlias },
     server: topology
       ? {
           port: topology.port,

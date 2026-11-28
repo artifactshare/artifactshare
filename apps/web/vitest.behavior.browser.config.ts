@@ -32,10 +32,10 @@ import {
   projectPlacementDestinations,
   projectPlacementCandidates,
 } from './app/test/project-placement-browser-command'
-import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
+import { resolveAlias } from './resolve-alias.js'
 import BrowserDurationSequencer from './app/test/browser-shard-sequencer'
 
 export default defineConfig({
@@ -64,7 +64,7 @@ export default defineConfig({
       'turndown',
     ],
   },
-  resolve: { alias: { '~': resolve(import.meta.dirname, 'app') } },
+  resolve: { alias: resolveAlias },
   plugins: [
     tailwindcss(),
     {

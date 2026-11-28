@@ -1,14 +1,14 @@
-import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
+import { resolveAlias } from './resolve-alias.js'
 
 export default defineConfig({
   cacheDir: 'node_modules/.vite-browser-visual',
   define: {
     __VISUAL_FAULT__: JSON.stringify(process.env.VISUAL_FAULT ?? null),
   },
-  resolve: { alias: { '~': resolve(import.meta.dirname, 'app') } },
+  resolve: { alias: resolveAlias },
   plugins: [
     tailwindcss(),
     {
