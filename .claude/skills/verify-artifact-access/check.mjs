@@ -7,6 +7,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
+// Invariants the current code is known to break. Each entry is a reported
+// finding, not a pass. Remove the entry when the code is fixed.
+const KNOWN_FINDINGS = {}
+
 const MUTATIONS = [
   {
     name: 'list-link-ignores-suspension',
@@ -125,5 +129,6 @@ const MUTATIONS = [
 await runModelChecks({
   modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
   module: 'ArtifactAccess',
+  knownFindings: KNOWN_FINDINGS,
   mutations: MUTATIONS,
 })

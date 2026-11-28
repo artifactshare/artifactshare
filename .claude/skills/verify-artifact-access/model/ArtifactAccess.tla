@@ -163,7 +163,9 @@ SharedProjectFound == kind = "project" /\ ~archived /\ verified /\ projectGrant
 (* projects.$id.tsx loader: findWorkspaceProject, else findSharedProjectForViewer, else 404 *)
 ProjectOpen == WorkspaceProjectFound \/ SharedProjectFound
 
-(* projects.$id.tsx loadSharedProject: visibleSharedProjectShareableToViewer *)
+(* projects.$id.tsx loadSharedProject: visibleSharedProjectShareableToViewer.
+   A 'project' artifact needs a current audience entry: the project_members
+   row stays after the viewer leaves the audience, so it is not enough. *)
 SharedVisible ==
     \/ vis = "project" /\ verified /\ projectGrant
     \/ shareGrant /\ verified
