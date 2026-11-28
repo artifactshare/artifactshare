@@ -119,6 +119,8 @@
     "scripts/changed-browser-repetitions.test.mjs",
     "scripts/ci/browser-shard-durations.mjs",
     "scripts/browser-shard-durations.test.mjs",
+    "scripts/ci/model-checks.mjs",
+    "scripts/model-checks.test.mjs",
     "scripts/skill-eval.mjs",
     "scripts/skill-eval.test.mjs",
     "scripts/lib/skill-eval/environment.mjs",

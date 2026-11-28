@@ -24,7 +24,7 @@ Each rule is an INVARIANT in `model/CliRefreshRotation.tla`.
 
 ## When to use
 
-Run the check when a change touches any of these. The model describes them as of the sync commit below.
+Run the check when a change touches any of these. The model describes them as of the sync commit below. `COVERS` in `check.mjs` lists these files. CI runs this check on a pull request that changes one of them, the model, `check.mjs`, or `scripts/lib/tlc-check.mjs`, and in every merge group.
 
 | Code | Model actions |
 | --- | --- |
@@ -39,7 +39,7 @@ Run the check when a change touches any of these. The model describes them as of
 **Sync commit: `eefce1b27e8020aa9a2993b58cd7a7f636a45603`.** To see whether covered code moved since then:
 
 ```sh
-git diff --stat eefce1b27e8020aa9a2993b58cd7a7f636a45603 -- apps/web/app/services/cli-refresh-credentials.server.ts apps/web/app/services/auth.server.ts apps/web/app/lib/d1-batch.server.ts
+git diff --stat eefce1b27e8020aa9a2993b58cd7a7f636a45603 -- $(node -e "import('./.claude/skills/verify-cli-refresh-rotation/check.mjs').then((m) => console.log(m.COVERS.join(' ')))")
 ```
 
 If a covered function changed, read the diff against the model before you trust a pass. A pass on a model that no longer matches the code proves nothing.
