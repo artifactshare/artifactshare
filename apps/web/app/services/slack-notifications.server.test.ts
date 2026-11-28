@@ -241,25 +241,23 @@ describe('processSlackNotificationOutbox', () => {
     expect(scheduledJobForCron('0 17 * * *')).toBe('reconciliation')
   })
 
-  test.skipIf(globalThis.process.env.PUBLIC_TEST === '1')(
-    'wrangler.jsonc の crons が両 job を 1 つずつ覆う',
-    async () => {
-      // 設定と振り分けの契約: wrangler.jsonc の cron 式が変わったときに、
-      // Slack 通知が止まったり日次リコンサイルが 5 分間隔で走ったりする
-      // 事故をテストで検知する。
-      const { readFile } = await import('node:fs/promises')
-      const raw = await readFile(
-        new URL('../../wrangler.jsonc', import.meta.url),
-        'utf8',
-      )
-      const cronsBlock = raw.match(/"crons":\s*\[([^\]]*)\]/)?.[1] ?? ''
-      const crons = [...cronsBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1])
-      expect(crons.length).toBeGreaterThan(0)
-      const jobs = crons.map((cron) => scheduledJobForCron(cron))
-      expect(jobs.filter((j) => j === 'slack-notifications')).toHaveLength(1)
-      expect(jobs.filter((j) => j === 'reconciliation')).toHaveLength(1)
-    },
-  )
+  test('wrangler.production.jsonc の crons が両 job を 1 つずつ覆う', async () => {
+    // 設定と振り分けの契約: 本番デプロイが読む wrangler.production.jsonc の
+    // cron 式が変わったときに、Slack 通知が止まったり日次リコンサイルが
+    // 5 分間隔で走ったりする事故をテストで検知する。既定の wrangler.jsonc は
+    // ローカルとプレビューの設定で、日次リコンサイルを持たない。
+    const { readFile } = await import('node:fs/promises')
+    const raw = await readFile(
+      new URL('../../wrangler.production.jsonc', import.meta.url),
+      'utf8',
+    )
+    const cronsBlock = raw.match(/"crons":\s*\[([^\]]*)\]/)?.[1] ?? ''
+    const crons = [...cronsBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    expect(crons.length).toBeGreaterThan(0)
+    const jobs = crons.map((cron) => scheduledJobForCron(cron))
+    expect(jobs.filter((j) => j === 'slack-notifications')).toHaveLength(1)
+    expect(jobs.filter((j) => j === 'reconciliation')).toHaveLength(1)
+  })
 
   test('タイトルと投稿者名の Slack 制御列がエスケープされる', async () => {
     postSlackWebhook.mockClear()
