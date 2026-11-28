@@ -33,7 +33,7 @@ export type ProjectMembershipRow = {
 
 export const externalGrantDomainSql = sql<boolean>`w.hd is not null and w.hd <> '' and instr(d.email,'@') > 0 and lower(substr(d.email, instr(d.email,'@')+1)) <> lower(w.hd) and lower(substr(d.email, instr(d.email,'@')+1)) <> 'bots.artifactshare.invalid'`
 
-export function visibleProjectContainerToViewerSql(user: SessionUser) {
+function visibleProjectContainerToViewerSql(user: SessionUser) {
   const workspaceAccessRevoked = workspaceAccessRevokedSql(
     sql.ref('c.workspace_id'),
     user.id,

@@ -519,7 +519,7 @@ export async function countWorkspaceContributors(
   return Number(row.count)
 }
 
-export const RECIPIENT_SEARCH_LIMIT = 20
+const RECIPIENT_SEARCH_LIMIT = 20
 
 export async function searchAssetTransferRecipients(
   db: Kysely<DB>,

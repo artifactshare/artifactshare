@@ -13,7 +13,6 @@ const dbRef = vi.hoisted(() => ({
 
 const storageMock = vi.hoisted(() => ({
   getArtifact: vi.fn(),
-  headArtifact: vi.fn(),
 }))
 
 const consumeJtiMock = vi.hoisted(() => vi.fn())
@@ -421,7 +420,6 @@ describe('violation reporter injection handler', () => {
     await seedStaticSite(fixture.db)
     consumeJtiMock.mockReset().mockResolvedValue(true)
     storageMock.getArtifact.mockReset()
-    storageMock.headArtifact.mockReset()
   })
 
   test('injects before the first element only', () => {
@@ -944,17 +942,6 @@ function storedBinaryArtifact(body: Uint8Array, contentType: string) {
   }
 }
 
-function storedHeadArtifact(body: string | Uint8Array, contentType: string) {
-  const size =
-    typeof body === 'string'
-      ? new TextEncoder().encode(body).byteLength
-      : body.byteLength
-  return {
-    httpMetadata: { contentType },
-    size,
-  } as unknown as R2Object
-}
-
 function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
     bytes.byteOffset,
@@ -1078,7 +1065,6 @@ describe('handleArtifactSandboxRequest', () => {
     await seedStaticSite(fixture.db)
     consumeJtiMock.mockReset().mockResolvedValue(true)
     storageMock.getArtifact.mockReset()
-    storageMock.headArtifact.mockReset()
   })
 
   test.each(['owner-1', null])(
@@ -3251,9 +3237,6 @@ describe('handleArtifactSandboxRequest', () => {
         storageMock.getArtifact.mockResolvedValue(
           storedArtifact('<body>Target page</body>', 'text/html'),
         )
-        storageMock.headArtifact.mockResolvedValue(
-          storedHeadArtifact('<body>Target page</body>', 'text/html'),
-        )
         const page = await handleArtifactSandboxRequest(
           new Request(new URL(target, origin), {
             headers: { Cookie: cookie },
@@ -4525,9 +4508,6 @@ describe('handleArtifactSandboxRequest', () => {
       storageMock.getArtifact.mockImplementation(async () =>
         storedArtifact('postMessage(1)', 'text/javascript'),
       )
-      storageMock.headArtifact.mockResolvedValue(
-        storedHeadArtifact('postMessage(1)', 'text/javascript'),
-      )
       let cookie = ''
       if (access !== 'anonymous-link') {
         const token =
@@ -4559,13 +4539,6 @@ describe('handleArtifactSandboxRequest', () => {
       }
       // The guard covers documents and SPA fallbacks as well as script MIME.
       for (const path of ['/index.html', '/projects/alpha']) {
-        if (access === 'anonymous-cookie') {
-          storageMock.headArtifact.mockImplementation(async (_bucket, key) =>
-            key.endsWith('/index.html')
-              ? storedHeadArtifact('<p>Entry</p>', 'text/html')
-              : null,
-          )
-        }
         const response = await handleArtifactSandboxRequest(
           new Request(
             `${access === 'authenticated' ? sandboxOrigin() : linkOrigin()}${path}`,
@@ -4577,9 +4550,6 @@ describe('handleArtifactSandboxRequest', () => {
         expect(response.status).toBe(403)
         expect((await response.arrayBuffer()).byteLength).toBe(0)
       }
-      storageMock.headArtifact.mockResolvedValue(
-        storedHeadArtifact('postMessage(1)', 'text/javascript'),
-      )
       expect(storageMock.getArtifact).not.toHaveBeenCalled()
       const response = await handleArtifactSandboxRequest(
         new Request(
@@ -4676,9 +4646,6 @@ describe('handleArtifactSandboxRequest', () => {
         storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
       )
       .mockResolvedValueOnce(storedArtifact('body{}', 'text/css'))
-    storageMock.headArtifact.mockResolvedValue(
-      storedHeadArtifact('body{}', 'text/css'),
-    )
     const token = await anonymousEntrypointToken()
     const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
@@ -4727,9 +4694,6 @@ describe('handleArtifactSandboxRequest', () => {
         storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
       )
       .mockResolvedValueOnce(storedArtifact('body{}', 'text/css'))
-    storageMock.headArtifact.mockResolvedValue(
-      storedHeadArtifact('body{}', 'text/css'),
-    )
     const token = await signSandboxToken(
       {
         uid: null,
@@ -4779,14 +4743,6 @@ describe('handleArtifactSandboxRequest', () => {
       .mockResolvedValueOnce(
         storedArtifact('<!doctype html><body>Fallback</body>', 'text/html'),
       )
-    storageMock.headArtifact.mockImplementation(async (_bucket, key: string) =>
-      key.endsWith('/index.html')
-        ? storedHeadArtifact(
-            '<!doctype html><body>Fallback</body>',
-            'text/html',
-          )
-        : null,
-    )
     const token = await anonymousEntrypointToken()
     const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
@@ -4828,12 +4784,9 @@ describe('handleArtifactSandboxRequest', () => {
         created_at: '2026-05-22T00:00:00.000Z',
       })
       .execute()
+    // The deleted file still exists in R2 for the old version.
     storageMock.getArtifact.mockImplementation(async (_bucket, key: string) =>
       storedArtifact(key, 'text/plain'),
-    )
-    // The deleted file still exists in R2 for the old version.
-    storageMock.headArtifact.mockResolvedValue(
-      storedHeadArtifact('old object', 'video/mp4'),
     )
     const oldHost = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
     const oldEntry = await handleArtifactSandboxRequest(
@@ -4918,7 +4871,6 @@ describe('handleArtifactSandboxRequest', () => {
       .where('id', '=', 'abc123def4')
       .execute()
     expect((await requestAsset('/index.html')).status).toBe(401)
-    expect(storageMock.headArtifact).not.toHaveBeenCalled()
   })
 
   test('stops serving an anonymous bundle cookie after its ten-minute TTL', async () => {

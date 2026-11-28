@@ -27,8 +27,8 @@ import { workspaceAdminQuery } from '~/services/access.server'
 import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
 
-export const FREE_PLAN_ACTIVE_BOT_LIMIT = 1
-export const ACTIVE_BOT_LIMIT = 10
+const FREE_PLAN_ACTIVE_BOT_LIMIT = 1
+const ACTIVE_BOT_LIMIT = 10
 
 export type WorkspaceBotRow = {
   id: string
@@ -81,7 +81,7 @@ type Actor = { id: string; workspaceId: string }
  * follow-up statements conditioned on `bot_stopped_at = marker` are 0-row for
  * every request that lost the CAS.
  */
-export function uniqueStopMarker(now = new Date()): string {
+function uniqueStopMarker(now = new Date()): string {
   const base = now.toISOString()
   let digits = ''
   const bytes = crypto.getRandomValues(new Uint8Array(6))

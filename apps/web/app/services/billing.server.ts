@@ -58,7 +58,7 @@ export type BillingEnv = {
   STRIPE_PORTAL_CONFIGURATION: string
 }
 
-export type BillingMutationResult =
+type BillingMutationResult =
   | { kind: 'ok'; url: string }
   | { kind: 'forbidden' }
   | { kind: 'invalid' }

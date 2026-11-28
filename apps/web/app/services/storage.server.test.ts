@@ -4,7 +4,6 @@ const bucketMock = vi.hoisted(() => ({
   put: vi.fn(),
   get: vi.fn(),
   delete: vi.fn(),
-  head: vi.fn(),
   list: vi.fn(),
 }))
 
@@ -19,7 +18,6 @@ import {
   deleteArtifactsByPrefix,
   getArtifact,
   getArtifactPrefixText,
-  headArtifact,
   putArtifact,
 } from './storage.server'
 
@@ -88,7 +86,6 @@ describe('R2 wrapper', () => {
     bucketMock.put.mockReset()
     bucketMock.get.mockReset()
     bucketMock.delete.mockReset()
-    bucketMock.head.mockReset()
     bucketMock.list.mockReset()
   })
 
@@ -178,14 +175,6 @@ describe('R2 wrapper', () => {
     await deleteArtifact(fakeBucket, 'artifacts/s/v/index.html')
 
     expect(bucketMock.delete).toHaveBeenCalledWith('artifacts/s/v/index.html')
-  })
-
-  test('headArtifact forwards the key to the bucket.head', async () => {
-    bucketMock.head.mockResolvedValue(null)
-
-    await headArtifact(fakeBucket, 'artifacts/s/v/index.html')
-
-    expect(bucketMock.head).toHaveBeenCalledWith('artifacts/s/v/index.html')
   })
 
   test('deleteArtifactsByPrefix logs when R2 truncates without a cursor', async () => {
