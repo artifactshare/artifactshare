@@ -60,6 +60,7 @@ export type BillingEnv = {
 
 type BillingMutationResult =
   | { kind: 'ok'; url: string }
+  | { kind: 'portal'; url: string }
   | { kind: 'forbidden' }
   | { kind: 'invalid' }
   | { kind: 'already-subscribed' }
@@ -338,7 +339,7 @@ export async function createPortalSession(
       return_url: `${origin}/settings/billing`,
     })
     if (!session.url) return { kind: 'external-failed' }
-    return { kind: 'ok', url: session.url }
+    return { kind: 'portal', url: session.url }
   } catch (error) {
     console.error('billing_portal_session_create_failed', error)
     return { kind: 'external-failed' }
@@ -595,7 +596,7 @@ export async function changePlan(
   plan: CheckoutPlan,
   interval: BillingInterval,
 ): Promise<
-  Exclude<BillingMutationResult, { kind: 'ok' }> | { kind: 'accepted' }
+  Exclude<BillingMutationResult, { url: string }> | { kind: 'accepted' }
 > {
   if (
     !workspace.stripe_subscription_id ||

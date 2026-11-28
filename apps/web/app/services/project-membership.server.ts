@@ -377,12 +377,11 @@ export async function listJoinedProjectsForDropdown(
     newCount: Number(r.newCount),
   }))
 }
-export async function countProjectParticipants(db: Db, containerId: string) {
-  const row = await db
+function participantsWithAccessQuery(db: Db, containerId: string) {
+  return db
     .selectFrom('project_members as pm')
     .innerJoin('users as u', 'u.id', 'pm.user_id')
     .innerJoin('artifact_containers as c', 'c.id', 'pm.container_id')
-    .select(sql<number>`count(*)`.as('count'))
     .where('pm.container_id', '=', containerId)
     .where(
       sql<boolean>`(
@@ -404,6 +403,11 @@ export async function countProjectParticipants(db: Db, containerId: string) {
           AND exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email)))
       )`,
     )
+}
+
+export async function countProjectParticipants(db: Db, containerId: string) {
+  const row = await participantsWithAccessQuery(db, containerId)
+    .select(sql<number>`count(*)`.as('count'))
     .executeTakeFirst()
   return Number(row?.count ?? 0)
 }
@@ -413,32 +417,8 @@ export async function listProjectParticipants(
   containerId: string,
   limit: number,
 ) {
-  return await db
-    .selectFrom('project_members as pm')
-    .innerJoin('users as u', 'u.id', 'pm.user_id')
-    .innerJoin('artifact_containers as c', 'c.id', 'pm.container_id')
+  return await participantsWithAccessQuery(db, containerId)
     .select(['u.id', 'u.name', 'u.email', 'u.image'])
-    .where('pm.container_id', '=', containerId)
-    .where(
-      sql<boolean>`(
-        (u.workspace_id = c.workspace_id AND (
-          (
-            NOT ${workspaceAccessRevokedSql(
-              sql.ref('c.workspace_id'),
-              sql.ref('u.id'),
-            )}
-            AND (
-              c.base_visibility = 'workspace'
-              OR pm.user_id = c.created_by_id
-            )
-          )
-          OR exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email) and u.email_verified = 1)
-          OR exists(select 1 from workspace_members wm inner join workspaces w2 on w2.id = wm.workspace_id where wm.workspace_id=c.workspace_id and wm.user_id=u.id and wm.role in ('owner','admin') and wm.status='active' and ${planInTierSql('w2.plan', ['team'])})
-        ))
-        OR (u.workspace_id <> c.workspace_id AND u.email_verified = 1
-          AND exists(select 1 from project_share_defaults d where d.project_container_id=c.id and lower(d.email)=lower(u.email)))
-      )`,
-    )
     .orderBy('pm.joined_at', 'desc')
     .limit(limit)
     .execute()

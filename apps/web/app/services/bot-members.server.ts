@@ -28,7 +28,7 @@ import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
 
 const FREE_PLAN_ACTIVE_BOT_LIMIT = 1
-const ACTIVE_BOT_LIMIT = 10
+const PAID_PLAN_ACTIVE_BOT_LIMIT = 10
 
 export type WorkspaceBotRow = {
   id: string
@@ -341,7 +341,7 @@ export async function createWorkspaceBot(
         .where(
           activeBotCountQuery(db, actor.workspaceId),
           '<',
-          sql<number>`CASE WHEN ${planInTierSql('workspaces.plan', PAID_TIERS)} THEN ${ACTIVE_BOT_LIMIT} ELSE ${FREE_PLAN_ACTIVE_BOT_LIMIT} END`,
+          sql<number>`CASE WHEN ${planInTierSql('workspaces.plan', PAID_TIERS)} THEN ${PAID_PLAN_ACTIVE_BOT_LIMIT} ELSE ${FREE_PLAN_ACTIVE_BOT_LIMIT} END`,
         )
         .select([
           eb.val(botUserId).as('id'),
@@ -710,7 +710,7 @@ async function classifyCreateFailure(
     .where('id', '=', workspaceId)
     .executeTakeFirst()
   const cap = isPaidPlan(workspace?.plan)
-    ? ACTIVE_BOT_LIMIT
+    ? PAID_PLAN_ACTIVE_BOT_LIMIT
     : FREE_PLAN_ACTIVE_BOT_LIMIT
   const activeCount = await activeBotCountQuery(
     db,

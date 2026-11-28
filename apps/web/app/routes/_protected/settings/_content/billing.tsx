@@ -242,7 +242,8 @@ async function submitBilling(
       currency,
       locale,
     )
-    if (result.kind === 'ok') return redirect(result.url)
+    if (result.kind === 'ok' || result.kind === 'portal')
+      return redirect(result.url)
     return settingsFailure(intent, result.kind)
   }
 
@@ -256,7 +257,7 @@ async function submitBilling(
       workspace.stripe_customer_id,
       origin,
     )
-    if (result.kind === 'ok') return redirect(result.url)
+    if (result.kind === 'portal') return redirect(result.url)
     return settingsFailure(intent, result.kind)
   }
 

@@ -7,7 +7,7 @@ const envMock = vi.hoisted(() => ({
 }))
 const requireUserApiMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
-const isWorkspaceAdminMock = vi.hoisted(() => vi.fn())
+const isWorkspaceAdminOnAnyPlanMock = vi.hoisted(() => vi.fn())
 const isWorkspaceAccessRevokedMock = vi.hoisted(() => vi.fn())
 const startLinkAbuseJudgmentMock = vi.hoisted(() => vi.fn())
 const shareableRef = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({ requireUser: requireUserMock }))
 vi.mock('~/services/access.server', () => ({
-  isWorkspaceAdmin: isWorkspaceAdminMock,
+  isWorkspaceAdminOnAnyPlan: isWorkspaceAdminOnAnyPlanMock,
 }))
 vi.mock('~/modules/access', () => ({
   isWorkspaceAccessRevoked: isWorkspaceAccessRevokedMock,
@@ -64,7 +64,7 @@ describe('manual link abuse check route', () => {
       id: 'owner-1',
       workspaceId: 'ws-1',
     })
-    isWorkspaceAdminMock.mockReset().mockResolvedValue(false)
+    isWorkspaceAdminOnAnyPlanMock.mockReset().mockResolvedValue(false)
     isWorkspaceAccessRevokedMock.mockReset().mockResolvedValue(false)
     startLinkAbuseJudgmentMock
       .mockReset()
@@ -93,10 +93,10 @@ describe('manual link abuse check route', () => {
 
   test('allows an active workspace admin', async () => {
     requireUserMock.mockReturnValue({ id: 'admin-1', workspaceId: 'ws-1' })
-    isWorkspaceAdminMock.mockResolvedValue(true)
+    isWorkspaceAdminOnAnyPlanMock.mockResolvedValue(true)
     const response = await action(actionArgs())
     expect(response.status).toBe(202)
-    expect(isWorkspaceAdminMock).toHaveBeenCalled()
+    expect(isWorkspaceAdminOnAnyPlanMock).toHaveBeenCalled()
   })
 
   test('reports the manual cooldown with a retry delay', async () => {

@@ -29,7 +29,7 @@ export function workspaceAdminQuery(
     .where('status', '=', 'active')
 }
 
-export async function isWorkspaceAdmin(
+export async function isWorkspaceAdminOnAnyPlan(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
   workspaceId: string,

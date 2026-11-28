@@ -1131,7 +1131,7 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
   db: Kysely<DB>,
   actor: { id: string; workspaceId: string },
   targetUserId: string,
-): Promise<'ok' | 'not-found' | 'forbidden'> {
+): Promise<'ok' | 'not-found' | 'forbidden' | 'bot-revoke-not-supported'> {
   const authorization = { actorId: actor.id, workspaceId: actor.workspaceId }
   const authorized = await authorizedTargetQuery(
     db,
@@ -1141,11 +1141,12 @@ export async function revokeAllCliRefreshCredentialFamiliesForMember(
   if (!authorized) {
     const target = await db
       .selectFrom('users')
-      .select('id')
+      .select('kind')
       .where('id', '=', targetUserId)
       .where('workspace_id', '=', actor.workspaceId)
       .executeTakeFirst()
-    return target ? 'forbidden' : 'not-found'
+    if (!target) return 'not-found'
+    return target.kind === 'bot' ? 'bot-revoke-not-supported' : 'forbidden'
   }
   await revokeAllCliRefreshCredentialFamiliesAtomic(db, {
     actorUserId: actor.id,
@@ -1188,6 +1189,7 @@ function authorizedTargetQuery(
     .select('users.id')
     .where('users.id', '=', targetUserId)
     .where('users.workspace_id', '=', authorization.workspaceId)
+    .where('users.kind', '=', 'human')
     .where(({ exists }) =>
       exists(
         db

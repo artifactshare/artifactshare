@@ -62,13 +62,6 @@ export async function revokeWorkspaceMemberCliSessions(
 ): Promise<TeamMutationResult> {
   const authorized = await requireWorkspaceAdmin(db, actor)
   if (authorized.kind !== 'ok') return authorized
-  const target = await db
-    .selectFrom('users')
-    .select('kind')
-    .where('id', '=', targetUserId)
-    .where('workspace_id', '=', actor.workspaceId)
-    .executeTakeFirst()
-  if (target?.kind === 'bot') return { kind: 'bot-revoke-not-supported' }
   return { kind: await revokeMemberCliFamilies(db, actor, targetUserId) }
 }
 

@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers'
 import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
-import { isWorkspaceAdmin } from '~/services/access.server'
+import { isWorkspaceAdminOnAnyPlan } from '~/services/access.server'
 import { isWorkspaceAccessRevoked } from '~/modules/access'
 import { createDb } from '~/services/db.server'
 import { startLinkAbuseJudgment } from '~/services/link-abuse-signals.server'
@@ -33,7 +33,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     shareable.visibility === 'link' &&
     (shareable.owner_user_id === user.id
       ? !ownerRevoked
-      : await isWorkspaceAdmin(db, user, shareable.workspace_id))
+      : await isWorkspaceAdminOnAnyPlan(db, user, shareable.workspace_id))
   if (!authorized) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
