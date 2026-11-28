@@ -26,6 +26,9 @@ const KINDS = new Set<ConversationKind>([
 ])
 const WHITESPACE_EDGE = /^\p{White_Space}|\p{White_Space}$/u
 const MEDIA_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+// The product contract's STATIC_SITE_UPLOAD_LIMITS.pathChars, which this
+// standalone package cannot import.
+const MAX_PATH_CHARS: number = 256
 const typedArrayPrototype = Object.getPrototypeOf(
   Uint8Array.prototype,
 ) as object
@@ -382,7 +385,7 @@ function preflightFiles(
     if (size > limit || size > policyLimit - total) invalidIntent()
     total += size
     const path = staticSite ? staticSiteCollisionKey(file.path) : file.path
-    if (staticSite && staticSiteStoredPath(file.path).length > 256) {
+    if (staticSite && staticSiteStoredPath(file.path).length > MAX_PATH_CHARS) {
       invalidIntent()
     }
     if (staticSite && !supportedStaticSitePath(file.path)) invalidIntent()
@@ -600,7 +603,11 @@ function boundedString(
 function boundedPath(value: unknown): string {
   if (typeof value !== 'string') invalidIntent()
   utf8Length(value, 'invalid_intent')
-  if (value.length < 1 || value.length > 256 || hasAsciiControl(value)) {
+  if (
+    value.length < 1 ||
+    value.length > MAX_PATH_CHARS ||
+    hasAsciiControl(value)
+  ) {
     invalidIntent()
   }
   return value
