@@ -119,6 +119,62 @@ function addFrameOffset(
 
 type PendingJump = { threadId: string; location: string }
 
+type SandboxLoadState = 'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
+type CspViolationEntry = CspViolationMessage & { id: string }
+
+// The frame's URL, how far that URL has got, and what it reported are one
+// state: every navigation moves all three together. Keeping them in one
+// reducer means a navigation is a single dispatch naming what it is, instead
+// of three setters whose agreement a reader has to check at each call site.
+type FrameState = {
+  url: string
+  changed: boolean
+  loadState: SandboxLoadState
+  violations: CspViolationEntry[]
+}
+
+type FrameAction =
+  // A different document. Its predecessor's violations do not describe it.
+  | { type: 'navigate'; url: string }
+  // The same document behind a freshly signed URL, so its violations stand.
+  | { type: 'reload'; url: string }
+  | { type: 'load-state'; loadState: SandboxLoadState }
+  | {
+      type: 'violations'
+      retain: (current: CspViolationEntry[]) => CspViolationEntry[]
+    }
+
+// Each case returns the current state unchanged when nothing moved, so React
+// bails out of the render exactly where the separate setters used to.
+function frameReducer(current: FrameState, action: FrameAction): FrameState {
+  switch (action.type) {
+    case 'navigate':
+      return {
+        url: action.url,
+        changed: true,
+        loadState: 'loading',
+        violations: [],
+      }
+    case 'reload':
+      return {
+        ...current,
+        url: action.url,
+        changed: true,
+        loadState: 'loading',
+      }
+    case 'load-state':
+      return current.loadState === action.loadState
+        ? current
+        : { ...current, loadState: action.loadState }
+    case 'violations': {
+      const violations = action.retain(current.violations)
+      return violations === current.violations
+        ? current
+        : { ...current, violations }
+    }
+  }
+}
+
 type PdfPage = { pageNumber: number; pageCount: number }
 
 type SandboxFrameProps = {
@@ -453,33 +509,24 @@ function useSandboxFrameController({
   lowTrust = false,
 }: SandboxFrameProps) {
   const { locale, t } = useT()
-  const [violations, setViolations] = useState<
-    Array<CspViolationMessage & { id: string }>
-  >([])
-  const [loadState, setLoadState] = useState<
-    'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
-  >('loading')
   const [retryFailed, setRetryFailed] = useState(false)
   const [pendingExternalNavigation, setPendingExternalNavigation] =
     useState<Extract<
       ReturnType<typeof classifyViewerLinkNavigation>,
       { kind: 'open-external' }
     > | null>(null)
-  const [frameSource, setFrameUrl] = useReducer(
-    (_current: { url: string; changed: boolean }, next: string) => ({
-      url: next,
-      changed: true,
-    }),
+  const [frameState, dispatchFrame] = useReducer(
+    frameReducer,
     url,
-    (initial) => {
-      return {
-        url:
-          initial + (typeof window === 'undefined' ? '' : window.location.hash),
-        changed: false,
-      }
-    },
+    (initial): FrameState => ({
+      url:
+        initial + (typeof window === 'undefined' ? '' : window.location.hash),
+      changed: false,
+      loadState: 'loading',
+      violations: [],
+    }),
   )
-  const frameUrl = frameSource.url
+  const { url: frameUrl, loadState, violations } = frameState
   const [probeCycle, restartProbeCycle] = useReducer(
     (current: number) => current + 1,
     0,
@@ -746,12 +793,12 @@ function useSandboxFrameController({
             )
           ) {
             if (focusRetryFailureRef.current) setRetryFailed(true)
-            setLoadState('paused')
+            dispatchFrame({ type: 'load-state', loadState: 'paused' })
             return
           }
           automaticRecoveryAttemptsRef.current += 1
           frameDestinationRef.current += 1
-          setLoadState('resuming')
+          dispatchFrame({ type: 'load-state', loadState: 'resuming' })
           const next = await refreshSandboxFrameUrl(
             shareableId,
             versionId,
@@ -769,18 +816,17 @@ function useSandboxFrameController({
           )
             return
           if (next) {
-            setFrameUrl(next)
+            dispatchFrame({ type: 'reload', url: next })
             restartFrameInstance()
-            setLoadState('loading')
           } else {
             if (focusRetryFailureRef.current) setRetryFailed(true)
-            setLoadState('paused')
+            dispatchFrame({ type: 'load-state', loadState: 'paused' })
           }
         } else if (outcome === 'forbidden') {
-          setLoadState('blocked')
+          dispatchFrame({ type: 'load-state', loadState: 'blocked' })
           reportBlock('forbidden')
         } else {
-          setLoadState('blocked')
+          dispatchFrame({ type: 'load-state', loadState: 'blocked' })
           reportBlock('network-error')
         }
       } catch (error) {
@@ -791,7 +837,7 @@ function useSandboxFrameController({
           )
         )
           return
-        setLoadState('blocked')
+        dispatchFrame({ type: 'load-state', loadState: 'blocked' })
         reportBlock(
           error instanceof DOMException && error.name === 'AbortError'
             ? 'timeout'
@@ -814,7 +860,7 @@ function useSandboxFrameController({
     frameNavigationIdRef.current = generation
     automaticRecoveryAttemptsRef.current = 0
     setRetryFailed(false)
-    setLoadState('ready')
+    dispatchFrame({ type: 'load-state', loadState: 'ready' })
     if (focusRetryFailureRef.current) {
       focusRetryFailureRef.current = false
       focusFrame()
@@ -894,12 +940,8 @@ function useSandboxFrameController({
         hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
         clearReadyFallback()
-        // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
-        setViolations([])
         pendingJumpRef.current = jump
-        // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
-        setLoadState('loading')
-        setFrameUrl(destination)
+        dispatchFrame({ type: 'navigate', url: destination })
         // The same src would not navigate a document that moved away from it
         if (destination === frameUrl) restartFrameInstance()
         return
@@ -919,9 +961,7 @@ function useSandboxFrameController({
         staticSiteAuthRef.current = Date.now()
         clearReadyFallback()
         pendingJumpRef.current = jump
-        setViolations([])
-        setLoadState('loading')
-        setFrameUrl(nextFrameUrl)
+        dispatchFrame({ type: 'navigate', url: nextFrameUrl })
       })
     },
   )
@@ -1123,9 +1163,11 @@ function useSandboxFrameController({
       )
     } else if (message.kind === 'csp-violation') {
       const entry = { ...message, id: crypto.randomUUID() }
-      setViolations((prev) =>
-        retainCspViolation(prev, entry, trustedMessageOrigin, renderType),
-      )
+      dispatchFrame({
+        type: 'violations',
+        retain: (current) =>
+          retainCspViolation(current, entry, trustedMessageOrigin, renderType),
+      })
     } else if (message.kind === 'ready') {
       securityTokenRef.current = acceptSandboxToken(
         securityTokenRef.current,
@@ -1415,7 +1457,7 @@ function useSandboxFrameController({
         frameNavigationIdRef.current += 1
         automaticRecoveryAttemptsRef.current = 0
         setRetryFailed(false)
-        setLoadState('loading')
+        dispatchFrame({ type: 'load-state', loadState: 'loading' })
         restartProbeCycle()
       }, 500)
     }
@@ -1446,7 +1488,7 @@ function useSandboxFrameController({
     loadState,
     retryFailed,
     frameUrl,
-    frameSourceChanged: frameSource.changed,
+    frameSourceChanged: frameState.changed,
     frameInstance,
     isTransitioning,
     frameRef,
@@ -1458,7 +1500,7 @@ function useSandboxFrameController({
       frameDestinationRef.current += 1
       automaticRecoveryAttemptsRef.current = 0
       setRetryFailed(false)
-      setLoadState('resuming')
+      dispatchFrame({ type: 'load-state', loadState: 'resuming' })
       void refreshSandboxFrameUrl(shareableId, versionId, frameUrl, {
         getHash: hashSync.latest,
         getTargetUrl: () => recoveryDestinationRef.current,
@@ -1467,17 +1509,16 @@ function useSandboxFrameController({
           if (generation !== frameNavigationIdRef.current) return
           if (!nextFrameUrl) {
             setRetryFailed(true)
-            setLoadState('paused')
+            dispatchFrame({ type: 'load-state', loadState: 'paused' })
             return
           }
-          setFrameUrl(nextFrameUrl)
+          dispatchFrame({ type: 'reload', url: nextFrameUrl })
           restartFrameInstance()
-          setLoadState('loading')
         },
         () => {
           if (generation !== frameNavigationIdRef.current) return
           setRetryFailed(true)
-          setLoadState('paused')
+          dispatchFrame({ type: 'load-state', loadState: 'paused' })
         },
       )
     },
