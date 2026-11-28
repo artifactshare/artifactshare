@@ -85,7 +85,7 @@ export type ViewerAccessFacts = {
   workspaceAccessRevoked: boolean
 }
 
-type ViewerAccessFactsRow = ProjectAccessFactsRow & {
+export type ViewerAccessFactsRow = ProjectAccessFactsRow & {
   visibility: Visibility
   owner_user_id: string
   artifact_workspace_id: string
@@ -318,22 +318,110 @@ export function activeLinkExpiry(
   ))`
 }
 
-/**
- * Load the database-owned facts used by the viewer authorization policy.
- *
- * The caller supplies only identity and time. Viewer workspace, email, and
- * verification state are read from the user row so callers cannot accidentally
- * authorize from stale session attributes.
- */
-export async function facts(
+export function canOpenSql(input: {
+  viewerUserId: string | null
+  now: string
+}) {
+  const teamAdmin = (
+    workspace: ReturnType<typeof sql.ref>,
+  ) => sql<boolean>`EXISTS (
+    SELECT 1
+    FROM workspace_members open_admin
+    JOIN workspaces open_admin_workspace
+      ON open_admin_workspace.id = open_admin.workspace_id
+    WHERE open_admin.workspace_id = ${workspace}
+      AND open_admin.user_id = open_viewer.id
+      AND open_viewer.workspace_id = ${workspace}
+      AND open_admin.status = 'active'
+      AND open_admin.role IN ('owner', 'admin')
+      AND ${planInTierSql('open_admin_workspace.plan', ['team'])}
+  )`
+  return sql<boolean>`(
+    COALESCE(
+      shareables.visibility = 'link'
+      AND shareables.link_suspended_at IS NULL
+      AND ${activeLinkExpiry(input.now)}
+      AND EXISTS (
+        SELECT 1
+        FROM workspaces open_link_workspace
+        WHERE open_link_workspace.id = shareables.workspace_id
+          AND open_link_workspace.link_sharing_enabled = 1
+      ),
+      0
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM users open_viewer
+      LEFT JOIN artifact_containers open_container
+        ON open_container.id = shareables.container_id
+        AND open_container.kind = 'project'
+      WHERE open_viewer.id = ${input.viewerUserId}
+        AND (
+          (
+            NOT ${workspaceAccessRevokedSql(
+              sql.ref('shareables.workspace_id'),
+              sql.ref('open_viewer.id'),
+            )}
+            AND (
+              shareables.owner_user_id = open_viewer.id
+              OR (
+                open_viewer.workspace_id = shareables.workspace_id
+                AND (
+                  shareables.visibility = 'workspace'
+                  OR (
+                    shareables.visibility = 'project'
+                    AND open_container.base_visibility = 'workspace'
+                  )
+                )
+              )
+              OR (
+                shareables.visibility = 'project'
+                AND open_container.created_by_id = open_viewer.id
+              )
+            )
+          )
+          OR (
+            shareables.visibility = 'link'
+            AND ${teamAdmin(sql.ref('shareables.workspace_id'))}
+          )
+          OR (
+            shareables.visibility = 'project'
+            AND ${teamAdmin(sql.ref('open_container.workspace_id'))}
+          )
+          OR (
+            open_viewer.email_verified = 1
+            AND (
+              EXISTS (
+                SELECT 1
+                FROM shareable_grants open_grant
+                WHERE open_grant.shareable_id = shareables.id
+                  AND ${lowerEmail('open_grant.granted_email')} = ${lowerEmail(
+                    'open_viewer.email',
+                  )}
+              )
+              OR (
+                shareables.visibility = 'project'
+                AND EXISTS (
+                  SELECT 1
+                  FROM project_share_defaults open_audience
+                  WHERE open_audience.project_container_id = open_container.id
+                    AND ${lowerEmail('open_audience.email')} = ${lowerEmail(
+                      'open_viewer.email',
+                    )}
+                )
+              )
+            )
+          )
+        )
+    )
+  )`
+}
+
+export function viewerAccessFactsQuery(
   db: Kysely<DB>,
-  input: {
-    shareableId: string
-    viewerUserId: string | null
-    now: string
-  },
-): Promise<LoadedViewerAccessFacts | null> {
-  const row = (await db
+  input: { viewerUserId: string | null; now: string },
+) {
+  return db
     .selectFrom('shareables')
     .leftJoin(
       'artifact_containers as access_container',
@@ -386,10 +474,32 @@ export async function facts(
           AND ${lowerEmail('sg.granted_email')} = ${lowerEmail('access_viewer.email')}
       )`.as('has_shareable_grant'),
     ])
+}
+
+/**
+ * Load the database-owned facts used by the viewer authorization policy.
+ *
+ * The caller supplies only identity and time. Viewer workspace, email, and
+ * verification state are read from the user row so callers cannot accidentally
+ * authorize from stale session attributes.
+ */
+export async function facts(
+  db: Kysely<DB>,
+  input: {
+    shareableId: string
+    viewerUserId: string | null
+    now: string
+  },
+): Promise<LoadedViewerAccessFacts | null> {
+  const row = (await viewerAccessFactsQuery(db, input)
     .where('shareables.id', '=', input.shareableId)
     .executeTakeFirst()) as ViewerAccessFactsRow | undefined
+  return row ? viewerAccessFactsFromRow(row) : null
+}
 
-  if (!row) return null
+export function viewerAccessFactsFromRow(
+  row: ViewerAccessFactsRow,
+): LoadedViewerAccessFacts {
   const projectFacts = projectAccessFactsFromRow(row)
   return {
     visibility: row.visibility,

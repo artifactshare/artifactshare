@@ -358,7 +358,7 @@ interface BillingOverageChargesTable {
   processed_at: string | null
 }
 
-interface ArtifactContainersTable {
+export interface ArtifactContainersTable {
   id: string
   workspace_id: string
   kind: 'inbox' | 'project'
@@ -392,7 +392,7 @@ interface ProjectMembersTable {
   last_seen_at: string
 }
 
-interface UsersTable {
+export interface UsersTable {
   oauth_token_version: Generated<number>
   id: string
   email: string

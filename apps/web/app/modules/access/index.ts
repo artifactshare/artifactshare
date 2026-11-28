@@ -1,4 +1,5 @@
 export {
+  canOpenSql,
   facts,
   activeLinkExpiry,
   projectAccessAllowed,
