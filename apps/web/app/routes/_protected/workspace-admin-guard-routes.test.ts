@@ -67,7 +67,9 @@ test('ownerless settings read persisted roles and require an active admin to sea
         membersPage: { total: 2 },
       })
       expect(await loadSettingsShell(request)).toMatchObject({
+        kind: 'upgrade',
         currentUserRole: role,
+        currentUserIsAdmin: role === 'admin',
       })
       const result = await recipients({
         ...args,
@@ -99,6 +101,10 @@ test('ownerless settings read persisted roles and require an active admin to sea
       ).toEqual({ name: role === 'admin' ? 'Renamed' : 'Example' })
       expect(await rows.execute()).toEqual(before)
     }
+    await db.updateTable('workspaces').set({ plan: 'team' }).execute()
+    const teamRequest = new RouterContextProvider()
+    teamRequest.set(userContext, context.get(userContext))
+    expect(await loadSettingsShell(teamRequest)).toMatchObject({ kind: 'team' })
   } finally {
     await db.destroy()
   }

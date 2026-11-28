@@ -1,5 +1,4 @@
 import { sql, type ExpressionBuilder, type Kysely } from 'kysely'
-import { redirect } from 'react-router'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { ARTIFACT_UPLOAD_LIMITS } from '~/lib/product-contracts'
 import type { ProjectBaseVisibility, Visibility } from '~/lib/shareable-types'
@@ -55,14 +54,6 @@ export async function isTeamWorkspaceAdmin(
     .where(planInTierSql('workspaces.plan', ['team']))
     .executeTakeFirst()
   return Boolean(row)
-}
-
-export async function requireInventoryAccess(
-  db: Parameters<typeof isTeamWorkspaceAdmin>[0],
-  user: Parameters<typeof isTeamWorkspaceAdmin>[1],
-) {
-  if (!(await isTeamWorkspaceAdmin(db, user, user.workspaceId)))
-    throw redirect('/settings')
 }
 
 export interface ArtifactSnapshot {
