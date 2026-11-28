@@ -19,7 +19,6 @@ import {
 } from '../errors.js'
 import {
   artifactGetSuccessFields,
-  artifactSourceSuccessFields,
   artifactsListSuccessFields,
   writeFailure,
   writeSuccess,
@@ -79,30 +78,6 @@ export async function runArtifactsGet(
     )
   }
   return writeSuccess(command, result.data, mode)
-}
-
-export async function readArtifact(
-  parsed: ParsedArgs,
-  command: 'artifacts get' | 'open',
-): Promise<
-  { data: ArtifactReadResponse; error?: never } | { error: CliError }
-> {
-  const target = parseArtifactReadTarget(parsed, command)
-  if (target.error) return { error: target.error }
-  const credential = await resolveCredential(
-    parsed.options,
-    await resolveProjectConfig(),
-  )
-  if (!credential.ok) return { error: credential.error }
-  const result = await fetchArtifact(parsed, target.value, credential)
-  if (result.error) return result
-  if (!artifactSourceSuccessFields(result.data))
-    return {
-      error: serviceError(
-        'This artifact has no single source file. Use download for static sites.',
-      ),
-    }
-  return { data: result.data }
 }
 
 function parseArtifactReadTarget(

@@ -403,7 +403,7 @@ export function artifactVersionsSuccessFields(
 ): data is ArtifactVersionsResponse {
   return isContract(ArtifactVersionsResponseSchema, data)
 }
-export function artifactSourceSuccessFields(
+function artifactSourceSuccessFields(
   data: unknown,
 ): data is ArtifactReadResponse {
   if (isContract(ARTIFACT_READ_RESPONSE_SCHEMA, data)) return true

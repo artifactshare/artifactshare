@@ -57,10 +57,6 @@ export type ProjectConfigResolution = {
   error?: CliError
 }
 
-export function projectConfigPath(cwd = process.cwd()): string {
-  return resolve(cwd, PROJECT_CONFIG_PATH)
-}
-
 export function projectConfigLocalPath(cwd = process.cwd()): string {
   return resolve(cwd, PROJECT_CONFIG_LOCAL_PATH)
 }
@@ -352,14 +348,6 @@ export async function readProjectConfigAtDirectory(
   const filename =
     kind === 'local' ? PROJECT_CONFIG_LOCAL_PATH : PROJECT_CONFIG_PATH
   return await readJsonFile<Record<string, unknown>>(join(directory, filename))
-}
-
-export async function readRawLocalProjectConfig(
-  cwd = process.cwd(),
-): Promise<Record<string, unknown> | null> {
-  return await readJsonFile<Record<string, unknown>>(
-    projectConfigLocalPath(cwd),
-  )
 }
 
 export function configString(value: unknown): string | null {

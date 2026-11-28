@@ -255,12 +255,6 @@ export async function writeGlobalConfig(
   return true
 }
 
-export async function updateGlobalConfig(
-  update: (config: GlobalConfig) => GlobalConfig,
-): Promise<boolean> {
-  return writeGlobalConfig(update((await readGlobalConfig()) ?? {}))
-}
-
 function accountName(profile: string, baseUrl: string): string {
   return `${baseUrl}:${profile}`
 }

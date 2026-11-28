@@ -1,5 +1,4 @@
 import { readdirSync, statSync } from 'node:fs'
-import { basename } from 'node:path'
 import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import { cliError, validationError } from '../errors.js'
 import { writeFailure, writeSuccess, writeSuccessLine } from '../output.js'
@@ -971,8 +970,4 @@ export async function runPreviewStop(
   const result = await agentApi(resolved.target, '/api/agent/stop', {})
   if ('error' in result) return writeFailure(command, result.error, mode, 1)
   return writeSuccess(command, result.body, mode)
-}
-
-export function previewFileName(realpath: string): string {
-  return basename(realpath)
 }
