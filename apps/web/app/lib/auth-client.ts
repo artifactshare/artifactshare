@@ -1,4 +1,8 @@
-import type { PublisherApproval } from '@artifactshare/contract'
+import type {
+  AgentApproval,
+  DeviceVerifyResponse,
+  PublisherApproval,
+} from '@artifactshare/contract'
 import { z } from 'zod'
 import { oauthProviderClient } from '@better-auth/oauth-provider/client'
 import { createAuthClient } from 'better-auth/react'
@@ -7,6 +11,11 @@ import {
   emailOTPClient,
 } from 'better-auth/client/plugins'
 
+// Copies of the contract's PublisherClientNameSchema and
+// PublisherApprovalSchema. The copy exists so the sign-in, consent and device
+// routes do not pull the contract into their browser chunk, which
+// auth-client.test.ts holds them to; auth-client-contract-parity.test.ts fails
+// when the copy and the contract stop agreeing on an input.
 const publisherClientNameSchema = z
   .string()
   .transform((value) => value.trim().normalize('NFC'))
@@ -41,40 +50,59 @@ const authClient = createAuthClient({
 
 export const { signIn, signOut } = authClient
 
-type AuthActionResult = { data?: unknown; error?: { code?: string } }
+/**
+ * Every Better Auth call resolves with this envelope instead of rejecting on an
+ * HTTP error, so a present `error` is how an endpoint says no and a rejection
+ * means the request never got an answer at all. `error` is null on success,
+ * `status` is the HTTP status of a refusal, and `code` is the Better Auth error
+ * code. `data` defaults to `unknown` because nothing validates the body on the
+ * way in, so each screen reads the fields it needs and treats the rest as
+ * unavailable.
+ */
+export type AuthFetchResult<TData = unknown> = {
+  data?: TData | null
+  error?: {
+    code?: string
+    message?: string
+    status?: number
+    statusText?: string
+  } | null
+}
 
-export function sendSignInOtp(email: string): Promise<AuthActionResult> {
+export function sendSignInOtp(email: string): Promise<AuthFetchResult> {
   return authClient.emailOtp.sendVerificationOtp({
     email,
     type: 'sign-in',
-  }) as Promise<AuthActionResult>
+  }) as Promise<AuthFetchResult>
 }
 
 export function signInWithOtp(
   email: string,
   otp: string,
   name: string,
-): Promise<AuthActionResult> {
+): Promise<AuthFetchResult> {
   return authClient.signIn.emailOtp({
     email,
     otp,
     name,
-  }) as Promise<AuthActionResult>
+  }) as Promise<AuthFetchResult>
 }
 
-export function oauthConsent(accept: boolean): Promise<unknown> {
+export function oauthConsent(accept: boolean): Promise<AuthFetchResult> {
   return authClient.oauth2.consent({ accept })
 }
 
-export function oauthClientInfo(clientId: string): Promise<unknown> {
+export function oauthClientInfo(clientId: string): Promise<AuthFetchResult> {
   return authClient.$fetch('/oauth2/public-client', {
     method: 'GET',
     query: { client_id: clientId },
   })
 }
 
-export function deviceVerify(userCode: string): Promise<unknown> {
-  return authClient.$fetch('/device', {
+export function deviceVerify(
+  userCode: string,
+): Promise<AuthFetchResult<DeviceVerifyResponse>> {
+  return authClient.$fetch<DeviceVerifyResponse>('/device', {
     method: 'GET',
     query: { user_code: userCode },
   })
@@ -86,7 +114,7 @@ export function deviceApprove(
   publisher?:
     | { mode: 'create-new' }
     | { mode: 'continue-existing'; client_id: string },
-): Promise<unknown> {
+): Promise<AuthFetchResult> {
   return authClient.$fetch('/device/approve', {
     method: 'POST',
     body: {
@@ -97,29 +125,16 @@ export function deviceApprove(
   })
 }
 
-export function deviceDeny(userCode: string): Promise<unknown> {
+export function deviceDeny(userCode: string): Promise<AuthFetchResult> {
   return authClient.$fetch('/device/deny', {
     method: 'POST',
     body: { userCode },
   })
 }
 
-export async function loadDeviceAgentApproval(userCode: string): Promise<
-  | {
-      preset: 'agent'
-      deviceName: string | null
-      projectSelector: string | null
-      fixedProject: {
-        id: string
-        name: string
-        baseVisibility: 'workspace' | 'private'
-        updatedAt: string
-      } | null
-      fixedProjectError: boolean
-    }
-  | PublisherApproval
-  | null
-> {
+export async function loadDeviceAgentApproval(
+  userCode: string,
+): Promise<AgentApproval | PublisherApproval | null> {
   const response = await fetch(
     `/api/cli/device-approval?user_code=${encodeURIComponent(userCode)}`,
     { headers: { accept: 'application/json' } },
@@ -133,18 +148,7 @@ export async function loadDeviceAgentApproval(userCode: string): Promise<
     return publisherApprovalSchema.parse(body.publisherApproval)
   const approval = body.agentApproval
   if (!approval || typeof approval !== 'object') return null
-  return approval as {
-    preset: 'agent'
-    deviceName: string | null
-    projectSelector: string | null
-    fixedProject: {
-      id: string
-      name: string
-      baseVisibility: 'workspace' | 'private'
-      updatedAt: string
-    } | null
-    fixedProjectError: boolean
-  }
+  return approval as AgentApproval
 }
 
 export function signInToCurrentPage(): void {

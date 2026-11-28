@@ -1,6 +1,6 @@
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import type { Compilable, Kysely } from 'kysely'
-import { defaultVisibilityFor } from '~/lib/shareable-types'
+import { visibilityForNewArtifact } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
 import { isAgentPublishableDestination } from '~/services/agent-scope.server'
@@ -445,14 +445,12 @@ async function publishWithDb(
     createIntent.destination.kind === 'project'
       ? createIntent.destination.id
       : null
-  const visibility =
-    (publisher ? 'private' : createIntent.visibility) ??
-    (createIntent.grantEmails && createIntent.grantEmails.length > 0
-      ? 'private'
-      : defaultVisibilityFor(
-          isOrgWorkspace(normalizedUser),
-          containerId === null ? 'inbox' : 'project',
-        ))
+  const visibility = visibilityForNewArtifact({
+    requested: publisher ? 'private' : createIntent.visibility,
+    grantedEmailCount: createIntent.grantEmails?.length ?? 0,
+    isOrg: isOrgWorkspace(normalizedUser),
+    containerKind: containerId === null ? 'inbox' : 'project',
+  })
 
   if (agentAuthority !== null) {
     const agentUser = {

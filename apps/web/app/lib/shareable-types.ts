@@ -1,11 +1,14 @@
-export type ArtifactKind =
-  | 'markdown_page'
-  | 'html_page'
-  | 'static_site'
-  | 'spa'
-  | 'workspace_app'
-  | 'pdf'
-  | 'video'
+export const ARTIFACT_KINDS = [
+  'markdown_page',
+  'html_page',
+  'static_site',
+  'spa',
+  'workspace_app',
+  'pdf',
+  'video',
+] as const
+
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number]
 
 export type Visibility = 'private' | 'workspace' | 'project' | 'link'
 
@@ -47,6 +50,34 @@ export function defaultVisibilityFor(
 ): EditableVisibility {
   if (containerKind === 'project') return 'project'
   return isOrg ? 'workspace' : 'private'
+}
+
+/**
+ * The visibility a newly published artifact gets. Naming people to share with
+ * is itself a visibility choice: a grant list makes the artifact private to
+ * that list, instead of taking the account's or the project's default.
+ */
+export function visibilityForNewArtifact(input: {
+  requested: EditableVisibility | null | undefined
+  grantedEmailCount: number
+  isOrg: boolean
+  containerKind: ContainerKind
+}): EditableVisibility {
+  return (
+    input.requested ??
+    (input.grantedEmailCount > 0
+      ? 'private'
+      : defaultVisibilityFor(input.isOrg, input.containerKind))
+  )
+}
+
+/**
+ * `shareables.artifact_kind` and `versions.artifact_kind` are plain TEXT with
+ * no CHECK constraint, so a row read back is a string until this says
+ * otherwise.
+ */
+export function isArtifactKind(value: unknown): value is ArtifactKind {
+  return (ARTIFACT_KINDS as ReadonlyArray<unknown>).includes(value)
 }
 
 export function isVisibility(value: unknown): value is Visibility {

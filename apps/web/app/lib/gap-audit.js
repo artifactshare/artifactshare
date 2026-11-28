@@ -1,7 +1,49 @@
-// @ts-nocheck
+/**
+ * One rectangle of ink an element paints: either a `surface` (background,
+ * border edge, or replaced element box) or a run of `text`. `fontSize` is
+ * carried on text rects only, so that a gap between two different type sizes
+ * can be told apart from a gap inside one block of running text.
+ *
+ * @typedef {{
+ *   top: number,
+ *   bottom: number,
+ *   left: number,
+ *   right: number,
+ *   width: number,
+ *   height: number,
+ *   kind: 'surface' | 'text',
+ *   fontSize?: number,
+ * }} InkRect
+ *
+ * @typedef {{ tag: string, class: string, text: string }} BoxDescription
+ * @typedef {{ tag: string, role?: string, text: string }} ControlDescription
+ *
+ * @typedef {{
+ *   audit: 'vertical',
+ *   gap: number,
+ *   kind: 'text-text' | 'surface',
+ *   parent: BoxDescription,
+ *   a: BoxDescription,
+ *   b: BoxDescription,
+ * }} VerticalGapFinding
+ *
+ * @typedef {{
+ *   audit: 'interactive',
+ *   axis: 'vertical' | 'horizontal',
+ *   gap: number,
+ *   a: ControlDescription,
+ *   b: ControlDescription,
+ * }} InteractiveGapFinding
+ *
+ * @typedef {VerticalGapFinding | InteractiveGapFinding} GapFinding
+ */
+
 /**
  * The function is self-contained because Playwright serializes it into
  * page.evaluate().
+ *
+ * @param {{ rootSelector?: string, minGap?: number }} [options]
+ * @returns {GapFinding[]}
  */
 export function auditGaps({
   rootSelector = 'body',
@@ -10,8 +52,13 @@ export function auditGaps({
   const root = document.querySelector(rootSelector)
   if (!root) return []
   const interactiveMinGap = 4
+  /**
+   * @param {Element} element
+   * @returns {InkRect[]}
+   */
   const rects = (element) => {
     const style = getComputedStyle(element)
+    /** @type {InkRect[]} */
     const result = []
     // opacity composites the whole subtree away; visibility can be overridden
     // by descendants, so it only hides this element's own ink below.
@@ -23,6 +70,10 @@ export function auditGaps({
       for (const child of element.children) result.push(...rects(child))
       return result
     }
+    /**
+     * @param {DOMRect} rect
+     * @param {InkRect['kind']} kind
+     */
     const add = (rect, kind) => {
       // DOMRect properties live on the prototype, so spreading one yields {}.
       if (rect.width >= 2 && rect.height >= 2)
@@ -36,6 +87,7 @@ export function auditGaps({
           kind,
         })
     }
+    /** @param {string} color */
     const isOpaque = (color) => {
       const alpha = color.match(
         /rgba?\([^,]+,[^,]+,[^,]+(?:,\s*([^)]+))?\)/,
@@ -63,20 +115,44 @@ export function auditGaps({
     if (!selfHidden && (background || replacement))
       add(element.getBoundingClientRect(), 'surface')
     const box = element.getBoundingClientRect()
-    for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
-      if (
-        !selfHidden &&
-        style[`border${side}Style`] !== 'none' &&
-        parseFloat(style[`border${side}Width`]) > 0
-      ) {
-        const width =
-          side === 'Top' || side === 'Bottom'
-            ? box.width
-            : parseFloat(style[`border${side}Width`])
-        const height =
-          side === 'Top' || side === 'Bottom'
-            ? parseFloat(style[`border${side}Width`])
-            : box.height
+    /**
+     * The four border edges in `Top, Right, Bottom, Left` order. `side`
+     * decides which box edge the band hugs; `lineStyle` and `lineWidth` are
+     * the computed `border<Side>Style` and `border<Side>Width`.
+     *
+     * @type {{
+     *   side: 'Top' | 'Right' | 'Bottom' | 'Left',
+     *   lineStyle: string,
+     *   lineWidth: string,
+     * }[]}
+     */
+    const borderEdges = [
+      {
+        side: 'Top',
+        lineStyle: style.borderTopStyle,
+        lineWidth: style.borderTopWidth,
+      },
+      {
+        side: 'Right',
+        lineStyle: style.borderRightStyle,
+        lineWidth: style.borderRightWidth,
+      },
+      {
+        side: 'Bottom',
+        lineStyle: style.borderBottomStyle,
+        lineWidth: style.borderBottomWidth,
+      },
+      {
+        side: 'Left',
+        lineStyle: style.borderLeftStyle,
+        lineWidth: style.borderLeftWidth,
+      },
+    ]
+    for (const { side, lineStyle, lineWidth } of borderEdges) {
+      if (!selfHidden && lineStyle !== 'none' && parseFloat(lineWidth) > 0) {
+        const horizontalBand = side === 'Top' || side === 'Bottom'
+        const width = horizontalBand ? box.width : parseFloat(lineWidth)
+        const height = horizontalBand ? parseFloat(lineWidth) : box.height
         if (width > 0 && height > 0)
           result.push({
             top: side === 'Bottom' ? box.bottom - height : box.top,
@@ -104,17 +180,22 @@ export function auditGaps({
             result[result.length - 1].fontSize = fontSize
         }
       } else if (child.nodeType === Node.ELEMENT_NODE)
-        result.push(...rects(child))
+        result.push(...rects(/** @type {Element} */ (child)))
     }
     return result
   }
+  /** @param {Element} element */
   const describedText = (element) => {
     if (element.closest('[data-gap-audit-redact]')) return '[redacted]'
-    const copy = element.cloneNode(true)
+    const copy = /** @type {Element} */ (element.cloneNode(true))
     for (const secret of copy.querySelectorAll('[data-gap-audit-redact]'))
       secret.textContent = '[redacted]'
     return (copy.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
   }
+  /**
+   * @param {Element} element
+   * @returns {BoxDescription}
+   */
   const describe = (element) => ({
     tag: element.tagName.toLowerCase(),
     class:
@@ -123,7 +204,9 @@ export function auditGaps({
         : '',
     text: describedText(element),
   })
+  /** @type {GapFinding[]} */
   const findings = []
+  /** @param {Element} parent */
   const walk = (parent) => {
     const children = [...parent.children].filter((element) => {
       const style = getComputedStyle(element)
@@ -238,6 +321,7 @@ export function auditGaps({
         elementStyle.visibility === 'collapse'
       )
         return false
+      /** @type {Element | null} */
       let ancestor = element
       while (ancestor) {
         const style = getComputedStyle(ancestor)
@@ -256,6 +340,10 @@ export function auditGaps({
     (element) =>
       !candidates.some((other) => other !== element && other.contains(element)),
   )
+  /**
+   * @param {Element} element
+   * @returns {ControlDescription}
+   */
   const describeInteractive = (element) => ({
     tag: element.tagName.toLowerCase(),
     role: element.getAttribute('role') || undefined,
@@ -300,6 +388,13 @@ export function auditGaps({
   return findings
 }
 
+/**
+ * @param {{ rootSelector?: string, minGap?: number }} [options]
+ * @returns {VerticalGapFinding[]}
+ */
 export function auditVerticalGaps(options = {}) {
-  return auditGaps(options).filter((finding) => finding.audit === 'vertical')
+  return auditGaps(options).filter(
+    /** @returns {finding is VerticalGapFinding} */
+    (finding) => finding.audit === 'vertical',
+  )
 }

@@ -36,13 +36,13 @@ import {
 } from '@artifactshare/contract'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
+import { MAX_TITLE_OVERRIDE_LENGTH } from '~/lib/product-contracts'
 import { APEX_HOST, isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import type { UploadPermissionResult } from '~/services/upload-access.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import {
-  defaultVisibilityFor,
   isVisibility,
-  type ContainerKind,
+  visibilityForNewArtifact,
   type ProjectBaseVisibility,
   type Visibility,
 } from '~/lib/shareable-types'
@@ -128,7 +128,15 @@ export {
 
 type Format = 'html' | 'markdown'
 
-const MAX_TITLE_OVERRIDE_LENGTH = 200
+/**
+ * `share_artifact`'s display title. The cap belongs to the tool's declared
+ * input, so a caller reading tools/list sees the same bound the handler
+ * applies: a longer title is trimmed and truncated, never rejected.
+ */
+const titleOverrideInput = z
+  .string()
+  .optional()
+  .transform((value) => value?.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH))
 
 const IDEMPOTENCY_WINDOW_MS = 10 * 60_000
 const CONNECT_AI_AGENTS_URL = `https://${APEX_HOST}/connect#${CONNECT_AI_AGENTS_ANCHOR}`
@@ -623,12 +631,9 @@ export function registerArtifactTools(
           .describe(
             'The full HTML or Markdown source to share. Do not pass a local file path; MCP cannot read the user’s filesystem.',
           ),
-        title: z
-          .string()
-          .optional()
-          .describe(
-            'Display title. Defaults to the title found in the content.',
-          ),
+        title: titleOverrideInput.describe(
+          'Display title. Defaults to the title found in the content.',
+        ),
         format: z
           .enum(['html', 'markdown'])
           .optional()
@@ -678,15 +683,13 @@ export function registerArtifactTools(
       const format = inferFormat(args.content, args.format)
       const grantEmails = args.grant_emails ?? []
       const containerId = args.project_id ?? null
-      const targetContainerKind: ContainerKind = containerId
-        ? 'project'
-        : 'inbox'
-      const visibility: Visibility =
-        args.visibility ??
-        (grantEmails.length > 0
-          ? 'private'
-          : defaultVisibilityFor(isOrgWorkspace(user), targetContainerKind))
-      const title = args.title?.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH)
+      const visibility: Visibility = visibilityForNewArtifact({
+        requested: args.visibility,
+        grantedEmailCount: grantEmails.length,
+        isOrg: isOrgWorkspace(user),
+        containerKind: containerId ? 'project' : 'inbox',
+      })
+      const title = args.title
 
       const contentHash = await publishContentHash({
         format,

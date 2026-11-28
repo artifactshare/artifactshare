@@ -179,14 +179,12 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   }
   const { id } = parsedParams.data
   return await withDb(async (db) => {
-    const result = await deleteShareable(
-      db,
-      user,
-      id,
-      ...(authority?.kind === 'publisher'
-        ? [{ publisherAuthority: authority }]
-        : []),
-    )
+    const result =
+      authority?.kind === 'publisher'
+        ? await deleteShareable(db, user, id, {
+            publisherAuthority: authority,
+          })
+        : await deleteShareable(db, user, id)
     if (result.kind !== 'ok') return cliDeleteArtifactErrorResponse(result)
     return Response.json(
       ArtifactDeleteResponseSchema.parse(deleteArtifactSuccessBody(id)),

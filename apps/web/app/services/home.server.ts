@@ -102,7 +102,7 @@ function unreadCommentSummarySelect(
       FROM comment_messages
       INNER JOIN comment_threads ON comment_threads.id = comment_messages.thread_id
       WHERE comment_threads.shareable_id = shareables.id
-        AND ${commentThreadWindowExpression(sql.ref('shareables.id'))}
+        AND ${commentThreadWindowExpression(sql.ref('shareables.id'), 'comment_threads')}
         AND (recency.comment_seen_through_at IS NULL OR comment_messages.created_at > recency.comment_seen_through_at)
         AND comment_messages.created_by_id <> ${userId}
       ORDER BY comment_messages.created_at DESC, comment_messages.id DESC
@@ -111,16 +111,13 @@ function unreadCommentSummarySelect(
   )`.as('unread_comment_summary')
 }
 
-function recentAttributeSelect(
-  user: ShareableViewer,
-  containerAlias = 'containers',
-) {
+function recentAttributeSelect(user: ShareableViewer, containerAlias: string) {
   return recentAttributeExpression(user, containerAlias).as('recent_attribute')
 }
 
 function recentAttributeExpression(
   user: ShareableViewer,
-  containerAlias = 'containers',
+  containerAlias: string,
 ) {
   const containerId = sql.ref(`${containerAlias}.id`)
   const viewerUserId = sql.ref('recency.viewer_user_id')
@@ -182,7 +179,7 @@ export function recentFilterPredicate(
   filters: { relation?: RecentRelation; unread?: boolean },
 ) {
   const relation = filters.relation ?? 'all'
-  const attribute = recentAttributeExpression(user)
+  const attribute = recentAttributeExpression(user, 'containers')
   const relationPredicate =
     relation === 'own'
       ? sql<boolean>`(${attribute}) = 'own'`
@@ -202,8 +199,8 @@ export function recentFilterPredicate(
 export function recentRowActivitySelects(
   eb: ExpressionBuilder<DB, 'shareables'>,
   userId: string,
+  containerAlias: string,
   user?: ShareableViewer,
-  containerAlias = 'containers',
 ) {
   return [
     versionCountSelect(eb),
@@ -380,7 +377,7 @@ function recentArtifactsQuery(
       'containers.workspace_id as project_workspace_id',
       'workspaces.name as project_workspace_name',
       commentCountSelect(eb),
-      ...recentRowActivitySelects(eb, user.id, user),
+      ...recentRowActivitySelects(eb, user.id, 'containers', user),
       directGrantsSelect(user.id, user.email),
     ])
     .where('recency.viewer_user_id', '=', user.id)

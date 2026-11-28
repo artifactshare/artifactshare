@@ -45,7 +45,7 @@ import type {
   ProjectBaseVisibility,
   Visibility,
 } from '~/lib/shareable-types'
-import { visibilityForContainer } from '~/lib/shareable-types'
+import { isArtifactKind, visibilityForContainer } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { validateBundlePath } from '../../workers/lib/path-validator'
@@ -102,7 +102,10 @@ import {
   resolveUploadContainer,
 } from './projects.server'
 import { slackNotificationEnqueueQuery } from './slack-notifications.server'
-import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
+import {
+  MAX_TITLE_OVERRIDE_LENGTH,
+  STATIC_SITE_UPLOAD_LIMITS,
+} from '~/lib/product-contracts'
 import type { CliAuthority } from './cli-authority.server'
 import { isAgentPublishableDestination } from './agent-scope.server'
 import { PAID_TIERS } from '~/lib/plan-tier'
@@ -115,7 +118,6 @@ const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const MAX_STATIC_SITE_TOTAL_BYTES = STATIC_SITE_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_PATH_CHARS = STATIC_SITE_UPLOAD_LIMITS.pathChars
 const MAX_STATIC_SITE_FOLDER_DEPTH = STATIC_SITE_UPLOAD_LIMITS.folderDepth
-const MAX_TITLE_OVERRIDE_LENGTH = 200
 const VERSION_FILE_INSERT_CHUNK_SIZE = 8
 const IGNORED_STATIC_SITE_FILE_NAMES = new Set([
   '.DS_Store',
@@ -1324,20 +1326,66 @@ export async function updateShareableMetadata(
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
 }
 
-export async function deleteShareable(
+type ShareableDeleteActor = {
+  id: string
+  email?: string | null
+  emailVerified: boolean
+  workspaceId: string
+}
+
+/**
+ * What the caller is allowed to delete. A publisher client can only reach its
+ * own artifacts, so it never also carries the project-manager fallback; the
+ * pair of optional flags this replaces could say otherwise, and the body then
+ * quietly forced the manager flag off.
+ */
+type ShareableDeleteAuthority =
+  | { kind: 'owner' }
+  | { kind: 'owner-or-project-manager' }
+  | { kind: 'publisher'; publisher: PublisherAuthority }
+
+/** Delete as the artifact's owner, or as the admin of a bot that owns it. */
+export function deleteShareable(
   db: Kysely<DB>,
-  user: {
-    id: string
-    email?: string | null
-    emailVerified: boolean
-    workspaceId: string
-  },
+  user: ShareableDeleteActor,
   shareableId: string,
-  options?: {
-    allowManagerDelete?: boolean
-    publisherAuthority?: PublisherAuthority
-  },
+  options?: { publisherAuthority?: PublisherAuthority },
 ): Promise<DeleteShareableResult> {
+  return deleteShareableWithAuthority(
+    db,
+    user,
+    shareableId,
+    options?.publisherAuthority
+      ? { kind: 'publisher', publisher: options.publisherAuthority }
+      : { kind: 'owner' },
+  )
+}
+
+/**
+ * Delete from a surface that lets a manager of the project the artifact sits
+ * in remove a member's artifact. The owner and a bot admin still delete
+ * through this path; it only adds the manager as a fallback when they are
+ * neither.
+ */
+export function deleteShareableAllowingProjectManager(
+  db: Kysely<DB>,
+  user: ShareableDeleteActor,
+  shareableId: string,
+): Promise<DeleteShareableResult> {
+  return deleteShareableWithAuthority(db, user, shareableId, {
+    kind: 'owner-or-project-manager',
+  })
+}
+
+async function deleteShareableWithAuthority(
+  db: Kysely<DB>,
+  user: ShareableDeleteActor,
+  shareableId: string,
+  authority: ShareableDeleteAuthority,
+): Promise<DeleteShareableResult> {
+  const publisherAuthority =
+    authority.kind === 'publisher' ? authority.publisher : undefined
+  const allowManagerDelete = authority.kind === 'owner-or-project-manager'
   const shareable = await db
     .selectFrom('shareables')
     .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
@@ -1355,18 +1403,10 @@ export async function deleteShareable(
   if (!shareable) return { kind: 'not-found' }
 
   if (
-    options?.publisherAuthority &&
-    !(await isPublisherArtifact(
-      db,
-      user.id,
-      options.publisherAuthority,
-      shareableId,
-    ))
+    publisherAuthority &&
+    !(await isPublisherArtifact(db, user.id, publisherAuthority, shareableId))
   )
     return { kind: 'not-found' }
-  const allowManagerDelete = options?.publisherAuthority
-    ? false
-    : (options?.allowManagerDelete ?? false)
   const isOwner =
     shareable.owner_user_id === user.id &&
     !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
@@ -1427,7 +1467,7 @@ export async function deleteShareable(
     workspaceId: shareable.workspace_id,
     containerId: shareable.container_id,
     allowManagerDelete,
-    publisherAuthority: options?.publisherAuthority,
+    publisherAuthority,
   })
   const batch: Compilable<unknown>[] = [
     db
@@ -3194,8 +3234,11 @@ export async function prepareUpload(
       workspaceRow.plan,
       workspaceRow.stripe_subscription_status,
     ) &&
-    workspaceRow.storage_used_bytes + file.size >
-      workspaceRow.storage_quota_bytes
+    !storageWriteFits(
+      workspaceRow.storage_used_bytes,
+      workspaceRow.storage_quota_bytes,
+      file.size,
+    )
   ) {
     return { kind: 'quota-exceeded' } as const
   }
@@ -3469,6 +3512,25 @@ function shouldEnforceStorageQuotaPreCheck(
   return !allowsStorageOverage(plan, subscriptionStatus)
 }
 
+/**
+ * A write fits when the bytes already stored plus the new bytes stay within
+ * the workspace quota. `reserveQuota` has to ask the same question inside the
+ * UPDATE that reserves the bytes, so the SQL form lives here beside the
+ * TypeScript one: the two spellings of this one rule stay together, instead of
+ * a `>` in the pre-check and a `<=` in the statement drifting apart.
+ */
+function storageWriteFits(
+  storageUsedBytes: number,
+  storageQuotaBytes: number,
+  sizeBytes: number,
+): boolean {
+  return storageUsedBytes + sizeBytes <= storageQuotaBytes
+}
+
+function storageWriteFitsSql(sizeBytes: number) {
+  return sql<boolean>`storage_used_bytes + ${sizeBytes} <= storage_quota_bytes`
+}
+
 export async function reserveQuota(
   db: Kysely<DB>,
   workspaceId: string,
@@ -3485,7 +3547,7 @@ export async function reserveQuota(
     WHERE id = ${workspaceId}
       AND (
         (${planInTierSql('plan', PAID_TIERS)} AND stripe_subscription_status IN (${activeStatuses}))
-        OR storage_used_bytes + ${sizeBytes} <= storage_quota_bytes
+        OR ${storageWriteFitsSql(sizeBytes)}
       )
   `.execute(db)
   if (Number(result.numAffectedRows ?? 0n) === 1) return 'ok'
@@ -3808,7 +3870,12 @@ export interface OwnedShareableSummary {
   linkExpiresAt: string | null
   updatedAt: string
   projectId: string | null
-  artifactKind: ArtifactKind
+  /**
+   * null when the stored `artifact_kind` is not one this build knows. The CLI
+   * list response already declares the field optional, so an unreadable kind
+   * is left out rather than failing the whole page.
+   */
+  artifactKind: ArtifactKind | null
 }
 
 const OWNED_SHAREABLE_LIST_LIMIT = 50
@@ -3867,7 +3934,7 @@ function toOwnedShareableSummary(row: {
     updatedAt: row.updated_at,
     activityAt: row.activity_at,
     projectId: row.container_kind === 'project' ? row.container_id : null,
-    artifactKind: row.artifact_kind as ArtifactKind,
+    artifactKind: isArtifactKind(row.artifact_kind) ? row.artifact_kind : null,
   }
 }
 
