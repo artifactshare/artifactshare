@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { CredentialTable } from './credential-table'
 import { useState } from 'react'
 import { SettingsSection } from '~/components/form/settings-section'
@@ -23,7 +23,7 @@ export function CliSessionsSection({
     triggerId: string
   } | null>(null)
   const [noop, setNoop] = useState(false)
-  useSettingsEntryChange(() => setNoop(false))
+  useSettingsEntryChangeIgnoringReplace(() => setNoop(false))
   function open(target: RevokeTarget, triggerId: string) {
     setNoop(false)
     setDialog({ target, triggerId })

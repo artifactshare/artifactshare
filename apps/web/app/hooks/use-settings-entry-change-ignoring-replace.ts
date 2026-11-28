@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useLocation, useNavigationType } from 'react-router'
 
-export function useSettingsEntryChange(clear: () => void) {
+export function useSettingsEntryChangeIgnoringReplace(clear: () => void) {
   const { key } = useLocation()
   const navigationType = useNavigationType()
   const entry = useRef(key)

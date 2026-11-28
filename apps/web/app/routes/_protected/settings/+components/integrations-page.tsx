@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { IconAlertTriangle, IconPlug as Plug } from '@tabler/icons-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useFetcher, Link, useOutletContext } from 'react-router'
@@ -47,7 +47,7 @@ export default function IntegrationsPage({
   loaderData: IntegrationsLoaderData
 }) {
   const fetcher = useFetcher<typeof action>()
-  useSettingsEntryChange(fetcher.reset)
+  useSettingsEntryChangeIgnoringReplace(fetcher.reset)
   const [selected, setSelected] = useState<SlackConnectionListItem | null>(null)
   const [open, setOpen] = useState(false)
   const pending = fetcher.state !== 'idle'

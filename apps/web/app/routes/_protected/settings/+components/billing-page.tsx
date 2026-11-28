@@ -6,7 +6,7 @@ import {
   useLocation,
   useOutletContext,
 } from 'react-router'
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import type { UsageLoaderData } from './billing-usage.server'
 import { OverageCostStat, shouldShowUsageWarning } from './billing-usage'
 import { BillingSelection } from '~/components/app/billing-toggle'
@@ -586,7 +586,7 @@ function SubscribedActions({
 
 function BillingForm({ children }: { children: ReactNode }) {
   const fetcher = useFetcher<typeof action>()
-  useSettingsEntryChange(fetcher.reset)
+  useSettingsEntryChangeIgnoringReplace(fetcher.reset)
   return (
     <fetcher.Form
       method="post"
@@ -695,7 +695,7 @@ function ChangeContract({
 
 function PlanChangeNotice({ kind }: { kind: 'plan' | 'interval' }) {
   const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
-  useSettingsEntryChange(change.reset)
+  useSettingsEntryChangeIgnoringReplace(change.reset)
   return change.state === 'idle' && change.data?.ok ? (
     <StatusBanner status={change.data.code} />
   ) : null
@@ -722,7 +722,7 @@ function ChangeContractOption({
 }) {
   const { locale, t } = useT()
   const [requestedOpen, setOpen] = useState(false)
-  useSettingsEntryChange(() => setOpen(false))
+  useSettingsEntryChangeIgnoringReplace(() => setOpen(false))
   const kind = plan === contract.plan ? 'interval' : 'plan'
   const change = useFetcher<typeof action>({ key: `billing-change-${kind}` })
   const result = change.state === 'idle' ? change.data : undefined

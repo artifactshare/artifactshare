@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { useEffect, useState } from 'react'
 import { useFetcher, useRevalidator } from 'react-router'
 import { SettingsBanner } from './settings-banner'
@@ -85,7 +85,7 @@ export function BotSection({
   const [notice, setNotice] = useState<{ intent: string; text: string } | null>(
     null,
   )
-  useSettingsEntryChange(() => setNotice(null))
+  useSettingsEntryChangeIgnoringReplace(() => setNotice(null))
   const [createOpen, setCreateOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<WorkspaceBotRow | null>(null)
   const [stopTarget, setStopTarget] = useState<WorkspaceBotRow | null>(null)
