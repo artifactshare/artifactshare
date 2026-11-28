@@ -1,7 +1,7 @@
 import { renderHtml } from '@tanstack/markdown/html'
 import { describe, expect, test } from 'vitest'
 
-import { httpAutolinkExtension } from './markdown-autolink'
+import { httpAutolinkExtension } from '@artifactshare/viewer-kit/markdown-autolink'
 
 function render(source: string) {
   return renderHtml(source, { extensions: [httpAutolinkExtension] })

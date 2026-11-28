@@ -111,14 +111,6 @@ export async function fetchJsonWithViewerTimeout<T>(
   }
 }
 
-export function isViewerFetchAbort(error: unknown): boolean {
-  return error instanceof ViewerFetchAbortError
-}
-
-export function isViewerFetchTimeout(error: unknown): boolean {
-  return error instanceof ViewerFetchTimeoutError
-}
-
 export function viewerFetchFailureReason(error: unknown): CommentNetworkResult {
   if (error instanceof ViewerFetchTimeoutError) return 'timeout'
   if (error instanceof ViewerFetchAbortError) return 'abort'

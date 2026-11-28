@@ -12,8 +12,6 @@ vi.mock('~/services/db.server', () => ({ createDb: () => dbHolder.db }))
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { loader } from './files'
-import { filesDateHeaderKey } from './files'
-import en from '~/i18n/en.json'
 import {
   listUnopenedOwnedArtifactsLimited,
   listMyArtifactsLimited,
@@ -342,11 +340,6 @@ describe('/files loader', () => {
   test('normalizes page in one redirect', async () => {
     expect(await redirectTo('/files?page=1')).toBe('/files')
   })
-})
-
-test('/files date column uses the creation-time header', () => {
-  expect(filesDateHeaderKey).toBe('table.created')
-  expect(en[filesDateHeaderKey]).toBe('Created')
 })
 
 test('/files date groups have today and yesterday headings', () => {

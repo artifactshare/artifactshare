@@ -1,11 +1,5 @@
 export type AnalyticsConsentState = 'granted' | 'denied' | 'unset'
 
-export function isAnalyticsConsentState(
-  value: unknown,
-): value is AnalyticsConsentState {
-  return value === 'granted' || value === 'denied' || value === 'unset'
-}
-
 export const CONSENT_REQUIRED_COUNTRIES: ReadonlySet<string> = new Set([
   'AT',
   'BE',

@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   fetchJsonWithViewerTimeout,
-  isViewerFetchAbort,
-  isViewerFetchTimeout,
   VIEWER_FETCH_TIMEOUT_MS,
+  viewerFetchFailureReason,
 } from './viewer-network'
+
+const isTimeout = (error: unknown) =>
+  viewerFetchFailureReason(error) === 'timeout'
+const isAbort = (error: unknown) => viewerFetchFailureReason(error) === 'abort'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -18,7 +21,7 @@ describe('fetchJsonWithViewerTimeout', () => {
 
     const request = expect(
       fetchJsonWithViewerTimeout('/slow'),
-    ).rejects.toSatisfy(isViewerFetchTimeout)
+    ).rejects.toSatisfy(isTimeout)
 
     await vi.advanceTimersByTimeAsync(VIEWER_FETCH_TIMEOUT_MS)
 
@@ -35,7 +38,7 @@ describe('fetchJsonWithViewerTimeout', () => {
     })
     controller.abort()
 
-    await expect(request).rejects.toSatisfy(isViewerFetchAbort)
+    await expect(request).rejects.toSatisfy(isAbort)
   })
 
   test('keeps the timeout active while reading the response body', async () => {
@@ -62,7 +65,7 @@ describe('fetchJsonWithViewerTimeout', () => {
 
     const request = expect(
       fetchJsonWithViewerTimeout('/headers-only'),
-    ).rejects.toSatisfy(isViewerFetchTimeout)
+    ).rejects.toSatisfy(isTimeout)
 
     await vi.advanceTimersByTimeAsync(VIEWER_FETCH_TIMEOUT_MS)
 
@@ -150,9 +153,7 @@ describe('fetchJsonWithViewerTimeout', () => {
             parseErrorJson: true,
           },
         ),
-      ).rejects.toSatisfy(
-        reason === 'timeout' ? isViewerFetchTimeout : isViewerFetchAbort,
-      )
+      ).rejects.toSatisfy((error) => viewerFetchFailureReason(error) === reason)
       await Promise.resolve()
       if (reason === 'timeout')
         await vi.advanceTimersByTimeAsync(VIEWER_FETCH_TIMEOUT_MS)
@@ -338,7 +339,7 @@ describe('comment operation diagnostics', () => {
             },
           },
         ),
-      ).rejects.toSatisfy(isViewerFetchAbort)
+      ).rejects.toSatisfy(isAbort)
       expect(fetch).not.toHaveBeenCalled()
       expect(log).not.toHaveBeenCalled()
     } finally {

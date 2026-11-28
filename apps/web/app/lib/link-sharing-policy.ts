@@ -54,13 +54,6 @@ export function linkExpiryStartingColumns(): {
   }
 }
 
-export function linkSharingPolicyDefaults(
-  plan: string | null | undefined,
-): WorkspaceLinkPolicy {
-  const normalized = normalizePlan(plan)
-  return { plan: normalized, ...LINK_SHARING_PLAN_DEFAULTS[normalized] }
-}
-
 export function normalizeWorkspaceLinkPolicy(row: {
   plan: string | null | undefined
   link_sharing_enabled: number | null | undefined
