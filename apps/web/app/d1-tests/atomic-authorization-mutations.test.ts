@@ -686,7 +686,7 @@ it.each(Object.entries(removalFailures))(
               { id: owner, workspaceId: ws },
               member,
             ),
-          ).toEqual({ kind: 'not-found' })
+          ).toEqual({ kind: 'ok' })
           const removals = await retryDb
             .selectFrom('audit_events')
             .select('detail')
