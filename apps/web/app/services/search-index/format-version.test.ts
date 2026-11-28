@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { INDEX_FORMAT_VERSION } from './normalize'
 
@@ -7,7 +8,12 @@ import { INDEX_FORMAT_VERSION } from './normalize'
 // seeds the rebuild for the new format. Until now nothing checked it, and a
 // bump without the migration leaves every workspace serving the old index with
 // no rebuild queued. This turns that comment into a check.
-const MIGRATIONS = new URL('../../../db/migrations', import.meta.url).pathname
+// fileURLToPath, not URL.pathname: a pathname keeps the percent-encoding, so a
+// checkout under a path with a space resolves to a directory that does not
+// exist and the check fails for the wrong reason.
+const MIGRATIONS = fileURLToPath(
+  new URL('../../../db/migrations', import.meta.url),
+)
 const SEED =
   /INSERT\s+INTO\s+search_index_rebuilds\s*\(\s*target\s*\)\s*VALUES\s*\(\s*(\d+)\s*\)/gi
 
