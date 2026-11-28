@@ -255,14 +255,32 @@ export function visibleShareableToViewerSql(
 // visibleShareableToViewer は visibility='workspace' を無条件に含み「見る人の
 // ワークスペースで絞り込み済み」を前提にするため、組織外の集計には流用できない
 // (別組織の社内向けが漏れる)。ここでは関係者として見える visibility='project' と、
-// 自分への個別共有だけに限る。プロジェクトに到達できている時点で関係者なので、
-// このプロジェクト配下の 'project' 成果物はすべて見える。
+// 自分への個別共有だけに限る。'project' は成果物を開く判定と同じく、いまも
+// 関係者 (project_share_defaults) に入っていることを求める。参加行
+// (project_members) は関係者から外されても残るので、それだけでは見せない。
 export function visibleSharedProjectShareableToViewer(
   eb: ExpressionBuilder<DB, 'shareables'>,
   viewer: { email: string; emailVerified: boolean },
 ) {
   return eb.or([
-    eb('shareables.visibility', '=', 'project'),
+    eb.and([
+      eb('shareables.visibility', '=', 'project'),
+      eb.exists(
+        eb
+          .selectFrom('project_share_defaults')
+          .select('project_share_defaults.id')
+          .whereRef(
+            'project_share_defaults.project_container_id',
+            '=',
+            'shareables.container_id',
+          )
+          .where(
+            lowerEmail('project_share_defaults.email'),
+            '=',
+            grantMatchEmail(viewer),
+          ),
+      ),
+    ]),
     eb.exists(
       eb
         .selectFrom('shareable_grants')
