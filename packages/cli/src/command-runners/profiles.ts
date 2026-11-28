@@ -3,6 +3,8 @@ import {
   RotatingCliAuthRefreshResponseSchema,
 } from '@artifactshare/contract'
 import type {
+  CliError,
+  FetchInit,
   OutputMode,
   ParsedArgs,
   ProfileConfigEntry,
@@ -267,39 +269,36 @@ export async function runProfilesDelete(
   return writeSuccess(command, data, mode)
 }
 
-async function importBotTokenProfile(
-  command: string,
+// Every refusal the import can raise on its own, in the order it raises them.
+// The rotation that follows consumes the bot token, so anything that could say
+// no has to say it here, while the token is still unconsumed.
+async function preflightBotTokenImport(
   profile: string,
-  token: string,
   parsed: ParsedArgs,
-  mode: OutputMode,
-): Promise<void> {
+): Promise<{ ok: true; init: FetchInit } | { ok: false; error: CliError }> {
   const config = (await readGlobalConfig()) ?? {}
   const entry = isRecord(config.profiles?.[profile])
     ? (config.profiles?.[profile] as ProfileConfigEntry)
     : undefined
+
   if (entry && parsed.options.force !== true) {
     const existing = await readProfileToken(profile, {
       ...parsed.options,
       baseUrl: nonEmpty(entry.base_url) ?? baseUrlOf(parsed.options),
     })
     if (existing.ok) {
-      return writeFailure(
-        command,
-        validationError(
+      return {
+        ok: false,
+        error: validationError(
           `Profile "${profile}" already has a stored credential.`,
           `Re-run with --force to replace it: printf '%s' "$TOKEN" | ${CLI_INVOCATION} profiles import-token --profile ${profile} --force`,
         ),
-        mode,
-        1,
-      )
+      }
     }
   }
 
   const request = await requestConfig(parsed.options)
-  if (request.error) {
-    return writeFailure(command, request.error, mode, 1)
-  }
+  if (request.error) return { ok: false, error: request.error }
 
   const forcedReplace = Boolean(entry && parsed.options.force === true)
   if (
@@ -307,12 +306,10 @@ async function importBotTokenProfile(
       existingCredentialRemovedFirst: forcedReplace,
     }))
   ) {
-    return writeFailure(
-      command,
-      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
-      mode,
-      1,
-    )
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+    }
   }
 
   if (forcedReplace && entry) {
@@ -322,27 +319,38 @@ async function importBotTokenProfile(
       parsed.options,
     )
     if (!removed.ok) {
-      return writeFailure(
-        command,
-        validationError(
+      return {
+        ok: false,
+        error: validationError(
           `The existing credential for profile "${profile}" could not be removed, so the forced import was aborted before consuming the token.`,
           'Fix the credential store (or remove the credential with logout --profile), then re-run the import; the bot token is still unconsumed.',
         ),
-        mode,
-        1,
-      )
+      }
     }
   }
 
-  const configWritable = (await writeGlobalConfig(config)).ok
-  if (!configWritable) {
-    return writeFailure(
-      command,
-      tokenStoreUnavailableError(profile, 'config_write_failed'),
-      mode,
-      1,
-    )
+  // Writing the config back unchanged proves the profile entry can be saved
+  // once the rotated credential exists.
+  if (!(await writeGlobalConfig(config)).ok) {
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'config_write_failed'),
+    }
   }
+
+  return { ok: true, init: request.init }
+}
+
+async function importBotTokenProfile(
+  command: string,
+  profile: string,
+  token: string,
+  parsed: ParsedArgs,
+  mode: OutputMode,
+): Promise<void> {
+  const preflight = await preflightBotTokenImport(profile, parsed)
+  if (!preflight.ok) return writeFailure(command, preflight.error, mode, 1)
+  const { init } = preflight
 
   const rotationRequestId = randomUUID()
   let result = await apiPostPublic(
@@ -352,7 +360,7 @@ async function importBotTokenProfile(
       rotation_request_id: rotationRequestId,
     } satisfies CliAuthRefreshRequest,
     parsed.options,
-    request.init,
+    init,
   )
   for (let retry = 0; result.error && retry < 2; retry += 1) {
     result = await apiPostPublic(
@@ -362,7 +370,7 @@ async function importBotTokenProfile(
         rotation_request_id: rotationRequestId,
       } satisfies CliAuthRefreshRequest,
       parsed.options,
-      request.init,
+      init,
     )
   }
   if (result.error) return writeFailure(command, result.error, mode, 1)
@@ -422,7 +430,7 @@ async function importBotTokenProfile(
     '/api/cli/whoami',
     refresh.data.access_token,
     parsed.options,
-    request.init,
+    init,
     { authenticated: true, baseUrl: baseUrlOf(parsed.options) },
   )
   const whoami = whoamiResult.error ? null : whoamiProfile(whoamiResult.body)
