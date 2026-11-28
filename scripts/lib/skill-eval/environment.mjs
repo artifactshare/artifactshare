@@ -197,7 +197,6 @@ export async function createRun({
     const launcherSource = join(import.meta.dirname, 'launcher.mjs')
     for (const bin of ['artifactshare', 'npm', 'npx', 'pnpm', 'bunx']) {
       const path = join(root, 'bin', bin)
-      // JSON literals are JavaScript source, not shell interpolation.
       await privateFile(
         path,
         `#!${process.execPath}\nimport { launch } from ${JSON.stringify(launcherSource)}; await launch(${JSON.stringify(join(root, 'launcher.json'))}, ${JSON.stringify(bin)});\n`,
@@ -269,10 +268,7 @@ export async function inventory(
       const path = join(dir, entry.name)
       const name = relative(root, path)
       const inSkill = /(?:^|\/)artifactshare(?:\/|\.mdc$|$)/u.test(name)
-      // Installer staging files are not active skills or reference assets.
       if (/^\.artifactshare-[a-z\d-]+\.tmp$/iu.test(entry.name)) continue
-      // The CLI's write-intent marker exists only while an install is in
-      // progress; one left in a settled snapshot is still reported.
       if (live && entry.name === '.artifactshare-pending.json') continue
       if (entry.isSymbolicLink()) {
         if (inSkill) recordError(path, { code: 'uninspected_skill_symlink' })
@@ -285,7 +281,6 @@ export async function inventory(
       if (!inSkill && !/^(?:SKILL\.md|artifactshare\.mdc)$/u.test(entry.name))
         continue
       try {
-        // Re-read if an ordinary writer changed the file during observation.
         const before = await io.lstat(path)
         if (before.isSymbolicLink()) {
           recordError(path, { code: 'uninspected_skill_symlink' })
@@ -352,7 +347,6 @@ export async function inventory(
             : (name.match(/\.(claude|agents|cursor)\//u)?.[1] ?? 'unknown'),
         })
       } catch (error) {
-        // Rename/unlink churn is local to this entry, not a failed directory.
         if (error.code === 'ENOENT') vanished.push(name)
         else recordError(path, error)
       }

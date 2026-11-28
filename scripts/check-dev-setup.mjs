@@ -72,7 +72,6 @@ function main() {
     setup(['--no-fixtures', '--reset', '--persist-to', persistTo])
     console.log('PASS populated state reset (first run)')
     console.log('START populated state reset (second run)')
-    // Seed again because the first reset removes the rows; an empty database cannot test dependency order.
     seedDatabase()
     setup(['--no-fixtures', '--reset', '--persist-to', persistTo])
     console.log('PASS populated state reset (second run)')

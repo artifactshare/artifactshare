@@ -10,7 +10,6 @@ export const CLI_API_VERSION = CLI_API_CONTRACT_VERSION
 export const CLI_API_BASE_PATH = '/api/cli' as const
 export const CLI_DEVICE_CLIENT_ID = 'artifactshare-cli' as const
 
-/** Shared product limits consumed by both the web API and the CLI. */
 export const ARTIFACT_KEY_MAX_LENGTH = 128 as const
 export const REFRESH_CREDENTIAL_TTL_DAYS = 180 as const
 
@@ -100,8 +99,6 @@ export type DownloadFileParams = z.infer<typeof DownloadFileParamsSchema>
 
 export const ProjectIdParamsSchema = z.object({ id: stringId })
 export type ProjectIdParams = z.infer<typeof ProjectIdParamsSchema>
-
-/* Authentication --------------------------------------------------------- */
 
 export const CliAuthRefreshRequestSchema = z.object({
   refresh_token: z.string().min(1).max(256),
@@ -296,9 +293,6 @@ export type DeviceVerifyResponse = z.infer<typeof DeviceVerifyResponseSchema>
 export const DeviceDenyRequestSchema = z.object({ userCode: stringId })
 export type DeviceDenyRequest = z.infer<typeof DeviceDenyRequestSchema>
 
-// Approval and denial success bodies are intentionally not specified: the
-// public adapters inspect only HTTP success/errors, not their response fields.
-
 export const DeviceApprovalQuerySchema = z.object({ user_code: stringId })
 export type DeviceApprovalQuery = z.infer<typeof DeviceApprovalQuerySchema>
 
@@ -335,8 +329,6 @@ export const DeviceApprovalResponseSchema = z.object({
 export type DeviceApprovalResponse = z.infer<
   typeof DeviceApprovalResponseSchema
 >
-
-/* Shared identity responses --------------------------------------------- */
 
 export const CliUserSchema = z.object({
   id: stringId,
@@ -419,8 +411,6 @@ export const CliDoctorResponseSchema = z.object({
 })
 export type CliDoctorResponse = z.infer<typeof CliDoctorResponseSchema>
 
-/* Upload and version update --------------------------------------------- */
-
 /** Query parameters used by the multipart upload endpoint. */
 export const ArtifactUploadQuerySchema = z.object({
   publish_key: z.string().optional(),
@@ -434,7 +424,6 @@ export type ArtifactUploadQuery = z.infer<typeof ArtifactUploadQuerySchema>
 
 export const VERSION_LABEL_MAX_CODE_POINTS = 80
 
-// Validate stored text without transforming it on readback.
 export const VersionLabelSchema = z
   .string()
   .refine(
@@ -593,8 +582,6 @@ export const ArtifactVersionLookupResponseSchema = z.object({
 export type ArtifactVersionLookupResponse = z.infer<
   typeof ArtifactVersionLookupResponseSchema
 >
-
-/* Artifacts -------------------------------------------------------------- */
 
 export const ArtifactsListQuerySchema = z
   .object({
@@ -899,8 +886,6 @@ export const ArtifactsListResponseSchema = z.object({
 })
 export type ArtifactsListResponse = z.infer<typeof ArtifactsListResponseSchema>
 
-/* Comments --------------------------------------------------------------- */
-
 export const MAX_COMMENT_PAGE_NUMBER = 100_000
 
 export const CommentAnchorSchema = z.union([
@@ -1099,8 +1084,6 @@ export const CommentDeleteResponseSchema = z.object({
 })
 export type CommentDeleteResponse = z.infer<typeof CommentDeleteResponseSchema>
 
-/* Projects --------------------------------------------------------------- */
-
 export const ProjectListEntrySchema = z.object({
   id: stringId,
   name: z.string(),
@@ -1160,8 +1143,6 @@ export const ProjectEditResponseSchema = z.object({
   audience: z.array(z.string()),
 })
 export type ProjectEditResponse = z.infer<typeof ProjectEditResponseSchema>
-
-/* Artifact settings ------------------------------------------------------ */
 
 export const CliEditableVisibilitySchema = z.enum([
   'private',
@@ -1239,8 +1220,6 @@ export const CliMoveResponseSchema = z.object({
 })
 export type CliMoveResponse = z.infer<typeof CliMoveResponseSchema>
 
-/* Resolve --------------------------------------------------------------- */
-
 export const ResolveQuerySchema = z.object({ q: z.string().trim().min(1) })
 export type ResolveQuery = z.infer<typeof ResolveQuerySchema>
 
@@ -1307,8 +1286,6 @@ export const ResolveResponseSchema = z.object({
   has_more: z.boolean(),
 })
 export type ResolveResponse = z.infer<typeof ResolveResponseSchema>
-
-/* HTTP method/status metadata ------------------------------------------- */
 
 export const CLI_API_STATUS_CODES = {
   ok: 200,
@@ -1561,8 +1538,6 @@ export const CLI_API_ENDPOINTS = {
 export type CliApiEndpoint =
   (typeof CLI_API_ENDPOINTS)[keyof typeof CLI_API_ENDPOINTS]
 
-/* Uppercase aliases follow the schema naming convention used by the MCP
- * surface while the PascalCase names remain pleasant for TypeScript imports. */
 export const API_ERROR_SCHEMA = ApiErrorSchema
 export const API_ERROR_RESPONSE_SCHEMA = ApiErrorResponseSchema
 export const CLI_AUTH_REFRESH_REQUEST_SCHEMA = CliAuthRefreshRequestSchema
@@ -1604,7 +1579,6 @@ export const CLI_MOVE_REQUEST_SCHEMA = CliMoveRequestSchema
 export const CLI_MOVE_RESPONSE_SCHEMA = CliMoveResponseSchema
 export const RESOLVE_RESPONSE_SCHEMA = ResolveResponseSchema
 
-// Local CLI results: intentionally separate from the HTTP doctor response.
 export const SkillLegacyDiagnosticSchema = z.object({
   path: z.string(),
   present: z.boolean(),

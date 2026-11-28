@@ -1,11 +1,3 @@
-// Rewrites apps/web/app/test/browser-shard-durations.json from the job logs of
-// Public CI browser runs, so the shard sequencer balances runners by current
-// file durations. Download a run's logs (Actions → run → Download log archive),
-// unzip them, and pass the browser job log files. Logs from several runs give
-// each file its median duration. An engine with no lines in the logs keeps
-// its current durations.
-//
-//   node scripts/ci/browser-shard-durations.mjs logs/*browser*.txt
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'

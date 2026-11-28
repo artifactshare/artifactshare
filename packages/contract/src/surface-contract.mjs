@@ -1,10 +1,3 @@
-/**
- * Public documentation metadata that is shared by the contract-surface
- * generator.  Wire schemas and endpoint metadata live in index.ts; this file
- * owns only the presentation choices that cannot be inferred from a runtime
- * schema (the short command examples and the existing discovery prose).
- */
-
 export const CLI_AGENT_COMMANDS = {
   init: 'init --json',
   open: 'open <artifact-id-or-url> --json',
@@ -177,7 +170,6 @@ export const MCP_OPENAPI_METADATA = {
     'offline_access',
     'artifactshare:access',
   ],
-  // The MCP handler requires the product scope in the bearer token.
   operationScopes: ['artifactshare:access'],
   description:
     'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP) and authenticated CLI REST endpoints. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
@@ -195,7 +187,6 @@ export const MCP_OPENAPI_METADATA = {
   },
 }
 
-// Option explanations displayed alongside the generated command reference.
 export const CLI_REFERENCE_OPTION_HELP = {
   'artifacts get': ['--version'],
   'artifacts versions': ['--cursor'],

@@ -460,9 +460,7 @@ async function waitForDevServerReady() {
       if (response.ok) {
         return
       }
-    } catch {
-      // keep polling
-    }
+    } catch {}
     await delay(500)
   }
   throw new Error(`Timed out waiting for dev server at ${APP_ORIGIN}`)
@@ -708,7 +706,6 @@ function countSubscriptionItems(subscription) {
 }
 
 function overageDescription(month) {
-  // Keep in sync with apps/web/app/services/billing-usage.server.ts (not importable from .mjs).
   return `Storage overage for ${month}`
 }
 

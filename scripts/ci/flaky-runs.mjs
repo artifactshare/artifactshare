@@ -73,7 +73,6 @@ export function suiteCommand(lane, report, root) {
       config,
       '--run',
       ...(lane.project ? [`--project=${lane.project}`] : []),
-      // Keep human diagnostics alongside the complete structured reporter.
       '--reporter=default',
       `--reporter=${path.join(root, 'scripts/ci/vitest-flaky-reporter.mjs')}`,
       `--outputFile=${report}`,
@@ -87,7 +86,6 @@ export function suiteCommand(lane, report, root) {
   }
 }
 
-// Two 20-minute repetitions leave 20 minutes for setup and artifact upload.
 export const repetitionTimeoutMs = 20 * 60 * 1000
 
 const ownershipVariable = 'ARTIFACTSHARE_FLAKY_REPETITION'
@@ -148,9 +146,6 @@ export async function terminateTree(
   if (!pid) return []
   const diagnostics = []
   if (afterExit) {
-    // A direct child's exit can precede its descendants' normal shutdown.
-    // Keep output pipes open during this bounded grace period; timeout cleanup
-    // still starts immediately.
     const graceDeadline = Date.now() + 2000
     try {
       while (true) {
@@ -202,7 +197,6 @@ export async function terminateTree(
   } finally {
     for (const target of [...targets].reverse())
       if (!afterExit || target !== pid) signal(target, 'SIGKILL')
-    // Also catch any still-associated processes if discovery failed.
     signal(-pid, 'SIGKILL')
   }
   try {
@@ -271,7 +265,6 @@ export function execute(command, args, options, output) {
         } catch (error) {
           diagnostics.push(`Diagnostic output failed: ${error.message}`)
         }
-        // Drain queued output, then release pipes even if cleanup failed.
         await delay(25)
         child.stdout.destroy()
         child.stderr.destroy()
@@ -292,7 +285,6 @@ export function execute(command, args, options, output) {
   })
 }
 
-// Suites that launch CI scripts would read the runner's controls as their own.
 const runnerControls = ['REPETITIONS', 'SHARD', 'RESULTS_DIR']
 function suiteEnvironment(env) {
   return Object.fromEntries(

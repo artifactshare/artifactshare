@@ -138,9 +138,7 @@ export async function executeCase(
           const error = JSON.parse(setup.stderr).error
           if (error?.code && error?.message)
             detail = `${error.code}: ${error.message}`
-        } catch {
-          /* Non-JSON failures retain the process diagnostic. */
-        }
+        } catch {}
         throw new Error(
           `${item.scenario === 'comments' ? 'Comments' : 'Update'} artifact seed failed: ${detail}`,
         )
@@ -151,8 +149,6 @@ export async function executeCase(
         throw new Error('Could not seed an owned update artifact')
       owned.set(seededId, 'setup-cli-response')
       beforeList = await client.list()
-      // Static sites cannot be read as one source, so their listing is the
-      // server evidence.
       result.server.before = scenario.seed.includes('site')
         ? beforeList.find((artifact) => artifact.id === seededId)
         : await client.get(seededId)
@@ -183,9 +179,7 @@ export async function executeCase(
             try {
               const error = JSON.parse(diagnostic).error
               if (error?.code) detail = `${error.code}: ${error.message ?? ''}`
-            } catch {
-              /* Retain the process diagnostic for non-JSON errors. */
-            }
+            } catch {}
           }
           throw new Error(`Comment post failed: ${detail}`)
         }
@@ -256,9 +250,7 @@ export async function executeCase(
               !beforeList.some((artifact) => artifact.id === id)
             )
               owned.set(id, 'agent-cli-response')
-          } catch {
-            /* Unparseable CLI output stays in evidence. */
-          }
+          } catch {}
         }
         observe(result.skills, await inventory(run.root, selectedOverlay.files))
       } catch {
@@ -276,8 +268,6 @@ export async function executeCase(
           ].filter((id) => !beforeList.some((before) => before.id === id))
         const id = seededId ?? [...owned.keys()][0]
         const present = afterList.find((artifact) => artifact.id === id)
-        // A legacy run keeps reading an artifact the agent deleted, so the
-        // missing source is reported as a server error.
         if (present || (id && scenario.legacy)) {
           result.server.listItem = present
           result.server.after =
@@ -402,9 +392,6 @@ async function projectList(run, runtime, options, signal) {
   if (!Array.isArray(projects)) throw new Error('Invalid project list evidence')
   return projects
 }
-// Legacy scenarios keep their server checks; the others are judged by their
-// own task check. Every scenario reports whether the skill and the expected
-// reference were read, separately from whether the task succeeded.
 export function scenarioChecks(result, scenario, email) {
   const all = score(result)
   const eligible = result.record.complete && result.status === 'completed'
@@ -429,7 +416,6 @@ export function scenarioChecks(result, scenario, email) {
         evidence: {
           expected: scenario.reference,
           read: result.record.referencesRead,
-          // A run may find the flags through --help instead of the reference.
           help: (result.actions ?? [])
             .filter((action) =>
               action.argv?.some((arg) => ['--help', '-h'].includes(arg)),
@@ -469,7 +455,6 @@ export function scenarioChecks(result, scenario, email) {
         }
   return checks
 }
-// `artifacts get --include comments` reads feedback as well as `comments list`.
 export function commentObservations(actions) {
   const positional = (action) =>
     action.argv?.filter((arg) => !arg.startsWith('--')) ?? []
@@ -528,7 +513,6 @@ export async function main(argv = process.argv.slice(2)) {
   const result = { schemaVersion: 1, ...publicPlan(options), runs: [] }
   let output, selectedOverlay
   try {
-    // Build/loader validation precedes authentication; dry-run never reaches it.
     selectedOverlay = await overlay(options.versions[0])
     await rm(selectedOverlay.root, { recursive: true, force: true })
     selectedOverlay = null

@@ -1,8 +1,3 @@
-// Runs a TLA+ model with TLC and checks that it behaves as recorded: the rules
-// that should hold pass, each known finding still breaks, and each mutation (a
-// broken copy of the code, written as a change to the model) breaks the rule
-// that guards it. Used by the verify-* formal verification skills in
-// .claude/skills/. Needs Java 11 or later and curl on PATH.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -152,8 +147,6 @@ export async function runModelChecks({
   const root = mkdtempSync(join(tmpdir(), `tlc-${MODULE}-`))
   const invariants = invariantsInConfig(baseConfig)
   const holding = invariants.filter((name) => !KNOWN_FINDINGS[name])
-  // One full exploration checks every invariant that should hold. It is the
-  // slow run, so it gets every core before the short runs start.
   const baseline = {
     job: { kind: 'baseline', invariant: holding.join(', '), expect: 'pass' },
     result: await runTlc(

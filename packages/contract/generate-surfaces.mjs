@@ -529,13 +529,8 @@ function duplicationProse(value) {
     .trim()
 }
 
-// Every window of a reference, keyed by its raw text. The matrix check asks
-// about the same few reference files once per owner source, so building the
-// set once turns each question from a substring scan into lookups.
 const referenceWindowCache = new Map()
 
-// Each window of 80 code points, sliced from the string by code point offsets
-// rather than rebuilt from an array of characters.
 function* duplicationWindows(text) {
   const offsets = []
   for (let index = 0; index < text.length;) {
@@ -634,7 +629,6 @@ export async function generateSurface({
   helpCache = new Map(),
   generatedDate,
 } = {}) {
-  // Help must come from the current sources, never an absent or stale bundle.
   if (!run && cliPath === CLI_PATH)
     execFileSync('pnpm', ['--filter', '@artifactshare/cli', 'build'], {
       cwd: ROOT,
@@ -994,8 +988,6 @@ function generatedJsonText(value) {
 }
 
 function generatedOpenApiText(value) {
-  // Use the repository's pinned formatter for schema arrays as well as MCP
-  // scopes, so generation and the format check agree on every REST schema.
   return execFileSync(
     'pnpm',
     [

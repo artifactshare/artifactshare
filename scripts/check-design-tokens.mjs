@@ -11,10 +11,7 @@ const ROOT = new URL('..', import.meta.url).pathname
 const APP_DIR = join(ROOT, 'apps/web/app')
 const STYLES_DIR = join(APP_DIR, 'styles')
 export const APP_CSS = join(APP_DIR, 'app.css')
-// The theme (dark variant, @theme tokens and breakpoints, @theme inline
-// bridges, light/dark/system values), imported by app.css and the viewers.
 export const THEME_CSS = join(STYLES_DIR, 'theme.css')
-// Sandboxed viewers build their own stylesheets from the shared theme.
 const VIEWERS_DIR = join(APP_DIR, 'viewers')
 const CATALOG_TS = join(APP_DIR, 'components/catalog.ts')
 const TOKENS_CSS = join(STYLES_DIR, 'tokens.css')
@@ -96,7 +93,6 @@ export function findJapaneseTypographyViolations(appCss) {
   ]
 }
 
-// Grid track definitions are structural values, not spacing token targets.
 const NUMERIC_LITERAL_ALLOW_HEADS = new Set([
   'grid-cols',
   'grid-rows',
@@ -104,8 +100,6 @@ const NUMERIC_LITERAL_ALLOW_HEADS = new Set([
   'auto-rows',
 ])
 
-// Unlisted CSS color functions default to deny. Add new ones (e.g. hwb) here
-// when they cause false positives.
 const COLOR_FUNCTIONS = [
   'color-mix',
   'color',
@@ -137,10 +131,6 @@ const VAR_REF_RE = /var\(\s*(--[A-Za-z0-9_-]+)\s*(,)?/g
 const VAR_REF_WHITELIST_PREFIXES = ['--tw-', '--radix-']
 const VAR_REF_WHITELIST_EXACT = new Set(['--spacing'])
 
-// Strip comments while respecting string literals, so `/*` or `//` inside a
-// string (a URL like `https://…`, a CSS `content` value) is not mistaken for a
-// comment and does not swallow real tokens on the same line. `lineComments`
-// enables `//` handling for TSX; CSS has only `/* */`.
 function stripCommentsRespectingStrings(text, { lineComments }) {
   let out = ''
   let quote = null
@@ -417,7 +407,6 @@ function stripExemptedLiterals(text) {
   }
 }
 
-// quote/exempt の前処理を共通化する。unclosed (${} 分割) は安全側に倒すため null を返す。
 function prepareValueForNumericCheck(value) {
   const quoted = stripQuotedStringsFromValue(value)
   if (quoted.unclosed) {
@@ -439,8 +428,6 @@ function valueContainsNumericLiteral(value) {
   return /[0-9]/.test(remaining)
 }
 
-// 先頭境界 (^|[^a-zA-Z]) が要点: `&_h1` の h1 のような「英字直後の数字」(セレクタ内の
-// 要素名) を除外し、`520px` / `.5` / `(3)` のような独立した数値だけを拾う。
 const VARIANT_NUMERIC_LITERAL_RE = /(?:^|[^a-zA-Z])(\d+\.?\d*|\.\d+)/
 
 const ARBITRARY_PROPERTY_RE = /^(-{0,2}[a-zA-Z][a-zA-Z0-9_-]*):(.*)$/s
@@ -450,8 +437,6 @@ function variantValueContainsNumericLiteral(value) {
   if (remaining === null) {
     return true
   }
-  // セレクタ variant の構造値は長さリテラルではないので除外する:
-  // 擬似クラス関数の引数 (:nth-child(3) 等) と属性値 ([aria-level=2] 等)。
   remaining = remaining
     .replace(/:[a-zA-Z-]+\([^)]*\)/g, '')
     .replace(/=[^\]&]*/g, '')
@@ -478,21 +463,14 @@ function findLiteralBracketViolationsInSegment(segment) {
 
     const headRange = getUtilityHeadRange(segment, i)
 
-    // head なし bracket の違反 (variant / 任意プロパティ) は : を必要とするため、
-    // 以降に : が無ければ違反になり得ない。scanBalanced を払う前に O(1) で弾く。
-    // 例外: ${} 分割され得るセレクタ variant (`[&...`) は : が次 segment に落ちるので通す。
     if (!headRange && i > lastColonIndex && segment[i + 1] !== '&') {
       continue
     }
     const closeIndex = findClosingBracket(segment, i)
     if (closeIndex === -1) {
-      // Template-literal ${} can split an arbitrary value across segments; we cannot
-      // statically inspect the full bracket, so deny unconditionally on the safe side.
       if (headRange) {
         matches.push(segment.slice(headRange.start))
       } else if (
-        // head なしでも [prop:...${x}...] の任意プロパティと [&...${x}...] の
-        // セレクタ variant は同様に deny する。
         ARBITRARY_PROPERTY_RE.test(segment.slice(i + 1)) ||
         segment[i + 1] === '&'
       ) {
@@ -659,11 +637,6 @@ function isWhitelistedVar(varName) {
   return VAR_REF_WHITELIST_PREFIXES.some((prefix) => varName.startsWith(prefix))
 }
 
-// A dynamic var name (`var(--avatar-${i})`) can't be resolved statically, so it
-// is skipped. Scope the check to this var() call — from `var(` to its closing
-// paren — so an unrelated `${…}` elsewhere on the line does not exempt a
-// genuinely hard-coded undefined var. The var-name capture stops at `$`, so
-// `${` sits at or just after the match end when the name is interpolated.
 function hasTemplateInterpolation(text, matchIndex, matchLength) {
   const callEnd = text.indexOf(')', matchIndex)
   const scanEnd = callEnd === -1 ? matchIndex + matchLength + 2 : callEnd
@@ -711,8 +684,6 @@ export function collectThemeContainerNames(appCss) {
 }
 
 const NUMERIC_MAX_MIN_BREAKPOINT_RE = /\b(?:max|min)-(\d+):/g
-// Breakpoint px values are 520+; require 3+ digits to avoid `step 1:` false positives.
-// Lookahead limits matches to Tailwind utility starts after the colon.
 const BARE_NUMERIC_BREAKPOINT_RE = /(?:^|[\s/`"'{:])(\d{3,}):(?=[a-z![-])/g
 const UNKNOWN_BREAKPOINT_VARIANT_RE =
   /(?:^|[\s"'`{:])((?:max|min)-([a-z][A-Za-z0-9_-]*):)(?=[a-z![-])/g
@@ -763,7 +734,6 @@ export function findUnknownBreakpointVariants(
       UNKNOWN_BREAKPOINT_VARIANT_RE,
     )) {
       const name = match[2]
-      // Skip @theme breakpoints and Tailwind defaults; flag everything else.
       if (
         definedBreakpointNames.has(name) ||
         TAILWIND_DEFAULT_BREAKPOINTS.has(name)
@@ -968,8 +938,6 @@ export function findDuplicateSelectors(css) {
   return duplicates
 }
 
-// Remove quoted substrings so a class-shaped token inside a string (an attribute
-// selector value `[data-kind=".as-fake"]`) is not mistaken for a real selector.
 function stripQuotedRanges(text) {
   let out = ''
   let quote = null
@@ -1001,23 +969,6 @@ function stripQuotedRanges(text) {
 // `_`, `-`/`--` custom-ident names, non-ASCII (`.カード`), escapes (`.\31 23`) — is.
 const CLASS_OR_ID_SELECTOR_RE = /[.#](?![0-9])/
 
-// Global CSS (app.css + styles/*.css) is limited to token definitions, a few base
-// styles, and document-level view-transition rules — all of which target :root,
-// elements, attributes, or view-transition pseudo-elements, never a class or id.
-// Report any rule prelude that carries a class/id selector (component-style CSS),
-// which subsumes the retired `as-*` baseline (an `as-*` class is a class selector).
-// The walker uses the same string-aware brace walk as `findDuplicateSelectors`,
-// with comments stripped up front and quoted ranges stripped per prelude. Like the
-// retired `collectAsClasses`, `;` also resets the prelude (not just `}`) so a class
-// rule right after a top-level `@import "x";` is not judged as part of the @import.
-// At-rule blocks are walked into (their nested rules are
-// judged at their own `{`); an at-rule's own prelude — a media/feature/layer/
-// keyframe header, not a component definition — is not scanned, so
-// `@supports selector(.foo)` (a feature test) does not false-positive. `@scope` is
-// the one exception: its prelude selector defines an active style scope, a bypass,
-// so `@scope` usage itself is denied. Element/attribute-only rules (`article > h1`)
-// are not flagged — that is a detection limit, not a normative allowance; the
-// global-css-scope.md placement rules still apply and are enforced in review.
 export function findForbiddenGlobalSelectors(css) {
   const stripped = stripCssComments(css)
   const violations = []
@@ -1052,8 +1003,6 @@ export function findForbiddenGlobalSelectors(css) {
       }
       blockStart = i + 1
     } else if (char === '}' || char === ';') {
-      // Reset at every statement terminator — a top-level `@import "x";` or an
-      // in-block declaration must not bleed into the next selector's prelude.
       blockStart = i + 1
     }
   }
@@ -1087,7 +1036,6 @@ function excludeThemeInlineBlock(css) {
   return css
 }
 
-// The viewers' own stylesheets (apps/web/app/viewers/**/*.css).
 export function collectViewerStylesheets(dir = VIEWERS_DIR) {
   let entries
   try {
@@ -1828,7 +1776,6 @@ export function runAllChecks() {
   const themeCssContent = readFileSync(THEME_CSS, 'utf8')
   const viewerCssEntries = collectViewerStylesheets()
   const rootTsxContent = readFileSync(ROOT_TSX, 'utf8')
-  // app.css imports the font and the theme that defines its stack.
   for (const violation of findFontSourceViolations(
     `${appCssContent}\n${themeCssContent}`,
     rootTsxContent,
@@ -1849,8 +1796,6 @@ export function runAllChecks() {
   const themeBreakpointNames = collectThemeBreakpointNames(themeCssContent)
   const themeContainerNames = collectThemeContainerNames(themeCssContent)
 
-  // catalog.ts quotes class strings and var names as documentation, not as
-  // applied styles, so it is excluded from every source scan.
   const sourceFiles = walkSourceFiles(APP_DIR, true).filter(
     (file) => file !== CATALOG_TS,
   )
@@ -1921,8 +1866,6 @@ export function runAllChecks() {
     ...styleCssContents,
   ])
 
-  // The @theme inline bridges map utility names onto semantic values and are
-  // not themselves references to check.
   const referenceSources = [
     ...styleCssEntries.map((entry) =>
       entry.path === THEME_CSS
@@ -1942,8 +1885,6 @@ export function runAllChecks() {
 
   for (const { path, content } of referenceSources) {
     const isSourceFile = /\.tsx?$/.test(path)
-    // Collect self-contained definitions from comment-stripped content so a
-    // `--name:` mention in a line comment does not count as a definition.
     const fileDefinedVars = collectDefinedVariables([
       isSourceFile ? stripTsxComments(content) : content,
     ])

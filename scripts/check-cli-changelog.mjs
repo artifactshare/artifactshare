@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-// packages/cli/src/changelog.ts の SECTION_HEADING と同じ厳密形。緩い形をここで
-// 受理すると、CI を通った見出しが実行時の節抽出に一致しない事故 (末尾空白など) が起きる。
 const VERSION_HEADING = /^## (\S+) - (\d{4}-\d{2}-\d{2})$/
 const LOOSE_HEADING = /^## (\S+) - (.*)$/
 const EXPECTED_NAME = '@artifactshare/cli'
@@ -25,8 +23,6 @@ export function findVersionHeadings(changelogContent) {
   return headings
 }
 
-// Each finding carries the code and the version or heading it is about. The
-// executable prints `message`; callers and tests read `code`.
 function finding(code, message, detail) {
   return { code, message, ...detail }
 }

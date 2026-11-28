@@ -3,8 +3,6 @@ import { extname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
 
-// Deliberately shallow: this checker inspects SQL written in the same AST
-// expression and Kysely wiring. The runtime plugin owns builder/data-flow cases.
 const root = fileURLToPath(new URL('..', import.meta.url))
 const SOURCE_ROOTS = ['apps/web/app', 'apps/web/workers']
 const SOURCE_EXTENSIONS = new Set([
@@ -23,9 +21,6 @@ const EXCLUDED_DIRECTORIES = new Set([
   'test',
   'tests',
 ])
-// Keep aligned with analytics-lint-plugin.test.mjs,
-// module-boundary-lint-plugin.test.mjs, and plan-tier-lint-plugin.test.mjs,
-// which create these during parallel tests.
 const LINT_FIXTURE_DIRECTORY =
   /^apps\/web\/app\/(?:(?:analytics|module-boundary|plan-tier)-lint-fixture-[^/]+|modules\/module-boundary-lint-fixture-[^/]+)$/
 const SET_OPERATION_WORDS = new Set(['EXCEPT', 'INTERSECT', 'UNION'])
@@ -102,8 +97,6 @@ function patternNames(node, names) {
   return names
 }
 
-// `var` is function-scoped, so a `var` written in a nested block still shadows
-// a constant everywhere in the function that holds it.
 function hoistedVarNames(functionNode, names) {
   function visit(node) {
     if (!node || typeof node !== 'object') return
@@ -124,13 +117,6 @@ function hoistedVarNames(functionNode, names) {
   return names
 }
 
-// The lexical scope an identifier resolves in. A scope records the names it
-// binds: a `const` with an initializer can resolve to that initializer, and
-// every other binding — parameter, `let`, `var`, catch clause, function, class,
-// import, loop variable — is opaque. A use site resolves against the nearest
-// enclosing binding of the name, so lifting a static query into a named
-// constant stays analyzable, while a parameter or local that happens to reuse a
-// constant's name does not resolve to that constant.
 function createScope(parent) {
   const bindings = new Map()
   const scope = { bindings, parent }
@@ -144,7 +130,6 @@ function createScope(parent) {
   return scope
 }
 
-// A name declared twice in one scope is ambiguous, so it stops resolving.
 function declare(scope, name, init = null) {
   scope.bindings.set(
     name,
@@ -185,9 +170,6 @@ function declareStatement(scope, statement) {
     declare(scope, node.id.name)
 }
 
-// The scope this node's children resolve in, or the enclosing scope when the
-// node binds nothing. Each scope holds only its own declarations, so a sibling
-// block never hides a constant from a use site outside it.
 function scopeFor(node, parent) {
   if (FUNCTION_TYPES.has(node.type)) {
     const scope = createScope(parent)
@@ -236,8 +218,6 @@ function staticStrings(node, scope, seen = new Set()) {
   if (node.type === 'Identifier') {
     const binding = scope?.lookup(node.name)
     if (!binding?.init || seen.has(node.name)) return null
-    // The initializer is written where the constant is declared, so its own
-    // identifiers resolve in that scope rather than at this use site.
     return staticStrings(
       binding.init,
       binding.scope,

@@ -14,7 +14,6 @@ function deploy(args) {
     throw new Error('Content deployment failed')
 }
 
-/** Called only by the protected production workflow, after builds and migration. */
 export async function deployContentCutover({
   readStage = readContentDeliveryStage,
   verify = verifyContentCutover,
