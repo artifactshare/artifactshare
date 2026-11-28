@@ -115,7 +115,7 @@ Examples of choosing the observation and fault control:
 
 ## Reproducing a flaky browser test
 
-A nightly flaky issue names a lane, a file and a test. `pnpm test:flaky-repro`
+A row of the nightly flaky report names a lane, a file and a test. `pnpm test:flaky-repro`
 repeats that one test the way the detector runs it, one Vitest process per
 repetition, and prints a JSON summary of what the repetitions did:
 
