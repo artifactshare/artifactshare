@@ -4,7 +4,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
   isTeamWorkspaceAdmin,
-  isWorkspaceAdmin,
+  isWorkspaceAdminOnAnyPlan,
   viewerAccessAllowed,
   viewerDisplayCheck,
   type ArtifactSnapshot,
@@ -768,7 +768,7 @@ describe('viewerDisplayCheck', () => {
   })
 })
 
-describe('isWorkspaceAdmin', () => {
+describe('isWorkspaceAdminOnAnyPlan', () => {
   let db: Kysely<DB>
 
   beforeEach(async () => {
@@ -806,7 +806,7 @@ describe('isWorkspaceAdmin', () => {
   })
 
   test('grants a recorded admin of the workspace', async () => {
-    const result = await isWorkspaceAdmin(
+    const result = await isWorkspaceAdminOnAnyPlan(
       db,
       { id: 'admin-1', workspaceId: 'ws-a' },
       'ws-a',
@@ -815,7 +815,7 @@ describe('isWorkspaceAdmin', () => {
   })
 
   test('denies a non-admin member of the workspace', async () => {
-    const result = await isWorkspaceAdmin(
+    const result = await isWorkspaceAdminOnAnyPlan(
       db,
       { id: 'owner-1', workspaceId: 'ws-a' },
       'ws-a',
@@ -826,7 +826,7 @@ describe('isWorkspaceAdmin', () => {
   test('denies when the user belongs to a different workspace than the target', async () => {
     // admin-1 is a recorded admin of ws-a, but the caller's own workspace is
     // ws-b — admin rights never cross workspaces, so the guard denies it.
-    const result = await isWorkspaceAdmin(
+    const result = await isWorkspaceAdminOnAnyPlan(
       db,
       { id: 'admin-1', workspaceId: 'ws-b' },
       'ws-a',
@@ -896,8 +896,8 @@ describe('isTeamWorkspaceAdmin', () => {
     expect(result).toBe(false)
   })
 
-  test('isWorkspaceAdmin stays true for a free workspace admin', async () => {
-    const result = await isWorkspaceAdmin(
+  test('isWorkspaceAdminOnAnyPlan stays true for a free workspace admin', async () => {
+    const result = await isWorkspaceAdminOnAnyPlan(
       db,
       { id: 'admin-1', workspaceId: 'ws-a' },
       'ws-a',
