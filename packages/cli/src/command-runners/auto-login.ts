@@ -12,6 +12,7 @@ import {
   authRequiredWithDeviceAuthError,
   configHomeUnavailableError,
   mapApiError,
+  reauthReasonOf,
   tokenStoreUnavailableError,
   validationError,
   botReauthRequiredError,
@@ -81,8 +82,7 @@ function interactiveLoginMessage(
 ): string {
   if (
     isProfileCredentialSource(credential.source) &&
-    credential.error.details?.reauth_reason ===
-      'profile_token_invalid_or_expired'
+    reauthReasonOf(credential.error) === 'profile_token_invalid_or_expired'
   ) {
     return 'Profile token expired. Starting device login to refresh...\n'
   }

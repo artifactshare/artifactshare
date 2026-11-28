@@ -304,9 +304,9 @@ async function writeConfig(
     }
   }
   const next = withConfigValue(current, key, value)
-  try {
-    if (!(await writeGlobalConfig(next))) return { path: null }
-  } catch {
+  const written = await writeGlobalConfig(next)
+  if (!written.ok) {
+    if (written.reason === 'config_home_unavailable') return { path: null }
     return {
       error: invalid(
         'User config could not be written.',

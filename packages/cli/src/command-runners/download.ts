@@ -320,7 +320,7 @@ async function runDownloadInternal(
   await boundary.replace(plan.value.tempRoot, plan.value.root)
   boundary.keep(plan.value.root)
 
-  await boundary.finish()
+  await boundary.cleanup()
   return writeSuccess(
     command,
     {
@@ -646,7 +646,7 @@ async function runProjectDownload(
     skipped: results.filter((r) => r.status === 'skipped').length,
     failed: results.filter((r) => r.status === 'failed').length,
   }
-  await boundary.finish()
+  await boundary.cleanup()
   process.exitCode = counts.failed > 0 ? 1 : 0
   return writeSuccess(
     command,

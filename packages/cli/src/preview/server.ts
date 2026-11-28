@@ -65,7 +65,7 @@ export interface PreviewServerOptions {
   ) => void
   openBrowser?: boolean
   historyDir?: string
-  cliOptions?: Record<string, unknown>
+  cliOptions?: CliOptions
 }
 
 export interface PreviewServer {
@@ -775,7 +775,7 @@ export async function startPreviewServer(
     fileName: basename(options.filePath),
     artifactOrigin: `http://127.0.0.1:${port}`,
     readFileBytes: () => readFileSync(options.filePath),
-    cliOptions: (options.cliOptions ?? {}) as CliOptions,
+    cliOptions: options.cliOptions ?? {},
   })
 
   async function close(): Promise<void> {

@@ -22,6 +22,22 @@ import { isContract, isRecord } from './validators.js'
 
 const PROJECTS_LIST_COMMAND = `${CLI_INVOCATION} projects list --json`
 
+// `auth_required` is the CLI JSON contract's code for "not signed in", so a
+// bot profile that can never sign in reports it too. `details.reauth_reason`
+// is what separates the two cases for callers, so the reasons are one named
+// union with one reader instead of bare strings on both sides.
+export const REAUTH_REASONS = [
+  'bot_credential_invalid',
+  'profile_token_invalid_or_expired',
+] as const
+
+export type ReauthReason = (typeof REAUTH_REASONS)[number]
+
+export function reauthReasonOf(error: CliError): ReauthReason | null {
+  const reason = error.details?.reauth_reason
+  return REAUTH_REASONS.find((known) => known === reason) ?? null
+}
+
 export type ProjectNameCandidate = {
   project_id: string
   name: string | null
@@ -727,7 +743,7 @@ export function botReauthRequiredError(profile: string): CliError {
     recovery: { kind: 'ask_human' },
     details: {
       profile,
-      reauth_reason: 'bot_credential_invalid',
+      reauth_reason: 'bot_credential_invalid' satisfies ReauthReason,
     },
   })
 }
@@ -762,7 +778,7 @@ export function profileReauthRequiredError(
     details: {
       ...authRecoveryDetails(baseUrl, loginCommand),
       credential_source: source,
-      reauth_reason: 'profile_token_invalid_or_expired',
+      reauth_reason: 'profile_token_invalid_or_expired' satisfies ReauthReason,
       profile,
     },
   })

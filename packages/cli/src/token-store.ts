@@ -59,27 +59,63 @@ export async function readProfileToken(
   return {
     ok: false,
     reason:
-      native || (options.allowPlaintextTokenStore && plaintextStoreWritable())
+      // This account has no plaintext entry, so only the opt-in can still
+      // make the fallback writable.
+      native ||
+      (await plaintextFallbackAllowed(account, options, {
+        existingEntryCounts: false,
+      }))
         ? 'missing'
         : 'unavailable',
   }
+}
+
+type PlaintextFallbackCheck = {
+  // A pre-opt-in install may already keep this profile's credential in the
+  // plaintext file, and that entry is itself permission to write it again. A
+  // caller that knows the entry is absent, or is about to remove it, passes
+  // false so the entry does not vouch for a write that will not have it.
+  existingEntryCounts?: boolean
+  platform?: NodeJS.Platform
+}
+
+// The plaintext file is the only fallback once no native store answers, so a
+// probe and a save decide it here and cannot drift apart.
+async function plaintextFallbackAllowed(
+  account: string,
+  options: CliOptions,
+  {
+    existingEntryCounts = true,
+    platform = process.platform,
+  }: PlaintextFallbackCheck = {},
+): Promise<boolean> {
+  if (!plaintextFallbackSupported(platform)) return false
+  if (!configHome()) return false
+  if (options.allowPlaintextTokenStore) return true
+  if (!existingEntryCounts) return false
+  return (await readPlaintextToken(account)) !== null
 }
 
 export async function probeTokenStoreWritable(
   profile: string,
   options: CliOptions,
   {
-    ignoreExistingEntry = false,
+    // A forced import removes the stored credential before it saves the new
+    // one, so the entry it is about to delete cannot prove the save will work.
+    existingCredentialRemovedFirst = false,
     platform = process.platform,
-  }: { ignoreExistingEntry?: boolean; platform?: NodeJS.Platform } = {},
+  }: {
+    existingCredentialRemovedFirst?: boolean
+    platform?: NodeJS.Platform
+  } = {},
 ): Promise<boolean> {
   const native = await nativeStore()
   if (native) return true
-  if (options.allowPlaintextTokenStore) return plaintextStoreWritable(platform)
-  if (ignoreExistingEntry) return false
-  if (!plaintextFallbackSupported(platform)) return false
-  const account = accountName(profile, baseUrlOf(options))
-  return (await readPlaintextToken(account)) !== null
+  return await plaintextFallbackAllowed(
+    accountName(profile, baseUrlOf(options)),
+    options,
+    { existingEntryCounts: !existingCredentialRemovedFirst, platform },
+  )
 }
 
 export async function saveProfileSessionCredential(
@@ -115,9 +151,8 @@ async function saveProfileCredential(
     }
     return { ok: true, store: native.kind }
   }
-  const hasPlaintextEntry = (await readPlaintextToken(account)) !== null
   if (
-    (options.allowPlaintextTokenStore || hasPlaintextEntry) &&
+    (await plaintextFallbackAllowed(account, options)) &&
     (await writePlaintextToken(account, value))
   ) {
     return { ok: true, store: 'plaintext_file' }
@@ -229,20 +264,32 @@ export async function readGlobalConfig(): Promise<GlobalConfig | null> {
   return await readJsonFile<GlobalConfig>(join(home, 'config.json'))
 }
 
+export type WriteGlobalConfigResult =
+  | { ok: true }
+  | { ok: false; reason: 'config_home_unavailable' }
+  | { ok: false; reason: 'write_failed'; cause: unknown }
+
+// Both ways a write can fail come back as one result. A caller that wants a
+// filesystem failure to keep propagating rethrows `cause` itself, so no caller
+// has to know that one failure returns and the other throws.
 export async function writeGlobalConfig(
   config: GlobalConfig,
-): Promise<boolean> {
+): Promise<WriteGlobalConfigResult> {
   const home = configHome()
-  if (!home) return false
-  await mkdir(home, { recursive: true, mode: 0o700 })
-  await writeFile(
-    join(home, 'config.json'),
-    `${JSON.stringify(config, null, 2)}\n`,
-    {
-      mode: 0o600,
-    },
-  )
-  return true
+  if (!home) return { ok: false, reason: 'config_home_unavailable' }
+  try {
+    await mkdir(home, { recursive: true, mode: 0o700 })
+    await writeFile(
+      join(home, 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    )
+  } catch (cause) {
+    return { ok: false, reason: 'write_failed', cause }
+  }
+  return { ok: true }
 }
 
 function accountName(profile: string, baseUrl: string): string {
@@ -877,14 +924,6 @@ export function plaintextFallbackSupported(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   return platform !== 'win32'
-}
-
-function plaintextStoreWritable(
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  const home = configHome()
-  if (!home) return false
-  return plaintextFallbackSupported(platform)
 }
 
 export async function tokenStoreDiagnostics(): Promise<TokenStoreDiagnostics> {

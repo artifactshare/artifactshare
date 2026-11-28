@@ -3,6 +3,8 @@ import {
   RotatingCliAuthRefreshResponseSchema,
 } from '@artifactshare/contract'
 import type {
+  CliError,
+  FetchInit,
   OutputMode,
   ParsedArgs,
   ProfileConfigEntry,
@@ -12,7 +14,7 @@ import type {
   ProfilesListEntry,
 } from '../types.js'
 import { apiGet, apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
-import { CLI_INVOCATION, DEFAULT_BASE_URL } from '../constants.js'
+import { CLI_INVOCATION } from '../constants.js'
 import { isRecord } from '../validators.js'
 import {
   botTokenInvalidError,
@@ -35,7 +37,10 @@ import {
 import { randomUUID } from 'node:crypto'
 import { BOT_TOKEN_PREFIX } from '../constants.js'
 import { verifyAndStoreApiTokenProfile, whoamiProfile } from './login.js'
-import { deleteCredentialForProfileEntry } from './profile-credentials.js'
+import {
+  deleteCredentialForProfileEntry,
+  readCredentialForProfileEntry,
+} from './profile-credentials.js'
 
 async function readStdinToken(): Promise<string> {
   if (process.stdin.isTTY === true) return ''
@@ -59,10 +64,11 @@ export async function runProfilesList(
   const profiles: ProfilesListEntry[] = await Promise.all(
     Object.entries(config.profiles ?? {}).map(async ([name, rawEntry]) => {
       const entry = isRecord(rawEntry) ? (rawEntry as ProfileConfigEntry) : {}
-      const stored = await readProfileToken(name, {
-        ...parsed.options,
-        baseUrl: nonEmpty(entry.base_url) ?? DEFAULT_BASE_URL,
-      })
+      const stored = await readCredentialForProfileEntry(
+        name,
+        rawEntry,
+        parsed.options,
+      )
       return {
         name,
         base_url: nonEmpty(entry.base_url) ?? null,
@@ -110,7 +116,8 @@ export async function runProfilesUse(
     return writeFailure(command, profileNotFoundError(name), mode, 1)
   }
   const previous = nonEmpty(config.default_profile) ?? null
-  await writeGlobalConfig({ ...config, default_profile: name })
+  const written = await writeGlobalConfig({ ...config, default_profile: name })
+  if (!written.ok && written.reason === 'write_failed') throw written.cause
   return writeSuccess(
     command,
     { default_profile: name, previous_default: previous },
@@ -248,11 +255,12 @@ export async function runProfilesDelete(
   const { [name]: _removed, ...restProfiles } = config.profiles ?? {}
   const defaultProfile =
     config.default_profile === name ? null : (config.default_profile ?? null)
-  await writeGlobalConfig({
+  const written = await writeGlobalConfig({
     ...config,
     default_profile: defaultProfile,
     profiles: restProfiles,
   })
+  if (!written.ok && written.reason === 'write_failed') throw written.cause
 
   const data: ProfilesDeleteData = {
     profile: name,
@@ -265,52 +273,47 @@ export async function runProfilesDelete(
   return writeSuccess(command, data, mode)
 }
 
-async function importBotTokenProfile(
-  command: string,
+// Every refusal the import can raise on its own, in the order it raises them.
+// The rotation that follows consumes the bot token, so anything that could say
+// no has to say it here, while the token is still unconsumed.
+async function preflightBotTokenImport(
   profile: string,
-  token: string,
   parsed: ParsedArgs,
-  mode: OutputMode,
-): Promise<void> {
+): Promise<{ ok: true; init: FetchInit } | { ok: false; error: CliError }> {
   const config = (await readGlobalConfig()) ?? {}
   const entry = isRecord(config.profiles?.[profile])
     ? (config.profiles?.[profile] as ProfileConfigEntry)
     : undefined
+
   if (entry && parsed.options.force !== true) {
     const existing = await readProfileToken(profile, {
       ...parsed.options,
       baseUrl: nonEmpty(entry.base_url) ?? baseUrlOf(parsed.options),
     })
     if (existing.ok) {
-      return writeFailure(
-        command,
-        validationError(
+      return {
+        ok: false,
+        error: validationError(
           `Profile "${profile}" already has a stored credential.`,
           `Re-run with --force to replace it: printf '%s' "$TOKEN" | ${CLI_INVOCATION} profiles import-token --profile ${profile} --force`,
         ),
-        mode,
-        1,
-      )
+      }
     }
   }
 
   const request = await requestConfig(parsed.options)
-  if (request.error) {
-    return writeFailure(command, request.error, mode, 1)
-  }
+  if (request.error) return { ok: false, error: request.error }
 
   const forcedReplace = Boolean(entry && parsed.options.force === true)
   if (
     !(await probeTokenStoreWritable(profile, parsed.options, {
-      ignoreExistingEntry: forcedReplace,
+      existingCredentialRemovedFirst: forcedReplace,
     }))
   ) {
-    return writeFailure(
-      command,
-      tokenStoreUnavailableError(profile, 'native_store_unavailable'),
-      mode,
-      1,
-    )
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'native_store_unavailable'),
+    }
   }
 
   if (forcedReplace && entry) {
@@ -320,32 +323,38 @@ async function importBotTokenProfile(
       parsed.options,
     )
     if (!removed.ok) {
-      return writeFailure(
-        command,
-        validationError(
+      return {
+        ok: false,
+        error: validationError(
           `The existing credential for profile "${profile}" could not be removed, so the forced import was aborted before consuming the token.`,
           'Fix the credential store (or remove the credential with logout --profile), then re-run the import; the bot token is still unconsumed.',
         ),
-        mode,
-        1,
-      )
+      }
     }
   }
 
-  let configWritable = false
-  try {
-    configWritable = await writeGlobalConfig(config)
-  } catch {
-    configWritable = false
+  // Writing the config back unchanged proves the profile entry can be saved
+  // once the rotated credential exists.
+  if (!(await writeGlobalConfig(config)).ok) {
+    return {
+      ok: false,
+      error: tokenStoreUnavailableError(profile, 'config_write_failed'),
+    }
   }
-  if (!configWritable) {
-    return writeFailure(
-      command,
-      tokenStoreUnavailableError(profile, 'config_write_failed'),
-      mode,
-      1,
-    )
-  }
+
+  return { ok: true, init: request.init }
+}
+
+async function importBotTokenProfile(
+  command: string,
+  profile: string,
+  token: string,
+  parsed: ParsedArgs,
+  mode: OutputMode,
+): Promise<void> {
+  const preflight = await preflightBotTokenImport(profile, parsed)
+  if (!preflight.ok) return writeFailure(command, preflight.error, mode, 1)
+  const { init } = preflight
 
   const rotationRequestId = randomUUID()
   let result = await apiPostPublic(
@@ -355,7 +364,7 @@ async function importBotTokenProfile(
       rotation_request_id: rotationRequestId,
     } satisfies CliAuthRefreshRequest,
     parsed.options,
-    request.init,
+    init,
   )
   for (let retry = 0; result.error && retry < 2; retry += 1) {
     result = await apiPostPublic(
@@ -365,7 +374,7 @@ async function importBotTokenProfile(
         rotation_request_id: rotationRequestId,
       } satisfies CliAuthRefreshRequest,
       parsed.options,
-      request.init,
+      init,
     )
   }
   if (result.error) return writeFailure(command, result.error, mode, 1)
@@ -425,16 +434,15 @@ async function importBotTokenProfile(
     '/api/cli/whoami',
     refresh.data.access_token,
     parsed.options,
-    request.init,
+    init,
     { authenticated: true, baseUrl: baseUrlOf(parsed.options) },
   )
   const whoami = whoamiResult.error ? null : whoamiProfile(whoamiResult.body)
 
   const latest = (await readGlobalConfig()) ?? {}
   const profiles = latest.profiles ?? {}
-  let configSaved = false
-  try {
-    configSaved = await writeGlobalConfig({
+  const configSaved = (
+    await writeGlobalConfig({
       ...latest,
       default_profile: nonEmpty(latest.default_profile) ?? profile,
       profiles: {
@@ -451,9 +459,7 @@ async function importBotTokenProfile(
         },
       },
     })
-  } catch {
-    configSaved = false
-  }
+  ).ok
   if (!configSaved) {
     return writeFailure(
       command,
