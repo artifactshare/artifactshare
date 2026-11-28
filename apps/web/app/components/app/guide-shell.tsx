@@ -167,7 +167,6 @@ export function GuideProse({
   const copiedLabel = t('guide.code.copied')
   const copyAriaLabel = t('guide.code.copyAriaLabel')
   const proseRef = useRef<HTMLDivElement>(null)
-  // The cleanup clears every per-button timer in the map and removes the listener.
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     const prose = proseRef.current

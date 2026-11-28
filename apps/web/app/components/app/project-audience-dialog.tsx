@@ -54,7 +54,6 @@ interface ProjectAudienceDialogProps {
   viewerEmail: string
   workspaceHd: string | null
   defaults: ReadonlyArray<ProjectShareDefault>
-  // 関係者を継承する成果物 (visibility='project') の件数。保存時の影響注記に使う。
   artifactCount: number
 }
 

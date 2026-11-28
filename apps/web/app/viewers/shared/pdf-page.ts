@@ -1,13 +1,3 @@
-// The PDF viewer and the app exchange the page being read. The app gives each
-// viewer document that answered its ready check a fresh sync token; the
-// viewer reports its current page with that token (validated in the app by
-// isSandboxMessage), so a report from an earlier document in the same frame
-// never matches. The app asks it to open a page. Like the preferences message,
-// the parent messages carry no access decision: the viewer accepts them from
-// its parent window alone, ignores anything malformed, and opens only a page
-// its document has.
-
-// Matches MAX_PDF_PAGE_COUNT in the sandbox message validator.
 export const MAX_PDF_PAGE = 100_000
 
 const REPORT_SOURCE = 'artifactshare'
@@ -29,7 +19,6 @@ function isToken(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
-/** The report for a viewer snapshot. Only a shown page is ever reported. */
 export function pdfPageReport(
   snapshot: {
     state: string

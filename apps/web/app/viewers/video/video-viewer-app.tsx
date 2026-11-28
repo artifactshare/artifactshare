@@ -35,7 +35,6 @@ type PlayerKey = Extract<TKey, `videoViewer.${string}`>
 type Text = (key: PlayerKey) => string
 type DownloadHandler = (event: ReactMouseEvent<HTMLAnchorElement>) => void
 
-// Player controls: icon buttons with 44px touch targets.
 const CONTROL = 'h-11 min-w-11 gap-2 px-2.5'
 const ICON = 'size-5'
 const PRESSED =
@@ -52,8 +51,6 @@ function formatTime(value: number) {
     : `${minutes}:${seconds}`
 }
 
-// Keys that buttons, links, the seek and volume ranges and the speed list
-// handle themselves.
 function ownsKeys(target: EventTarget | null) {
   return (
     target instanceof HTMLElement &&
@@ -83,8 +80,6 @@ export function VideoViewerApp({
     return () => runtime.stop()
   }, [runtime])
 
-  // Shortcuts only while focus is in the player and not on a control that
-  // has its own keys.
   const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (
       event.ctrlKey ||
@@ -125,9 +120,6 @@ export function VideoViewerApp({
           aria-label={text(
             player.ended ? 'videoViewer.replay' : 'videoViewer.startPlay',
           )}
-          // The large button invites the first play and a replay; once the
-          // reader has played or moved the video, it would only cover the
-          // paused frame.
           hidden={!paused || failed || (player.moved && !player.ended)}
           onClick={() => void runtime.togglePlay()}
         >
@@ -157,10 +149,6 @@ export function VideoViewerApp({
   )
 }
 
-// The page's own <video> element, moved into the picture once; React never
-// recreates it, so playback survives every re-render. It moves during the
-// first commit, which also clears the mount point, so the element is never
-// left out of the document between tasks.
 function VideoSlot({ video }: { video: HTMLVideoElement }) {
   const slotRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -221,9 +209,6 @@ function Status({
   )
 }
 
-// The seek bar above one row of controls: play, back 10 seconds and the
-// time on the left; volume, playback settings, full screen and download on
-// the right.
 function Controls({
   runtime,
   player,
@@ -245,7 +230,6 @@ function Controls({
   const paused = player.paused || player.ended
   const { duration } = player
   const total = duration ? formatTime(duration) : '–:––'
-  // While the reader drags the bar, playback updates do not move it back.
   const [dragging, setDragging] = useState<string | null>(null)
   const position = duration
     ? String(Math.min(100, (player.currentTime / duration) * 100))
@@ -281,8 +265,6 @@ function Controls({
           }}
         />
       </label>
-      {/* The app's version chip overlaps the frame's bottom-right corner, so
-          the buttons stay clear of it. */}
       <div className="max-stack:gap-0 flex items-center justify-between gap-3 pr-15">
         <div className="max-stack:gap-0 flex min-w-0 items-center gap-1">
           <Button
@@ -320,8 +302,6 @@ function Controls({
           </span>
         </div>
         <div className="max-stack:gap-0 flex min-w-0 items-center gap-1">
-          {/* Phones, and touch devices without hover in any orientation, use
-              the device volume. */}
           <div className="max-stack:hidden touch:hidden flex min-w-0 items-center gap-1">
             <Button
               id="mute"
@@ -401,9 +381,6 @@ function Controls({
   )
 }
 
-// The settings button opens a small panel above the controls with the
-// playback speed. Escape in the panel closes it and returns to the button;
-// a click elsewhere closes it.
 function PlaybackSettings({
   runtime,
   rate,

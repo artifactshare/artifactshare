@@ -29,9 +29,6 @@ function identifier(node, name) {
   return node?.type === 'Identifier' && node.name === name
 }
 
-// Parentheses, optional-chain wrappers and the inert (0, fn) call spelling do
-// not hide the name being checked, even when optional calls may short-circuit.
-// Do not discard arbitrary sequence prefixes: initialization must remain inert.
 function unwrap(node) {
   while (node) {
     if (['ParenthesizedExpression', 'ChainExpression'].includes(node.type))
@@ -67,10 +64,6 @@ function call(node, name) {
   )
 }
 
-// These entry points process private messages or trusted-event decisions. Walk
-// their entire bodies (including listener callbacks). Unlike the anchor engine
-// and painters, the original reporter never used iterable syntax in these paths.
-// Keep this list in sync when extracting/renaming security-sensitive functions.
 const securityFunctions = new Set([
   'createMessagePayload',
   'send',
@@ -96,12 +89,6 @@ const securityFunctions = new Set([
   'installMermaidResults',
 ])
 
-// Decision-path lint is limited to the named security functions (including
-// nested callbacks): Object/Array/Reflect/Function references, realm-qualified
-// calls, and the fixed Node 24 Array.prototype own names except constructor
-// and length. Tests flag new runtime methods for explicit review. Direct bare
-// Array.isArray calls remain permitted. This is not general alias analysis or
-// a ban on replaceable methods outside this set.
 const decisionBuiltins = new Set(['Object', 'Array', 'Reflect', 'Function'])
 const arrayMethods = new Set([
   'at',
@@ -239,7 +226,6 @@ function isFunction(value) {
   ].includes(value?.type)
 }
 
-// Binding names and non-computed property keys are not value references.
 function isNonReference(node, ancestors) {
   const parent = ancestors.at(-1)
   if (
@@ -270,10 +256,6 @@ function isNonReference(node, ancestors) {
     (!parent.shorthand || parent.value !== node)
   )
     return true
-  // A shorthand key is only a property name. If the parser shares its node
-  // with the value, classify that value below rather than exempting it too.
-  // Binding patterns are declarations, not value references. Assignment patterns
-  // on the left of an assignment remain references and are deliberately rejected.
   let child = node
   for (let index = ancestors.length - 1; index >= 0; index--) {
     const owner = ancestors[index]
@@ -297,9 +279,6 @@ function isNonReference(node, ancestors) {
   return false
 }
 
-// Reserve bundle function names throughout the IIFE instead of attempting
-// general alias analysis. With no shadow bindings, writes, or dynamic code,
-// a bare callee name resolves to the declaration in the bundle function map.
 function validateFunctionBindings(program, functions) {
   function targets(pattern, visit) {
     pattern = unwrap(pattern)
@@ -324,8 +303,6 @@ function validateFunctionBindings(program, functions) {
         fail(`bundle function binding ${node.name} must not be ${reason}`)
     })
   walk(program, (node, ancestors) => {
-    // Preserve only the existing initial capture spelling. This property name
-    // does not invoke the Function constructor or expose it to another call.
     const initialCallBind =
       identifier(node, 'Function') &&
       ancestors.findLast(isFunction) === functions.get('capturePrimordials') &&
@@ -370,16 +347,6 @@ function validateFunctionBindings(program, functions) {
   })
 }
 
-// Secret-flow guard: documentToken/readyChallenge must not reach replaceable
-// code. Whole ctx arguments go only to bundle declarations whose matching
-// parameter is named ctx. Their names cannot be shadowed or reassigned.
-// eval/Function identifiers (except the initial win.Function.prototype.call.bind
-// capture), ctx receivers, arguments and non-ctx secret members are forbidden.
-// With normalized callees and reserved function bindings this
-// checks explicit secret flow in the repository's trusted reporter sources;
-// it is not a sandbox for arbitrary code or general alias/dynamic-key analysis.
-// Skipped writes and secret handling compare only against live values of
-// reporter-owned objects or captured primordials. Do not alias secret state.
 function validateCtxReference(node, ancestors, functions) {
   if (!identifier(node, 'ctx') || isNonReference(node, ancestors)) return
   const parent = ancestors.at(-1)
@@ -436,10 +403,6 @@ function validateCtxReference(node, ancestors, functions) {
   )
 }
 
-// Secrets may only be assigned, tested without coercion, or placed directly in
-// send's message literal. Reject aliases and serialization, including prototype
-// calls, rather than trying to maintain a general-purpose taint analysis. Token
-// construction in installReporter is synchronous, before authored code runs.
 function validateSecretUse(node, ancestors) {
   if (
     node.type !== 'MemberExpression' ||
@@ -480,9 +443,6 @@ function validateSecretUse(node, ancestors) {
   )
 }
 
-// These are the only functions receiving whole secret-bearing messages. Keep
-// their calls confined to local copying and the captured native primitives.
-// Neither path needs constructors; authored replacements can inspect arguments.
 function validateMessageCalls(fn) {
   if (!['send', 'createMessagePayload'].includes(fn.id.name)) return
   walk(fn, (node) => {
@@ -507,7 +467,6 @@ function validateMessageCalls(fn) {
   })
 }
 
-/** Reject initialization introduced by bundling, not just familiar helper names. */
 export function validateBundle(
   output,
   sourceFunctions = new Set(['installReporter', 'capturePrimordials']),
@@ -719,8 +678,6 @@ export async function renderReporter({ entry = entryPath } = {}) {
         })
       }
     }
-    // Region labels are bundler diagnostics, not injected source. Strip them
-    // before hashing so local module paths never become part of the response.
     const body = validateBundle(output, sourceFunctions)
       .replace(/\r\n/g, '\n')
       .replace(/^[ \t]*\/\/#(?:end)?region[^\n]*(?:\n|$)/gm, '')

@@ -84,8 +84,6 @@ export function SearchPalette({
       window.removeEventListener('search:edit', edit)
     }
   }, [])
-  // Leaving for another page hands focus to that page (the results heading),
-  // so only a plain close returns focus to the trigger.
   const keepFocus = useRef(false)
   const close = (restoreFocus = true) => {
     setOpen(false)
@@ -119,8 +117,6 @@ export function SearchPalette({
   )
   return (
     <div
-      // Breakpoint classes, not the `mobile` state, so the first paint on a
-      // phone already shows the icon button on the right.
       className={
         resultsPage
           ? 'nav:max-w-xl min-w-0 flex-1'
@@ -326,7 +322,6 @@ type SearchHistoryEntry = {
   selectedScope?: SearchSelectionNames
 }
 
-/** The viewer's recent searches, one per distinct set of conditions. */
 function useSearchHistory(retry: number) {
   const [history, setHistory] = useState<SearchHistoryEntry[]>([])
   const [historyError, setHistoryError] = useState(false)
@@ -393,7 +388,6 @@ function PaletteBody({
   const { history, historyError } = useSearchHistory(retry)
   const sequence = useRef(0),
     composition = useRef(false),
-    // Opening the palette fetches at once; only typing waits for a pause.
     fetched = useRef(false)
   const params = new URLSearchParams(initialParams)
   params.set('q', query)
@@ -829,7 +823,6 @@ function paletteOptions({
   formatDate,
 }: {
   query: string
-  /** An owner or project chip is set, so Enter searches even without words. */
   filtered: boolean
   results: Suggestions
   history: Array<{

@@ -43,7 +43,6 @@ interface AvatarMenuProps {
 
 async function handleSignOut() {
   await signOut()
-  // Hard reload so the loader re-runs without the session cookie.
   window.location.href = '/'
 }
 

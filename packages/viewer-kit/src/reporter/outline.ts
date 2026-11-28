@@ -1,9 +1,5 @@
 import type { ReporterState } from './state.js'
 
-// Reading position for the Markdown outline viewer (data-md-outline-version="2").
-// The renderer emits the outline, the compact contents row and the panel; this
-// controller only tracks, navigates and moves the rail marker.
-
 interface OutlineItem {
   id: string
   heading: HTMLElement
@@ -49,8 +45,6 @@ function startMarkdownOutline(ctx: ReporterState) {
   const doc = ctx.doc
   const win = ctx.win
   const body = doc.body
-  // Without a running controller the outline list itself must stay visible
-  // on narrow screens, so every failed start drops the provisional mark.
   const notReady = () => doc.documentElement.removeAttribute(READY_MARK)
   if (
     !body ||
@@ -120,7 +114,6 @@ function startMarkdownOutline(ctx: ReporterState) {
   let tracking = items.filter((item) => showDetails || !item.fine)
   let activeId = ''
   let frame = 0
-  // An explicitly chosen entry stays selected until the document moves.
   let jumpPosition: number | null = null
   let openY = 0
   let restoreOnClose = false
@@ -150,7 +143,6 @@ function startMarkdownOutline(ctx: ReporterState) {
     win.getComputedStyle(element).display !== 'none'
   const contentTop = () =>
     shown(row) ? Math.max(0, row.getBoundingClientRect().bottom) : 0
-  // Only the outline copy the reader can currently use carries aria-current.
   const surface = () =>
     dialog.open ? panelNav : shown(sidebar) ? railNav : panelNav
   const applyCurrent = () => {
@@ -201,7 +193,6 @@ function startMarkdownOutline(ctx: ReporterState) {
     return true
   }
 
-  // Geometry changes place the marker immediately; only section changes move it.
   const syncIndicators = (animate: boolean) => {
     for (const indicator of indicators) {
       const { root, svg, marker } = indicator
@@ -237,7 +228,6 @@ function startMarkdownOutline(ctx: ReporterState) {
     syncIndicators(false)
   }
 
-  // Scroll the outline only as far as needed to show the current entry.
   const reveal = (container: HTMLElement, center: boolean) => {
     const link = container.querySelector<HTMLElement>('[aria-current]')
     if (!link || container.scrollHeight <= container.clientHeight) return
@@ -294,7 +284,6 @@ function startMarkdownOutline(ctx: ReporterState) {
 
   const update = () => {
     frame = 0
-    // A selection caused by a layout change places the marker without travel.
     const animate = !geometryChanged
     geometryChanged = false
     if (jumpPosition !== null) {
@@ -308,7 +297,6 @@ function startMarkdownOutline(ctx: ReporterState) {
     )
     if (!rendered.length) return
     const root = doc.scrollingElement || doc.documentElement
-    // A short final section cannot always reach the reference line.
     if (
       root.scrollHeight > win.innerHeight + 2 &&
       root.scrollTop > 0 &&
@@ -323,7 +311,6 @@ function startMarkdownOutline(ctx: ReporterState) {
       0,
       rendered.findIndex((item) => item.id === activeId),
     )
-    // Separate entry and exit edges keep small reversals from flipping it.
     while (
       index + 1 < rendered.length &&
       rendered[index + 1]!.heading.getBoundingClientRect().top <=
@@ -344,7 +331,6 @@ function startMarkdownOutline(ctx: ReporterState) {
     geometryChanged = true
     schedule()
   }
-  // A hidden fine heading selects the visible section that owns it.
   const ownerOf = (item: OutlineItem) => {
     const position = items.indexOf(item)
     let owner = tracking[0]!
@@ -355,7 +341,6 @@ function startMarkdownOutline(ctx: ReporterState) {
 
   const jump = (item: OutlineItem) => {
     const heading = item.heading
-    // Like native fragment navigation, reveal a heading inside closed details.
     for (
       let ancestor = heading.parentElement;
       ancestor;
@@ -398,7 +383,6 @@ function startMarkdownOutline(ctx: ReporterState) {
 
   rowButton.addEventListener('pointerdown', (event) => event.preventDefault())
   rowButton.addEventListener('click', openPanel)
-  // Closing without a choice returns to where the reader was.
   const cancelPanel = () => {
     if (dialog.open) dialog.close()
     restoreOnClose = false
@@ -428,7 +412,6 @@ function startMarkdownOutline(ctx: ReporterState) {
           return
         event.preventDefault()
         if (dialog.open) {
-          // Unlock the document before navigating; never restore afterwards.
           restoreOnClose = false
           dialog.close()
           rowButton.setAttribute('aria-expanded', 'false')
@@ -454,8 +437,6 @@ function startMarkdownOutline(ctx: ReporterState) {
   }
 
   win.addEventListener('scroll', schedule, { passive: true })
-  // Back/Forward and fragment navigation select the heading in the URL, even
-  // when the scroll offset is unchanged (for example clamped final sections).
   const followHistory = () => {
     let id = ''
     try {
@@ -473,7 +454,6 @@ function startMarkdownOutline(ctx: ReporterState) {
   win.addEventListener('popstate', followHistory)
   win.addEventListener('hashchange', followHistory)
   win.addEventListener('resize', () => {
-    // The panel belongs to the narrow layout only.
     if (dialog.open && shown(sidebar)) cancelPanel()
     applyCurrent()
     refreshGeometry()

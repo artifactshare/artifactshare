@@ -16,7 +16,6 @@ const subscribe = (notify: () => void) => {
 const snapshot = latestViewerHash
 const serverSnapshot = () => ''
 
-// Hydrated links support normal activation and opening in a new tab.
 export function useViewerHash() {
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot)
 }

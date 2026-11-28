@@ -15,15 +15,6 @@ export {
   READY_CHECK_MESSAGE_KIND,
 } from './reporter-constants.js'
 
-/*
- * Injected into sandbox iframe content so the parent frame can surface
- * CSP violations to the viewer. Without this, an artifact whose external
- * scripts or fetches are blocked just renders blank with no signal.
- *
- * The iframe can postMessage to its parent — CSP doesn't block
- * window.postMessage. The parent (a.$id.tsx) listens for
- * source==='artifactshare' messages and renders a violation banner.
- */
 export const SANDBOX_READY_CHECK_MESSAGE = {
   source: READY_CHECK_MESSAGE_SOURCE,
   kind: READY_CHECK_MESSAGE_KIND,
@@ -78,7 +69,6 @@ export function canUseOsHandler(
   )
 }
 
-// The generated body and hash share one source of truth for both injection paths.
 export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}</script>`
 
 export interface CspViolationMessage {
@@ -97,7 +87,6 @@ export interface TextLocus {
   block_text: string
 }
 
-/** Page-derived data, independently validated again at the storage boundary. */
 export function parseTextLocus(value: unknown): TextLocus | undefined {
   if (!value || typeof value !== 'object') return undefined
   const { headings, block_text } = value as Record<string, unknown>
@@ -123,7 +112,6 @@ export interface TextSelectionMessage {
   locus?: TextLocus
   source: 'artifactshare'
   kind: 'text-selection'
-  /** Static sites: the document's comment location (path plus hash route). */
   targetPath?: string | null
   quotedText: string
   prefixText: string
@@ -220,10 +208,6 @@ export interface HashChangedMessage {
   token: string
 }
 
-// The PDF viewer's current page. 'unavailable' (loading, a page that failed
-// to render, or a document that cannot be shown) carries no page at all.
-// token echoes the app's sync token for this document, so a report from an
-// earlier document in the same frame is told apart.
 export const MAX_PDF_PAGE_COUNT = 100_000
 export type PdfPageChangedMessage =
   | {

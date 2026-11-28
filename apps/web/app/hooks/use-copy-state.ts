@@ -3,8 +3,6 @@ import { writeClipboardText } from '~/lib/clipboard'
 
 export type CopyState = 'idle' | 'copied' | 'failed'
 
-/** Copy-to-clipboard with a transient state that resets to idle after 2.2s.
- *  Shared by the connector URL field and the config code block. */
 export function useCopyState(text: string): {
   state: CopyState
   copy: () => void

@@ -33,8 +33,6 @@ export const instrumentations: ServerInstrumentation[] = [
         { context }: { context: Pick<RouterContextProvider, 'get'> },
       ) {
         const result = await run()
-        // A handler built without createRequestContext has no request here;
-        // handleError still reports the error, without the route id.
         const request = context.get(routerRequestContext)
         if (result.status === 'error' && request) {
           report(result.error, request, route.id)

@@ -59,7 +59,6 @@ export function clearMarks(ctx: ReporterState, preserveBadges = false) {
       '.ash-comment-highlight-badge::after{content:attr(data-count);}'
 }
 
-// Skipped writes compare live reporter-owned paint and DOM state.
 export function paintIntact(
   ctx: ReporterState,
   highlightsById: Map<string, ResolvedHighlight>,
@@ -522,15 +521,10 @@ export function missingState(
 
 export function scheduleChecking(ctx: ReporterState, retryDelay = 0) {
   if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
-  // Paused while a draft is edited in place; ending the edit remeasures and
-  // schedules again.
   if (ctx.previewEdit) {
     ctx.checkingTimer = undefined
     return
   }
-  // A checking report still needs a follow-up even if its deadline elapsed
-  // during this pass. Keep both streams: verification must not cancel an
-  // unchanged (signature-suppressed) highlight's outstanding report.
   let deadlines = ctx.checkingHighlights.concat(ctx.checkingAnchors)
   if (!deadlines.length) {
     ctx.checkingTimer = undefined
@@ -549,10 +543,6 @@ export function scheduleChecking(ctx: ReporterState, retryDelay = 0) {
         }
         completed = true
       } finally {
-        // Failed engine, paint, or verification work must not consume the
-        // follow-up owed to either stream's last checking report.
-        // Repeated failures back off to one retry per second. A successful
-        // paired pass returns to normal deadline scheduling.
         scheduleChecking(
           ctx,
           completed ? 0 : Math.min(1000, Math.max(1, retryDelay * 2)),
@@ -563,18 +553,15 @@ export function scheduleChecking(ctx: ReporterState, retryDelay = 0) {
   )
 }
 
-// Skip writes only while live reporter-owned values still match intact paint.
 export function applyHighlights(
   ctx: ReporterState,
   list: CommentHighlight[],
   engine?: TextAnchorEngine,
 ) {
   ctx.anchorSnapshotGeneration++
-  // Highlights labelled for another location never paint or report here.
   if (ctx.locationScoped && ctx.displayedPath !== liveCommentLocation(ctx))
     list = []
   ctx.pendingHighlights = Array.isArray(list) ? list : []
-  // Resolved against the restored text once an in-place edit ends.
   if (ctx.previewEdit) return
   if (!ctx.pendingHighlights.length) {
     ctx.checkingHighlights = []
@@ -583,8 +570,6 @@ export function applyHighlights(
     clearMarks(ctx)
     return
   }
-  // Stage the next report's obligations without discarding the last report
-  // if resolution, painting, or serialization fails partway through the pass.
   let checking: number[] = []
   let forcePaint = !!engine
   engine = engine || createTextAnchorEngine(anchorRoot(ctx))
@@ -611,7 +596,6 @@ export function applyHighlights(
       return [entry.highlight.threadId, entry]
     }),
   )
-  // Metadata echoes retain paint only while its DOM ranges and owned nodes survive.
   let paintKey = JSON.stringify(
     resolvedHighlights
       .map(function (entry) {
@@ -723,8 +707,6 @@ export function applyHighlights(
   completePendingScroll(ctx)
 }
 
-// A jump requested before its text was verified completes once it paints,
-// while that conversation is still the target.
 function completePendingScroll(ctx: ReporterState) {
   let id = ctx.pendingScrollThreadId
   if (!id) return
@@ -748,7 +730,6 @@ export function invalidateChangedPaint(
   engine: TextAnchorEngine,
 ) {
   ctx.paintedAnchors = ctx.paintedAnchors.filter(function (entry) {
-    // Measure the entire span, including newly inserted nodes between pieces.
     let first = entry.ranges[0]
     let last = entry.ranges[entry.ranges.length - 1]
     if (
@@ -793,8 +774,6 @@ export function scrollToThread(ctx: ReporterState, id: string) {
         inline: 'nearest',
         behavior: 'instant',
       })
-      // The parent may be an entire code block or paragraph. Reveal the
-      // verified text rect within each scrollport, from the inside out.
       let range = painted.ranges[0]
       for (
         let ancestor: HTMLElement | null = target;

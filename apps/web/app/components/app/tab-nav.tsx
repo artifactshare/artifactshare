@@ -6,8 +6,6 @@ import { cn } from '~/lib/utils'
 const linkClassName =
   'relative inline-flex items-center gap-[var(--spacing-2)] whitespace-nowrap text-sm text-muted-foreground no-underline hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring after:absolute after:bg-foreground after:opacity-0 after:transition-opacity aria-[current=page]:font-medium aria-[current=page]:text-foreground aria-[current=page]:after:opacity-100'
 
-// 横 (下線) を基底にし、responsive は stack 以上で縦 (右端インジケータ) に上書きする。
-// 双方向の上書きは cascade が読めなくなるため、上書きは stack: の一方向だけにする。
 const horizontalNavClassName = 'flex gap-[var(--spacing-4)] overflow-x-auto'
 const verticalNavOverrideClassName =
   'stack:flex-col stack:gap-[var(--spacing-1)] stack:overflow-visible'

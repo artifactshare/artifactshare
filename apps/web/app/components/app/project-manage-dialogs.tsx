@@ -75,7 +75,6 @@ interface UnarchiveProjectButtonProps {
   children: React.ReactNode
 }
 
-// Restoring is reversible, so it acts immediately without a confirm step.
 export function UnarchiveProjectButton({
   projectId,
   projectName,
@@ -139,7 +138,6 @@ interface ArchiveProjectDialogProps {
   onOpenChange: (open: boolean) => void
   projectId: string
   projectName: string
-  // Refresh the view after success (navigate away, or revalidate the list).
   onSuccess: () => void
 }
 
@@ -201,8 +199,6 @@ interface DeleteProjectDialogProps {
   onOpenChange: (open: boolean) => void
   projectId: string
   projectName: string
-  // Whether the viewer sees the project as empty. The server still re-checks
-  // every file regardless of visibility before deleting.
   isEmpty: boolean
   onSuccess: () => void
 }
@@ -248,15 +244,12 @@ export function DeleteProjectDialog({
       toast.success(t('toast.projectDeleted', { name: projectName }))
       onSuccess()
     } else if (result.code === 'project-has-agent-credentials') {
-      // A live agent CLI credential still targets this project; its holder
-      // must revoke or stop it before the project can be deleted.
       toast.error(
         result.holderName
           ? t('toast.projectHasAgentCredentials', { holder: result.holderName })
           : t('toast.projectHasAgentCredentialsUnknownHolder'),
       )
     } else if (result.status === 409) {
-      // A file slipped in (or was hidden from this viewer): not actually empty.
       toast.error(t('toast.projectNotEmpty'))
     } else {
       toast.error(t('toast.projectActionFailed'))

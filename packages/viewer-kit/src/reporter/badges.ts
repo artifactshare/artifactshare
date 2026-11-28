@@ -137,7 +137,6 @@ export function isBadgeAnchorVisible(
   ctx: ReporterState,
   element: Element | null,
 ) {
-  // Visibility affects badge geometry, not selector text or painted ranges.
   if (!element) return false
   let visibility = ctx.win.getComputedStyle(element).visibility
   if (visibility === 'hidden' || visibility === 'collapse') return false

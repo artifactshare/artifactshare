@@ -57,11 +57,7 @@ export function GuideStaticPage({
               }}
             />
           ) : (
-            <div
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: server-rendered from
-              // our own checked-in markdown, no user input.
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
+            <div dangerouslySetInnerHTML={{ __html: html }} />
           )}
         </GuideProse>
       </GuideShell>

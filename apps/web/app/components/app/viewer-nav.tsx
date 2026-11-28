@@ -20,8 +20,6 @@ export function ViewerNav({
 }: {
   anonymous?: boolean
   appOrigin?: string
-  // viewer-brand-placement.md: 閲覧エラーページは本文閲覧の情報量を持たないため
-  // ロゴを 16px / 48px バーに揃える (通常 viewer は文字併記 20px / 単独 24px)
   variant?: 'viewer' | 'error'
   className?: string
 }) {

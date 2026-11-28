@@ -46,10 +46,6 @@ export function AnalyticsConsentBanner() {
     }
   }, [commentPanelOpen, visible])
 
-  // Close (and restore focus) only after a choice submitted from THIS banner
-  // settles. The root-level fetcher is shared for the whole SPA session, so its
-  // `data` stays truthy after the first submission; keying off a per-open
-  // submitted flag avoids closing the banner the instant it is re-opened.
   useEffect(() => {
     if (fetcher.state === 'idle' && submittedRef.current) {
       submittedRef.current = false

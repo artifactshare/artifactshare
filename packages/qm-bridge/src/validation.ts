@@ -600,8 +600,6 @@ function boundedString(
 function boundedPath(value: unknown): string {
   if (typeof value !== 'string') invalidIntent()
   utf8Length(value, 'invalid_intent')
-  // Artifact Share's product contract defines this limit in JavaScript
-  // characters (`pathChars`), while payload limits are measured in bytes.
   if (value.length < 1 || value.length > 256 || hasAsciiControl(value)) {
     invalidIntent()
   }

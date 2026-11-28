@@ -12,14 +12,6 @@ import { ANALYTICS_EVENTS, ANALYTICS_PARAMS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
 import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
 
-/**
- * Provider sign-in buttons (Google / Microsoft), full-width and stacked.
- * Shared by the landing hero, the dedicated /sign-in page, and the shared-file
- * pre-auth screen so every pre-login surface offers the same providers.
- *
- * `callbackURL` is where the provider returns after auth. When omitted the
- * current page is used (resolved at click time so SSR has no window dependency).
- */
 export function SignInOptions({
   callbackURL,
   includeViewerHash = false,
@@ -61,8 +53,6 @@ export function SignInOptions({
       callbackURL: callback,
       // On failure better-auth redirects here (else its own /api/auth/error,
       // which in prod bounces to the landing page) and appends ?error= / &error=.
-      // Carry the destination as `next` so the email-code fallback on /sign-in
-      // still returns the user to the file or authorize flow they started from.
       errorCallbackURL:
         errorCallbackURL ?? `/sign-in?next=${encodeURIComponent(callback)}`,
     })

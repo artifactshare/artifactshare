@@ -2,7 +2,6 @@ import { useT } from '~/hooks/use-t'
 import type { ArtifactType } from '~/lib/artifact-type'
 import { cn } from '~/lib/utils'
 
-// Format names are shown as-is; video is labelled by its type, localized.
 const LABEL: Record<Exclude<ArtifactType, 'video'>, string> = {
   html: 'HTML',
   md: 'MD',

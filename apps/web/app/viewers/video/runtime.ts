@@ -1,7 +1,5 @@
 import { VIDEO_ORIGINAL_PATH } from './paths'
 
-// The player's media state: loading → ready, or one of the terminal failures
-// corrupt, unsupported and transport.
 export type VideoState =
   | 'loading'
   | 'ready'
@@ -9,8 +7,6 @@ export type VideoState =
   | 'unsupported'
   | 'transport'
 
-// What the status over the picture says, if anything. Every notice offers the
-// original download.
 export type VideoNotice =
   | 'loading'
   | 'buffering'
@@ -21,8 +17,6 @@ export type VideoNotice =
   | 'unsupported'
   | 'transport'
 
-// Whether the whole original is kept in memory for download: not yet, kept,
-// or it could not be kept (the link then downloads the attachment).
 export type DownloadCopy = 'pending' | 'ready' | 'failed'
 
 export interface VideoSnapshot {
@@ -30,10 +24,8 @@ export interface VideoSnapshot {
   notice: VideoNotice | null
   paused: boolean
   ended: boolean
-  // The reader has played or moved the video.
   moved: boolean
   currentTime: number
-  // 0 while unknown.
   duration: number
   silent: boolean
   volume: number
@@ -61,15 +53,6 @@ type FullscreenElement = HTMLElement & { webkitRequestFullscreen?: () => void }
 // controls.
 type FullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
 
-// Runs one player document: it owns the page's <video> element (the one the
-// generated page shipped with native controls, so the video still plays if
-// this script cannot run), its media and error handling, full screen and the
-// in-memory copy of the original, and publishes the state the React controls
-// render. The document's root keeps data-video-state.
-//
-// The video element streams the original with Range requests; separately,
-// the whole original is fetched once while the sandbox cookie is valid, so
-// download keeps working after the cookie expires during long viewing.
 export class VideoPlayerRuntime {
   readonly video: HTMLVideoElement
   #snapshot: VideoSnapshot
@@ -79,7 +62,6 @@ export class VideoPlayerRuntime {
   #classifying = false
   #original: Blob | null = null
   #acquiring: Promise<void> | null = null
-  // The in-memory copy's object URL once playback continues from it.
   readonly #objectUrls = new Map<'playback', string>()
 
   constructor(video: HTMLVideoElement) {
@@ -209,8 +191,6 @@ export class VideoPlayerRuntime {
       this.#update({ fullscreen: Boolean(fullscreenElement()) })
     this.#listen(document, 'fullscreenchange', syncFullscreen)
     this.#listen(document, 'webkitfullscreenchange', syncFullscreen)
-    // A page kept for back/forward navigation keeps its copy; only a real
-    // unload releases it.
     this.#listen(window, 'pagehide', (event) => {
       if ((event as PageTransitionEvent).persisted) return
       this.#original = null
@@ -264,7 +244,6 @@ export class VideoPlayerRuntime {
     this.seekTo(this.video.currentTime + seconds)
   }
 
-  // A position on the seek bar, from 0 to 100.
   seekToPercent(percent: number) {
     const duration = this.#knownDuration()
     if (duration) this.seekTo((percent / 100) * duration)
@@ -286,10 +265,6 @@ export class VideoPlayerRuntime {
     this.video.playbackRate = rate
   }
 
-  // Full screen puts the whole player, controls included, in full screen.
-  // Where only the video can (iPhone Safari), the video goes full screen
-  // with the system's own controls, as the player did before; where neither
-  // can, the reader is told so.
   async toggleFullscreen(player: FullscreenElement) {
     const current = document as FullscreenDocument
     try {
@@ -310,9 +285,6 @@ export class VideoPlayerRuntime {
     }
   }
 
-  // Media errors: a decode error is a damaged file; a network error, or a
-  // "not supported" error whose source request itself fails, is a transport
-  // failure; otherwise the browser cannot play this file.
   async #showMediaError() {
     if (this.#classifying || this.#failed()) return
     const code = this.video.error?.code ?? 0
@@ -336,10 +308,6 @@ export class VideoPlayerRuntime {
     this.#showState(reachable ? 'unsupported' : 'transport')
   }
 
-  // Download: the whole original is fetched once with the page's credentials
-  // while they are valid, independently of playback, and kept in memory.
-  // Until it is complete, or if it fails, the link itself downloads the
-  // attachment (never navigating the player away).
   #acquire() {
     // no-store: never wait behind the video element's own cached request.
     this.#acquiring ??= fetch(VIDEO_ORIGINAL_PATH, {
@@ -359,18 +327,12 @@ export class VideoPlayerRuntime {
       })
       .catch(() => {
         this.#acquiring = null
-        // Say so: the link still downloads now, but only while this page's
-        // sign-in lasts.
         this.#update({ download: 'failed' })
         if (this.#snapshot.state !== 'loading') this.#hideStatus()
       })
     return this.#acquiring
   }
 
-  // The sandbox cookie expires after a while, so the element's later Range
-  // requests can fail during long viewing. When that happens and the whole
-  // original is already in memory, continue from that copy at the same
-  // position, speed and play state instead of showing a failure.
   #useLocalCopy(resume: boolean) {
     if (!this.#original || this.#objectUrls.has('playback')) return false
     const video = this.video
@@ -385,15 +347,11 @@ export class VideoPlayerRuntime {
       },
       { once: true },
     )
-    // Kept for the rest of the page's life; a real unload revokes it.
     this.#objectUrls.set('playback', URL.createObjectURL(this.#original))
     video.src = this.#objectUrls.get('playback') ?? ''
     return true
   }
 
-  // A download link's click: once the original is kept, it saves that copy;
-  // until then the link downloads the attachment, and the copy is fetched
-  // again for later.
   saveOriginal(event: Event, fileName: string) {
     if (!this.#original) {
       void this.#acquire()

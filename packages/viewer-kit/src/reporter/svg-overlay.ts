@@ -96,7 +96,6 @@ export function svgTextRange(ctx: ReporterState, ranges: Range[]) {
     let count = text.getNumberOfChars()
     let characters =
       collapsed.length === count ? collapsed : raw.length === count ? raw : null
-    // Do not guess glyph offsets when the browser's shaping disagrees.
     if (!characters) return []
     let start = -1,
       end = -1

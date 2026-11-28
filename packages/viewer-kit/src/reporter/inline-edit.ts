@@ -3,16 +3,11 @@ import { ensureAnnotateStyles, ownText } from './annotate.js'
 import { send } from './messaging.js'
 import { rebuildAfterMutations } from './mutations.js'
 
-// Local preview only: a picked element made only of text can be rewritten in
-// place. The edit is a draft the parent mirrors; the document is put back
-// exactly as it was when editing ends, so anchors and the file never see it.
 export const INLINE_EDIT_MAX_LENGTH = 16_000
 
 export function inlineEditable(ctx: ReporterState, el: Element) {
   if (!ctx.previewCapability) return false
   if (el.namespaceURI !== 'http://www.w3.org/1999/xhtml') return false
-  // Code keeps its whitespace and controls own their text; neither is
-  // edited as collapsed plain text.
   if (
     /^(A|AUDIO|BUTTON|CANVAS|CODE|IFRAME|IMG|INPUT|KBD|LABEL|METER|NOSCRIPT|OBJECT|OPTGROUP|OPTION|PRE|PROGRESS|SAMP|SCRIPT|SELECT|STYLE|SUMMARY|TEMPLATE|TEXTAREA|TITLE|VIDEO)$/.test(
       el.tagName,
@@ -44,12 +39,10 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
     pick.sequence !== sequence ||
     pick.endpoints
   ) {
-    // A newer pick or edit got here first: the parent shows its field.
     send(ctx, { kind: 'edit-ended', pickSequence: sequence })
     return
   }
   const el = pick.target as HTMLElement
-  // The document changed it since the pick: the parent shows its field.
   if (!el.isConnected || !inlineEditable(ctx, el)) {
     send(ctx, { kind: 'edit-ended', pickSequence: sequence })
     return
@@ -67,7 +60,6 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
   ensureAnnotateStyles(ctx)
   el.classList.remove('as-preview-annotate-hover', 'as-preview-annotate-text')
   if (ctx.annotateHoverElement === el) ctx.annotateHoverElement = null
-  // Checking follow-ups resume when the edit ends and anchors are remeasured.
   if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
   ctx.checkingTimer = undefined
   ctx.win.clearTimeout(ctx.resolveTimer)
@@ -88,8 +80,6 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
     return
   }
   el.classList.add('as-preview-editing')
-  // The pick click left focus in this document. If the reader has already
-  // moved to the parent's comment field, the rewrite uses the field instead.
   if (!ctx.doc.hasFocus()) {
     endInlineEdit(ctx, true)
     return
@@ -114,11 +104,9 @@ export function lockInlineEdit(ctx: ReporterState, locked: unknown) {
     'contenteditable',
     locked ? 'false' : 'plaintext-only',
   )
-  // Text typed before the lock arrived was dropped while saving; resend it.
   if (!locked) sendInlineEditText(ctx)
 }
 
-/** Puts the document back. `removed` tells the parent the element went away. */
 export function endInlineEdit(ctx: ReporterState, removed = false) {
   const edit = ctx.previewEdit
   if (!edit) return
@@ -134,8 +122,6 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
   else el.setAttribute('contenteditable', edit.contentEditable)
   el.classList.remove('as-preview-editing')
   if (removed) send(ctx, { kind: 'edit-ended', pickSequence: edit.sequence })
-  // Changes made while editing were not measured, and the restore's own
-  // mutation records can fall outside the anchor root: remeasure here.
   rebuildAfterMutations(ctx)
 }
 
@@ -152,7 +138,6 @@ export function sendInlineEditText(ctx: ReporterState) {
 function onEditInput(ctx: ReporterState) {
   const edit = ctx.previewEdit!
   const el = edit.element
-  // Plain text only: anything else (a dropped node) is put back as text.
   if (el.firstElementChild !== null) el.textContent = el.textContent || ''
   const text = ownText(ctx, el)
   if (text.length > INLINE_EDIT_MAX_LENGTH) {
@@ -165,9 +150,6 @@ function onEditInput(ctx: ReporterState) {
   sendInlineEditText(ctx)
 }
 
-/** Events inside the element being edited never reach the document's own
- * handlers (window capture runs before any of them), so typing cannot drive
- * a slide deck or a shortcut. Their default actions still edit the text. */
 export function installInlineEditGuard(ctx: ReporterState) {
   const guardedEvents: (keyof WindowEventMap)[] = [
     'keydown',
@@ -227,8 +209,6 @@ export function installInlineEditGuard(ctx: ReporterState) {
       type,
       function (event: Event) {
         const edit = ctx.previewEdit
-        // A key pressed in the edit is released after Enter or Esc ended
-        // it; that keyup belongs to the edit too.
         if (type === 'keyup') {
           const code = (event as KeyboardEvent).code
           if (ctx.previewEditKeys[code] === true) {
@@ -242,7 +222,6 @@ export function installInlineEditGuard(ctx: ReporterState) {
           ? ctx.primordials.targetGet(event)
           : event.target
         if (!target || !edit.element.contains(target as Node)) {
-          // A drop elsewhere must not land in the editable element either.
           return
         }
         event.stopImmediatePropagation()

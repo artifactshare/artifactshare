@@ -1,7 +1,3 @@
-// The parts of pdf.js the viewer uses. pdf.js is not bundled: the library,
-// its worker and its viewer component load at run time from this sandbox
-// origin (PDFJS_ASSET_PREFIX), the pinned pdfjs-dist files the sandbox Worker
-// serves, so only their shapes are declared here.
 import { PDFJS_ASSET_PREFIX } from './paths'
 
 export interface PdfViewport {

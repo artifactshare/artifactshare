@@ -4,10 +4,6 @@ import { Inline } from '~/components/layout/inline'
 import { Stack } from '~/components/layout/stack'
 import { Button } from '~/components/ui/button'
 
-/**
- * One dev-user picker tile on /dev/sign-in: a full-width outline button with
- * an icon circle + name/note stack, submitting its own one-field form.
- */
 export function DevSignInOption({
   next,
   persona,

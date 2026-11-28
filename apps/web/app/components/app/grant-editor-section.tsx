@@ -54,7 +54,6 @@ interface GrantEditorInputProps {
   suggestionContext: RecipientSuggestionContext
   excludedEmails: ReadonlyArray<string>
   ownerEmail?: string | null
-  // 入力欄の右側に差し込む追加コントロール。
   children?: ReactNode
 }
 
@@ -152,12 +151,9 @@ interface GrantEditorRowProps {
   entry: GrantEditorEntry
   saving: boolean
   canEdit: boolean
-  // 保存前の追加・削除予定。両立しないので boolean 2 個でなく union で持つ。
   status?: GrantEditorRowStatus
-  // 役割編集モードでは行のメタ枠を表示し、サブ行に既定役割を併記しない。
   showRole?: boolean
   onRemove: (email: string) => void
-  // showRole が true のとき、行のメタ枠に差し込む内容。
   children?: ReactNode
 }
 

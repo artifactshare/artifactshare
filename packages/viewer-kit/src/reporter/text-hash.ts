@@ -1,4 +1,3 @@
-// Synchronous SHA-256 binds the text snapshot to its ranges without async races.
 export function textHash(value: string) {
   const bytes = new TextEncoder().encode(value)
   const words = new Uint32Array(Math.ceil((bytes.length + 9) / 64) * 16)

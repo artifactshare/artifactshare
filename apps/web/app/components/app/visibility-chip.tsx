@@ -112,8 +112,6 @@ export function VisibilityChip({
   )
 }
 
-// プロジェクトの共有範囲のベースを表すチップ。'workspace'=社内全員、
-// 'private'=関係者のみ。関係者の人数は別の「関係者 N」ボタンで示す。
 export function ProjectScopeChip({
   baseVisibility,
   className,

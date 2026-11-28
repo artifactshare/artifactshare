@@ -4,9 +4,6 @@ import { guideFocusRingClassName } from '~/components/app/guide-styles'
 import { cn } from '~/lib/utils'
 import { IconChevronDown } from '@tabler/icons-react'
 
-// 開閉トグルは shadcn Button にしない。Button base の
-// [&_svg:not([class*='size-'])]:size-4 がシェブロン (14px) を 16px に
-// 上書きするため、素の button + 同居スタイルの方が副作用が少ない。
 const agentDisclosureSummarySurfaceClassName = cn(
   'mx-auto w-fit cursor-pointer rounded-[var(--r-sm)] border-0 bg-transparent px-[var(--spacing-2)] py-[var(--spacing-1)]',
   'text-muted-foreground [font:inherit]',

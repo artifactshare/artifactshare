@@ -25,8 +25,6 @@ function removeAnalyticsCookies(measurementId: string | null): void {
 function loadGtag(measurementId: string, userId: string | null): void {
   const w0 = window as unknown as { gtag?: (...args: unknown[]) => void }
   if (document.getElementById('as-gtag-js')) {
-    // Already loaded (e.g. consent re-granted after a withdrawal that set
-    // analytics_storage denied): restore granted rather than re-injecting.
     w0.gtag?.('consent', 'update', {
       analytics_storage: 'granted',
       ad_storage: 'denied',
@@ -42,8 +40,6 @@ function loadGtag(measurementId: string, userId: string | null): void {
   script.src = 'https://www.googletagmanager.com/gtag/js?id=' + measurementId
 
   const w = window as unknown as { gtag?: (...args: unknown[]) => void }
-  // Basic consent mode: gtag only loads once consent allows, so analytics is
-  // granted while ad signals stay denied.
   w.gtag?.('consent', 'default', {
     analytics_storage: 'granted',
     ad_storage: 'denied',
@@ -54,10 +50,6 @@ function loadGtag(measurementId: string, userId: string | null): void {
   // Apply user_id before config so every page_view carries it.
   w.gtag?.('set', { user_id: userId })
   // cookie_domain 'none' keeps GA cookies host-only so withdrawal cleanup works.
-  // send_page_view stays off: page_view is sent explicitly with a sanitized
-  // page_location (see AnalyticsGtag), because some routes carry authorization
-  // material in the query string (e.g. /device?user_code=...) that must not
-  // reach a third-party analytics store.
   w.gtag?.('config', measurementId, {
     send_page_view: false,
     cookie_domain: 'none',
@@ -67,9 +59,6 @@ function loadGtag(measurementId: string, userId: string | null): void {
   document.head.appendChild(script)
 }
 
-// Reconciles the GA4 gtag runtime with the consent state resolved by the root
-// loader: loads gtag only when consent allows, otherwise stops and clears GA and
-// first-touch cookies. Reads GA4_MEASUREMENT_ID via the measurementId prop.
 function syncGtagWithConsent(
   shouldLoadAnalytics: boolean,
   measurementId: string | null,
@@ -77,10 +66,6 @@ function syncGtagWithConsent(
 ): void {
   if (!shouldLoadAnalytics) {
     setAnalyticsRuntimeState({ shouldLoadAnalytics: false, measurementId })
-    // Consent not granted (withdrawn or pre-consent in the EU). If gtag.js is
-    // already loaded, tell it consent is denied so GA stops using analytics
-    // storage (Enhanced Measurement etc.) — not just our own wrapper — then
-    // drop the first-touch attribution and GA cookies so nothing is retained.
     if (document.getElementById('as-gtag-js')) {
       const w = window as unknown as { gtag?: (...args: unknown[]) => void }
       w.gtag?.('consent', 'update', {
@@ -97,24 +82,15 @@ function syncGtagWithConsent(
   }
 
   if (measurementId) {
-    // loadGtag applies user_id before config so every hit, including the
-    // initial page_view, carries it. null clears a prior user (logout);
-    // re-grant also reapplies the current id.
     loadGtag(measurementId, userId)
     setAnalyticsRuntimeState({ shouldLoadAnalytics: true, measurementId })
     return
   }
 
-  // Consent granted but no Measurement ID configured: nothing to load. Local
-  // development, captures and tests run this way on purpose, so that they never
-  // send hits to Google.
   setAnalyticsRuntimeState({ shouldLoadAnalytics: true, measurementId: null })
   removeAnalyticsCookies(measurementId)
 }
 
-// Query parameters allowed on the page_location sent to GA. Everything else is
-// stripped: routes like /device?user_code=... and the signed OAuth sign-in URL
-// carry authorization material that must never reach Google.
 const PAGE_VIEW_ALLOWED_PARAMS = [
   'utm_source',
   'utm_medium',
@@ -145,7 +121,6 @@ function sanitizeUrl(href: string): string {
   return url.toString()
 }
 
-// Only authored labels may reach analytics; never use document or loader titles.
 function sanitizedPageTitle(pathname: string): string {
   const fixed: Record<string, string> = {
     '/files': 'Files',
@@ -201,10 +176,6 @@ function sanitizedPageLocation(): string {
   return sanitizeUrl(window.location.href)
 }
 
-// A same-origin referrer (e.g. /device?user_code=... into a full-page
-// sign-in navigation) can carry the same authorization material, so it gets
-// the same allowlist. Cross-origin referrers keep their value — that is the
-// acquisition signal — and an unparsable one is dropped.
 function sanitizedPageReferrer(): string | null {
   const referrer = document.referrer
   if (!referrer) return null
@@ -229,8 +200,6 @@ export function AnalyticsGtag({
 }): null {
   const location = useLocation()
   const navigationType = useNavigationType()
-  // Sanitized location/referrer pinned for the current route (all hits), and
-  // the last page_view actually sent (for dedupe across replace cleanups).
   const pinnedPage = useRef<{
     location: string
     referrer: string | null
@@ -240,12 +209,8 @@ export function AnalyticsGtag({
   // Pin the sanitized page fields globally before any passive event effect
   // runs, so every hit — custom events included — carries the sanitized
   // page_location/page_referrer instead of gtag's raw document.location.
-  // For SPA navigations the referrer is the previous in-app page (already
-  // sanitized); document.referrer only seeds the initial load.
   useClientLayoutEffect(() => {
     if (!shouldLoadAnalytics || !measurementId) {
-      // Forget the pinned page on withdrawal so a later re-grant derives
-      // page_referrer from the actual previous page, not a pre-withdrawal one.
       pinnedPage.current = null
       return
     }
@@ -297,8 +262,6 @@ export function AnalyticsGtag({
       sentPageView.current = { key: location.key, location: pageLocation }
       return
     }
-    // trackEvent reports whether the hit was actually pushed; only then is
-    // this location marked as counted, so a missing gtag runtime retries.
     if (
       trackEvent(ANALYTICS_EVENTS.pageView, {
         page_location: pageLocation,

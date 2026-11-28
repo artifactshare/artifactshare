@@ -18,9 +18,7 @@ interface AuthorAvatarProps {
   id: string
   image: string | null
   initial: string
-  /** `xs` for viewer chrome subtitle (14px), `sm` for lists/comments (20px), `menu` for account menu (26px). */
   size?: keyof typeof sizeClassName
-  /** `<img loading>` 属性のみを制御する (`fetchPriority` には影響しない)。default `'lazy'`。 */
   loading?: 'eager' | 'lazy'
   className?: string
 }

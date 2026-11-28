@@ -10,8 +10,6 @@ import {
   type PdfViewerInstance,
 } from './pdfjs'
 
-// The viewer's document state. 'page-error' is a page that failed to render
-// while it is the current page; the others before 'ready' are terminal.
 export type PdfState =
   | 'loading'
   | 'ready'
@@ -42,17 +40,14 @@ export type FindType = '' | 'again'
 
 export interface ViewerSnapshot {
   state: PdfState
-  // pdf.js has laid out the pages, so the controls can act on them.
   ready: boolean
   page: number
   pageCount: number
-  // Display settings live only in memory, chosen from page 1 at load.
   layout: PageLayout
   size: PageSize
   search: SearchMessage
 }
 
-// Terminal states other than a lost connection keep the original download.
 export function offersDownload(state: PdfState): boolean {
   return state !== 'loading' && state !== 'ready' && state !== 'transport'
 }
@@ -74,11 +69,6 @@ function failureState(error: unknown): PdfState {
 
 const THUMBNAIL_WIDTH = 240
 
-// Runs pdf.js for one viewer document: it owns the page area (the container
-// pdf.js renders into), the loaded PDF and the page-list thumbnails, and
-// publishes the state the React controls render. The document's root keeps
-// data-pdf-state, and the body data-mode and data-size, so the stylesheet
-// and pdf.js measurements follow the current layout synchronously.
 export class PdfViewerRuntime {
   #snapshot: ViewerSnapshot = {
     state: 'loading',
@@ -106,7 +96,6 @@ export class PdfViewerRuntime {
   #searchableText: Promise<boolean> | null = null
   readonly #failedPages = new Set<number>()
   #touchStart: { x: number; y: number } | null = null
-  // Page list thumbnails, kept across openings of the list.
   #list: HTMLElement | null = null
   #thumbnailObserver: IntersectionObserver | null = null
   readonly #thumbnailCanvases = new Map<number, HTMLCanvasElement>()
@@ -161,9 +150,6 @@ export class PdfViewerRuntime {
     this.#cleanups.push(() => target.removeEventListener(type, handler))
   }
 
-  // Loads pdf.js and the original into the given container. Landscape pages
-  // open one at a time fitted to the visible area, portrait pages as a
-  // vertical scroll fitted to width and capped at 100%.
   async start(container: HTMLDivElement, pageArea: HTMLDivElement) {
     this.#container = container
     this.#pageArea = pageArea
@@ -225,9 +211,6 @@ export class PdfViewerRuntime {
       this.#fit()
       this.#keepTopAtLoad()
     })
-    // A page that failed to render shows its message only while it is the
-    // current page; rendering it, or moving to a page that rendered, clears
-    // it. The loading message stays until a page has actually rendered.
     eventBus.on('pagerendered', ({ pageNumber, error }) => {
       if (error) this.#failedPages.add(pageNumber)
       else this.#failedPages.delete(pageNumber)
@@ -280,7 +263,6 @@ export class PdfViewerRuntime {
         void pdf.destroy()
         return
       }
-      // Saved from memory only once pdf.js holds the whole file.
       pdf.getDownloadInfo().then(
         () => {
           if (!this.#stopped) this.#downloadable = pdf
@@ -300,8 +282,6 @@ export class PdfViewerRuntime {
       this.#document = pdf
       viewer.setDocument(pdf)
       linkService.setDocument(pdf)
-      // A page kept for back/forward navigation keeps its document, so it
-      // shows the PDF again when restored; only a real unload releases it.
       this.#listen(window, 'pagehide', (event) => {
         this.#pageShown = false
         this.#pauseThumbnails()
@@ -453,7 +433,6 @@ export class PdfViewerRuntime {
     this.#sync()
   }
 
-  // A change of layout or size keeps the page being read.
   setLayout(layout: PageLayout) {
     this.#update({ layout })
     this.#applySettings()
@@ -476,13 +455,10 @@ export class PdfViewerRuntime {
     this.#sync()
   }
 
-  // While the display settings are open a swipe does not turn pages.
   setSettingsOpen(open: boolean) {
     this.#settingsOpen = open
   }
 
-  // Swiping turns pages only one page at a time and while the page fits the
-  // width; zoomed wider, a swipe pans the page instead.
   #listenForSwipes(container: HTMLDivElement) {
     const passive = { passive: true }
     this.#listen(
@@ -531,9 +507,6 @@ export class PdfViewerRuntime {
     )
   }
 
-  // Search with pdf.js's find controller. Whether the PDF has any text at
-  // all is checked once, page by page until the first text, so that a
-  // scanned PDF says so instead of reporting no results.
   #hasSearchableText() {
     const pdf = this.#document
     this.#searchableText ??= (async () => {
@@ -557,13 +530,9 @@ export class PdfViewerRuntime {
     this.#searchOpen = open
     this.#searchQuery = ''
     this.#update({ search: null })
-    // Closing ends the search, so reopening starts from an empty field.
     if (!open) this.#eventBus?.dispatch('findbarclose', { source: this })
   }
 
-  // An emptied query replaces the old one in the controller, so late counts
-  // for the old query are recognised as stale. A new query never shows the
-  // previous query's count or message.
   find(rawQuery: string, type: FindType, findPrevious: boolean) {
     this.#searchQuery = rawQuery
     const query = rawQuery.trim() ? rawQuery : ''
@@ -596,10 +565,6 @@ export class PdfViewerRuntime {
       this.#update({ search: { kind: 'matches', current, total } })
   }
 
-  // Download serves the bytes pdf.js already holds, so it keeps working
-  // after the sandbox's short-lived cookie expires during long reading.
-  // Only once the whole file is in memory: until then the link itself still
-  // works, and waiting for the rest could expire the click.
   download(event: { preventDefault(): void }, link: HTMLAnchorElement) {
     const pdf = this.#downloadable
     if (!pdf) return
@@ -622,22 +587,15 @@ export class PdfViewerRuntime {
         save(url)
         setTimeout(() => URL.revokeObjectURL(url), 60000)
       },
-      // Like the link itself: a download, never a navigation of the viewer.
       () => save(href),
     )
   }
 
-  // The page list's aspect ratio for a page before its thumbnail is drawn.
   #pageAspectRatio(page: number): string | undefined {
     const view = this.#viewer?.getPageView(page - 1)
     return view ? `${view.width} / ${view.height}` : undefined
   }
 
-  // Page list. Thumbnails are drawn only while the list is open and the
-  // viewer page is visible, one at a time, for the items near the visible
-  // part of the list, closest to the current page first. Each item's first
-  // child holds the thumbnail canvas, which the runtime owns and keeps for
-  // the next opening.
   openPageList(list: HTMLElement) {
     this.#list = list
     const observer = new IntersectionObserver(
@@ -711,8 +669,6 @@ export class PdfViewerRuntime {
         const canvas = this.#thumbnailCanvases.get(n)
         if (!n || !pdf || !canvas) break
         try {
-          // One thumbnail at a time, chosen again after each: the visible
-          // items and the current page change while drawing.
           // react-doctor-disable-next-line react-doctor/async-await-in-loop
           const page = await pdf.getPage(n)
           if (!this.#thumbnailsActive()) break
@@ -730,12 +686,8 @@ export class PdfViewerRuntime {
           this.#thumbnailsDrawn.add(n)
           const item = canvas.parentElement?.parentElement
           if (item) item.dataset.rendered = 'true'
-          // Releases what the thumbnail needed, unless the viewer has drawn
-          // or is drawing this page and would need it again.
           if (!this.#viewer?.getPageView(n - 1)?.renderingState) page.cleanup()
         } catch (error) {
-          // A cancelled thumbnail is drawn again later; one that failed, in
-          // loading its page or in drawing it, stays blank and is not retried.
           const cancelled =
             !!error &&
             typeof error === 'object' &&

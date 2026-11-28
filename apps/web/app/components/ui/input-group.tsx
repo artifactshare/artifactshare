@@ -7,7 +7,6 @@ import { Input } from '~/components/ui/input'
 import { Textarea } from '~/components/ui/textarea'
 
 function InputGroup({ className, ...props }: React.ComponentProps<'div'>) {
-  // The input group intentionally joins its controls into one field.
   return (
     <div
       data-slot="input-group"

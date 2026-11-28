@@ -56,12 +56,8 @@ export function rebuildAfterMutations(ctx: ReporterState) {
 }
 export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
   if (ctx.previewEdit) {
-    // The document removed what is being edited: end the edit; the parent
-    // keeps the typed text. Otherwise remeasure only once it is restored.
     if (!ctx.previewEdit.element.isConnected) endInlineEdit(ctx, true)
     else {
-      // The draft can change the layout around it; badge moves of our own
-      // must not schedule another pass.
       for (let i = 0; i < records.length; i++) {
         const target = records[i].target
         const element =
@@ -82,8 +78,6 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
   let root = anchorRoot(ctx)
   let rootReplaced = root !== ctx.observedAnchorRoot
   ctx.observedAnchorRoot = root
-  // Exclusion changes can arrive while a text debounce is pending, including
-  // on nodes now ignored by the normal mutation filter. Never reuse that snapshot.
   let exclusionChanged = false
   for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
     const record = records[recordIndex]
@@ -138,10 +132,8 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     if (record.type !== 'attributes') hasRelevantContent = true
   }
   if (!rootReplaced && !hasRelevant) return
-  // Layout changes never alter anchor text, but live range geometry may change.
   schedulePositionBadges(ctx)
   if (rootReplaced || hasRelevantContent) {
-    // Observe ancestors too: replacing the content root invalidates its ranges.
     rebuildAfterMutations(ctx)
   }
 }

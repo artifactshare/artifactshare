@@ -7,10 +7,6 @@ import type { PdfViewerRuntime } from './runtime'
 
 type PageRuntime = Pick<PdfViewerRuntime, 'subscribe' | 'getSnapshot' | 'goTo'>
 
-// Tells the app which page is shown, whenever it or the document's state
-// changes (buttons, keys, search, scrolling), once the app has given this
-// document its sync token; and opens a page the app asks for while a page is
-// shown. Only the parent window is answered.
 export function connectPdfPageBridge(
   runtime: PageRuntime,
   view: Window = window,
@@ -39,8 +35,6 @@ export function connectPdfPageBridge(
         runtime.goTo(page)
       return
     }
-    // Every answer to the app's ready check brings a new token: report the
-    // current page with it.
     const next = parsePdfPageSyncMessage(event.data)
     if (next === null) return
     token = next

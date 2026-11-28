@@ -4,18 +4,8 @@ import {
 } from './markdown-renderer.js'
 import { escapeHtml } from './escape-html.js'
 
-// The CSP violation reporter is injected by the response handler, not
-// here — keeping render output bake-free so Workers Cache stays the
-// canonical body store.
 export interface MarkdownRenderOptions {
-  /** The web renderer reports its timing to the platform log. The CLI's stdout
-   * carries a single-line JSON contract, so it turns the log off rather than
-   * losing the measurement for the web. */
   logTiming?: boolean
-  /** `document` (default) renders the outline viewer for Markdown artifacts and
-   * the CLI preview, including Markdown pages inside static sites. `export`
-   * keeps the original script-free layout, English labels and heading IDs for
-   * HTML exports, which carry no reporter script. */
   mode?: MarkdownRenderMode
 }
 
@@ -83,8 +73,6 @@ const OUTLINE_LABELS = {
 }
 type OutlineLabels = (typeof OUTLINE_LABELS)['en']
 
-// Control IDs contain "_", which generated heading IDs never do, so they
-// cannot collide with an article heading.
 const PANEL_ID = 'md_outline_panel'
 
 function outlineDocument(markdown: SplitMarkdown) {
@@ -105,10 +93,6 @@ function outlineDocument(markdown: SplitMarkdown) {
 </html>`
 }
 
-/**
- * A frontmatter `lang` wins; otherwise kana in the body means Japanese. Kanji
- * alone does not: Chinese text and English mentioning a kanji word stay `en`.
- */
 function documentLanguage(metadata: string[], body: string) {
   for (const line of metadata) {
     const match = line.match(/^lang\s*:\s*(['"]?)([^'"]*)\1\s*$/)
@@ -144,16 +128,12 @@ interface OutlineEntry extends OutlineHeading {
 
 function renderOutline(headings: OutlineHeading[], labels: OutlineLabels) {
   if (!headings.length) return { row: '', sidebar: '', panel: '' }
-  // A sole H1 that opens the document is its title: it becomes the overview
-  // entry and does not add an indentation step for the sections below it.
   const hasTitle =
     headings[0]?.level === 1 &&
     headings.filter((h) => h.level === 1).length === 1
   const sectionLevels = headings
     .filter((h) => !hasTitle || h.level !== 1)
     .map((h) => h.level)
-  // H2–H4 by default; a document whose shallowest section is deeper still
-  // shows that level, so the outline is never empty by default.
   const maxLevel = Math.min(
     6,
     Math.max(4, sectionLevels.length ? Math.min(...sectionLevels) : 2),
@@ -250,9 +230,6 @@ function plainText(value: string) {
   )
 }
 
-// Inlined so the sandbox iframe doesn't pay a stylesheet fetch before first paint.
-// The legacy stylesheet is MD_TOKEN_STYLES + LEGACY_LAYOUT_STYLES +
-// MD_CONTENT_STYLES, byte for byte as before the outline layout existed.
 const MD_TOKEN_STYLES = `
 :root {
   color-scheme: light dark;
@@ -606,8 +583,6 @@ const MD_CONTENT_STYLES = `.md p, .md ul, .md ol, .md blockquote, .md table { ma
 .md input[type="checkbox"] { margin-right: 0.4em; }
 `
 
-// Outline viewer layout: right outline at 1120px and wider, one compact
-// contents row with a modal panel below. OS fonts only; no web font.
 const OUTLINE_LAYOUT_STYLES = `* { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 html { scroll-behavior: auto; }
