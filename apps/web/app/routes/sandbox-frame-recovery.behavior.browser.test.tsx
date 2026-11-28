@@ -343,6 +343,79 @@ describe('SandboxFrame recovery', () => {
     expect(host.querySelector('iframe')).not.toBe(recoveredFrame)
   })
 
+  test('keeps the diagnostics it collected across an automatic recovery', async () => {
+    vi.useFakeTimers()
+    const tokenRequests: Array<Deferred<Response>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).includes('/__artifactshare_probe')) {
+          return Promise.resolve(
+            new Response('artifactshare-sandbox-probe-v1', {
+              status: 200,
+              headers: {
+                'X-ArtifactShare-Sandbox-Probe':
+                  'artifactshare-sandbox-probe-v1',
+              },
+            }),
+          )
+        }
+        const request = deferred<Response>()
+        tokenRequests.push(request)
+        return request.promise
+      }),
+    )
+
+    const sandboxOrigin =
+      'https://l-abc123def4--v-7631.usercontent.localhost:5174'
+    const host = await renderFrame(undefined, false, false, undefined, {
+      url: `${sandboxOrigin}/sandbox-frame-test?__as_token=old`,
+    })
+    const frame = host.querySelector('iframe')!
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: sandboxOrigin,
+          source: frame.contentWindow,
+          data: {
+            source: 'artifactshare',
+            kind: 'csp-violation',
+            directive: 'script-src',
+            blockedURI: 'eval',
+            sourceFile: `${sandboxOrigin}/index.html`,
+            lineNumber: 1,
+            sample: 'reported-before-recovery',
+          },
+        }),
+      )
+    })
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    expect(host.textContent).toContain('reported-before-recovery')
+
+    // Recovery re-signs the URL of the same document, so what that document
+    // already reported still describes what the reader is looking at. A
+    // recovery that dropped the reports would leave the banner empty while
+    // the blocked resources stay blocked.
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    await waitForRealTaskCondition(
+      () => tokenRequests.length === 1,
+      'recovery token request',
+    )
+    await expectFrameState(host, 'resuming')
+    await act(async () =>
+      tokenRequests[0].resolve(
+        Response.json({
+          sandboxUrl: `${sandboxOrigin}/sandbox-frame-test?__as_token=fresh`,
+          renderType: 'html',
+        }),
+      ),
+    )
+    await expectFrameState(host, 'loading')
+    expect(host.querySelector('iframe')?.src).toContain('__as_token=fresh')
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    expect(host.textContent).toContain('reported-before-recovery')
+  })
+
   test('ignores initial pageshow but checks a visible persisted restore', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
