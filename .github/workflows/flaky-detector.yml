@@ -99,11 +99,6 @@ jobs:
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The only write in this workflow: one issue per reported row, filed by the
-    # job that produced the report.
-    permissions:
-      contents: read
-      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,11 +124,3 @@ jobs:
           name: flaky-report
           path: ${{ runner.temp }}/flaky-report.json
           if-no-files-found: error
-      # Runs after the aggregate step fails on a reported row, and writes only
-      # on the nightly schedule: a manual run prints the plan instead.
-      - name: Track each reported row as one issue
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: node scripts/ci/flaky-issues.mjs "$RUNNER_TEMP/flaky-report.json"

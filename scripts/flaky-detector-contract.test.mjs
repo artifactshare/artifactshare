@@ -38,31 +38,12 @@ test('the nightly report runs after failed workers and tolerates missing shards'
   )
 })
 
-test('only the report job may write, and only to issues', () => {
+test('the detector writes nothing to the repository', () => {
+  // Issues are disabled on this repository, so the report is the run's output:
+  // the job log, the step summary and the flaky-report artifact.
   assert.deepEqual(workflow.permissions, { contents: 'read' })
-  assert.deepEqual(workflow.jobs.report.permissions, {
-    contents: 'read',
-    issues: 'write',
-  })
   for (const [name, job] of Object.entries(workflow.jobs))
-    if (name !== 'report') assert.equal(job.permissions, undefined, name)
-})
-
-test('the report job tracks each reported row after writing the report', () => {
-  const report = workflow.jobs.report
-  const track = stepThatRuns(report, 'flaky-issues.mjs')
-  // The aggregate step exits non-zero on a reported row, which is exactly the
-  // night an issue has to be filed.
-  assert.equal(track.if, 'always()')
-  assert.equal(track.env.GITHUB_TOKEN, '${{ github.token }}')
-  assert.equal(
-    track.env.DEFAULT_BRANCH,
-    '${{ github.event.repository.default_branch }}',
-  )
-  assert.ok(
-    stepIndex(report, 'flaky-issues.mjs') >
-      stepIndex(report, 'flaky-report.mjs'),
-  )
+    assert.equal(job.permissions, undefined, name)
 })
 
 test('the detector runs nightly and by hand, and on no other event', () => {
@@ -70,8 +51,7 @@ test('the detector runs nightly and by hand, and on no other event', () => {
     'schedule',
     'workflow_dispatch',
   ])
-  // A pull request trigger would repeat every suite on every push, and a run of
-  // an unmerged branch must never be the one that files an issue.
+  // A pull request trigger would repeat every suite on every push.
   assert.deepEqual(workflow.on.schedule, [{ cron: '17 2 * * *' }])
 })
 
