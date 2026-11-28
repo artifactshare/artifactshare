@@ -1,8 +1,9 @@
+import { hasRefusedExtension } from '@artifactshare/viewer-kit/reporter/refused-extensions'
+
 export type PathValidationResult =
   | { kind: 'ok' }
   | { kind: 'blocked'; reason: string }
 
-const EXECUTABLE_EXTENSION_PATTERN = /\.(?:exe|sh|php|py|rb|bat|cmd|dll|so)$/i
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/
 const URL_RESERVED_CHAR_PATTERN = /[#?]/
 
@@ -30,7 +31,7 @@ export function validateBundlePath(path: string): PathValidationResult {
     return { kind: 'blocked', reason: `Blocked Windows absolute path: ${path}` }
   }
 
-  if (EXECUTABLE_EXTENSION_PATTERN.test(path)) {
+  if (hasRefusedExtension(path)) {
     return {
       kind: 'blocked',
       reason: `Blocked executable file extension: ${path}`,

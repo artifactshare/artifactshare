@@ -16,6 +16,7 @@
     "./inject": "./src/inject.ts",
     "./reporter/anchor-engine": "./src/reporter/anchor-engine.ts",
     "./reporter/comment-location": "./src/reporter/comment-location.ts",
+    "./reporter/refused-extensions": "./src/reporter/refused-extensions.ts",
     "./reporter/static-site-paths": "./src/reporter/static-site-paths.ts"
   },
   "scripts": {
