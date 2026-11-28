@@ -118,6 +118,14 @@ const MUTATIONS = [
     breaks: 'RecentOpens',
   },
   {
+    name: 'project-activity-uses-the-member-predicate',
+    code: "listFeedEvents slice 'project' takes visibleShareableToViewerSql for a viewer whose page resolved through findSharedProjectForViewer",
+    find: '    \\/ WorkspaceProjectFound /\\ WorkspaceListPredicate\n    \\/ SharedProjectFiles',
+    replace:
+      '    \\/ WorkspaceProjectFound /\\ WorkspaceListPredicate\n    \\/ SharedProjectFound /\\ WorkspaceListPredicate',
+    breaks: 'ProjectActivityOpens',
+  },
+  {
     name: 'activity-feed-owner-ignores-revocation',
     code: "mineFeedVisibleSql: the owner clause loses NOT workspaceAccessRevoked",
     find: '       \\/ ~sameWs /\\ joined /\\ (SharedVisible \\/ (owner /\\ ~Revoked))',

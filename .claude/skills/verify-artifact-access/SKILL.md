@@ -18,6 +18,7 @@ Each rule is an INVARIANT in `model/ArtifactAccess.tla`. "Open" means `viewerAcc
 | `SharedProjectFilesOpen` | Each file on a project page opened by an audience member from another workspace opens for them. | The shared project page leaks files outside the audience's reach. |
 | `ProjectFileCountOpens` | The file count on the projects page counts only files that open for the viewer. | The count reveals that hidden files exist. |
 | `ActivityFeedOpens` | Each artifact in the activity feed (`listFeedEvents`, slice `mine`) opens for the viewer. | The feed shows titles, and comment text, of artifacts the viewer may not see. |
+| `ProjectActivityOpens` | Each artifact in a project page's activity and view ranking (`listFeedEvents` slice `project`, `listProjectViewRanking`) opens for the viewer. | The project page shows titles, comment text and view counts of files the viewer may not open, including an outside audience member seeing the host workspace's own files. |
 | `SearchOpens` | Each artifact that search (`discoveryEligibility`) returns opens for the viewer. | Search shows hidden artifacts. |
 | `RecentOpens` | Each artifact in recents (`recentShareableAccessPredicate`) opens for the viewer. | Recents show a live row (current title, owner, version and unread counts) for an artifact the viewer may not open, and the search palette matches its current title. |
 | `ProjectListsOpen` | Every unarchived project on the projects page, the shared list, the suggestions, the joined dropdown, and every project the viewer may join or leave has a project page that opens. | Project names leak, or links lead to 404. |
@@ -39,15 +40,17 @@ Run the check when a change touches any of these. The model describes them as of
 | same file, `visibleShareableToViewer`; `services/access.server.ts` `workspaceScopedProjectVisibility` | `WorkspaceListPredicate`, `WorkspaceList` |
 | same file, `projectSummaryQuery` via `findWorkspaceProject`, and `sharedProjectSummaryQuery` via `findSharedProjectForViewer` and `listSharedProjects` | `WorkspaceProjectFound`, `SharedProjectFound`, `SharedListed` |
 | same file, `visibleSharedProjectShareableToViewer`; `routes/_protected/projects.$id.tsx` `loader` and `loadSharedProject` | `ProjectOpen`, `SharedProjectFiles` |
+| `routes/_protected/projects.$id.tsx` `loadProjectActivity` and `routes/_protected/+lib/project-subpage.server.ts` `projectSubpageVisibleFilter`, which pick the `visibleTo` the project activity takes | `ProjectActivity` |
 | `services/project-membership.server.ts` `listProjectsForIndex` with `visibleShareableToDatabaseViewerSql` (its own copy of the link clause) and `visibleSharedProjectShareableToDatabaseViewerSql` | `IndexListed`, `MemberVisibleInIndex`, `SharedVisibleInIndex`, `ProjectFileCount` |
 | same file, `suggestProjects`, `listJoinedProjectsForDropdown`, `visibleProjectContainerToViewerSql` | `SuggestListed`, `DropdownListed`, `Joinable` |
 | same file, `joinProject`, `leaveProject` | `JoinProject`, `LeaveProject` |
 | `services/events.server.ts` `listFeedEvents`, slice `mine`: the scope filter and the access predicate `mineFeedVisibleSql` | `ActivityFeed` |
+| same file, `listFeedEvents` slice `project` and `listProjectViewRanking`: the `shareables.container_id` scope and the `visibleTo` the caller passes | `ProjectActivity` |
 | `services/search-discovery.server.ts` `discoveryEligibility` and the `includeArchived` filter in `discoveryQuery` | `Search` |
 | `services/home.server.ts` `recentShareableAccessPredicate` | `Recent` |
 | `services/views.server.ts` `recordViewerRecency` (a row when the viewer opens the page) | `ViewArtifact` |
 
-**Sync commit: `e8d95c84b165ea557077df58b59319f790d021f4`.** To see whether covered code moved since then:
+**Sync commit: `e8d95c84b165ea557077df58b59319f790d021f4`.** `ProjectActivity` was written against the project activity as it is now, when `listFeedEvents` slice `project` and `listProjectViewRanking` started taking `visibleTo` from the caller. The commit is not moved with it, because the other operators were not re-read at that point and the covered files have changed since. To see whether covered code moved since then:
 
 ```sh
 git diff --stat e8d95c84b165ea557077df58b59319f790d021f4 -- apps/web/app/modules/access apps/web/app/services/access.server.ts apps/web/app/services/projects.server.ts apps/web/app/services/project-membership.server.ts apps/web/app/services/events.server.ts apps/web/app/services/search-discovery.server.ts apps/web/app/services/home.server.ts apps/web/app/services/views.server.ts 'apps/web/app/routes/_protected/projects.$id.tsx'
@@ -100,12 +103,12 @@ Assumed:
 - The artifact and its container are in one workspace, and a project's creator is in that workspace. The model does not move users between workspaces.
 - Email matching is exact. `lowerEmail`, `grantMatchEmail`, and the session's `emailVerified` against the database's `email_verified` are one boolean each.
 - Link expiry is one of four classes, read by `activeLinkExpiry`. The string formats behind them are not in the model. Each list and `facts` read expiry with `activeLinkExpiry`, and `checkAnonymousLinkAccess` reads it with `isValidUtcIso` and `Date.parse`.
-- Every caller of `visibleShareableToViewer` in the coverage table applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check other callers. `listFeedEvents` slice `project` applies the container's equivalent, `projectContainers.workspace_id = user.workspaceId`.
+- Every caller of `visibleShareableToViewer` in the coverage table applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check other callers. The project activity scopes by `shareables.container_id` instead, and `ProjectActivity` treats that as the same scope, because the container is in the viewer's workspace whenever `findWorkspaceProject` resolved the page, and the model keeps an artifact in its container's workspace. Nothing in the schema enforces that last part.
+- The viewer's own `users.workspace_id` is what `sameWs` means, not a `workspace_members` row. The product does write an active `workspace_members` row outside the holder's own workspace: `reserveContributorSlot` writes one in the host workspace when an external contributor posts into a shared project. `events.server.test.ts` covers that viewer.
 
 Left out:
 
 - Anonymous viewers (they open only through `AnonymousLinkAllowed`), agent credential scopes (`agentReadableShareableSql`), bot-specific grants, Slack and the comment and access-request paths that call `viewerDisplayCheck`.
-- `listFeedEvents` slice `project` (project page activity) and `listProjectViewRanking`. Both now split on `projectContainers.workspace_id = user.workspaceId`, the test `sameWs` describes, but the model has no operator for either. The product does create an active `workspace_members` row outside the holder's own workspace: `reserveContributorSlot` writes one in the host workspace when an external contributor posts into a shared project, so the earlier gate on that row disagreed with `sameWs`. `events.server.test.ts` covers that viewer.
 - The activity feed's relation filter (the `artifact_created`, owner, and recency branches of slice `mine`). Leaving it out makes the model list more than the code, so it cannot hide a breach of `ActivityFeedOpens`.
 - The search palette's own filters and `listRailProjects`. Search index freshness: the model checks the eligibility SQL, not the index.
 - Who may write: the authority checks on visibility, audience, and archive changes. Every write is allowed in the model.
