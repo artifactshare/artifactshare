@@ -61,10 +61,12 @@ export const SHAREABLE_READ_EXEMPTIONS = {
     'apps/web/app/services/search-logs.server.ts#readSearchLogs',
     'apps/web/app/services/search-logs.server.ts#recordSearchOpen',
     'apps/web/app/services/search-palette.server.ts#searchPalette',
+    'apps/web/app/services/search-visibility.server.ts#searchVisibilitySources',
     'apps/web/app/services/search.server.ts#metadata',
     'apps/web/app/services/search.server.ts#recentSuggestions',
     'apps/web/app/services/search.server.ts#searchGroup',
     'apps/web/app/services/shareables.server.ts#ownedShareableSummaryQuery',
+    'apps/web/app/services/slack-notifications.server.ts#processSlackNotificationOutbox',
     'apps/web/app/services/slack.server.ts#getShareableForUnfurl',
     'apps/web/workers/bundle-sandbox.ts#publishedEntrypoint',
     'apps/web/workers/bundle-sandbox.ts#serveAnonymousLinkBundleAsset',
@@ -143,8 +145,6 @@ export const SHAREABLE_READ_EXEMPTIONS = {
     'apps/web/app/services/reconcile.server.ts#reconcileQuota',
     'apps/web/app/services/sandbox-block-report.server.ts#finishSandboxBlockReport',
     'apps/web/app/services/search-index/inventory.server.ts#inventory',
-    'apps/web/app/services/search-visibility.server.ts#searchVisibilitySources',
-    'apps/web/app/services/slack-notifications.server.ts#processSlackNotificationOutbox',
     'apps/web/app/services/version-retention.server.ts#candidates',
     'apps/web/app/services/version-retention.server.ts#hasExtraProtectedCurrentVersion',
     'apps/web/app/services/version-retention.server.ts#pruneVersions',
@@ -171,11 +171,7 @@ export const SHAREABLE_READ_EXEMPTIONS = {
   ],
 }
 
-const EXEMPTION_CATEGORY = new Map(
-  Object.entries(SHAREABLE_READ_EXEMPTIONS).flatMap(([category, keys]) =>
-    keys.map((key) => [key, category]),
-  ),
-)
+const EXEMPT_KEYS = new Set(Object.values(SHAREABLE_READ_EXEMPTIONS).flat())
 
 export function isAccessLintScope(file) {
   return (
@@ -253,9 +249,8 @@ export function shareableReads(program) {
   return reads
 }
 
-function message(key) {
-  return `Shareable visibility is decided in ~/modules/access, not in each query: check one artifact with access.facts and viewerAccessAllowed, and extend a list that is already in the migrating group instead of writing a new one, until access.openShareable and access.visibleShareables replace them. A read no viewer sees (an owner or admin path with its own check, a system job, a write) goes in SHAREABLE_READ_EXEMPTIONS in scripts/access-lint-plugin.mjs under its category as '${key}'.`
-}
+const MESSAGE =
+  "Whether a viewer may see a shareable is decided in ~/modules/access, and the exemption table for older reads only shrinks. To open one artifact, load `facts` from `~/modules/access` and pass the result to `viewerAccessAllowed` from `~/services/access.server`. To list artifacts, write the query in ~/modules/access and filter it with `visibleShareableToViewer` (the viewer's own workspace) or `visibleSharedProjectShareableToViewer` (shared projects elsewhere) from `~/services/projects.server`."
 
 export default {
   meta: { name: 'access' },
@@ -274,9 +269,8 @@ export default {
             for (const { node, functionName: name } of shareableReads(
               program,
             )) {
-              const key = `${file}#${name}`
-              if (!EXEMPTION_CATEGORY.has(key))
-                context.report({ node, message: message(key) })
+              if (!EXEMPT_KEYS.has(`${file}#${name}`))
+                context.report({ node, message: MESSAGE })
             }
           },
         }

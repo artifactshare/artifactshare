@@ -44,6 +44,7 @@
     "scripts/access-lint-plugin.test.mjs",
     "scripts/fixtures/access-lint/7741af5.home.server.ts.txt",
     "scripts/fixtures/access-lint/880e418.project-membership.server.ts.txt",
+    "scripts/fixtures/access-lint/exemption-baseline.json",
     "scripts/fixtures/access-lint/fde8c8d.events.server.ts.txt",
     "scripts/check-cli-changelog.mjs",
     "scripts/check-cli-changelog.test.mjs",

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import test from 'node:test'
 import { parseSync } from 'oxc-parser'
@@ -15,6 +21,7 @@ import { lintFixturePrefix } from './lib/lint-fixture-paths.mjs'
 const root = resolve(import.meta.dirname, '..')
 const fixtures = join(import.meta.dirname, 'fixtures', 'access-lint')
 const NEW_FILE = 'apps/web/app/services/new-list.server.ts'
+const BASELINE_FILE = 'scripts/fixtures/access-lint/exemption-baseline.json'
 
 const PRE_FIX = [
   {
@@ -63,6 +70,12 @@ function lineAt(source, offset) {
 
 function violations(file, source) {
   const { program } = parseSync('source.ts', source)
+  const names = new Map(
+    shareableReads(program).map(({ node, functionName }) => [
+      node,
+      functionName,
+    ]),
+  )
   const reports = []
   plugin.rules['no-direct-shareable-read']
     .create({
@@ -73,7 +86,7 @@ function violations(file, source) {
     .Program?.(program)
   return reports.map(({ node, message }) => ({
     line: lineAt(source, node.start),
-    key: message.match(/'([^']+#[^']+)'/u)[1],
+    key: `${file}#${names.get(node)}`,
     message,
   }))
 }
@@ -102,11 +115,47 @@ test('rejects the reads behind three access leaks, as they were before each fix'
       entry.revision,
     )
     for (const { message } of reports) {
-      assert.match(message, /access\.visibleShareables/u)
-      assert.match(message, /access\.openShareable/u)
-      assert.match(message, /SHAREABLE_READ_EXEMPTIONS/u)
+      assert.match(message, /only shrinks/u)
+      assert.doesNotMatch(message, /SHAREABLE_READ_EXEMPTIONS|#|\.mjs/u)
     }
   }
+})
+
+function exportsName(file, name) {
+  const source = readFileSync(file, 'utf8')
+  return new RegExp(
+    `export (?:async )?function ${name}\\b|export \\{[^}]*\\b${name}\\b`,
+    'u',
+  ).test(source)
+}
+
+test('the message names functions that its paths export', () => {
+  const [{ message }] = violations(
+    NEW_FILE,
+    `export function newList(db) {\n  return db.selectFrom('shareables')\n}\n`,
+  )
+  const quoted = [...message.matchAll(/`([^`]+)`/gu)].map(([, text]) => text)
+  const files = [
+    ...new Set(quoted.filter((text) => text.startsWith('~/'))),
+  ].map((text) =>
+    [
+      `apps/web/app/${text.slice(2)}.ts`,
+      `apps/web/app/${text.slice(2)}/index.ts`,
+    ].find((file) => existsSync(join(root, file))),
+  )
+  assert.ok(files.length > 0 && files.every(Boolean), message)
+  const names = quoted.filter((text) => !text.startsWith('~/'))
+  assert.deepEqual(names, [
+    'facts',
+    'viewerAccessAllowed',
+    'visibleShareableToViewer',
+    'visibleSharedProjectShareableToViewer',
+  ])
+  for (const name of names)
+    assert.ok(
+      files.some((file) => exportsName(join(root, file), name)),
+      `${name} is not exported from ${files.join(', ')}`,
+    )
 })
 
 test('exempts those functions only at their own path and name, as migrating', () => {
@@ -214,6 +263,26 @@ test('the exemption table lists every current read and nothing stale', () => {
       found.add(`${file}#${functionName}`)
   }
   assert.deepEqual(listed.toSorted(), [...found].sort())
+})
+
+test('the exemption table only shrinks from its frozen baseline', () => {
+  const baseline = JSON.parse(readFileSync(join(root, BASELINE_FILE), 'utf8'))
+  const entries = (table) =>
+    Object.entries(table).flatMap(([category, keys]) =>
+      keys.map((key) => `${category}: ${key}`),
+    )
+  const frozen = entries(baseline)
+  const current = entries(SHAREABLE_READ_EXEMPTIONS)
+  assert.deepEqual(
+    current.filter((entry) => !frozen.includes(entry)),
+    [],
+    `SHAREABLE_READ_EXEMPTIONS only shrinks. A new read that decides what a viewer sees goes through ~/modules/access, so neither the table nor ${BASELINE_FILE} takes a new key or a key in a new category.`,
+  )
+  assert.deepEqual(
+    frozen.filter((entry) => !current.includes(entry)),
+    [],
+    `These keys left SHAREABLE_READ_EXEMPTIONS. Delete them from ${BASELINE_FILE} too.`,
+  )
 })
 
 const historyAvailable = PRE_FIX.every(
