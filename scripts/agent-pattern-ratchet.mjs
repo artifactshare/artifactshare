@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { parseSync, Visitor } from 'oxc-parser'
+import { parseSync } from 'oxc-parser'
 
 const QUIRK_VENDORS = [
   'better-auth',
@@ -59,6 +59,24 @@ const TEMPLATE_TIMER = new RegExp(
 )
 const TEMPLATE_COMMENT =
   /^\s*\/\/(?![a-z0-9-]+(?:\.[a-z0-9-]+)+(?=[/:?#'"]|\s*$))/i
+const SCRIPT_ELEMENT = /<script\b[^>]*>([\s\S]*?)(?=<\/script>|$)/gi
+const ESCAPES = { n: '\n', r: '\r', t: '\t' }
+const BINDING_KEYS = new Set(['id', 'params', 'param', 'label', 'exported'])
+const BINDING_PARENTS = new Set(['ArrayPattern', 'RestElement'])
+const SKIPPED_NODES = new Set([
+  'ImportDeclaration',
+  'TSInterfaceDeclaration',
+  'TSTypeAliasDeclaration',
+  'TSDeclareFunction',
+])
+const SKIPPED_KEYS = new Set([
+  'typeAnnotation',
+  'returnType',
+  'typeParameters',
+  'typeArguments',
+  'superTypeArguments',
+  'implements',
+])
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/
 const TAG_LINES = 3
 const CODE_FILE = /\.[cm]?[jt]sx?$/
@@ -118,6 +136,10 @@ function rulesFor(path) {
     : ['effect', 'timer', 'comment']
 }
 
+function isFile(path) {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false
+}
+
 function lineStarts(source) {
   const starts = [0]
   for (let index = 0; index < source.length; index++)
@@ -154,14 +176,48 @@ function importedCalls(program) {
   return names
 }
 
-function calleeName(callee, imports) {
-  if (callee.type === 'Identifier')
-    return imports.get(callee.name) ?? callee.name
-  if (callee.type !== 'MemberExpression') return null
-  if (!callee.computed) return callee.property.name
-  return typeof callee.property.value === 'string'
-    ? callee.property.value
+function memberName({ computed, property }) {
+  if (!computed) return property.name
+  if (property.type === 'Literal') return property.value
+  return property.type === 'TemplateLiteral' &&
+    property.expressions.length === 0
+    ? property.quasis[0].value.cooked
     : null
+}
+
+function referenceName(node, parent, key, grand, imports) {
+  if (parent?.type === 'UnaryExpression' && parent.operator === 'typeof')
+    return null
+  if (node.type === 'MemberExpression') return memberName(node)
+  if (node.type !== 'Identifier') return null
+  if (
+    parent.type === 'MemberExpression' &&
+    key === 'property' &&
+    !parent.computed
+  )
+    return null
+  if (parent.type === 'Property' && grand?.type === 'ObjectPattern')
+    return key === 'key' && !parent.computed ? node.name : null
+  if (
+    key === 'key' ||
+    BINDING_KEYS.has(key) ||
+    BINDING_PARENTS.has(parent.type) ||
+    (parent.type === 'AssignmentPattern' && key === 'left')
+  )
+    return null
+  return imports.get(node.name) ?? node.name
+}
+
+function walk(node, visit, parent = null, key = null, grand = null) {
+  if (Array.isArray(node)) {
+    for (const item of node) walk(item, visit, parent, key, grand)
+    return
+  }
+  if (typeof node?.type !== 'string' || SKIPPED_NODES.has(node.type)) return
+  visit(node, parent, key, grand)
+  for (const [name, child] of Object.entries(node))
+    if (child && typeof child === 'object' && !SKIPPED_KEYS.has(name))
+      walk(child, visit, node, name, parent)
 }
 
 function directive(text) {
@@ -203,19 +259,95 @@ function groupComments(comments, source) {
   return blocks
 }
 
+function templateText(source, quasis) {
+  let text = ''
+  for (const [index, quasi] of quasis.entries()) {
+    const end = quasi.end - (quasi.tail ? 1 : 2)
+    text += source.slice(quasi.start + 1, end)
+    if (!quasi.tail) text += '_'.repeat(quasis[index + 1].start + 1 - end)
+  }
+  return text
+}
+
+function cook(raw) {
+  let text = ''
+  const offsets = []
+  for (let index = 0; index < raw.length; index++) {
+    offsets.push(index)
+    if (raw[index] !== '\\') {
+      text += raw[index]
+      continue
+    }
+    const next = raw[++index] ?? ''
+    text += ESCAPES[next] ?? next
+  }
+  offsets.push(raw.length)
+  return { text, offsets }
+}
+
+function scriptTokens(text) {
+  const comments = []
+  let code = ''
+  let index = 0
+  const skip = (stop) => {
+    code += text.slice(index, stop).replace(/[^\n]/g, ' ')
+    index = stop
+  }
+  while (index < text.length) {
+    const pair = text.slice(index, index + 2)
+    if (pair === '//' || pair === '/*') {
+      const close =
+        pair === '//' ? text.indexOf('\n', index) : text.indexOf('*/', index)
+      const stop = close === -1 ? text.length : close + (pair === '/*' ? 2 : 0)
+      comments.push({
+        type: pair === '//' ? 'Line' : 'Block',
+        value: text.slice(index + 2, close === -1 ? text.length : close),
+        start: index,
+        end: stop,
+      })
+      skip(stop)
+      continue
+    }
+    const quote = text[index]
+    if (quote === "'" || quote === '"' || quote === '`') {
+      let stop = index + 1
+      while (
+        stop < text.length &&
+        text[stop] !== quote &&
+        (quote === '`' || text[stop] !== '\n')
+      )
+        stop += text[stop] === '\\' ? 2 : 1
+      skip(Math.min(stop + 1, text.length))
+      continue
+    }
+    const step = quote === '\\' ? 2 : 1
+    code += text.slice(index, index + step)
+    index += step
+  }
+  return { comments, code }
+}
+
 function templateParts(source, quasis, starts) {
   const comments = []
   const timers = []
-  for (const quasi of quasis) {
-    const raw = quasi.value.raw
-    const found = source.indexOf(raw, quasi.start)
-    const offset = found === -1 ? quasi.start + 1 : found
-    let lineStart = 0
-    for (const [index, segment] of raw.split('\n').entries()) {
-      const at = offset + lineStart
+  const base = quasis[0].start + 1
+  const text = templateText(source, quasis)
+  const scripts = [...text.matchAll(SCRIPT_ELEMENT)].map((match) => {
+    const start = match.index + match[0].indexOf('>') + 1
+    return { start, end: start + match[1].length }
+  })
+  const timersIn = (code, at) => {
+    for (const match of code.matchAll(TEMPLATE_TIMER))
+      timers.push({ line: lineOf(starts, at(match.index)), label: match[1] })
+  }
+  let outside = 0
+  for (const region of [...scripts, { start: text.length, end: text.length }]) {
+    let lineStart = outside
+    for (const segment of text.slice(outside, region.start).split('\n')) {
+      const at = base + lineStart
+      const lineBegins = lineStart > 0 && text[lineStart - 1] === '\n'
       lineStart += segment.length + 1
-      const comment = index > 0 && TEMPLATE_COMMENT.test(segment)
-      if (comment) {
+      if (lineBegins && TEMPLATE_COMMENT.test(segment)) {
         const line = lineOf(starts, at)
         comments.push({
           type: 'Line',
@@ -227,9 +359,25 @@ function templateParts(source, quasis, starts) {
         })
         continue
       }
-      for (const match of segment.matchAll(TEMPLATE_TIMER))
-        timers.push({ line: lineOf(starts, at + match.index), label: match[1] })
+      timersIn(segment, (offset) => at + offset)
     }
+    outside = region.end
+    const { text: script, offsets } = cook(text.slice(region.start, region.end))
+    const at = (offset) => base + region.start + offsets[offset]
+    const tokens = scriptTokens(script)
+    for (const comment of tokens.comments) {
+      const start = at(comment.start)
+      const end = at(comment.end)
+      comments.push({
+        type: comment.type,
+        text: blockText(comment),
+        line: lineOf(starts, start),
+        endLine: lineOf(starts, Math.max(start, end - 1)),
+        start,
+        end,
+      })
+    }
+    timersIn(tokens.code, at)
   }
   return { comments, timers }
 }
@@ -302,20 +450,19 @@ function scan(source, path, exists) {
   const calls = []
   const templateComments = []
   const imports = importedCalls(parsed.program)
-  new Visitor({
-    CallExpression(node) {
-      const name = calleeName(node.callee, imports)
-      for (const rule of ['effect', 'timer'])
-        if (rules.includes(rule) && CALLS[rule].has(name))
-          calls.push({ rule, line: lineOf(starts, node.start), label: name })
-    },
-    TemplateLiteral(node) {
+  walk(parsed.program, (node, parent, key, grand) => {
+    if (node.type === 'TemplateLiteral') {
       const { comments, timers } = templateParts(source, node.quasis, starts)
       templateComments.push(...comments)
       if (rules.includes('timer'))
         for (const timer of timers) calls.push({ rule: 'timer', ...timer })
-    },
-  }).visit(parsed.program)
+      return
+    }
+    const name = referenceName(node, parent, key, grand, imports)
+    for (const rule of ['effect', 'timer'])
+      if (rules.includes(rule) && CALLS[rule].has(name))
+        calls.push({ rule, line: lineOf(starts, node.start), label: name })
+  })
   const comments = [
     ...parsed.comments.map((comment) => ({
       type: comment.type,
@@ -544,7 +691,7 @@ function ratchet({ root, base, head, env = {} }) {
         paths.map((path) => `${head}:${path}`),
       )
     : paths.map((path) =>
-        existsSync(join(root, path))
+        isFile(join(root, path))
           ? readFileSync(join(root, path), 'utf8')
           : null,
       )
@@ -557,8 +704,7 @@ function ratchet({ root, base, head, env = {} }) {
     ? (path) => readBlobs(root, [`${head}:${path}`])[0] !== null
     : (path) =>
         (indexed.has(path) || untrackedSet.has(path)) &&
-        (statSync(join(root, path), { throwIfNoEntry: false })?.isFile() ??
-          false)
+        isFile(join(root, path))
   const added = addedLines(root, mergeBase, head)
   const weight = (occurrences) =>
     occurrences.reduce((sum, { lines = 1 }) => sum + lines, 0)

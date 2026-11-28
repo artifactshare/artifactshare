@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
@@ -49,7 +56,7 @@ function repository(t) {
     const head = commit('head')
     return run(['--base', base, '--head', head])
   }
-  return { git, write, commit, run, replay }
+  return { directory, git, write, commit, run, replay }
 }
 
 test('fails on the comment fda6f9d added inside the preview shell inline script', (t) => {
@@ -382,4 +389,71 @@ test('does not count a protocol-relative URL at the start of a template line', (
   assert.match(result.stderr, /comment rose from 0 to 1/)
   assert.match(result.stderr, /page\.ts:6 "the fonts load after the script"/)
   assert.doesNotMatch(result.stderr, /example\.(?:com|net)/)
+})
+
+test('counts an effect or timer passed or reached by reference, but not in types or typeof checks', (t) => {
+  const repo = repository(t)
+  const base = repo.commit('base')
+  repo.write({
+    'apps/web/app/frame.tsx': [
+      "import React, { useEffect, useLayoutEffect } from 'react'",
+      'export const paint = () => new Promise(requestAnimationFrame)',
+      'export const later = (f: () => void) => (0, setTimeout)(f, 1)',
+      'export const bound = (f: () => void) => setTimeout.call(globalThis, f, 1)',
+      'export const literal = (f: () => void) => React[`useEffect`](f)',
+      'const { useEffect: picked } = React',
+      'const member = React.useEffect',
+      "const useIso = typeof window === 'undefined' ? useEffect : useLayoutEffect",
+      'export const run = (f: () => void) => [picked(f), member(f), useIso(f)]',
+      'export type Handle = ReturnType<typeof setTimeout>',
+      "export const idle = typeof requestIdleCallback === 'function'",
+      'export const handle: ReturnType<typeof setTimeout> | null = null',
+      '',
+    ].join('\n'),
+  })
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /timer rose from 0 to 3/)
+  for (const line of [2, 3, 4])
+    assert.match(result.stderr, new RegExp(`frame\\.tsx:${line} `))
+  assert.match(result.stderr, /effect rose from 0 to 5/)
+  for (const line of [5, 6, 7])
+    assert.match(result.stderr, new RegExp(`frame\\.tsx:${line} useEffect`))
+  assert.match(result.stderr, /frame\.tsx:8 useLayoutEffect/)
+  assert.doesNotMatch(result.stderr, /frame\.tsx:(?:9|1[0-2]) /)
+})
+
+test('counts trailing and block comments inside a template script element, not CSS comments', (t) => {
+  const repo = repository(t)
+  const base = repo.commit('base')
+  repo.write({
+    'packages/cli/src/preview/page.ts': [
+      'export const page = (data: string) => `<style>',
+      '  /* the panel stays on top */',
+      '</style>',
+      '<script>',
+      '  render() // the first paint',
+      '  /* a block note */',
+      '  const state = ${data}// parsed once',
+      "  const link = 'https://example.com/a' + \\`//b\\`",
+      '</script>`',
+      '',
+    ].join('\n'),
+  })
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /comment rose from 0 to 3/)
+  assert.match(result.stderr, /page\.ts:5 "the first paint"/)
+  assert.match(result.stderr, /page\.ts:6 "a block note"/)
+  assert.match(result.stderr, /page\.ts:7 "parsed once"/)
+})
+
+test('skips an untracked symlink to a directory that has a code extension', (t) => {
+  const repo = repository(t)
+  repo.write({ 'apps/web/app/real/index.ts': 'export {}\n' })
+  const base = repo.commit('base')
+  symlinkSync('real', join(repo.directory, 'apps/web/app/linked.ts'))
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /ok \(effect 0 -> 0/)
 })

@@ -444,9 +444,10 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
 
 test('pnpm lint runs the agent pattern ratchet against the pull request or merge group base', () => {
   const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'))
-  assert.match(
-    rootPackage.scripts.lint,
-    /&& node scripts\/agent-pattern-ratchet\.mjs$/u,
+  assert.match(rootPackage.scripts.lint, /^pnpm lint:ratchet && vp lint /u)
+  assert.equal(
+    rootPackage.scripts['lint:ratchet'],
+    'node scripts/agent-pattern-ratchet.mjs',
   )
   assert.match(rootPackage.scripts['validate:static'], /&& pnpm lint &&/u)
   const steps = parsedWorkflow.jobs['static-validation'].steps
