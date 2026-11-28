@@ -49,15 +49,6 @@ export type CliAuthority =
       externalWorkspaceId: string
     }
 
-/**
- * Resolution result. `denied` is distinct from `null` ("no session"): bot
- * users may only authenticate through an active agent-preset family authority
- * whose family still holds a live (unrevoked, unexpired) refresh credential.
- * Anything else — a missing authority row, a bootstrap, an unrestricted
- * family, a revoked/superseded family, or a dead credential — is an explicit
- * denial. The human unrestricted fallback (no authority row → unrestricted)
- * is intentional legacy-CLI compatibility and stays.
- */
 export type CliAuthorityResolution = CliAuthority | 'denied' | null
 
 export function resolveCliAuthorityBySessionToken(
@@ -81,8 +72,6 @@ export async function resolveCliAuthorityIdentifiers(token: string) {
   }
 }
 
-// Both projections execute the same authorization policy. The narrow one
-// replaces sensitive metadata with SQL null/empty/truth sentinels before reads.
 async function resolveAuthority(
   token: string,
   identifiersOnly: boolean,
@@ -168,9 +157,6 @@ async function resolveAuthority(
             >`${sql.ref('bridge_authorities.external_workspace_id')}`
         ).as('bridge_external_workspace_id'),
         'bridge_authorities.fallback_project_id as bridge_fallback_project_id',
-        // Bot sessions are re-validated on every request against the family's
-        // credential liveness so a stopped or expired bot cannot keep using a
-        // previously issued session.
         exists(
           selectFrom('cli_refresh_credentials')
             .select('cli_refresh_credentials.id')
@@ -188,9 +174,6 @@ async function resolveAuthority(
       .executeTakeFirst()
     if (!row) return null
     if (row.user_kind === 'bot') {
-      // Positive conditions only: active agent family authority with a live
-      // credential, on an active (non-stopped) bot. Never fall back to
-      // unrestricted for bots — that fallback also fires for cookie sessions.
       if (
         row.bot_stopped_at !== null ||
         row.kind !== 'family' ||

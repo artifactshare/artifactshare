@@ -1,9 +1,3 @@
-/*
- * Server-only locale resolution.
- * Priority: user.locale → __as_locale cookie → Accept-Language → 'en'.
- * user.locale wins when present; cookie is the unauthenticated / fallback path.
- */
-
 import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from '~/i18n/messages'
 import { readCookie, serializeCookie } from './cookies.server'
 
@@ -11,11 +5,6 @@ export { isSupportedLocale }
 
 const LOCALE_COOKIE = '__as_locale'
 
-/**
- * Reduce a BCP 47 tag (`'ja'`, `'en-US'`, `'pt-BR'`) to a supported `Locale`,
- * or null if no match. Used by sign-in (Google `locale` claim) and by
- * `Accept-Language` parsing.
- */
 export function normalizeLocaleTag(
   input: string | null | undefined,
 ): Locale | null {
@@ -24,7 +13,6 @@ export function normalizeLocaleTag(
   return isSupportedLocale(base) ? base : null
 }
 
-/** Resolve locale for a request. Pass user.locale if signed in. */
 export function getLocale(
   request: Request,
   userLocale?: string | null,
@@ -45,12 +33,10 @@ export function getLocale(
   return DEFAULT_LOCALE
 }
 
-/** Build a Set-Cookie header that pins the locale (1 year, host-only). */
 export function localeCookieHeader(locale: Locale): string {
   return serializeCookie(LOCALE_COOKIE, locale, { maxAgeSeconds: 31536000 })
 }
 
-/** Parse Accept-Language into tags ordered by q. */
 function parseAcceptLanguage(header: string): string[] {
   const parsed: { tag: string; q: number }[] = []
   for (const entry of header.split(',')) {

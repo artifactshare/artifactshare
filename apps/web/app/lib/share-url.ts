@@ -8,8 +8,6 @@ export function buildShareableUrl(
 ): string {
   if (visibility === 'link') {
     const app = new URL(appOrigin)
-    // A development per-ID viewer is served by the same server as the app, so
-    // it keeps the app's port when a local stack runs on non-default ports.
     return linkViewerUrl(
       app.hostname === APEX_HOST || app.hostname === WWW_HOST,
       id,

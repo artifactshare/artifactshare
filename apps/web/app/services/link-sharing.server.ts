@@ -47,7 +47,6 @@ export async function resolveLinkSharingWrite(
     nextVisibility: Visibility
     requestedLinkExpiresAt?: string | null
     now?: string
-    /** Test seams: the limit (default from env) and the judgment starter. */
     rateLimit?: LinkPublishRateLimit
     judge?: typeof startLinkAbuseJudgment
   },
@@ -72,8 +71,6 @@ export async function resolveLinkSharingWrite(
   }
 
   if (args.currentVisibility !== 'link') {
-    // The Worker bindings are loaded only on this path, so callers that
-    // never publish a link (and their tests) do not need the runtime module.
     const [{ env }, { startLinkAbuseJudgment }] = await Promise.all([
       import('cloudflare:workers'),
       import('./link-abuse-signals.server'),
@@ -98,13 +95,6 @@ export async function resolveLinkSharingWrite(
   return resolved.kind === 'ok' ? resolved : { kind: 'link-expiry-invalid' }
 }
 
-/**
- * A new Free workspace may publish only a bounded number of artifacts per
- * rolling day. The durable ledger keeps the latest publication for each
- * workspace/artifact pair even after the artifact is hidden or deleted. This
- * read-only check avoids unnecessary upload work; the mutation trigger remains
- * authoritative when concurrent writers race for the remaining capacity.
- */
 async function checkLinkPublishRateLimit(
   db: Kysely<DB>,
   args: {
@@ -134,7 +124,6 @@ async function checkLinkPublishRateLimit(
     now: args.now,
     limit: args.rateLimit,
   }
-  // The cheap discriminators (plan, age, disabled limit) run before the scan.
   if (!isLinkPublishLimitedWorkspace(policyInput)) return null
   const windowStart = new Date(
     nowMs - LINK_PUBLISH_RATE_WINDOW_MS,
@@ -373,8 +362,6 @@ export async function checkAnonymousLinkAccess(
     (!isValidUtcIso(linkExpiresAt) ||
       !isValidUtcIso(now) ||
       Date.parse(linkExpiresAt) <= Date.parse(now))
-  // An operator pause outranks expiry for viewers; the owner still learns
-  // both from the `expired` flag.
   if (row.link_suspended_at)
     return {
       kind: 'suspended',
@@ -528,8 +515,6 @@ async function resolveWorkspaceExternalAccessPolicy(
   if (!allowedRole) return { kind: 'forbidden' }
 
   if (planTier(current.plan) !== 'team') {
-    // Free and Plus owners can only resume a switch that a previous Team
-    // policy turned off; external posting stays unavailable on Free.
     const onlyResumesDisabledPolicy =
       (patch.linkSharingEnabled === undefined ||
         (patch.linkSharingEnabled === true && !current.linkSharingEnabled)) &&
@@ -643,8 +628,6 @@ export async function updateWorkspaceExternalAccessPolicy(
   )
   const workspaceSet = {
     link_sharing_enabled: next.linkSharingEnabled ? 1 : 0,
-    // Free clamps external posting to off in the policy view; leave the stored
-    // flag alone there so a later upgrade restores what the workspace had.
     ...(current.plan !== 'free' && {
       external_posting_enabled: next.externalPostingEnabled ? 1 : 0,
     }),

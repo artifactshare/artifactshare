@@ -20,7 +20,6 @@ export function captureFirstTouch(input: {
   const referrerDomain = referrerDomainFromReferrer(document.referrer)
   const ft = {
     utm: utmFromSearch(location.search),
-    // Same-host navigation says nothing about where the visitor came from.
     referrerDomain:
       referrerDomain === location.host ? undefined : referrerDomain,
     artifactId: input.artifactId,

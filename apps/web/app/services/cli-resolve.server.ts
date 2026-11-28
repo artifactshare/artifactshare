@@ -247,8 +247,6 @@ async function versionCandidates(
       'shareables.current_version_id as current_version_id',
       'versions.published_at as published_at',
       'versions.size_bytes as size_bytes',
-      // Only published versions have durable numbers. Preserve the legacy
-      // creation-order count when resolving an unpublished or failed upload.
       sql<number>`coalesce(versions.number, (
         SELECT count(*) FROM versions older
         WHERE older.shareable_id = versions.shareable_id

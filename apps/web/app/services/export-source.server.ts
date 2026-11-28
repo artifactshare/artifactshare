@@ -206,8 +206,6 @@ async function loadMarkdownExportSource(
       versionId: access.currentVersionId!,
       source,
       fileName: exportFileName(path, 'index.md'),
-      // Exports carry no reporter script; the legacy layout's contents work
-      // without one at every width.
       renderedHtml: renderMarkdownDocument(source, { mode: 'export' }),
     },
   }

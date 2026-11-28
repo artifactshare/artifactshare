@@ -99,8 +99,6 @@ export const agentSurface = {
     provider: 'google',
     scopes: ['openid', 'email', 'profile'],
     user_session: apexUrl('/login'),
-    // An agent authorizes through the OAuth 2.1 server and calls the MCP
-    // endpoint with the bearer token — no browser session. See `connector`.
     headless: true,
   },
   cli: {
@@ -127,8 +125,6 @@ export const agentSurface = {
       after_approval: 'rerun_same_command',
     },
   },
-  // The remote MCP endpoint: how an agent connects and shares programmatically.
-  // Endpoints/scopes mirror the OAuth metadata at protected_resource_metadata.
   connector: {
     protocol: 'mcp',
     transport: 'streamable-http',
@@ -437,8 +433,6 @@ export const capabilitiesMd = [
 
 export const pricingMarkdown = buildPricingMarkdown()
 
-/** Anonymous, cacheable, cross-origin-readable responses (agent.json, openapi,
- * OAuth discovery). Reused so the header set stays identical across them. */
 export const PUBLIC_CACHEABLE_CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Cache-Control': 'public, max-age=3600',

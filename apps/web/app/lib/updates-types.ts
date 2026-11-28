@@ -18,7 +18,6 @@ export interface UpdateEntry {
   detailsHref?: string
 }
 
-// loader が client へ流す最小形。一覧は本文全文を、個別は要約を運ばない。
 export type UpdateListItem = Omit<UpdateEntry, 'bodyHtml' | 'flag' | 'notice'>
 export type UpdateDetail = Omit<
   UpdateEntry,

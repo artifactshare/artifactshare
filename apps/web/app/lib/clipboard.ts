@@ -3,11 +3,6 @@ import { ANALYTICS_EVENTS } from '~/lib/analytics/events'
 import { trackEvent } from '~/lib/analytics/track.client'
 import type { Translator } from '~/lib/i18n'
 
-/**
- * Copy a share URL to the clipboard and surface the appropriate toast.
- * Falls back to showing the URL inline when the Clipboard API is denied
- * (e.g. inside a sandboxed iframe or insecure origin).
- */
 export async function copyShareUrl(
   url: string,
   translator: Translator,
@@ -26,8 +21,6 @@ export async function copyShareUrl(
   if (copied) {
     toast.dismiss(copyFailureToastId(url))
     trackEvent(ANALYTICS_EVENTS.copyLinkSucceeded)
-    // A paused link copies fine but will not open for recipients; say so
-    // where the owner is looking instead of only in the banner above.
     if (options.paused) toast.warning(translator.t('toast.copiedLinkPaused'))
     else toast(translator.t('toast.copySuccess'))
   } else {

@@ -11,7 +11,6 @@ export type { Locale, TKey }
 
 type Vars = Record<string, string | number>
 
-/** Falls back: locale → English → key string. */
 export function t(locale: Locale, key: TKey, vars?: Vars): string {
   const dict = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]
   const raw = dict[key] ?? MESSAGES[DEFAULT_LOCALE][key] ?? key
@@ -21,7 +20,6 @@ export function t(locale: Locale, key: TKey, vars?: Vars): string {
   })
 }
 
-/** Picks `${stem}One` when n==1, else `${stem}Other`. `n` is auto-injected as a var. */
 export function tPlural(
   locale: Locale,
   stem: string,

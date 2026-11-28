@@ -1,8 +1,3 @@
-/**
- * A post-login / post-action redirect target, constrained to an internal path
- * so an attacker-controlled `next` value can't bounce the user to another
- * origin. Accepts whatever a query param or form field yields.
- */
 export function safeInternalNext(next: unknown): string {
   if (typeof next !== 'string' || !next.startsWith('/')) return '/'
   // `//host` and `/\host` start with `/` but browsers resolve them to another

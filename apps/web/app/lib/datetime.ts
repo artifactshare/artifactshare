@@ -1,9 +1,3 @@
-/*
- * Storage convention: all timestamp columns are TEXT in ISO 8601 with `Z`
- * suffix. ISO 8601+Z is lexicographically sortable, so plain string `<`/`>`
- * in Kysely queries is safe and matches temporal order.
- */
-
 import type { Locale } from '~/i18n/messages'
 
 const DEFAULT_TIME_ZONE = 'UTC'
@@ -12,8 +6,6 @@ export function nowIso(): string {
   return new Date().toISOString()
 }
 
-// ISO timestamp `ms` milliseconds in the past — for "within the last N" window
-// queries (e.g. idempotency / dedup lookups).
 export function isoMsAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString()
 }
@@ -25,10 +17,6 @@ const WEEK = 7 * DAY
 const MONTH = 30 * DAY
 const YEAR = 365 * DAY
 
-// Intl constructors allocate ICU lookup tables — heavy. Pre-build one per
-// supported locale at module load (unrolled so the no-hoist-intl lint rule
-// sees explicit module-scope construction). `satisfies` makes adding a new
-// supported locale a compile error here.
 const RTF_EN = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const RTF_JA = new Intl.RelativeTimeFormat('ja', { numeric: 'auto' })
 const RTF = {

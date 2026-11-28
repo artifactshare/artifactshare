@@ -12,9 +12,6 @@ export { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 const MAX_UPLOAD_BYTES = STATIC_SITE_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const TEXT_EXTENSIONS = [...HTML_FILE_EXTENSIONS, ...MD_FILE_EXTENSIONS]
-// A single-file upload may also be a PDF or an MP4 video. Static sites keep
-// text entry pages and their asset list; a PDF is never a site file or
-// entrypoint, and an MP4 inside a site stays an ordinary site asset.
 const ALLOWED_EXTENSIONS = [
   ...TEXT_EXTENSIONS,
   ...PDF_FILE_EXTENSIONS,
@@ -103,7 +100,6 @@ export function validateFiles(
     }
   }
   if (totalSize > MAX_UPLOAD_BYTES) return t('upload.error.tooLarge')
-  // Static site entrypoints stay narrower than accepted file extensions.
   if (staticSite && !paths.some((path) => /^index\.(html|md)$/i.test(path))) {
     return t('upload.error.missingEntrypoint')
   }

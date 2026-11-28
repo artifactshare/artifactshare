@@ -32,8 +32,6 @@ const MAX_BOUND_PARAMETERS = 100
 
 export type D1Limit = 'compound-terms' | 'bound-parameters'
 
-// The limit a query crossed, so callers and tests can tell the two apart
-// without reading the sentence.
 export class D1CompatibilityError extends Error {
   readonly limit: D1Limit
   readonly max: number

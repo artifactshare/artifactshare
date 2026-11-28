@@ -10,12 +10,6 @@ import type { DB } from '~/types/db'
 import { isWorkspaceAccessRevoked } from '~/modules/access'
 import { planTier } from '~/lib/plan-tier'
 
-// An operator pauses a link share while reviewing it (from the Slack judgment
-// notification) and resumes it afterwards; the owner is told by email and by
-// a banner on the file, and can appeal from that banner. Nothing here runs
-// without a person: the judgment workflow only announces, and the pause is
-// an explicit operator action on the signed ops page.
-
 export const LINK_SUSPENSION_REASON_MAX = 300
 export const LINK_APPEAL_MESSAGE_MAX = 1000
 const APPEAL_COOLDOWN_MS = 60 * 60 * 1000
@@ -100,7 +94,6 @@ function ownerOf(db: Kysely<DB>, shareableId: string) {
     .executeTakeFirst()
 }
 
-/** Clip to `max` code points so a surrogate pair is never split. */
 function clipCodePoints(value: string, max: number): string {
   return Array.from(value.trim()).slice(0, max).join('')
 }
@@ -174,8 +167,7 @@ async function notificationRecipients(
  * shareable is in the state the move leaves, the flag update carries the same
  * guard, and an audit row records the operator action (no actor: the signed
  * token names the judgment, not a person). Whether the event landed decides
- * "already". `updated_at` is left alone: a moderation action is not an edit
- * and must not reorder the owner's lists.
+ * "already".
  */
 async function transitionLink(
   db: Kysely<DB>,
@@ -561,9 +553,6 @@ export async function appealLinkSuspension(
     if (!classified.suspended) return { kind: 'not-suspended' }
     return { kind: 'cooldown' }
   }
-  // The alerts worker creates the signed operator credential. Keeping the
-  // token out of this marker prevents the app invocation log from recording
-  // the query string before redaction can be applied downstream.
   console.warn('artifactshare_link_appeal', {
     shareableId: args.shareableId,
     workspaceId: classified.workspace_id,
@@ -603,7 +592,6 @@ function appealClassificationRow(
   }
 }
 
-/** Email the owner; a delivery failure is logged and never fails the action. */
 export async function sendOwnerNotice(
   notice: OwnerNotice,
 ): Promise<OwnerNoticeOutcome> {

@@ -14,7 +14,6 @@ export const searchQueryKeys = [
   'sort',
 ]
 
-/** Translate the screen vocabulary without silently dropping invalid scope. */
 export function searchApiParams(params: URLSearchParams) {
   const api = new URLSearchParams(params)
   const project = params.get('project')
@@ -24,7 +23,6 @@ export function searchApiParams(params: URLSearchParams) {
     if (project !== 'home') api.set('projectId', project ?? '')
   }
   const period = params.get('period')
-  // All time keeps the UI's date-field preference, but applies no API date filter.
   if (
     !['period', 'days', 'from', 'to'].some((key) => params.has(key)) &&
     params.getAll('dateField').length === 1 &&
@@ -39,7 +37,6 @@ export function searchApiParams(params: URLSearchParams) {
   return api
 }
 
-/** Owner-only searches without keywords list newest first; others by relevance. */
 export function defaultSearchSort(params: URLSearchParams) {
   return !params.get('q')?.trim() && params.has('owner')
     ? 'newest'
@@ -66,11 +63,8 @@ export function clearSearchFilters(params: URLSearchParams) {
 }
 export function removeSelectedName(query: string, name: string) {
   if (!name) return query
-  // Locale-free lowercasing, like the server's name matching.
   const lowered = query.toLowerCase(),
     target = name.toLowerCase()
-  // Suggestions match when the whole query is part of the name, so a partly
-  // typed name was only typed to find this choice.
   const typed = lowered.trim()
   if (typed && target.includes(typed)) return ''
   const wordName = /[\p{Script=Latin}\p{N}]/u.test(name)
@@ -89,7 +83,6 @@ export function removeSelectedName(query: string, name: string) {
   }
   return query
 }
-/** Logs contain canonical API filters, never cached result metadata. */
 export function searchHistoryParams(canonical: string) {
   const value = JSON.parse(canonical)
   const params = new URLSearchParams({ q: value.query, sort: value.sort })
@@ -108,7 +101,6 @@ export function searchHistoryParams(canonical: string) {
   return params
 }
 
-/** HTML dates are inclusive days; canonical timestamp upper bounds are exclusive. */
 export function searchDateValue(value: string | null, upper = false) {
   if (!value) return ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
@@ -126,11 +118,6 @@ export type SearchConditionPart = {
   key: 'owner' | 'project' | 'period' | 'archived' | 'sort'
   label: string
 }
-/**
- * Describes the active search conditions. Sort is included only when asked
- * and only when it differs from the default for the query (relevance with
- * keywords, newest without), so it never makes a search look filtered.
- */
 export function searchConditionParts(
   params: URLSearchParams,
   names: SearchSelectionNames | undefined,
@@ -193,18 +180,12 @@ export function searchConditionSummary(
     .join(' · ')
 }
 
-/** Remove the last whitespace-delimited word without normalizing the user's text. */
 export function reduceSearchKeywords(value: string): string | null {
   const trimmed = value.trim()
   const boundary = trimmed.search(/\s+\S+$/u)
   return boundary < 0 ? null : trimmed.slice(0, boundary)
 }
 
-/**
- * Reads a search API response body before deciding the outcome, so the
- * request always completes and the server's own error code is reported
- * instead of a guess from the HTTP status.
- */
 export async function readSearchJson<T extends object>(
   response: Response,
 ): Promise<Exclude<T, { error: unknown }>> {

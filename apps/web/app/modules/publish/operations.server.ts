@@ -192,7 +192,6 @@ export async function appendShareable(
     user.workspaceId,
   )
   if (externalPosting.kind !== 'ok') return externalPosting
-  // Appending text needs a text source; a PDF or video is binary.
   if (
     shareable.artifact_kind === 'static_site' ||
     shareable.artifact_kind === 'pdf' ||
@@ -357,11 +356,6 @@ export async function createVersion(
     user.workspaceId,
   )
   if (externalPosting.kind !== 'ok') return externalPosting
-  // A version replaces an existing artifact, so storage / quota / suspension all
-  // belong to the workspace that owns the artifact, not the poster's, and no
-  // contributor slot is consumed. Version authorization does not scope to the
-  // poster's workspace, so cross-workspace external posts account storage against
-  // the project's workspace.
   const accounting = {
     workspaceId: shareable.workspace_id,
     contributorGuardrailLimit: CONTRIBUTOR_GUARDRAIL_LIMIT,
@@ -711,12 +705,6 @@ async function createNewShareableFromFile(
     return { kind: 'bot-artifact-grant-unsupported' }
   }
 
-  // Resolve the destination before allocating an id or buffering the file:
-  // cross-workspace posting bills the project's workspace, so every quota / R2
-  // / contributor decision below must use the destination workspace, not the
-  // poster's. resolveUploadContainer enforces the workspace policy and
-  // relationship for external posting; the contributor guardrail is applied
-  // by this upload path after destination resolution.
   const destination = await resolveUploadContainer(
     db,
     user,
@@ -1513,9 +1501,6 @@ async function reserveContributorSlot(
     isWorkspaceAccessRevoked(db, workspaceId, userId),
   ])
   if (workspaceAccessRevoked) {
-    // Cross-workspace project grants are an independent posting authority.
-    // Do not recreate a removed membership row, while still rejecting a
-    // stopped bot through the shared revocation check.
     if (!externalPosting || uploader?.kind !== 'human') {
       return 'workspace-access-revoked'
     }

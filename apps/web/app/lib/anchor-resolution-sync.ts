@@ -2,12 +2,9 @@ import type { AnchorResolutionMessage } from './csp-reporter'
 
 type Result = AnchorResolutionMessage['results'][number]
 
-/** Delay before the first retry of a failed position write; each later
- * attempt doubles it, up to ANCHOR_RETRY_LIMIT attempts. */
 export const ANCHOR_RETRY_DELAY_MS = 250
 export const ANCHOR_RETRY_LIMIT = 4
 
-/** One displayed frame's UI snapshot and independently acknowledged write queue. */
 export function createAnchorResolutionSync(
   url: string,
   apply: (results: Result[]) => void,
@@ -24,7 +21,6 @@ export function createAnchorResolutionSync(
   let sending = false
   let failures = 0
   let disposed = false
-  // Save only state or hint changes; include the latest hash in those writes.
   const signature = (result: Result) =>
     JSON.stringify([result.state, result.textStart, result.textEnd])
   const pending = () =>
@@ -90,9 +86,6 @@ export function createAnchorResolutionSync(
   return {
     accept(message: AnchorResolutionMessage) {
       if (disposed) return
-      // A frame token or location change (including a same-document route
-      // change) starts a new scope: earlier verdicts must not be saved or
-      // shown under it, and returning to a route checks it afresh.
       if (
         current &&
         (current.token !== message.token ||

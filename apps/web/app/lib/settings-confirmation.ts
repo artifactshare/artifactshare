@@ -4,11 +4,6 @@ import {
   type MiddlewareFunction,
 } from 'react-router'
 
-/**
- * A request that never got an answer from the app: the connection was lost,
- * the response could not be read, or a server in front of the app answered
- * 502, 503 or 504. Anything else is the app's own answer or failure.
- */
 export function isInterruptedRequest(error: unknown) {
   return isRouteErrorResponse(error)
     ? [502, 503, 504].includes(error.status)
@@ -49,7 +44,6 @@ export type ServerMiddleware<T> = (
   ...args: Parameters<MiddlewareFunction<Response>>
 ) => T | Promise<T>
 
-// Middleware runs before a route action can normalize its own error.
 export function settingsSubmissionMiddleware<T>(
   middleware: ServerMiddleware<T>,
 ): ServerMiddleware<T> {

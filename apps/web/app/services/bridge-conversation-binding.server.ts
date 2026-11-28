@@ -54,10 +54,6 @@ export type BindBridgeRequestResult =
         | 'internal-error'
     }
 
-/**
- * Establishes only host-owned routing state. This intentionally runs before
- * model-owned intent validation, digest calculation, replay, or upload staging.
- */
 export async function bindTrustedBridgeRequest(
   db: Kysely<DB>,
   authority: BridgeAuthority,

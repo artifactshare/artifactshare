@@ -7,15 +7,6 @@ import { lowerEmail } from '~/lib/grant-emails.server'
 
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 
-// Agent READ scope (approved contract): within the credential's workspace, an
-// agent can read workspace-visible artifacts in any non-archived project, and
-// private-project artifacts where the approver's email is in the project
-// audience. Artifacts in inbox (home) containers stay unreadable — personal
-// home is deliberately narrower than human read semantics. Link-only and
-// private visibilities stay unreadable. WRITE scope for artifact
-// create/update uses the live approved destinations (a singleton for humans; see
-// isAgentPublishableDestination), while COMMENTS deliberately follow read
-// scope — the approved contract is commentable = readable.
 export function agentReadableShareableSql(
   viewerAlias: string,
   authority: AgentAuthority,

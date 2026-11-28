@@ -236,7 +236,6 @@ export async function getPublisherArtifactReadback(
     }
   }
   const format = singleFileFormat(row.artifact_kind)
-  // Binary kinds such as PDF have no text source; never decode them.
   if (!format)
     return { kind: 'unsupported-kind', artifactKind: row.artifact_kind }
   if (!row.r2_key) return { kind: 'source-unavailable' }
@@ -256,7 +255,6 @@ export async function getPublisherArtifactReadback(
   }
 }
 
-// CLI get also supports metadata-only sites; source-only consumers keep their contract.
 export async function getCliArtifactReadback(
   db: Kysely<DB>,
   user: SessionUser,

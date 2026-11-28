@@ -76,26 +76,19 @@ function writeTabNonce(nonce: string): boolean {
 function removeTabNonce(): void {
   try {
     sessionStorage.removeItem(AUTH_ATTEMPT_TAB_KEY)
-  } catch {
-    // Analytics state must never interrupt authentication or rendering.
-  }
+  } catch {}
 }
 
 export function readAuthAttempt(): AuthAttempt | null {
   const attempts = readAuthAttempts()
   const tabNonce = readTabNonce()
   if (tabNonce) return attempts.find(({ nonce }) => nonce === tabNonce) ?? null
-  // The shared cookie cannot distinguish a tab that lost sessionStorage from
-  // another open tab showing the same artifact. Recovering by artifact would
-  // let both tabs emit auth_completed, so analytics fails closed instead.
   return null
 }
 
 function writeAuthAttempts(values: AuthAttempt[]): boolean {
   try {
     const secure = location.protocol === 'https:' ? '; Secure' : ''
-    // Analytics-only state: no credential, identity, email, or authorization
-    // data. The viewer and root trackers intentionally consume it in JS.
     // react-doctor-disable-next-line react-doctor/insecure-session-cookie
     document.cookie = `${AUTH_ATTEMPT_COOKIE}=${encodeURIComponent(JSON.stringify(values.slice(-MAX_AUTH_ATTEMPTS)))}; Path=/; Max-Age=${AUTH_ATTEMPT_MAX_AGE_SECONDS}; SameSite=Lax${secure}`
     return true
@@ -108,9 +101,7 @@ function expireAuthAttemptCookie(): void {
   try {
     // react-doctor-disable-next-line react-doctor/insecure-session-cookie
     document.cookie = `${AUTH_ATTEMPT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
-  } catch {
-    // Analytics state must never interrupt authentication or rendering.
-  }
+  } catch {}
 }
 
 function artifactIdFromCallback(callbackURL: string): string | undefined {

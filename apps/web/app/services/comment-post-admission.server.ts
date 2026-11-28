@@ -9,10 +9,6 @@ export type CommentPostRefusal =
   | { kind: 'thread-capacity' }
   | { kind: 'rate-limited'; retry_after_seconds: number; retry_at: string }
 
-/** One reusable durable row per verified actor/artifact, shared by all transports.
- * Validation happens before admission. Subsequent failures are charged, without
- * refunds. The fixed UTC window intentionally permits bursts across boundaries.
- */
 export async function admitCommentPost(
   db: Kysely<DB>,
   userId: string,
@@ -101,9 +97,7 @@ export async function commentInsertFailure(
         (signal === 'closed-thread' && thread?.status === 'resolved')
       )
         return { kind: signal }
-    } catch {
-      // A failed confirmation cannot establish a policy refusal.
-    }
+    } catch {}
   }
   return { kind: 'commit-failed' }
 }

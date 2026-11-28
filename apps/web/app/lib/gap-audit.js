@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
- * Find visually touching vertical blocks and interactive controls. The function
- * is self-contained because Playwright serializes it into page.evaluate().
+ * The function is self-contained because Playwright serializes it into
+ * page.evaluate().
  */
 export function auditGaps({
   rootSelector = 'body',
@@ -25,7 +25,6 @@ export function auditGaps({
     }
     const add = (rect, kind) => {
       // DOMRect properties live on the prototype, so spreading one yields {}.
-      // Sub-2px rects are visually-hidden helpers (sr-only clips), not ink.
       if (rect.width >= 2 && rect.height >= 2)
         result.push({
           top: rect.top,
@@ -109,8 +108,6 @@ export function auditGaps({
     }
     return result
   }
-  // Findings are written to the manifest and the console, so text inside a
-  // [data-gap-audit-redact] element (a one-time secret) never leaves the page.
   const describedText = (element) => {
     if (element.closest('[data-gap-audit-redact]')) return '[redacted]'
     const copy = element.cloneNode(true)
@@ -133,8 +130,6 @@ export function auditGaps({
       return (
         !element.hasAttribute('data-gap-audit-exempt') &&
         style.display !== 'contents' &&
-        // visibility is handled entirely by ink collection: a hidden element
-        // contributes no ink of its own, but visible descendants still do.
         parseFloat(style.opacity) >= 0.05 &&
         !element.closest('[data-gap-audit-exempt]') &&
         !element.closest('a,button,summary,label')
@@ -166,10 +161,7 @@ export function auditGaps({
         const first = ar.top <= br.top ? [a, b] : [b, a]
         const firstRect = first[0] === a ? ar : br
         const secondRect = first[1] === b ? br : ar
-        // positioned/translated siblings whose boxes overlap are out of scope
         if (secondRect.top < firstRect.bottom - 2) continue
-        // The lower element may declare an intended flush boundary with the
-        // element above it (e.g. full-bleed viewer body under the topbar).
         if (first[1].hasAttribute('data-gap-audit-allow-touch')) continue
         const ai = rects(first[0]),
           bi = rects(first[1])
@@ -187,9 +179,6 @@ export function auditGaps({
           bottomRect.kind === 'text' && topRect.kind === 'text'
             ? 'text-text'
             : 'surface'
-        // A smaller label stacked over a larger value (or vice versa) is an
-        // intended hierarchy; only same-size text lines fused at 0px are a
-        // unit boundary defect.
         if (
           kind === 'text-text' &&
           bottomRect.fontSize !== undefined &&

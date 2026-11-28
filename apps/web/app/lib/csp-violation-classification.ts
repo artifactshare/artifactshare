@@ -9,7 +9,6 @@ const allowedScriptOrigins = new Set(
   ),
 )
 
-// Presentation attribution only: injected inline scripts can also name the document.
 export function classifyCspViolation(
   sourceFile: string | null,
   sandboxOrigin: string,

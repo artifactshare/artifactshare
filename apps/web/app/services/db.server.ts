@@ -20,10 +20,6 @@ export function createDb(database: D1Database = env.DB): Kysely<DB> {
 
 export type Db = ReturnType<typeof createDb>
 
-/**
- * Open a Kysely connection, run `fn`, and always destroy it. Keeps route
- * loaders from repeating the create / try / finally / destroy boilerplate.
- */
 export async function withDb<T>(
   fn: (db: Db) => Promise<T>,
   database?: D1Database,
