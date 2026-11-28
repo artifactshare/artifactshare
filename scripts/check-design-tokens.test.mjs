@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -187,7 +188,9 @@ export function Example({ dynamic }) {
 }
 `
   const entries = reportClassNameEntries(
-    new URL('../apps/web/app/components/fixture.tsx', import.meta.url).pathname,
+    fileURLToPath(
+      new URL('../apps/web/app/components/fixture.tsx', import.meta.url),
+    ),
     source,
   )
   assert.deepEqual(
@@ -200,10 +203,12 @@ export function Example({ dynamic }) {
 })
 
 test('settings spacing deny resolves quoted arbitrary-value object keys', () => {
-  const file = new URL(
-    '../apps/web/app/routes/_protected/settings/fixture.tsx',
-    import.meta.url,
-  ).pathname
+  const file = fileURLToPath(
+    new URL(
+      '../apps/web/app/routes/_protected/settings/fixture.tsx',
+      import.meta.url,
+    ),
+  )
   const entries = reportClassNameEntries(
     file,
     `<div className={cn({ 'mt-[var(--spacing-4)]': condition })} />`,
@@ -217,10 +222,12 @@ test('settings spacing deny resolves quoted arbitrary-value object keys', () => 
 })
 
 test('settings spacing deny does not let a sibling reset hide a positive margin', () => {
-  const file = new URL(
-    '../apps/web/app/routes/_protected/settings/fixture.tsx',
-    import.meta.url,
-  ).pathname
+  const file = fileURLToPath(
+    new URL(
+      '../apps/web/app/routes/_protected/settings/fixture.tsx',
+      import.meta.url,
+    ),
+  )
   const entries = reportClassNameEntries(
     file,
     `<div className="mt-4 [&_p]:m-0" />`,
@@ -253,7 +260,9 @@ test('font and typography checks reject stale sources', () => {
           "app.css must import @fontsource-variable/geist and define --font-sans once with 'Geist Variable' first, followed by the required Japanese system-font fallbacks",
       },
       {
-        file: new URL('../apps/web/app/root.tsx', import.meta.url).pathname,
+        file: fileURLToPath(
+          new URL('../apps/web/app/root.tsx', import.meta.url),
+        ),
         detail: 'root.tsx must not load Google Fonts globally',
       },
     ],
@@ -1385,10 +1394,9 @@ test('check 8: denies undefined theme() breakpoint refs; @theme is the only vali
   const validCss = `
 @media (width <= theme(--breakpoint-stack)) { .x { color: red; } }
 `
-  const localCssPath = new URL(
-    './fixtures/local-breakpoint.css',
-    import.meta.url,
-  ).pathname
+  const localCssPath = fileURLToPath(
+    new URL('./fixtures/local-breakpoint.css', import.meta.url),
+  )
 
   const undefinedRefs = findUndefinedThemeBreakpointReferences([
     { path: THEME_CSS, content: themeCss },

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -6,8 +7,12 @@ import { Kysely, SqliteDialect } from 'kysely'
 import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
 import type { DB } from '~/types/db'
 
-const MIGRATIONS_DIR = new URL('../../db/migrations', import.meta.url).pathname
-const SCHEMA_PATH = new URL('../../db/schema.sql', import.meta.url).pathname
+const MIGRATIONS_DIR = fileURLToPath(
+  new URL('../../db/migrations', import.meta.url),
+)
+const SCHEMA_PATH = fileURLToPath(
+  new URL('../../db/schema.sql', import.meta.url),
+)
 
 export function loadMigrations(): Array<{ name: string; sql: string }> {
   return readdirSync(MIGRATIONS_DIR)

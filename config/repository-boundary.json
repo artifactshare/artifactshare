@@ -37,6 +37,8 @@
     "scripts/module-boundary-lint-plugin.test.mjs",
     "scripts/plan-tier-lint-plugin.mjs",
     "scripts/plan-tier-lint-plugin.test.mjs",
+    "scripts/file-url-path-lint-plugin.mjs",
+    "scripts/file-url-path-lint-plugin.test.mjs",
     "scripts/check-cli-changelog.mjs",
     "scripts/check-cli-changelog.test.mjs",
     "scripts/check-d1-compatibility.mjs",

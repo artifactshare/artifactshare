@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import type { SearchProbeDocument } from './search-index-probe'
 import type {
   IndexSearchInput,
@@ -40,10 +41,9 @@ import {
 mkdirSync(new URL('../../.wrangler/integration-logs', import.meta.url), {
   recursive: true,
 })
-process.env.WRANGLER_LOG_PATH = new URL(
-  '../../.wrangler/integration-logs',
-  import.meta.url,
-).pathname
+process.env.WRANGLER_LOG_PATH = fileURLToPath(
+  new URL('../../.wrangler/integration-logs', import.meta.url),
+)
 const { createTestHarness, unstable_readConfig, unstable_splitSqlQuery } =
   await import('wrangler')
 
@@ -69,10 +69,14 @@ if (!productionConfig.send_email?.length) {
 const publicIntegration = process.env.PUBLIC_INTEGRATION === '1'
 const runtimeConfig = unstable_readConfig(
   {
-    config: new URL(
-      publicIntegration ? '../wrangler.jsonc' : '../wrangler.production.jsonc',
-      import.meta.url,
-    ).pathname,
+    config: fileURLToPath(
+      new URL(
+        publicIntegration
+          ? '../wrangler.jsonc'
+          : '../wrangler.production.jsonc',
+        import.meta.url,
+      ),
+    ),
   },
   { hideWarnings: true },
 )
@@ -86,14 +90,17 @@ const { build } = require(
   require.resolve('esbuild', { paths: [require.resolve('wrangler')] }),
 ) as typeof import('esbuild')
 await build({
-  entryPoints: [new URL('./search-index-probe.ts', import.meta.url).pathname],
-  outfile: new URL('../build/server/search-index-probe.js', import.meta.url)
-    .pathname,
+  entryPoints: [
+    fileURLToPath(new URL('./search-index-probe.ts', import.meta.url)),
+  ],
+  outfile: fileURLToPath(
+    new URL('../build/server/search-index-probe.js', import.meta.url),
+  ),
   bundle: true,
   format: 'esm',
   target: 'es2022',
   platform: 'node',
-  tsconfig: new URL('../tsconfig.json', import.meta.url).pathname,
+  tsconfig: fileURLToPath(new URL('../tsconfig.json', import.meta.url)),
   external: ['cloudflare:workers'],
   plugins: [
     {
@@ -115,14 +122,16 @@ integrationConfig.main = 'search-index-entry.js'
 await writeFile(integrationConfigUrl, JSON.stringify(integrationConfig))
 const sandboxName = unstable_readConfig(
   {
-    config: new URL('../wrangler.sandbox.jsonc', import.meta.url).pathname,
+    config: fileURLToPath(
+      new URL('../wrangler.sandbox.jsonc', import.meta.url),
+    ),
     ...(publicIntegration ? {} : { env: 'production' }),
   },
   { hideWarnings: true },
 ).name
 if (!sandboxName) throw new Error('Sandbox Worker config is missing its name')
 const harness = createTestHarness({
-  root: new URL('..', import.meta.url).pathname,
+  root: fileURLToPath(new URL('..', import.meta.url)),
   workers: [
     {
       configPath: 'build/server/wrangler.integration.json',
