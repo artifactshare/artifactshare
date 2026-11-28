@@ -7,11 +7,6 @@ export type CommentRefreshAttemptOutcome =
   | 'auth-error'
   | 'transient-error'
 
-type CommentRefreshDeferOutcome =
-  | 'missing-response'
-  | 'response-error'
-  | 'body-missing'
-
 type CommentRefreshWithAuthRecoveryOptions = {
   runAttempt: () => Promise<CommentRefreshAttemptOutcome>
   waitBeforeRetry: () => Promise<boolean>
@@ -20,21 +15,6 @@ type CommentRefreshWithAuthRecoveryOptions = {
 type CommentRefreshScheduler = {
   request: () => Promise<CommentRefreshResult>
   cancelPending: () => void
-}
-
-export function shouldDeferCommentRefreshDuringMutation({
-  hasPendingMutation,
-  outcome,
-}: {
-  hasPendingMutation: boolean
-  outcome: CommentRefreshDeferOutcome
-}): boolean {
-  switch (outcome) {
-    case 'missing-response':
-    case 'response-error':
-    case 'body-missing':
-      return hasPendingMutation
-  }
 }
 
 export function createCommentRefreshScheduler(

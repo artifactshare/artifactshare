@@ -1,10 +1,10 @@
 import { displayTitle } from '~/lib/display-title'
 import { parseTextLocus, type TextLocus } from '~/lib/csp-reporter'
 import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
+import type { CommentPageRequest } from '~/lib/comment-page'
 import {
   loadMessageWindow,
   loadInitialMessageWindows,
-  type CommentPageRequest,
 } from './comment-message-window.server'
 import {
   admitCommentPost,

@@ -7,12 +7,7 @@ import {
 import { VIDEO_VIEWER_SCRIPT } from './video-viewer-script.generated'
 import { VIDEO_VIEWER_STYLE } from './video-viewer-style.generated'
 
-export {
-  VIDEO_ORIGINAL_PATH,
-  VIDEO_PLAYBACK_RATES,
-  VIDEO_PLAYER_SCRIPT_PATH,
-  VIDEO_PLAYER_STYLE_PATH,
-}
+export { VIDEO_ORIGINAL_PATH }
 export const VIDEO_MIME_TYPE = 'video/mp4'
 
 export interface VideoPlayerAsset {

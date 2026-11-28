@@ -46,6 +46,7 @@ import {
   PREVIEW_MUTATION_HEADER_VALUE,
 } from './contract.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
+import { escapeHtml } from './shell.js'
 
 export interface ShareDialogHandlerOptions {
   filePath: string
@@ -754,14 +755,6 @@ function embedJson(value: unknown): string {
   return JSON.stringify(value)
     .replaceAll('</', '<\\/')
     .replaceAll('<!--', '<\\!--')
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
 }
 
 function renderPage(options: ShareDialogHandlerOptions): string {

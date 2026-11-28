@@ -1,6 +1,7 @@
 import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 
+import { escapeHtml } from './escape-html.js'
 import { httpAutolinkExtension } from './markdown-autolink.js'
 import { markdownDisclosureExtension } from './markdown-disclosure.js'
 import {
@@ -70,7 +71,7 @@ function highlightCode(html: string): string {
         language === 'mermaid'
           ? original
           : highlightTanStackCode(decodeHtml(encodedCode), language).html
-      return `<figure class="md-code-block" data-lang="${escapeAttribute(language)}"><figcaption class="md-code-toolbar" data-anchor-ignore><span class="md-code-label">${escapeHtml(label)}</span><button type="button" class="md-code-copy" data-code-copy data-anchor-ignore aria-label="Copy code">Copy</button></figcaption>${renderedCode}</figure>`
+      return `<figure class="md-code-block" data-lang="${escapeHtml(language)}"><figcaption class="md-code-toolbar" data-anchor-ignore><span class="md-code-label">${escapeHtml(label)}</span><button type="button" class="md-code-copy" data-code-copy data-anchor-ignore aria-label="Copy code">Copy</button></figcaption>${renderedCode}</figure>`
     },
   )
   return highlighted.replace(
@@ -82,19 +83,6 @@ function highlightCode(html: string): string {
 function readAttribute(attributes: string, name: string) {
   const match = attributes.match(new RegExp(`\\s${name}="([^"]*)"`))
   return match?.[1] !== undefined ? decodeHtml(match[1]) : null
-}
-
-function escapeAttribute(value: string) {
-  return escapeHtml(value)
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;')
 }
 
 function decodeHtml(value: string) {

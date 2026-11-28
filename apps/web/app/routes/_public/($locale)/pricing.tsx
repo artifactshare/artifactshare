@@ -6,7 +6,6 @@ import { userContext } from '~/middleware/context'
 import { defaultBillingCurrency } from '~/lib/billing-prices'
 import { PRICING_COPY } from '~/lib/pricing-content'
 import { resolvePublicRouteLocale } from '~/lib/public-route-locale'
-export { pricingCheckoutHref } from '~/lib/pricing-checkout'
 import type { Route } from './+types/pricing'
 export function loader({ params, request, context }: Route.LoaderArgs) {
   return {
@@ -15,7 +14,6 @@ export function loader({ params, request, context }: Route.LoaderArgs) {
     signedIn: Boolean(context.get(userContext)),
   }
 }
-export { PricingPage }
 export function pricingLocaleHref(locale: Locale): string {
   return locale === 'ja' ? '/ja/pricing' : '/pricing'
 }

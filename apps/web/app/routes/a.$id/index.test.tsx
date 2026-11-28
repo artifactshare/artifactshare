@@ -126,12 +126,8 @@ vi.mock('~/hooks/use-t', () => ({
         },
 }))
 
-import {
-  AgentHelpContent,
-  buildPreauthCliOpenCommand,
-  loader,
-  meta,
-} from './index'
+import { AgentHelpContent, buildPreauthCliOpenCommand } from './+viewer'
+import { loader, meta } from './index'
 
 describe('/a/:id loader', () => {
   beforeEach(() => {

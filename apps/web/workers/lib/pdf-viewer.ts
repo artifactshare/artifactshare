@@ -7,12 +7,7 @@ import {
 import { PDF_VIEWER_SCRIPT } from './pdf-viewer-script.generated'
 import { PDF_VIEWER_STYLE } from './pdf-viewer-style.generated'
 
-export {
-  PDF_ORIGINAL_PATH,
-  PDF_VIEWER_SCRIPT_PATH,
-  PDF_VIEWER_STYLE_PATH,
-  PDFJS_ASSET_PREFIX,
-}
+export { PDF_ORIGINAL_PATH }
 export const PDF_MIME_TYPE = 'application/pdf'
 
 export interface PdfViewerAsset {

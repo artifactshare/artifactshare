@@ -636,7 +636,7 @@ function optionalBoundedCharacters(
   return value
 }
 
-function hasAsciiControl(value: string): boolean {
+export function hasAsciiControl(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const unit = value.charCodeAt(index)
     if (unit <= 0x1f || unit === 0x7f) return true

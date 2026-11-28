@@ -16,7 +16,7 @@ export interface PreviewShellOptions {
   messages: typeof PREVIEW_MESSAGES
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')

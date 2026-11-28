@@ -2,7 +2,7 @@
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useViewerList } from './viewer-shell'
+import { useViewerList } from '../+hooks/use-viewer-list'
 
 type HookResult = ReturnType<typeof useViewerList>
 

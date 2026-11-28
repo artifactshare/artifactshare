@@ -49,10 +49,6 @@ export function spawnFile(
   })
 }
 
-export function shouldOpenBrowserForLogin(): boolean {
-  return browserOpenSkipReason() === null
-}
-
 function browserOpenSkipReason(): BrowserOpenSkipReason | null {
   if (process.env.CI === 'true') return 'ci'
   if (
