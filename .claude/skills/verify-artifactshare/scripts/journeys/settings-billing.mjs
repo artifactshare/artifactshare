@@ -43,7 +43,7 @@ mkdirSync(workDir, { recursive: true })
 const file = join(workDir, 'settings-file.html')
 writeFileSync(
   file,
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>${'Storage usage proof. '.repeat(200)}</p></main></body></html>`,
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>${'Storage usage proof. '.repeat(15_000)}</p></main></body></html>`,
 )
 
 const t = (key, vars) => uiText('en', key, vars)
@@ -59,6 +59,8 @@ const storageUsed = (page) =>
 const membersTable = (page) => page.locator('main').getByRole('table')
 
 const browsers = []
+let renamedPage
+let rename
 const open = async (persona, next) => {
   const session = await signIn(run, { persona, next })
   session.page.setDefaultTimeout(20_000)
@@ -113,11 +115,12 @@ try {
 
   await oPage.goto(`${run.appOrigin}/settings/billing`)
   await currentPlan(oPage).getByText(t('billing.plan.team')).first().waitFor()
+  await currentPlan(oPage).getByText(t('billing.subscription.none')).waitFor()
   await currentPlan(oPage).getByText(t('billing.unavailable')).waitFor()
   await capture(run, FEATURE, '05-owner-billing-unconfigured', oPage)
   step('the Team owner billing page says billing is unavailable without Stripe')
 
-  const rename = async (page, name) => {
+  rename = async (page, name) => {
     await page.goto(`${run.appOrigin}/settings/general`)
     const field = page.getByRole('textbox', { name: 'Display name' })
     await actUntil(
@@ -130,6 +133,7 @@ try {
     )
   }
   await rename(oPage, renamed)
+  renamedPage = oPage
   await oPage.reload()
   await breadcrumb(oPage).getByRole('link', { name: renamed }).waitFor()
   await capture(run, FEATURE, '06-owner-renamed', oPage)
@@ -140,6 +144,7 @@ try {
   await capture(run, FEATURE, '07-member-sees-rename', mPage)
   // Leave the workspace as the dev sign-in made it for the journeys after this.
   await rename(oPage, teamWorkspace)
+  renamedPage = undefined
   step('the owner renames the workspace and the member sees the new name', {
     renamed,
   })
@@ -279,6 +284,8 @@ try {
   await ja.close()
   step('fixture: a Japanese phone sees the past-due banner in Japanese')
 } finally {
+  // A failure after the rename must not leave the Team workspace renamed.
+  if (renamedPage) await rename(renamedPage, teamWorkspace).catch(() => {})
   await Promise.all(browsers.map((browser) => browser.close()))
   writeFileSync(
     join(evidenceDir(run, FEATURE), 'steps.json'),

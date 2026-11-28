@@ -4,9 +4,9 @@ A workspace owner manages the workspace from Settings: members, the admin pages,
 
 ## Sub-features
 
-- `settings-member-gate` hides `Bots`, `Activity`, and `Inventory` from a member's Settings menu and answers `Access denied` (403) when a member opens one by URL.
+- `settings-member-gate` hides `Bots`, `Activity`, and `Inventory` from a member's Settings menu and answers `Access denied` (403) when a member opens `/settings/bots` by URL. The unit test `settings-admin-gate.test.tsx` covers the other admin pages.
 - `settings-members` lists the workspace members, with the owner marked `Owner`.
-- `settings-rename` lets the owner or an admin change the workspace display name on `General`. A member sees the field and `Save` disabled.
+- `settings-rename` lets the owner change the workspace display name on `General`. A member sees the field and `Save` disabled.
 - `settings-token-revoke` revokes an API token from `AI tools and CLI`. The token leaves the list and the CLI gets `token_invalid`.
 - `billing-plan` shows the plan, the subscription state, and storage usage. Without Stripe values the page says billing is not available.
 - `billing-read-only` shows a member the plan with no billing action and a link to `General`.
@@ -28,10 +28,10 @@ Preconditions:
 - **Member view.** As `Team member`, `/settings` shows a table with a row for the `Team owner` persona, marked `Owner`, and the member's own row, and the `Workspace settings` navigation has no `Bots`, `Activity`, or `Inventory` link. `/settings/bots` responds 403 with a heading `Access denied` and a `Back to settings` link.
 - **Member billing.** `/settings/billing` as a member shows `Billing is managed by the workspace owner…` (`billing.readOnly.seeGeneral`) and no button in the `Current plan` region. Its `Open general settings` link goes to `/settings/general`, where the `Display name` textbox and `Save` are disabled.
 - **Owner view.** As `Team owner`, `/settings` lists the `Team member` persona once the member has signed in, and the menu has `Bots`, `Activity`, and `Inventory`.
-- **Billing without Stripe.** The `Current plan` region shows the plan name (`Team`, `Free`), `Not subscribed`, and `Billing is not available yet. Please check back later.` (`billing.unavailable`). The `Storage usage` region's first `strong` is the storage used (`0 B` on a fresh workspace).
-- **Storage usage.** After a CLI `share` as `Free owner`, a reload of `/settings/billing` shows a larger storage used (`4 KB` for the journey's file).
+- **Billing without Stripe.** The `Current plan` region shows the plan name (`Team`, `Free`), `Not subscribed`, and `Billing is not available yet. Please check back later.` (`billing.unavailable`). The `Storage usage` region's first `strong` is the storage used (`0 B` on a fresh workspace). The Team owner's plan also reads `Not subscribed`.
+- **Storage usage.** After a CLI `share` as `Free owner`, a reload of `/settings/billing` shows a larger storage used. The journey's file is about 300 KB, so the change shows even after earlier journeys pushed usage past 1 MB, where the display has one decimal of MB.
 - **Rename.** On `/settings/general`, fill `Display name` and click `Save`. The `Location` navigation's first link changes to the new name, after a reload too, and the member's `/settings/general` shows it. The journey renames back to `Artifact Share Local Dev Team`.
-- **Revoke a token.** On `/settings/tokens`, the token's row has `Revoke`, which opens an alert dialog `Revoke “<name>”?` with `Cancel` and `Revoke`. After `Revoke` the list reads `No API tokens yet.` and `whoami --json` with that token exits `1` with `error.code` `token_invalid`.
+- **Revoke a token.** On `/settings/tokens`, the token's row has `Revoke`, which opens an alert dialog `Revoke “<name>”?` with `Cancel` and `Revoke`. After `Revoke` the token's row is gone (on a fresh stack the list reads `No API tokens yet.`), and `whoami --json` with that token exits `1` with `error.code` `token_invalid`.
 - **Fixture states.** `/dev/settings/<state>/billing` (any signed-in persona) renders the real billing page with fixture data:
   - `team-past-due`: an `alert` with `billing.pastDue.banner`, `Past due` in `Current plan`, `Open customer portal`, and the estimate note `Unpaid: the <date> charge failed`.
   - `team-cancel-scheduled`: `Ends on <date>` in `Current plan`.

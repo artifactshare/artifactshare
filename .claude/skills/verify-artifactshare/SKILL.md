@@ -90,7 +90,7 @@ Proof standards:
 - Drive the real user path: persona sign-in, Settings for tokens, the visible buttons and dialogs, and the CLI. Do not POST to internal endpoints (`/api/shareables/uploads`, `/api/auth/dev/sign-in`) or reuse a session cookie as a Bearer token to skip the UI. The scripts in `scripts/*.mjs` do that for their own purposes, and it does not count as proof here.
 - Capture the action and the resulting state. For a mutation, confirm it from a second, read-only view, e.g. a CLI `artifacts list` after a share, or Home after an upload.
 - For viewer features, assert on content inside the sandbox iframe. The page shell rendering without the frame content is a failure, not a pass.
-- No mocks. The stack is local and self-contained. Stripe, Google OAuth, Slack, and email are not configured, so features that need them are out of reach; report them as unverified and do not fake them. The one stand-in is `/dev/settings/<state>/<page>`, which renders the real Settings pages with fixture loader data for states only Stripe or a full workspace can reach. Label those steps as fixtures (see `features/settings-billing.md`).
+- No mocks. The stack is local and self-contained. Stripe, Google OAuth, Slack, and email are not configured, so features that need them are out of reach; report them as unverified and do not fake them. Besides `/dev/sign-in` for Google sign-in, the one data stand-in is `/dev/settings/<state>/<page>`, which renders the real Settings pages with fixture loader data for states only Stripe or a full workspace can reach. Label those steps as fixtures (see `features/settings-billing.md`).
 
 ## Cleanup
 
