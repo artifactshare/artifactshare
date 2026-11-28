@@ -12,7 +12,6 @@ import { nowIso } from '~/lib/datetime'
 import type { DB } from '~/types/db'
 import {
   allFixedPriceIds,
-  hasActiveSubscription,
   planForPriceId,
   resolveStripePrices,
   type BillingEnv,
@@ -68,7 +67,7 @@ const NEVER_PAID_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
   'incomplete_expired',
 ] satisfies Stripe.Subscription.Status[])
 
-export function deriveContractPlanFromSubscription(
+function deriveContractPlanFromSubscription(
   subscription: BillingSubscription,
   prices: StripePrices,
 ): 'plus' | 'team' | null {
@@ -233,7 +232,7 @@ async function writeWorkspaceSubscription(
   if (
     workspace.stripe_subscription_id !== null &&
     workspace.stripe_subscription_id !== subscription.id &&
-    !hasActiveSubscription(subscription.status)
+    !isActiveSubscriptionStatus(subscription.status)
   ) {
     // An ignored event still takes the token, so a sync that read Stripe
     // before it cannot commit afterwards.
@@ -249,15 +248,6 @@ async function writeWorkspaceSubscription(
   }
 
   const prices = resolveStripePrices(env)
-  const contractPlan = deriveContractPlanFromSubscription(subscription, prices)
-  if (contractPlan === null) {
-    console.error('billing_sync_unknown_price', {
-      subscriptionId: subscription.id,
-      workspaceId: workspace.id,
-    })
-    return { kind: 'unknown-price' }
-  }
-
   const plan = derivePlanFromSubscription(subscription, prices)
   if (plan === null) {
     console.error('billing_sync_unknown_price', {
