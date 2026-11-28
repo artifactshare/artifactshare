@@ -16,9 +16,6 @@ export type { ViewerAccessFacts } from '~/modules/access'
 
 export const MAX_CONTENT_BYTES = ARTIFACT_UPLOAD_LIMITS.totalBytes
 
-// Canonical workspace admin membership lookup. Returned as a query builder so
-// callers that need an atomic admin re-check (e.g. inside an UPDATE ... WHERE
-// EXISTS) reuse the same predicate as the boolean form below.
 export function workspaceAdminQuery(
   db: Kysely<DB>,
   userId: string,
@@ -33,13 +30,6 @@ export function workspaceAdminQuery(
     .where('status', '=', 'active')
 }
 
-/**
- * Whether the user is an admin of the given workspace. Admin rights never cross
- * workspace boundaries, so a workspace mismatch is denied before any read.
- *
- * Use this only for all-plan workspace settings. Team-only management features
- * must use `isTeamWorkspaceAdmin`.
- */
 export async function isWorkspaceAdmin(
   db: Kysely<DB>,
   user: { id: string; workspaceId: string },
@@ -87,7 +77,6 @@ export type ViewerDisplayCheck =
   | { kind: 'access-granted'; meta: ArtifactSnapshot }
   | { kind: 'access-denied' }
   | { kind: 'meta-unavailable' }
-  /** An operator paused the link; anonymous viewers get the paused page. */
   | { kind: 'link-suspended' }
 
 export interface ViewerDisplayContext {
@@ -96,20 +85,13 @@ export interface ViewerDisplayContext {
   artifactWorkspaceId: string
   viewerWorkspaceId: string | null
   viewerEmail: string | null
-  // Whether viewerEmail is proven. Email-grant access is gated on this.
   viewerEmailVerified: boolean
   containerId: string | null
-  // inbox も base_visibility='workspace' を持つため、project のときだけ使う。
   containerKind: 'project' | 'inbox' | null
   containerBaseVisibility: ProjectBaseVisibility | null
   now?: string
 }
 
-// Email-grant access requires a proven email. An unverified viewer (e.g. a
-// Microsoft tenant that asserts no verification) gets null here, so the
-// email-match clauses never match and they must prove the address via the
-// email-code flow first. Admin and grant access are separate; identity-based
-// owner, workspace, and creator access uses the live revocation check.
 export function grantMatchEmail(viewer: {
   email: string
   emailVerified: boolean
@@ -117,12 +99,6 @@ export function grantMatchEmail(viewer: {
   return viewer.emailVerified ? viewer.email.toLowerCase() : null
 }
 
-// 呼び出し側が見る人のワークスペース内の成果物に絞り込み済みであることを前提に、
-// base_visibility='workspace' を同一ワークスペース向けとして扱う。
-// project 可視の成果物を一覧・件数で見られる viewer。所有者一致は呼び出し側
-// (visibleShareableToViewer) が別に見る。ここでは「社内全員ベース / プロジェクト
-// 作成者 / ワークスペース管理者 / 関係者」を通す。作成者・管理者は private ベースでも
-// プロジェクトの中身を管理する立場なので、関係者でなくても見られる。
 export function workspaceScopedProjectVisibility(
   eb: ExpressionBuilder<DB, 'shareables'>,
   viewer: {
@@ -212,8 +188,6 @@ async function canViewerAccessProjectVisibility(
     return true
   }
 
-  // 作成者・ワークスペース管理者は、private ベースでもプロジェクトの project 可視成果物を
-  // 見られる (プロジェクトを管理する立場で、関係者リストには載らないため別に通す)。
   const container = await db
     .selectFrom('artifact_containers')
     .select(['created_by_id', 'workspace_id'])
@@ -234,8 +208,6 @@ async function canViewerAccessProjectVisibility(
     }
   }
 
-  // Audience membership is email-grant access → only for a verified email.
-  // (Creator / workspace-admin access above is not email-based and still works.)
   if (!viewerEmail || !context.viewerEmailVerified) return false
   const audienceMember = await db
     .selectFrom('project_share_defaults')
@@ -263,9 +235,6 @@ export async function viewerDisplayCheck(
       if (!publicMeta) return { kind: 'meta-unavailable' }
       return { kind: 'access-granted', meta: publicMeta }
     }
-    // An expired, disabled, or Free link is denied only when the request has
-    // no other authenticated authorization. Owner/grant checks below preserve
-    // non-link access that the shareable already granted.
     if (!viewerUserId)
       return linkAccess.kind === 'suspended'
         ? { kind: 'link-suspended' }
@@ -326,7 +295,6 @@ export async function viewerDisplayCheck(
 
   if (!viewerEmail) return { kind: 'access-denied' }
 
-  // Per-artifact grant is email-grant access → only for a verified email.
   const grant = await db
     .selectFrom('shareable_grants')
     .select('shareable_id')
@@ -346,7 +314,6 @@ export async function viewerDisplayCheck(
   return { kind: 'access-granted', meta: publicMeta }
 }
 
-/** Pure authorization decision shared by apex tests and sandbox delivery. */
 export function viewerAccessAllowed(facts: ViewerAccessFacts): boolean {
   if (facts.visibility === 'link' && facts.anonymousLinkAllowed) return true
   if (!facts.viewerUserId) return false

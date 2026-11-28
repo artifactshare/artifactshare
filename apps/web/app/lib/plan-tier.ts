@@ -35,12 +35,10 @@ export function planTier(plan: string | null | undefined): PlanTier {
   return PLAN_TIERS[normalizePlan(plan)]
 }
 
-/** The plans in tier `T`, derived from `PLAN_TIERS`. */
 export type PlanInTier<T extends PlanTier> = {
   [P in BillingPlan]: (typeof PLAN_TIERS)[P] extends T ? P : never
 }[BillingPlan]
 
-/** Narrows a known plan by tier, for code that still renders per plan. */
 export function isPlanInTier<T extends PlanTier>(
   plan: BillingPlan,
   tier: T,

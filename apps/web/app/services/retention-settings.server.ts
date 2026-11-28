@@ -18,8 +18,6 @@ function ownerQuery(db: Kysely<DB>, id: string, ownerId: string) {
     )
 }
 
-// A single SQL snapshot is also compared by the guarded UPDATE. It includes
-// unpublished rows and, for managed artifacts, other files' current references.
 // Explicit JSON conversion preserves arrays/null across subquery and CASE boundaries.
 function snapshot(id: string, proposed: number | null) {
   return sql<string>`json_object('file', id, 'owner', owner_user_id,
@@ -63,9 +61,6 @@ export async function previewRetention(
     : null
 }
 
-// Used by both the unrestricted API edit and the session-only browser flow.
-// The ownership/access and optional preview guard are evaluated by the write,
-// inside D1's batch, rather than relying on an earlier authorization lookup.
 export async function saveRetention(
   db: Kysely<DB>,
   id: string,

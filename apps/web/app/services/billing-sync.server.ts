@@ -63,7 +63,6 @@ type WorkspaceSubscriptionRow = Pick<
   stripe_sync_token: string | null
 }
 
-// Stripe statuses of a subscription whose first invoice was never paid.
 const NEVER_PAID_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
   'incomplete',
   'incomplete_expired',
@@ -163,8 +162,6 @@ export async function syncWorkspaceSubscription(
   subscriptionId: string,
   options?: SyncWorkspaceSubscriptionOptions,
 ): Promise<SyncWorkspaceSubscriptionResult> {
-  // This read only finds the workspace. The state written below comes from a
-  // read made after the workspace row is read.
   const routing = await stripe.subscriptions.retrieve(subscriptionId, {
     expand: ['items.data.price'],
   })
@@ -278,10 +275,6 @@ async function writeWorkspaceSubscription(
     stripe_sync_token: syncToken,
   }
 
-  // Apply the access-control defaults on the first paid contract. Link expiry
-  // settings belong to the workspace and are never rewritten by a plan change;
-  // later paid-plan changes preserve the access controls too. A subscription
-  // recorded before its first payment does not count as a contract.
   const hadPaidContract =
     workspace.stripe_subscription_id !== null &&
     !NEVER_PAID_SUBSCRIPTION_STATUSES.has(workspace.stripe_subscription_status)
@@ -293,8 +286,6 @@ async function writeWorkspaceSubscription(
     if (plan === 'plus' || plan === 'team') {
       const defaults = LINK_SHARING_PLAN_DEFAULTS[plan]
       Object.assign(workspaceUpdates, {
-        // Team defaults to link sharing off for new workspaces; an upgrade
-        // must not cut links the workspace already shares.
         link_sharing_enabled:
           plan === 'team'
             ? workspace.link_sharing_enabled
@@ -314,8 +305,6 @@ async function writeWorkspaceSubscription(
       from: workspace.plan,
       to: plan,
     })
-    // Only the sync that moves the plan off `from` logs the change, so the
-    // Checkout return and the webhook for one purchase write one entry.
     batch.push(
       db
         .insertInto('audit_events')
@@ -361,7 +350,6 @@ async function writeWorkspaceSubscription(
     : 'conflict'
 }
 
-// Marks the webhook event processed only when this sync's write committed.
 function processedMark(
   db: Kysely<DB>,
   workspaceId: string,
@@ -422,14 +410,6 @@ function stripeObjectId(value: string | { id: string } | null): string | null {
   return value?.id ?? null
 }
 
-/**
- * Brings the plan up to date when the owner returns from Stripe Checkout,
- * before the page reads it, so the billing page shows the plan just bought
- * without waiting for the webhook. The session must be a completed
- * subscription Checkout that this workspace started for its own Stripe
- * customer; anything else is left to the webhook, as before. The subscription
- * goes through the same sync the webhook uses.
- */
 export async function syncReturnedCheckout(
   db: Kysely<DB>,
   stripe: CheckoutReturnStripeClient,

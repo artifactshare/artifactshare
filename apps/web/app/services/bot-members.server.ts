@@ -26,9 +26,6 @@ import { computeTextSha256Hex } from '~/lib/sha256'
 import { requireWorkspaceAdmin } from '~/services/team-management.server'
 import type { DB } from '~/types/db'
 
-// Bots are outside the contributor guardrail, so an unlimited count would be
-// the cheapest billing bypass. Free workspaces (which have the guardrail) get
-// one active bot; paid workspaces get ten.
 export const FREE_PLAN_ACTIVE_BOT_LIMIT = 1
 export const ACTIVE_BOT_LIMIT = 10
 
@@ -84,7 +81,7 @@ type Actor = { id: string; workspaceId: string }
  * every request that lost the CAS.
  */
 export function uniqueStopMarker(now = new Date()): string {
-  const base = now.toISOString() // ...ss.mmmZ
+  const base = now.toISOString()
   let digits = ''
   const bytes = crypto.getRandomValues(new Uint8Array(6))
   for (const byte of bytes) digits += String(byte % 10)
@@ -106,13 +103,6 @@ function activeBotCountQuery(db: Kysely<DB>, workspaceId: string) {
     .where('bot_stopped_at', 'is', null)
 }
 
-/**
- * Cancellation is deliberately narrower than "no visible posts". A bot is
- * unused only while its credential has never authenticated and no durable
- * record can be attributed to either the bot user or its agent profile.
- * Keeping this as one SQL predicate lets every statement in the cancellation
- * batch re-check the same condition at commit time.
- */
 function botCancellationEligible(botUserId: string | Expression<unknown>) {
   return sql<boolean>`
     EXISTS (
@@ -165,8 +155,6 @@ export async function listWorkspaceBots(
 ): Promise<WorkspaceBotRow[]> {
   const rows = await db
     .selectFrom('users')
-    // Join the LATEST authority regardless of status: stop revokes them all,
-    // and the stopped row must still show its destination snapshot.
     .leftJoin('cli_family_authorities as authority', (join) =>
       join.onRef('authority.user_id', '=', 'users.id').on(
         'authority.created_at',
@@ -278,10 +266,6 @@ export async function createWorkspaceBot(
   const name = normalizeBotDisplayName(input.name)
   if (!name) return { kind: 'bot-name-invalid' }
 
-  // Pre-validation: the destination must be a non-archived project in the
-  // admin's workspace; a private destination must have grant headroom for the
-  // bot's contributor grant. The batch re-checks both as INSERT...SELECT
-  // guards to cover the pre-check → batch race.
   const project = await db
     .selectFrom('artifact_containers')
     .select(({ selectFrom }) => [
@@ -361,9 +345,6 @@ export async function createWorkspaceBot(
         .select([
           eb.val(botUserId).as('id'),
           eb.val(email).as('email'),
-          // email_verified=1: audience matching (verified email equality) is
-          // the explicit-share mechanism and there is no verification flow to
-          // run against an unobtainable domain.
           eb.val(1).as('email_verified'),
           eb.val(name).as('name'),
           eb.val(null).as('image'),
@@ -547,9 +528,6 @@ export async function createWorkspaceBot(
         ]),
     )
 
-  // The create audit is conditioned on the user row only (not the authority):
-  // if the tiny race window leaves an incomplete bot, the recovery stop below
-  // pairs it with a bot.stop event.
   const auditInsert = db
     .insertInto('audit_events')
     .columns([
@@ -644,7 +622,6 @@ export async function createWorkspaceBot(
     )
   } catch (error) {
     logErrorDiagnostic('bot.create', error)
-    // Constraint failure rolled the batch back; classify deterministically.
     return await classifyCreateFailure(db, actor.workspaceId, name)
   }
 
@@ -670,8 +647,6 @@ export async function createWorkspaceBot(
       .where(projectPlacementSql(actor, input.projectId))
       .executeTakeFirst()
     if (!destination) return { kind: 'bot-destination-invalid' }
-    // Head INSERT selected 0 rows: the cap predicate (or a raced workspace
-    // delete) blocked it without an SQL error.
     return await classifyCreateFailure(db, actor.workspaceId, name)
   }
 
@@ -710,10 +685,6 @@ export async function createWorkspaceBot(
     (!complete.privateDestinationNow || complete.grantPresent),
   )
   if (!authorityComplete) {
-    // The race window (e.g. the project was archived between pre-check and
-    // batch) produced a token that could never post. Reclaim via the standard
-    // stop path — a defined outcome: bot.create and bot.stop both remain, the
-    // stopped bot row stays in the bot section, and the name is released.
     await stopWorkspaceBot(db, actor, botUserId)
     return { kind: 'bot-destination-invalid' }
   }
@@ -748,8 +719,6 @@ async function classifyCreateFailure(
     workspaceId,
   ).executeTakeFirst()
   if ((activeCount?.count ?? 0) >= cap) return { kind: 'bot-limit-reached' }
-  // Anything else is the (vanishingly rare) generated-email UNIQUE collision;
-  // a retry regenerates the address.
   return { kind: 'bot-conflict' }
 }
 
@@ -899,9 +868,6 @@ export async function stopWorkspaceBot(
     .where('kind', '=', 'bot')
     .where('bot_stopped_at', 'is', null)
 
-  // One revoke audit per family that still holds an unrevoked, unexpired
-  // credential (matches the user-id-based revocation statement below; a bot
-  // whose credentials all expired gets bot.stop only).
   const revokeAudits = db
     .insertInto('audit_events')
     .columns([
@@ -948,8 +914,6 @@ export async function stopWorkspaceBot(
     .where('expires_at', '>', marker)
     .where(stoppedNow)
 
-  // Bots hold only bearer CLI sessions; deleting them all also cascades the
-  // cli_session_authorities and cli_refresh_sessions rows.
   const deleteSessions = db
     .deleteFrom('sessions')
     .where('user_id', '=', botUserId)
@@ -1059,10 +1023,6 @@ export async function reissueWorkspaceBotCredential(
   if (!bot) return { kind: 'not-found' }
   if (bot.bot_stopped_at !== null) return { kind: 'bot-stopped' }
 
-  // The destination is not revalidated (archived is fine), with one
-  // exception: a deleted destination project (project_id NULL or the row
-  // gone) would mint a family whose every request 401s — a silently dead
-  // bot. The fix for a deleted destination is a new bot.
   const source = await db
     .selectFrom('cli_family_authorities as authority')
     .leftJoin(
@@ -1108,9 +1068,6 @@ export async function reissueWorkspaceBotCredential(
     .where('status', '=', 'active')
     .where(botActive)
 
-  // Immediate invalidation of the old token even when unused: without the
-  // revocation an unrotated old credential would stay family-live for up to
-  // 180 days.
   const revokeOldCredentials = db
     .updateTable('cli_refresh_credentials')
     .set({ revoked_at: now })
@@ -1297,9 +1254,6 @@ export async function reissueWorkspaceBotCredential(
     )
   } catch (error) {
     logErrorDiagnostic('bot.reissue', error)
-    // The batch rolled back. Re-read state to classify instead of guessing:
-    // only a genuinely missing/deleted destination is "create a new bot" —
-    // a transient D1 error must surface as retryable.
     const currentBot = await db
       .selectFrom('users')
       .select('bot_stopped_at')

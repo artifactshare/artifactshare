@@ -179,9 +179,6 @@ export async function findWorkspaceIdByProviderTenant(
 ): Promise<string | null> {
   if (!providerTenantId) return null
 
-  // The workspace column is the canonical Microsoft tenant identity. Prefer
-  // it over a claim row so legacy duplicate data cannot route a sign-in to an
-  // empty claim-only workspace.
   const tenantWorkspace = await db
     .selectFrom('workspaces')
     .select('id')
@@ -234,12 +231,8 @@ export async function ensureDomainClaimWorkspace(
     name: domain,
     created_at: input.now,
     email_domain: domain,
-    // A caller's provisioning (auth) carries the expiry columns; any other
-    // caller still gets the starting policy instead of the column default.
     ...linkExpiryStartingColumns(),
     ...input.creation,
-    // Claim workspaces start on Free; the column default is still 0, and the
-    // plan default wins over whatever the caller's provisioning carried.
     link_sharing_enabled: LINK_SHARING_PLAN_DEFAULTS.free.linkSharingEnabled
       ? 1
       : 0,
@@ -310,8 +303,6 @@ export async function maybeMoveUserToClaimedWorkspace(
   db: Kysely<DB>,
   input: { userId: string; email: string; currentWorkspaceId: string },
 ): Promise<string | null> {
-  // Human-only: a bot's workspace_id is its host workspace and every agent
-  // authority and member row depends on it staying put.
   const mover = await db
     .selectFrom('users')
     .select('kind')
@@ -708,7 +699,6 @@ async function moveUserToWorkspaceIfSafe(
     targetMembershipGuardQuery,
     sourceMembershipDelete,
     emptySourceWorkspaceDelete,
-    // A later failure repairing the target cannot undo this domain join.
     db
       .updateTable('pending_signup_analytics')
       .set({ workspace_created: 0 })

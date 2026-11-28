@@ -31,13 +31,8 @@ export type ProjectMembershipRow = {
   shared?: boolean
 }
 
-// 社外ドメイン判定の SQL 片 (app/lib/grant-emails.ts の isExternalEmail と同じ意味)。
-// d = project_share_defaults, w = workspaces の別名を前提にする。3 箇所目を作らず
-// これを参照する
 export const externalGrantDomainSql = sql<boolean>`w.hd is not null and w.hd <> '' and instr(d.email,'@') > 0 and lower(substr(d.email, instr(d.email,'@')+1)) <> lower(w.hd) and lower(substr(d.email, instr(d.email,'@')+1)) <> 'bots.artifactshare.invalid'`
 
-// c = artifact_containers の別名を前提にする。プロジェクト一覧と、所属先を
-// 返してよいか判定する resource route で同じ可視性を使う。
 export function visibleProjectContainerToViewerSql(user: SessionUser) {
   const workspaceAccessRevoked = workspaceAccessRevokedSql(
     sql.ref('c.workspace_id'),
@@ -278,8 +273,6 @@ export async function listProjectsForIndex(
       'c.updated_at as updatedAt',
       'c.archived_at as archivedAt',
       'c.workspace_id as workspaceId',
-      // 件数は読み手に見えるファイルだけを数える (可視でない追加の存在を件数から
-      // 推測させない)。自 workspace は member 述語、別 workspace は共有述語
       sql<number>`(select count(*) from shareables where shareables.container_id=c.id and ((c.workspace_id = access_viewer.workspace_id and ${memberVisible}) or (c.workspace_id <> access_viewer.workspace_id and ${sharedVisible})))`.as(
         'fileCount',
       ),
@@ -306,7 +299,6 @@ export async function listProjectsForIndex(
     joined: Boolean(row.joined),
   }))
 }
-/** Bounded name-only projection using the same live project access predicate. */
 export function suggestProjects(
   db: Db,
   userId: string,
@@ -338,8 +330,6 @@ export async function listJoinedProjectsForDropdown(
     sql.ref('c.workspace_id'),
     user.id,
   )
-  // 一覧全走査を避け、参加行起点で必要な列だけを SQL で limit まで取る。
-  // 権限喪失した参加行は現在の閲覧権 (member / admin / 関係者) で再評価して除外
   const rows = await db
     .selectFrom('project_members as pm')
     .innerJoin('artifact_containers as c', 'c.id', 'pm.container_id')
@@ -387,8 +377,6 @@ export async function listJoinedProjectsForDropdown(
     newCount: Number(r.newCount),
   }))
 }
-// 現在の閲覧権を持つ参加者だけを数える: 同 workspace のメンバーは base='workspace' か
-// 作成者か関係者、別 workspace の参加者は検証済みメールの関係者のみ。
 export async function countProjectParticipants(db: Db, containerId: string) {
   const row = await db
     .selectFrom('project_members as pm')
@@ -420,7 +408,6 @@ export async function countProjectParticipants(db: Db, containerId: string) {
   return Number(row?.count ?? 0)
 }
 
-// 詳細ヘッダ用: 閲覧権を持つ参加者の先頭 limit 人 (参加の新しい順)。
 export async function listProjectParticipants(
   db: Db,
   containerId: string,

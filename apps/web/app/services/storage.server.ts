@@ -18,7 +18,6 @@ export function artifactR2Key(args: {
   versionId: string
   renderType: SingleFileArtifactType
 }): string {
-  // A PDF is stored as the uploaded original, not as a renderable index page.
   if (args.renderType === 'pdf') {
     return `artifacts/${args.shareableId}/${args.versionId}/original.pdf`
   }
@@ -44,10 +43,6 @@ export function artifactContentType(
   }
 }
 
-// All R2 helpers take bucket as the first argument. This keeps tests able to
-// pass a mocked R2Bucket and prevents future reconciliation helpers from
-// silently falling back to env.BUCKET when the caller meant to operate on a
-// specific bucket instance.
 export async function putArtifact(
   bucket: R2Bucket,
   key: string,
@@ -86,9 +81,6 @@ export async function getArtifactPrefixText(
   })
   if (!object) return null
   const text = await object.text()
-  // The byte range can split a multi-byte UTF-8 char at maxBytes, which decodes
-  // to a trailing replacement char. Stored content is valid UTF-8, so the only
-  // source of U+FFFD is that tail cut — drop it so excerpts don't end in `�`.
   return text.replace(/�+$/u, '')
 }
 
@@ -139,18 +131,12 @@ export async function deleteArtifacts(
   }
 }
 
-// Hard cap on pagination loop iterations. With R2 list returning up to 1000
-// keys per page, 10k iterations covers ~10M objects — well beyond any single
-// bundle prefix. If we ever hit this we want to fail loudly rather than spin.
 const DELETE_BY_PREFIX_MAX_PAGES = 10_000
 
 export async function deleteArtifactsByPrefix(
   bucket: R2Bucket,
   prefix: string,
 ): Promise<void> {
-  // Empty prefix would list and delete the entire bucket. Current callers
-  // construct prefixes from non-empty workspace / shareable / version ids,
-  // but the guard makes the function safe against future caller miscompute.
   if (prefix === '') {
     throw new Error('deleteArtifactsByPrefix: refusing empty prefix')
   }
@@ -161,8 +147,6 @@ export async function deleteArtifactsByPrefix(
       bucket,
       listed.objects.map((obj) => obj.key),
     )
-    // Falsy cursor (incl. empty string) terminates even when truncated is
-    // true — better to leak orphans than loop infinitely on a stuck cursor.
     if (!listed.truncated) return
     if (!listed.cursor) {
       console.error('r2_delete_by_prefix_truncated_no_cursor', { prefix })
