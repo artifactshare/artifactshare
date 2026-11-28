@@ -14,7 +14,7 @@ import type {
   ProfilesListEntry,
 } from '../types.js'
 import { apiGet, apiPostPublic, baseUrlOf, requestConfig } from '../api.js'
-import { CLI_INVOCATION, DEFAULT_BASE_URL } from '../constants.js'
+import { CLI_INVOCATION } from '../constants.js'
 import { isRecord } from '../validators.js'
 import {
   botTokenInvalidError,
@@ -37,7 +37,10 @@ import {
 import { randomUUID } from 'node:crypto'
 import { BOT_TOKEN_PREFIX } from '../constants.js'
 import { verifyAndStoreApiTokenProfile, whoamiProfile } from './login.js'
-import { deleteCredentialForProfileEntry } from './profile-credentials.js'
+import {
+  deleteCredentialForProfileEntry,
+  readCredentialForProfileEntry,
+} from './profile-credentials.js'
 
 async function readStdinToken(): Promise<string> {
   if (process.stdin.isTTY === true) return ''
@@ -61,10 +64,11 @@ export async function runProfilesList(
   const profiles: ProfilesListEntry[] = await Promise.all(
     Object.entries(config.profiles ?? {}).map(async ([name, rawEntry]) => {
       const entry = isRecord(rawEntry) ? (rawEntry as ProfileConfigEntry) : {}
-      const stored = await readProfileToken(name, {
-        ...parsed.options,
-        baseUrl: nonEmpty(entry.base_url) ?? DEFAULT_BASE_URL,
-      })
+      const stored = await readCredentialForProfileEntry(
+        name,
+        rawEntry,
+        parsed.options,
+      )
       return {
         name,
         base_url: nonEmpty(entry.base_url) ?? null,
