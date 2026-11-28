@@ -6,7 +6,8 @@
     "./scripts/module-boundary-lint-plugin.mjs",
     "./scripts/test-reliability-lint-plugin.mjs",
     "./scripts/plan-tier-lint-plugin.mjs",
-    "./scripts/file-url-path-lint-plugin.mjs"
+    "./scripts/file-url-path-lint-plugin.mjs",
+    "./scripts/access-lint-plugin.mjs"
   ],
   "categories": {
     "correctness": "error"
@@ -23,7 +24,8 @@
     "module-boundary/no-internal-imports": "error",
     "test-reliability/observed-waits": "error",
     "plan-tier/no-plan-name-comparison": "error",
-    "file-url-path/no-url-pathname": "error"
+    "file-url-path/no-url-pathname": "error",
+    "access/no-direct-shareable-read": "error"
   },
   "overrides": [
     {
