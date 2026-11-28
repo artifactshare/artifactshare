@@ -87,6 +87,20 @@ function mineFeedVisibleSql(user: FeedUser) {
   return sql<boolean>`((shareables.workspace_id = ${user.workspaceId} AND ${visibleShareableToViewerSql(user)}) OR (shareables.workspace_id <> ${user.workspaceId} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id=shareables.container_id AND pm.user_id=${user.id}) AND (${visibleSharedProjectShareableToViewerSql(user)} OR (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}))))`
 }
 
+// プロジェクトのアクティビティは、閲覧者自身のワークスペースのプロジェクトか
+// 共有されたプロジェクトかで可視判定を分ける。外部からの投稿者はホスト側の
+// workspace_members に行を持つことがあるため、その行ではなく
+// users.workspace_id と同じ基準で判定する (他の呼び出し元と同じ)。
+// projectContainers は LEFT JOIN なので、呼び出し元は container_id で絞る。
+function projectFeedVisibleSql(user: FeedUser) {
+  return sql<boolean>`(
+    (projectContainers.workspace_id = ${user.workspaceId}
+      AND ${visibleShareableToViewerSql(user)})
+    OR (projectContainers.workspace_id <> ${user.workspaceId}
+      AND ${visibleSharedProjectShareableToViewerSql(user)})
+  )`
+}
+
 export async function listFeedEvents(
   db: EventDb,
   {
@@ -162,12 +176,7 @@ export async function listFeedEvents(
       )
       .where(
         slice === 'project'
-          ? sql<boolean>`(
-            (EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
-              AND ${visibleShareableToViewerSql(user)})
-            OR (NOT EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
-              AND ${visibleSharedProjectShareableToViewerSql(user)})
-          )`
+          ? projectFeedVisibleSql(user)
           : slice === 'mine'
             ? mineFeedVisibleSql(user)
             : visibleShareableToViewerSql(user),
@@ -811,12 +820,7 @@ export async function listProjectViewRanking(
       // 空白区切りだと 10 文字目 'T' > ' ' で窓が最大 1 日広がる
       sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${now}, '-30 days')`,
     )
-    .where(sql<boolean>`(
-      (EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
-        AND ${visibleShareableToViewerSql(user)})
-      OR (NOT EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
-        AND ${visibleSharedProjectShareableToViewerSql(user)})
-    )`)
+    .where(projectFeedVisibleSql(user))
     .groupBy([
       'shareables.id',
       'shareables.name',
