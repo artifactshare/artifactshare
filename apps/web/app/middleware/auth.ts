@@ -9,7 +9,11 @@ import {
   getSessionUserFromBearer,
   readBearerSessionToken,
 } from '~/services/auth.server'
-import { resolveCliAuthorityBySessionToken } from '~/services/cli-authority.server'
+import {
+  resolveCliAuthorityBySessionToken,
+  type CliAuthority,
+} from '~/services/cli-authority.server'
+import type { SessionUser } from '~/lib/user'
 import { isApiToken } from '~/services/api-tokens.server'
 import {
   allowsCliOperation,
@@ -56,62 +60,65 @@ export const requireUserApiMiddleware: MiddlewareFunction = ({ context }) => {
   throw new Response('Unauthorized', { status: 401 })
 }
 
+// `absent` is the only state that may keep a cookie identity. Every other
+// state clears it, so a failed bearer credential can never fall through to
+// the browser session.
+type BearerCredential =
+  | { kind: 'absent' }
+  | { kind: 'unusable' }
+  | { kind: 'rejected' }
+  | { kind: 'accepted'; user: SessionUser; authority: CliAuthority }
+
+async function readBearerCredential(
+  request: Request,
+): Promise<BearerCredential> {
+  const token = readBearerSessionToken(request)
+  if (!token)
+    return hasBearerScheme(request) ? { kind: 'unusable' } : { kind: 'absent' }
+  const user = await getSessionUserFromBearer(request)
+  if (!user) return { kind: 'rejected' }
+  if (isApiToken(token)) {
+    if (user.kind === 'bot') return { kind: 'rejected' }
+    return { kind: 'accepted', user, authority: { kind: 'unrestricted' } }
+  }
+  const resolution = await resolveCliAuthorityBySessionToken(token)
+  if (!resolution || resolution === 'denied') return { kind: 'rejected' }
+  return { kind: 'accepted', user, authority: resolution }
+}
+
 export const requireUserApiWithBearerMiddleware: MiddlewareFunction = async (
   { request, context, url },
   next,
 ) => {
-  let bearerChecked = false
-  let bearerResolved = false
-  let scopeDenied: Response | null = null
-  const bearerToken = readBearerSessionToken(request)
-  const bearerSupplied = hasBearerScheme(request)
-  if (bearerToken) {
-    bearerChecked = true
-    const bearerUser = await getSessionUserFromBearer(request)
-    const resolution = bearerUser
-      ? isApiToken(bearerToken)
-        ? bearerUser.kind === 'bot'
-          ? ('denied' as const)
-          : { kind: 'unrestricted' as const }
-        : await resolveCliAuthorityBySessionToken(bearerToken)
-      : null
-    const authority = resolution === 'denied' ? null : resolution
-    bearerResolved = Boolean(bearerUser && authority)
-    if (bearerUser && authority) {
-      context.set(userContext, bearerUser)
-      context.set(authSourceContext, 'bearer')
-      context.set(cliAuthorityContext, authority)
-      if (!allowsCliOperation(authority, request.method, url.pathname)) {
-        scopeDenied = cliScopeDeniedResponse()
-      }
-    } else {
-      context.set(userContext, null)
-      context.set(authSourceContext, null)
-      context.set(cliAuthorityContext, null)
-    }
-  } else if (bearerSupplied) {
+  const bearer = await readBearerCredential(request)
+  if (bearer.kind === 'accepted') {
+    context.set(userContext, bearer.user)
+    context.set(authSourceContext, 'bearer')
+    context.set(cliAuthorityContext, bearer.authority)
+  } else if (bearer.kind === 'absent') {
+    context.set(authSourceContext, context.get(userContext) ? 'cookie' : null)
+  } else {
     context.set(userContext, null)
     context.set(authSourceContext, null)
     context.set(cliAuthorityContext, null)
-  } else if (context.get(userContext)) {
-    context.set(authSourceContext, 'cookie')
-  } else {
-    context.set(authSourceContext, null)
   }
-  if (hasBearerAuth(request)) {
+  if (bearer.kind === 'accepted' || bearer.kind === 'rejected') {
     logAuthObservation(
       request,
       {
-        bearerChecked,
-        bearerResolved,
-        cookieUserResolved:
-          Boolean(context.get(userContext)) && !bearerResolved,
+        bearerChecked: true,
+        bearerResolved: bearer.kind === 'accepted',
+        cookieUserResolved: false,
         phase: 'bearer_api',
       },
       url,
     )
   }
-  if (scopeDenied) throw scopeDenied
+  if (
+    bearer.kind === 'accepted' &&
+    !allowsCliOperation(bearer.authority, request.method, url.pathname)
+  )
+    throw cliScopeDeniedResponse()
   if (context.get(userContext)) return next()
   throw new Response('Unauthorized', { status: 401 })
 }
