@@ -54,11 +54,11 @@ jobs:
         run: node .claude/skills/verify-artifactshare/scripts/stack.mjs up --run "$VERIFY_RUN"
       - name: Drive every journey
         timeout-minutes: 15
-        # One stack for all six, in order, and every journey runs even after
+        # One stack for all seven, in order, and every journey runs even after
         # one fails, so a red run names each feature that broke.
         run: |
           failed=()
-          for journey in cli-share-view home-upload comments sharing projects viewer-notices; do
+          for journey in cli-share-view home-upload comments sharing projects viewer-notices settings-billing; do
             started=$SECONDS
             if node ".claude/skills/verify-artifactshare/scripts/journeys/$journey.mjs" --run "$VERIFY_RUN"; then
               echo "journey $journey passed in $((SECONDS - started))s"
