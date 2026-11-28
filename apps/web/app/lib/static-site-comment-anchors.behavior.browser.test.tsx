@@ -979,8 +979,13 @@ test('a hash route with a query reopens the same route and query', async () => {
   await render({ targetThreadId: 'search', highlightThreadId: 'search' })
   await at('/index.html#/search?q=a')
   await waitFor(() => expect(verdict('search')).toBe('attached'))
-  expect(await frame<string>('location.hash')).toBe('#/search?q=a')
-  expect(await painted()).toEqual(['Common hash'])
+  // The verdict is the parent's view of a message the reopened document sent.
+  // The document itself settles after that, so read it through the same wait
+  // the earlier reads use rather than on the first attempt.
+  await waitFor(async () =>
+    expect(await frame<string>('location.hash')).toBe('#/search?q=a'),
+  )
+  await waitFor(async () => expect(await painted()).toEqual(['Common hash']))
 })
 
 test('a missing quote reaches cannot-find, late text completes the latest jump', async () => {
