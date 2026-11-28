@@ -17,6 +17,16 @@ function currentHook() {
   return `#!/bin/sh
 # artifactshare-managed-pre-push
 repo_root=$(git rev-parse --show-toplevel) || exit 1
+if [ -f "$repo_root/package.json" ] && command -v pnpm >/dev/null 2>&1; then
+  if ! (cd "$repo_root" && pnpm -s format </dev/null >/dev/null 2>&1); then
+    echo "pre-push: formatting differs from oxfmt; run pnpm exec vp fmt -c .oxfmtrc.json, commit, and push again" >&2
+    exit 1
+  fi
+  if ! (cd "$repo_root" && pnpm -s lint </dev/null >&2); then
+    echo "pre-push: pnpm lint failed; fix the findings above, commit, and push again" >&2
+    exit 1
+  fi
+fi
 if [ -f "$repo_root/scripts/public-development-guard.mjs" ]; then
   node "$repo_root/scripts/public-development-guard.mjs" --remote "$1"
 else
