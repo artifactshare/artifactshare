@@ -8,6 +8,7 @@ import type {
   OwnedBridgeRequest,
   RequestedAudience,
 } from './types.js'
+import { hasAsciiControl } from './validation.js'
 import { metadataOverflowCode, requestMetadata } from './wire.js'
 
 const encoder = new TextEncoder()
@@ -473,14 +474,6 @@ function sameOriginUrl(value: unknown, baseUrl: string): boolean {
   } catch {
     return false
   }
-}
-
-function hasAsciiControl(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index)
-    if (unit <= 0x1f || unit === 0x7f) return true
-  }
-  return false
 }
 
 function boundedString(value: unknown, max: number): value is string {

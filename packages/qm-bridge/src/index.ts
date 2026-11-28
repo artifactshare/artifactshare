@@ -32,7 +32,11 @@ import type {
   ShareIntent,
   TrustedHostContext,
 } from './types.js'
-import { finalizeSnapshot, snapshotInputs } from './validation.js'
+import {
+  finalizeSnapshot,
+  hasAsciiControl,
+  snapshotInputs,
+} from './validation.js'
 import { metadataOverflowCode } from './wire.js'
 
 export function publishTrusted(options: {
@@ -331,14 +335,6 @@ function sameOriginUrl(value: unknown, baseUrl: string): value is string {
   } catch {
     return false
   }
-}
-
-function hasAsciiControl(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index)
-    if (unit <= 0x1f || unit === 0x7f) return true
-  }
-  return false
 }
 
 function resultServerCode(value: unknown): value is string {

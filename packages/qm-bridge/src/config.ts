@@ -4,7 +4,7 @@ import type {
   ConversationKind,
   ValidatedBridgeConfig,
 } from './types.js'
-import { conversationKey } from './validation.js'
+import { conversationKey, hasAsciiControl } from './validation.js'
 
 const KINDS = new Set<ConversationKind>([
   'public_channel',
@@ -173,14 +173,6 @@ function configString(value: unknown, max: number, pattern?: RegExp): string {
     invalidConfig()
   }
   return value
-}
-
-function hasAsciiControl(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index)
-    if (unit <= 0x1f || unit === 0x7f) return true
-  }
-  return false
 }
 
 function utf8Length(value: string): number {
