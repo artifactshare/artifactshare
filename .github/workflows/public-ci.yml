@@ -158,7 +158,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit]
+        # Firefox runs only in the nightly Flaky detector.
+        project: [chromium, webkit]
     env:
       # Actions overrides HOME; Firefox requires the root-owned home.
       HOME: /root
@@ -518,7 +519,8 @@ jobs:
     timeout-minutes: 30
     # Keep one serial browser per runner. Historical file durations balance
     # independent runners without adding resource contention inside a browser.
-    # Refresh them with scripts/ci/browser-shard-durations.mjs.
+    # Refresh them with scripts/ci/browser-shard-durations.mjs. Firefox runs
+    # only in the nightly Flaky detector.
     strategy:
       fail-fast: false
       matrix:
@@ -526,9 +528,6 @@ jobs:
           - { project: chromium, shard: 1, total: 3 }
           - { project: chromium, shard: 2, total: 3 }
           - { project: chromium, shard: 3, total: 3 }
-          - { project: firefox, shard: 1, total: 3 }
-          - { project: firefox, shard: 2, total: 3 }
-          - { project: firefox, shard: 3, total: 3 }
           - { project: webkit, shard: 1, total: 3 }
           - { project: webkit, shard: 2, total: 3 }
           - { project: webkit, shard: 3, total: 3 }

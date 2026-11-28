@@ -53,25 +53,6 @@
     "app/routes/sharing-recovery.behavior.browser.test.tsx": 1559,
     "app/routes/viewer-list.behavior.browser.test.tsx": 305
   },
-  "firefox": {
-    "app/lib/anchor-reporter.behavior.browser.test.tsx": 60499,
-    "app/lib/csp-reporter.behavior.browser.test.tsx": 35503,
-    "app/lib/pdf-viewer.behavior.browser.test.tsx": 134347,
-    "app/lib/preview-security.behavior.browser.test.tsx": 66695,
-    "app/lib/static-site-comment-anchors.behavior.browser.test.tsx": 19855,
-    "app/lib/text-anchor.behavior.browser.test.tsx": 62,
-    "app/lib/usercontent-delivery.behavior.browser.test.tsx": 113747,
-    "app/lib/video-viewer.behavior.browser.test.tsx": 24313,
-    "app/routes/_protected/settings/_content/billing-states.behavior.browser.test.tsx": 1408,
-    "app/routes/_protected/settings/_content/bots.behavior.browser.test.tsx": 8966,
-    "app/routes/_protected/settings/cli-sessions.behavior.browser.test.tsx": 6173,
-    "app/routes/a.$id/hash-sync.behavior.browser.test.tsx": 24324,
-    "app/routes/a.$id/viewer-revisit.behavior.browser.test.tsx": 33303,
-    "app/routes/comment-frame-recovery.behavior.browser.test.tsx": 2754,
-    "app/routes/comment-session.behavior.browser.test.tsx": 1464,
-    "app/routes/pdf-page-comments.behavior.browser.test.tsx": 3779,
-    "app/routes/sandbox-frame-recovery.behavior.browser.test.tsx": 3745
-  },
   "webkit": {
     "app/lib/anchor-reporter.behavior.browser.test.tsx": 55440,
     "app/lib/csp-reporter.behavior.browser.test.tsx": 32593,

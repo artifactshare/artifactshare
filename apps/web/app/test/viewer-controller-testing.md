@@ -96,7 +96,8 @@ focus/CSS/history/iframe/native-task contracts. No full matrix remains in browse
 Run these witnesses with `pnpm --filter @artifactshare/web exec vitest --config
 vitest.behavior.browser.config.ts --run` followed by those five route paths. Use
 all applicable configured projects (Chromium, Firefox and WebKit); project
-applicability is unchanged. The source lane still has a 180,000 ms admission clock
+applicability is unchanged. Pull requests and the merge queue run Chromium and
+WebKit only, and Firefox runs in the nightly Flaky detector. The source lane still has a 180,000 ms admission clock
 and 600,000 ms process deadline, and changed-browser repetitions still run five times.
 Preparation/unit time is additional, not part of a three-minute total promise.
 

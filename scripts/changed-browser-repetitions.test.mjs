@@ -45,16 +45,20 @@ test('browser lanes partition the globally capped plan without dropping or addin
     { length: 8 },
     (_, i) => `apps/web/app/lib/example-${i}.behavior.browser.test.tsx`,
   )
-  const projects = ['chromium', 'firefox', 'webkit']
+  const projects = ['chromium', 'webkit']
   const plan = await buildPlan(selected(files), {
     discover: fixtureDiscovery(
       files.flatMap((testFile) =>
-        projects.map((project) => ({ file: testFile, project })),
+        ['chromium', 'firefox', 'webkit'].map((project) => ({
+          file: testFile,
+          project,
+        })),
       ),
     ),
   })
   assert.equal(plan.pairs.length, MAX_PAIRS)
-  assert.equal(plan.skippedPairs.length, 9)
+  assert.equal(plan.skippedPairs.length, 1)
+  assert.ok(plan.pairs.every((pair) => pair.project !== 'firefox'))
   const lanes = projects.map((project) => planForProject(plan, project))
   assert.deepEqual(
     lanes
@@ -70,7 +74,7 @@ test('browser lanes partition the globally capped plan without dropping or addin
     assert.deepEqual(lane.skippedPairs, plan.skippedPairs)
   }
   assert.equal(planForProject(plan), plan)
-  for (const invalid of ['', 'Chromium', 'unknown'])
+  for (const invalid of ['', 'Chromium', 'firefox', 'unknown'])
     assert.throws(() => planForProject(plan, invalid), /Unsupported browser/)
   const empty = planForProject({ ...plan, pairs: [] }, 'webkit')
   assert.deepEqual(empty.projects, [])
@@ -232,13 +236,15 @@ test('plans injected authoritative specifications, exclusions and changed includ
   })
   assert.deepEqual(
     plan.pairs.map(({ file: name, project }) => ({ file: name, project })),
-    [...specs].sort((a, b) =>
-      a.file < b.file
-        ? -1
-        : a.file > b.file
-          ? 1
-          : a.project.localeCompare(b.project),
-    ),
+    specs
+      .filter((spec) => spec.project !== 'firefox')
+      .sort((a, b) =>
+        a.file < b.file
+          ? -1
+          : a.file > b.file
+            ? 1
+            : a.project.localeCompare(b.project),
+      ),
   )
   assert.deepEqual(plan.excluded, [excluded])
   assert.equal(closed, 1)
@@ -296,7 +302,7 @@ test('suffix and case-insensitive collisions execute only the selected file', as
     repetitions: '1',
     discover: fixtureDiscovery(specs),
   })
-  assert.equal(plan.pairs.length, 3)
+  assert.equal(plan.pairs.length, 2)
   const results = temporary(t)
   const invocations = []
   await runPlan(plan, {
@@ -319,7 +325,7 @@ test('suffix and case-insensitive collisions execute only the selected file', as
       return { exitCode: 0 }
     },
   })
-  assert.equal(invocations.length, 3)
+  assert.equal(invocations.length, 2)
   for (const [index, { command, args }] of invocations.entries()) {
     assert.equal(command, 'pnpm')
     assert.equal(args.at(-1), path.resolve(file))
@@ -418,7 +424,7 @@ test('real config discovery respects inherited includes, browser overrides and e
     )
     for (const [files, projects] of [
       [[general.file], 'chromium'],
-      [[common.file], 'chromium firefox webkit'],
+      [[common.file], 'chromium webkit'],
       [[], ''],
     ]) {
       const results = temporary(t)
@@ -440,7 +446,7 @@ test('real config discovery respects inherited includes, browser overrides and e
         `has_pairs=${Boolean(projects)}\nprojects=${projects}\nhas_webkit=${projects.includes('webkit')}\n`,
       )
     }
-    assert.equal(plan.pairs.length, 4)
+    assert.equal(plan.pairs.length, 3)
     assert.equal(plan.excluded.length, 1)
     assert.deepEqual(
       await discovery.specifications([
@@ -801,14 +807,14 @@ test('caps sorted file/project pairs at 15 and executes at most 150 invocations'
         file: name,
         project,
       })),
-      files.slice(0, 5).flatMap((name) =>
-        ['chromium', 'firefox', 'webkit'].map((project) => ({
-          file: name,
-          project,
-        })),
-      ),
+      files
+        .slice(0, 8)
+        .flatMap((name) =>
+          ['chromium', 'webkit'].map((project) => ({ file: name, project })),
+        )
+        .slice(0, MAX_PAIRS),
     )
-    assert.deepEqual(plan.projects, ['chromium', 'firefox', 'webkit'])
+    assert.deepEqual(plan.projects, ['chromium', 'webkit'])
     let calls = 0
     const results = temporary(t)
     await runPlan(plan, {
@@ -829,12 +835,12 @@ test('caps sorted file/project pairs at 15 and executes at most 150 invocations'
           `| ${pair.file} | ${pair.project} | 0/${repetitions} |`,
         ),
       )
-    const skipped = files.slice(5).flatMap((name) =>
-      ['chromium', 'firefox', 'webkit'].map((project) => ({
-        file: name,
-        project,
-      })),
-    )
+    const skipped = files
+      .slice(7)
+      .flatMap((name) =>
+        ['chromium', 'webkit'].map((project) => ({ file: name, project })),
+      )
+      .slice(1)
     assert.deepEqual(plan.skippedPairs, skipped)
     assert.match(
       summary.markdown,
@@ -1081,11 +1087,11 @@ test('source delegation uses actual global caps and keeps both cap tails eligibl
   })
   assert.deepEqual(
     plan.delegated.map((pair) => pair.file),
-    names.slice(0, 5),
+    names.slice(0, 8),
   )
   assert.deepEqual(
     plan.pairs.map((pair) => pair.file),
-    names.slice(5),
+    names.slice(8),
   )
   assert.equal(
     new Set([...plan.delegated, ...plan.pairs].map((pair) => pair.file)).size,
