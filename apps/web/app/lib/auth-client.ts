@@ -11,6 +11,11 @@ import {
   emailOTPClient,
 } from 'better-auth/client/plugins'
 
+// Copies of the contract's PublisherClientNameSchema and
+// PublisherApprovalSchema. The copy exists so the sign-in, consent and device
+// routes do not pull the contract into their browser chunk, which
+// auth-client.test.ts holds them to; auth-client-contract-parity.test.ts fails
+// when the copy and the contract stop agreeing on an input.
 const publisherClientNameSchema = z
   .string()
   .transform((value) => value.trim().normalize('NFC'))
