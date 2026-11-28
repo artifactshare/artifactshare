@@ -1,3 +1,5 @@
+import { MAX_COMMENT_PAGE_NUMBER } from '@artifactshare/contract'
+
 export const MAX_COMMENT_BODY_LENGTH = 4000
 
 export type CommentThreadStatus = 'open' | 'resolved'
@@ -10,13 +12,7 @@ export type CommentThreadStatus = 'open' | 'resolved'
  * Not the viewer's `MAX_PDF_PAGE_COUNT`, which caps how many pages a sandbox
  * may report for one document. That is a count, and this range has to cover
  * it so that every page a viewer can open can be commented on.
- *
- * Written here rather than imported from `@artifactshare/contract`: this module
- * reaches the browser bundle, and the visual lane runs without building the
- * contract package. comments-contract-parity.test.ts holds the two equal.
  */
-export const MAX_COMMENT_PAGE_NUMBER = 100_000
-
 export function isPdfPageNumber(value: unknown): value is number {
   return (
     typeof value === 'number' &&
