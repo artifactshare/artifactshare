@@ -29,7 +29,7 @@ const authorize = vi.hoisted(() =>
     .mockResolvedValue({ kind: 'ok' }),
 )
 vi.mock('~/services/team-management.server', () => ({
-  requireWorkspaceBillingOwner: authorize,
+  requireWorkspaceOwner: authorize,
 }))
 vi.mock('~/services/project-membership.server', () => ({}))
 vi.mock('~/services/billing-usage.server', () => ({}))

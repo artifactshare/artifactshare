@@ -30,7 +30,7 @@ import {
 } from '~/services/billing.server'
 import { allowsStorageOverage } from '~/lib/billing-plan.server'
 import { createDb } from '~/services/db.server'
-import { requireWorkspaceBillingOwner } from '~/services/team-management.server'
+import { requireWorkspaceOwner } from '~/services/team-management.server'
 import {
   canUseExternalPosting,
   normalizeWorkspaceLinkPolicy,
@@ -184,7 +184,7 @@ async function submitBilling(
 ) {
   const user = requireUser(context)
   const db = createDb()
-  const authorized = await requireWorkspaceBillingOwner(db, user)
+  const authorized = await requireWorkspaceOwner(db, user)
   if (authorized.kind !== 'ok') return settingsFailure(intent, authorized.kind)
   if (!['change-plan', 'checkout', 'portal'].includes(intent))
     return settingsFailure(intent, 'invalid')

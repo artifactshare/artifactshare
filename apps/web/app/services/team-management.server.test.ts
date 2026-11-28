@@ -44,7 +44,7 @@ import {
   removeWorkspaceMember,
   searchAssetTransferRecipients,
   requireWorkspaceAdmin,
-  requireWorkspaceBillingOwner,
+  requireWorkspaceOwner,
   revokeWorkspaceAdmin,
   restoreWorkspaceMember,
   transferWorkspaceOwner,
@@ -423,12 +423,12 @@ describe('team-management service', () => {
     seedAdmin(sqlite, 'u1')
     seedOwner(sqlite, 'u2')
 
-    await expect(requireWorkspaceBillingOwner(db, user('u2'))).resolves.toEqual(
-      { kind: 'ok' },
-    )
-    await expect(requireWorkspaceBillingOwner(db, user('u1'))).resolves.toEqual(
-      { kind: 'forbidden' },
-    )
+    await expect(requireWorkspaceOwner(db, user('u2'))).resolves.toEqual({
+      kind: 'ok',
+    })
+    await expect(requireWorkspaceOwner(db, user('u1'))).resolves.toEqual({
+      kind: 'forbidden',
+    })
   })
 
   test('billing authorization rejects an admin without an owner', async () => {
@@ -436,9 +436,9 @@ describe('team-management service', () => {
     seedUser(sqlite, 'u1')
     seedAdmin(sqlite, 'u1')
 
-    await expect(requireWorkspaceBillingOwner(db, user('u1'))).resolves.toEqual(
-      { kind: 'forbidden' },
-    )
+    await expect(requireWorkspaceOwner(db, user('u1'))).resolves.toEqual({
+      kind: 'forbidden',
+    })
   })
 
   test('owner can grant and revoke multiple admins with idempotent audit writes', async () => {

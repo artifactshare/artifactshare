@@ -1515,14 +1515,11 @@ export async function requireWorkspaceAdmin(
   db: Kysely<DB>,
   actor: { id: string; workspaceId: string },
 ): Promise<TeamMutationResult> {
-  const actorMembership = await db
-    .selectFrom('workspace_members')
-    .select('user_id')
-    .where('workspace_id', '=', actor.workspaceId)
-    .where('user_id', '=', actor.id)
-    .where('role', 'in', ['owner', 'admin'])
-    .where('status', '=', 'active')
-    .executeTakeFirst()
+  const actorMembership = await workspaceAdminQuery(
+    db,
+    actor.id,
+    actor.workspaceId,
+  ).executeTakeFirst()
   return { kind: actorMembership ? 'ok' : 'forbidden' }
 }
 
@@ -1687,20 +1684,6 @@ function activeWorkspaceOwnerQuery(
     .where('user_id', '=', userId)
     .where('role', '=', 'owner')
     .where('status', '=', 'active')
-}
-
-export async function requireWorkspaceBillingOwner(
-  db: Kysely<DB>,
-  actor: { id: string; workspaceId: string },
-): Promise<TeamMutationResult> {
-  const owner = await activeWorkspaceOwnerQuery(
-    db,
-    actor.id,
-    actor.workspaceId,
-  ).executeTakeFirst()
-  if (owner) return { kind: 'ok' }
-
-  return { kind: 'forbidden' }
 }
 
 async function loadUser(db: Kysely<DB>, userId: string): Promise<TeamMember> {

@@ -66,7 +66,7 @@ const services = vi.hoisted(() => ({
 vi.mock('~/services/team-management.server', () => ({
   requireWorkspaceAdmin: async () => ({ kind: 'ok' }),
   searchAssetTransferRecipients: services.search,
-  requireWorkspaceBillingOwner: async () => ({ kind: 'ok' }),
+  requireWorkspaceOwner: async () => ({ kind: 'ok' }),
 }))
 vi.mock('~/services/billing.server', async (original) => ({
   ...(await original<typeof import('~/services/billing.server')>()),

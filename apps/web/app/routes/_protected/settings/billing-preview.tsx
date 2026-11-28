@@ -14,7 +14,7 @@ import {
   previewPlanChange,
   type PlanChangePreview,
 } from '~/services/billing.server'
-import { requireWorkspaceBillingOwner } from '~/services/team-management.server'
+import { requireWorkspaceOwner } from '~/services/team-management.server'
 
 // Only the plan change confirmation fetches this, so an expired session is a
 // 401 the confirmation handles, not a redirect to the sign-in page.
@@ -41,7 +41,7 @@ export async function loader({
 
   const db = createDb()
   const [authorized, workspace] = await Promise.all([
-    requireWorkspaceBillingOwner(db, user),
+    requireWorkspaceOwner(db, user),
     db
       .selectFrom('workspaces')
       .select([
