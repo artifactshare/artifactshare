@@ -200,7 +200,9 @@ export async function listCliArtifacts(
         link_expires_at: item.linkExpiresAt,
         updated_at: item.updatedAt,
         project_id: item.projectId,
-        artifact_kind: item.artifactKind,
+        // The list entry declares artifact_kind optional, so a row whose
+        // stored kind this build cannot read is listed without one.
+        artifact_kind: item.artifactKind ?? undefined,
       })),
       limit: CLI_ARTIFACTS_LIST_LIMIT,
       has_more: hasMore,

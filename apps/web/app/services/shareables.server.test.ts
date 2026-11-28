@@ -7164,6 +7164,28 @@ describe('cross-workspace owner operations', () => {
     expect(summary!.projectId).toBe(EXT_PROJECT)
   })
 
+  test('getOwnedShareableSummary reports an unreadable artifact_kind as null', async () => {
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('kind.html', '<p>kind</p>'),
+      'private',
+      [],
+      null,
+      null,
+    )
+    if (uploaded.kind !== 'ok') throw new Error('expected ok')
+    expect(
+      (await getOwnedShareableSummary(db, OWNER, uploaded.id))!.artifactKind,
+    ).toBe('html_page')
+    sqliteRef.current!.exec(
+      `UPDATE shareables SET artifact_kind='from_the_future' WHERE id='${uploaded.id}'`,
+    )
+    expect(
+      (await getOwnedShareableSummary(db, OWNER, uploaded.id))!.artifactKind,
+    ).toBeNull()
+  })
+
   test('updateShareableMetadata updates cross-workspace owned artifacts', async () => {
     await seedExternalProject(db)
     const uploaded = await uploadShareable(

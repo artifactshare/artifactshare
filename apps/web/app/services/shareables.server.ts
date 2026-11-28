@@ -45,7 +45,7 @@ import type {
   ProjectBaseVisibility,
   Visibility,
 } from '~/lib/shareable-types'
-import { visibilityForContainer } from '~/lib/shareable-types'
+import { isArtifactKind, visibilityForContainer } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
 import type { DB } from '~/types/db'
 import { validateBundlePath } from '../../workers/lib/path-validator'
@@ -3810,7 +3810,12 @@ export interface OwnedShareableSummary {
   linkExpiresAt: string | null
   updatedAt: string
   projectId: string | null
-  artifactKind: ArtifactKind
+  /**
+   * null when the stored `artifact_kind` is not one this build knows. The CLI
+   * list response already declares the field optional, so an unreadable kind
+   * is left out rather than failing the whole page.
+   */
+  artifactKind: ArtifactKind | null
 }
 
 const OWNED_SHAREABLE_LIST_LIMIT = 50
@@ -3869,7 +3874,7 @@ function toOwnedShareableSummary(row: {
     updatedAt: row.updated_at,
     activityAt: row.activity_at,
     projectId: row.container_kind === 'project' ? row.container_id : null,
-    artifactKind: row.artifact_kind as ArtifactKind,
+    artifactKind: isArtifactKind(row.artifact_kind) ? row.artifact_kind : null,
   }
 }
 
