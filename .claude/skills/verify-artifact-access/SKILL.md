@@ -105,7 +105,8 @@ Assumed:
 Left out:
 
 - Anonymous viewers (they open only through `AnonymousLinkAllowed`), agent credential scopes (`agentReadableShareableSql`), bot-specific grants, Slack and the comment and access-request paths that call `viewerDisplayCheck`.
-- `listFeedEvents` slice `project` (project page activity). It applies `visibleShareableToViewerSql` to a viewer with an active `workspace_members` row in the project's workspace, not to `users.workspace_id`. That is the same as `sameWs` unless a user holds an active row outside their own workspace, which the model does not represent. A scratch model with such rows breaks it in an initial state, and whether the product can make such a row is unconfirmed.
+- `listFeedEvents` slice `project` (project page activity). It applies `visibleShareableToViewerSql` to a viewer with an active `workspace_members` row in the project's workspace, not to `users.workspace_id`. That differs from `sameWs` for a user who holds an active row outside their own workspace, which the model does not represent, and for a removed member of their own workspace, who gets the narrower shared branch instead. A scratch model with such rows breaks it in an initial state, and whether the product can make such a row is unconfirmed.
+- The activity feed's relation filter (the `artifact_created`, owner, and recency branches of slice `mine`). Leaving it out makes the model list more than the code, so it cannot hide a breach of `ActivityFeedOpens`.
 - The search palette's own filters and `listRailProjects`. Search index freshness: the model checks the eligibility SQL, not the index.
 - Who may write: the authority checks on visibility, audience, and archive changes. Every write is allowed in the model.
 - Time windows other than link expiry, and the `unread` and `relation` filters on recents.
