@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
+import { resolveAlias } from './resolve-alias.js'
 
 export default defineConfig({
   plugins: [
@@ -17,14 +17,7 @@ export default defineConfig({
       },
     },
   ],
-  resolve: {
-    alias: {
-      '~': fileURLToPath(new URL('./app', import.meta.url)),
-      '@artifactshare/contract': fileURLToPath(
-        new URL('../../packages/contract/src/index.ts', import.meta.url),
-      ),
-    },
-  },
+  resolve: { alias: resolveAlias },
   test: {
     // Threads reduce full-suite runtime while retaining per-file isolation.
     pool: 'threads',

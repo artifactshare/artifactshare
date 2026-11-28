@@ -1,12 +1,8 @@
-import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
+import { resolveAlias } from './resolve-alias.js'
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '~': fileURLToPath(new URL('./app', import.meta.url)),
-    },
-  },
+  resolve: { alias: resolveAlias },
   test: {
     hookTimeout: 60_000,
     testTimeout: 45_000,

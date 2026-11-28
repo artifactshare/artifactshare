@@ -1480,10 +1480,12 @@ test('viewer placement uses effective unit discovery and a directory command', a
     path.join(workspace, 'node_modules'),
     'dir',
   )
-  fs.copyFileSync(
-    path.join(root, 'apps/web/vitest.config.ts'),
-    path.join(workspace, 'vitest.config.ts'),
-  )
+  for (const name of ['vitest.config.ts', 'resolve-alias.ts']) {
+    fs.copyFileSync(
+      path.join(root, 'apps/web', name),
+      path.join(workspace, name),
+    )
+  }
   fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"module"}')
   for (const name of [
     `${VIEWER_UNIT_SCOPE}/discovery-example.test.ts`,

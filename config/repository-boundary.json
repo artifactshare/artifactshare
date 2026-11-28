@@ -10,6 +10,7 @@
     "apps/web/tsconfig.cloudflare.json",
     "apps/web/tsconfig.json",
     "apps/web/tsconfig.node.json",
+    "apps/web/resolve-alias.ts",
     "apps/web/vite.config.test.ts",
     "apps/web/vitest.behavior.browser.config.ts",
     "apps/web/vitest.config.ts",
