@@ -4,10 +4,8 @@ import {
   renderTypeFromKind,
 } from '~/lib/artifact-type'
 import type { ArtifactKind } from '~/lib/shareable-types'
-import {
-  loadMessageWindow,
-  messageCursor,
-} from './comment-message-window.server'
+import { messageCursor } from '~/lib/comment-cursor'
+import { loadMessageWindow } from './comment-message-window.server'
 import {
   admitCommentPost,
   commentInsertFailure,

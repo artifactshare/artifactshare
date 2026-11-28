@@ -559,8 +559,6 @@ export function buildHomeView(
   return { recent: files, projectBlocks }
 }
 
-export { listMyProjects } from './projects.server'
-
 export type RailProject = {
   id: string
   name: string

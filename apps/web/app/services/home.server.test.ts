@@ -15,12 +15,12 @@ import {
   compileRecentArtifactsCountQuery,
   countRecentArtifacts,
   listMyArtifacts,
-  listMyProjects,
   listUnopenedOwnedArtifactsLimited,
   listRecentArtifactsLimited,
   listRecentArtifactsPage,
   recentHistoryCardinality,
 } from './home.server'
+import { listMyProjects } from './projects.server'
 
 const TS = '2026-06-14T00:00:00.000Z'
 

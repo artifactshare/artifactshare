@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
+import { VIDEO_PLAYBACK_RATES } from '../../app/viewers/video/paths'
 import {
-  VIDEO_PLAYBACK_RATES,
   videoContentDisposition,
   videoDownloadFileName,
   videoPlayerAsset,

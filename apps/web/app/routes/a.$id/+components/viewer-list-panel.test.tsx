@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { bindI18n } from '~/lib/i18n'
-import type { ViewerListRowView, ViewerListStatus } from './viewer-shell'
+import type {
+  ViewerListRowView,
+  ViewerListStatus,
+} from '../+hooks/use-viewer-list'
 import { ViewerListPanelBody, viewerListInitial } from './viewer-list-panel'
 
 const { t } = bindI18n('en')

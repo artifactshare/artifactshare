@@ -2,13 +2,9 @@ import { Window } from 'happy-dom'
 import { describe, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
-import {
-  PricingPage,
-  pricingCheckoutHref,
-  pricingLocaleHref,
-  loader,
-  meta,
-} from './_public/($locale)/pricing'
+import { PricingPage } from '~/components/app/pricing-page'
+import { pricingCheckoutHref } from '~/lib/pricing-checkout'
+import { pricingLocaleHref, loader, meta } from './_public/($locale)/pricing'
 
 vi.mock('~/components/app/public-footer', () => ({
   PublicFooter: ({ variant = 'full' }: { variant?: string }) => (

@@ -4,7 +4,6 @@ import {
   parseMessageCursor,
   type MessageBoundary,
 } from '~/lib/comment-cursor'
-export { messageCursor, parseMessageCursor } from '~/lib/comment-cursor'
 import { sql, type Kysely } from 'kysely'
 import type { CommentMessageView } from '~/lib/comments'
 import type { DB } from '~/types/db'
@@ -12,10 +11,6 @@ import type { DB } from '~/types/db'
 import {
   COMMENT_REPLY_PAGE_LIMIT,
   validateCommentPageRequest,
-  type CommentPageRequest,
-} from '~/lib/comment-page'
-export {
-  COMMENT_REPLY_PAGE_LIMIT,
   type CommentPageRequest,
 } from '~/lib/comment-page'
 

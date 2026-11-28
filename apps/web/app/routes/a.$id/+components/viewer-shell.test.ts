@@ -2,22 +2,27 @@ import type { CommentThreadView } from '~/lib/comments'
 import { firstNewCommentThread } from './comment-order'
 import { describe, expect, test } from 'vitest'
 import {
-  classifyLiveRecoveryResponse,
   consumeAppliedCommentMutationEcho,
+  rememberAppliedCommentMutationEcho,
+} from './comment-mutation-echo'
+import {
   createCommentRefreshScheduler,
-  createViewerShellState,
+  runCommentRefreshWithAuthRecovery,
+} from './comment-refresh'
+import {
+  classifyLiveRecoveryResponse,
   createViewerCommentState,
   viewerCommentReducer,
   mergeLiveViewCount,
   parseLiveMessage,
-  rememberAppliedCommentMutationEcho,
-  runCommentRefreshWithAuthRecovery,
   shouldClearLatestVersionRetryOnLiveAvailable,
-  shouldDeferCommentRefreshDuringMutation,
   shouldPromoteLatestVersionRetry,
-  viewerShellReducer,
   viewerTextAnchorsEnabled,
 } from './viewer-shell'
+import {
+  createViewerShellState,
+  viewerShellReducer,
+} from './viewer-shell-state'
 
 describe('text selection comments', () => {
   test('static sites select text on the current version, like html and md', () => {
@@ -218,50 +223,6 @@ describe('applied comment mutation echo tracking', () => {
     expect(echoes.size).toBe(20)
     expect(echoes.has('mutation-0')).toBe(false)
     expect(echoes.has('mutation-24')).toBe(true)
-  })
-})
-
-describe('comment refresh deferral', () => {
-  test('defers transient refresh failures while a comment mutation is pending', () => {
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: true,
-        outcome: 'missing-response',
-      }),
-    ).toBe(true)
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: true,
-        outcome: 'response-error',
-      }),
-    ).toBe(true)
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: true,
-        outcome: 'body-missing',
-      }),
-    ).toBe(true)
-  })
-
-  test('does not defer transient refresh failures after pending mutations settle', () => {
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: false,
-        outcome: 'missing-response',
-      }),
-    ).toBe(false)
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: false,
-        outcome: 'response-error',
-      }),
-    ).toBe(false)
-    expect(
-      shouldDeferCommentRefreshDuringMutation({
-        hasPendingMutation: false,
-        outcome: 'body-missing',
-      }),
-    ).toBe(false)
   })
 })
 

@@ -7,15 +7,6 @@ import {
 } from './comment-session'
 import { CommentPageSessionContext } from './use-comment-page'
 import { type AppliedCommentMutationEchoes } from './comment-mutation-echo'
-export {
-  rememberAppliedCommentMutationEcho,
-  consumeAppliedCommentMutationEcho,
-} from './comment-mutation-echo'
-export {
-  createCommentRefreshScheduler,
-  runCommentRefreshWithAuthRecovery,
-  shouldDeferCommentRefreshDuringMutation,
-} from './comment-refresh'
 import { DELIVERY_UNAVAILABLE_PATH } from '~/lib/hosts'
 import { type CommentThreadPatch } from './comment-history'
 import { firstNewCommentThread } from './comment-order'
@@ -50,18 +41,6 @@ import {
   type ViewerListOpenedFrom,
 } from './viewer-shell-state'
 import { useViewerList } from '../+hooks/use-viewer-list'
-
-export {
-  createViewerShellState,
-  viewerShellReducer,
-  type ViewerListCloseReason,
-  type ViewerListOpenedFrom,
-} from './viewer-shell-state'
-export {
-  useViewerList,
-  type ViewerListRowView,
-  type ViewerListStatus,
-} from '../+hooks/use-viewer-list'
 import { SandboxFrame } from './sandbox-frame'
 import {
   pdfCommentPage,
