@@ -52,7 +52,7 @@ From the repository root:
 pnpm check:cli-refresh-model
 ```
 
-It needs Java 11 or later and `curl` on PATH. The first run downloads `tla2tools.jar` v1.7.4, checks its SHA-256, and caches it in `~/.cache/artifactshare/`. A run takes about 30 seconds on 4 cores. Pass `--keep` (`node .claude/skills/verify-cli-refresh-rotation/check.mjs --keep`) to keep the TLC output folders.
+It needs Java 11 or later and `curl` on PATH. The runner is `scripts/lib/tlc-check.mjs`; `check.mjs` records what each check should do. The first run downloads `tla2tools.jar` v1.7.4, checks its SHA-256, and caches it in `~/.cache/artifactshare/`. A run takes about 30 seconds on 4 cores. Pass `--keep` (`node .claude/skills/verify-cli-refresh-rotation/check.mjs --keep`) to keep the TLC output folders.
 
 The command runs three kinds of check and prints one line each:
 
