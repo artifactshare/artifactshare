@@ -3,12 +3,17 @@
 (* One workspace and its Stripe customer, with Stripe as the environment.  *)
 (*                                                                         *)
 (* Code: apps/web/app/services/billing.server.ts                          *)
-(*   createCheckoutSession  -> TabReadWorkspace, TabListOpen, TabExpire,   *)
+(*   createCheckoutSession  -> TabReadWorkspace, TabAcquireLease,          *)
+(*                             TabListOpen, TabExpire,                     *)
 (*                             TabListSubscriptions, TabEnsureCustomer,    *)
-(*                             TabCreateSession                            *)
+(*                             TabCreateSession, TabReleaseLease           *)
+(*   acquireCheckoutLease, releaseCheckoutLease -> ws.lease                *)
 (* Code: apps/web/app/services/billing-sync.server.ts                     *)
 (*   syncWorkspaceSubscription (and syncReturnedCheckout, which calls it)  *)
-(*                          -> SyncRetrieve, SyncReadWorkspace, SyncWrite  *)
+(*                          -> SyncReadWorkspace, SyncRetrieve, SyncWrite  *)
+(*   (its first retrieve only finds the workspace and writes nothing)      *)
+(*   workspaces.stripe_sync_token -> ws.ver: each write sets a fresh       *)
+(*   nanoid, which the model writes as a counter that only goes up.        *)
 (* Code: apps/web/app/routes/api.stripe.webhook.tsx                       *)
 (*   action: an event stays pending until a sync for it commits; Stripe   *)
 (*   may deliver it again, out of order, or to two handlers at once.       *)
@@ -52,7 +57,8 @@ VARIABLES
 vars == <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, ws, tab, h>>
 
 TabIdle(n) == [pc |-> "idle", clicks |-> n, plan |-> "plus", open |-> {}]
-HIdle == [pc |-> "idle", ev |-> 0, sub |-> 0, snap |-> NoSub, wsSnap |-> [subId |-> 0, status |-> "none", plan |-> "free"]]
+HIdle == [pc |-> "idle", ev |-> 0, sub |-> 0, snap |-> NoSub,
+          wsSnap |-> [subId |-> 0, status |-> "none", plan |-> "free", ver |-> 0]]
 
 Init ==
     /\ subs = [s \in SubIds |-> NoSub]
@@ -63,7 +69,8 @@ Init ==
     /\ pending = {}
     /\ evSub = [e \in EvIds |-> 0]
     /\ nextEv = 1
-    /\ ws \in [subId : {0}, status : {"none"}, plan : {"free"}, customer : BOOLEAN]
+    /\ ws \in [subId : {0}, status : {"none"}, plan : {"free"}, customer : BOOLEAN,
+               ver : {0}, lease : {"none"}]
     /\ tab = [t \in Tabs |-> TabIdle(0)]
     /\ h = [x \in Handlers |-> HIdle]
 
@@ -81,10 +88,32 @@ TabReadWorkspace(t) ==
         tab' = [tab EXCEPT ![t] =
                   IF ws.plan # "free"                     \* isPaidPlan -> already-subscribed
                   THEN TabIdle(tab[t].clicks + 1)
-                  ELSE IF ws.customer                     \* existingCustomer
-                       THEN [TabIdle(tab[t].clicks) EXCEPT !.pc = "listOpen", !.plan = p]
-                       ELSE [TabIdle(tab[t].clicks) EXCEPT !.pc = "ensure", !.plan = p]]
+                  ELSE [TabIdle(tab[t].clicks) EXCEPT !.pc = "acquire", !.plan = p]]
     /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, ws, h>>
+
+(* acquireCheckoutLease: a conditional UPDATE of workspaces. A tab that  *)
+(* does not get it answers checkout-in-progress. With the lease held, the *)
+(* workspace row is read again (plan, stripe_customer_id).                *)
+TabAcquireLease(t) ==
+    /\ tab[t].pc = "acquire"
+    /\ IF ws.lease = "none"
+       THEN /\ ws' = [ws EXCEPT !.lease = t]
+            /\ tab' = [tab EXCEPT ![t] =
+                         IF ws.plan # "free"
+                         THEN [tab[t] EXCEPT !.pc = "release"]
+                         ELSE IF ws.customer                    \* existingCustomer
+                              THEN [tab[t] EXCEPT !.pc = "listOpen"]
+                              ELSE [tab[t] EXCEPT !.pc = "ensure"]]
+       ELSE /\ tab' = [tab EXCEPT ![t] = TabIdle(tab[t].clicks + 1)]
+            /\ UNCHANGED ws
+    /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, h>>
+
+(* releaseCheckoutLease in the finally block: only the holder clears it *)
+TabReleaseLease(t) ==
+    /\ tab[t].pc = "release"
+    /\ ws' = [ws EXCEPT !.lease = IF ws.lease = t THEN "none" ELSE ws.lease]
+    /\ tab' = [tab EXCEPT ![t] = TabIdle(tab[t].clicks + 1)]
+    /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, h>>
 
 (* stripe.checkout.sessions.list({ status: 'open' }) *)
 TabListOpen(t) ==
@@ -106,7 +135,7 @@ TabExpire(t) ==
 TabListSubscriptions(t) ==
     /\ tab[t].pc = "listSubs"
     /\ tab' = [tab EXCEPT ![t] = IF BillableSubs # {}
-                                 THEN TabIdle(tab[t].clicks + 1)
+                                 THEN [tab[t] EXCEPT !.pc = "release"]
                                  ELSE [tab[t] EXCEPT !.pc = "ensure"]]
     /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, ws, h>>
 
@@ -124,7 +153,7 @@ TabCreateSession(t) ==
     /\ sessions' = [sessions EXCEPT ![nextSess] = "open"]
     /\ sessPlan' = [sessPlan EXCEPT ![nextSess] = tab[t].plan]
     /\ nextSess' = nextSess + 1
-    /\ tab' = [tab EXCEPT ![t] = TabIdle(tab[t].clicks + 1)]
+    /\ tab' = [tab EXCEPT ![t].pc = "release"]
     /\ UNCHANGED <<subs, changes, pending, evSub, nextEv, ws, h>>
 
 -----------------------------------------------------------------------------
@@ -162,33 +191,40 @@ StripeChange ==
 -----------------------------------------------------------------------------
 (* Webhook handler -> syncWorkspaceSubscription *)
 
-(* stripe.subscriptions.retrieve *)
-SyncRetrieve(x) ==
+(* readWorkspaceSubscriptionRow: the workspace row, including            *)
+(* stripe_sync_token, read before Stripe is asked. *)
+SyncReadWorkspace(x) ==
     /\ h[x].pc = "idle"
     /\ \E e \in pending :
-        h' = [h EXCEPT ![x] = [HIdle EXCEPT !.pc = "read", !.ev = e, !.sub = evSub[e],
-                                            !.snap = subs[evSub[e]]]]
+        h' = [h EXCEPT ![x] = [HIdle EXCEPT !.pc = "retrieve", !.ev = e, !.sub = evSub[e],
+                                            !.wsSnap = [subId |-> ws.subId, status |-> ws.status,
+                                                        plan |-> ws.plan, ver |-> ws.ver]]]
     /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, ws, tab>>
 
-(* resolveWorkspaceForSubscription *)
-SyncReadWorkspace(x) ==
-    /\ h[x].pc = "read"
-    /\ h' = [h EXCEPT ![x].pc = "write",
-                      ![x].wsSnap = [subId |-> ws.subId, status |-> ws.status, plan |-> ws.plan]]
+(* stripe.subscriptions.retrieve *)
+SyncRetrieve(x) ==
+    /\ h[x].pc = "retrieve"
+    /\ h' = [h EXCEPT ![x].pc = "write", ![x].snap = subs[h[x].sub]]
     /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, pending, evSub, nextEv, ws, tab>>
 
-(* the 'ignored' check, then runD1Batch(audit, UPDATE workspaces, mark     *)
-(* billing_webhook_events processed). An ignored event is marked processed *)
-(* by the route in its own statement; that is folded into this step.      *)
+(* writeWorkspaceSubscription -> commitSync: runD1Batch(audit, UPDATE      *)
+(* workspaces ... WHERE stripe_sync_token IS the token read, mark           *)
+(* billing_webhook_events processed WHERE the row holds this sync's token). *)
+(* The 'ignored' case writes only a new token, so a sync that read Stripe   *)
+(* before it cannot commit after it. When the token moved, nothing is       *)
+(* written, the event stays pending, and the sync starts over (up to 3      *)
+(* times, then the webhook answers 500 and Stripe delivers it again).       *)
 SyncWrite(x) ==
     /\ h[x].pc = "write"
     /\ LET snap == h[x].snap
            w == h[x].wsSnap
            ignored == w.subId # 0 /\ w.subId # h[x].sub /\ ~(snap.status \in ActiveStatuses)
-       IN ws' = IF ignored THEN ws
-                ELSE [ws EXCEPT !.subId = h[x].sub, !.status = snap.status,
-                                !.plan = DerivedPlan(snap)]
-    /\ pending' = pending \ {h[x].ev}
+           current == ws.ver = w.ver
+       IN /\ ws' = IF ~current THEN ws
+                   ELSE IF ignored THEN [ws EXCEPT !.ver = ws.ver + 1]
+                   ELSE [ws EXCEPT !.subId = h[x].sub, !.status = snap.status,
+                                   !.plan = DerivedPlan(snap), !.ver = ws.ver + 1]
+          /\ pending' = IF current THEN pending \ {h[x].ev} ELSE pending
     /\ h' = [h EXCEPT ![x] = HIdle]
     /\ UNCHANGED <<subs, sessions, sessPlan, nextSess, changes, evSub, nextEv, tab>>
 
@@ -203,11 +239,12 @@ Done ==
 
 Next ==
     \/ \E t \in Tabs :
-        \/ TabReadWorkspace(t) \/ TabListOpen(t) \/ TabExpire(t)
+        \/ TabReadWorkspace(t) \/ TabAcquireLease(t) \/ TabReleaseLease(t)
+        \/ TabListOpen(t) \/ TabExpire(t)
         \/ TabListSubscriptions(t) \/ TabEnsureCustomer(t) \/ TabCreateSession(t)
     \/ StripeCompleteCheckout
     \/ StripeChange
-    \/ \E x \in Handlers : SyncRetrieve(x) \/ SyncReadWorkspace(x) \/ SyncWrite(x)
+    \/ \E x \in Handlers : SyncReadWorkspace(x) \/ SyncRetrieve(x) \/ SyncWrite(x)
     \/ Done
 
 Spec == Init /\ [][Next]_vars

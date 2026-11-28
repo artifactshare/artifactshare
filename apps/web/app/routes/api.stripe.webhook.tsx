@@ -88,8 +88,10 @@ export const action = async ({ request }: Route.ActionArgs) => {
 
       if (
         result.kind === 'workspace-not-found' ||
-        result.kind === 'unknown-price'
+        result.kind === 'unknown-price' ||
+        result.kind === 'conflict'
       ) {
+        // Stripe delivers the event again later, and that sync reads afresh.
         await markWebhookError(db, event.id, result.kind)
         return new Response(null, { status: 500 })
       }

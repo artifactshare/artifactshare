@@ -62,7 +62,10 @@ CREATE TABLE workspaces (
                                   AND link_expiry_default_days IS NOT NULL
                                   AND link_expiry_default_days <= link_expiry_max_days
                                 )
-                              )
+                              ),
+  stripe_sync_token           TEXT,                        -- changed by every subscription sync
+  checkout_lease_token        TEXT,                        -- one Checkout creation at a time
+  checkout_lease_expires_at   TEXT
 );
 CREATE UNIQUE INDEX workspaces_ms_tenant_id
   ON workspaces(ms_tenant_id);

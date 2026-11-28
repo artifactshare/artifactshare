@@ -557,6 +557,7 @@
   "billing.status.checkoutCancelled": "Checkout was canceled.",
   "billing.status.planChangeRequested": "Plan change requested. It may take a moment to appear.",
   "billing.status.alreadySubscribed": "This workspace already has a paid plan. Change it from this page.",
+  "billing.status.checkoutInProgress": "Another checkout for this workspace is starting. Try again in a moment.",
   "billing.status.noSubscription": "No active subscription was found.",
   "picker.title": "Pick an HTML, Markdown, PDF, or MP4 file",
   "upload.hero.title": "Turn AI-generated files into shareable links",

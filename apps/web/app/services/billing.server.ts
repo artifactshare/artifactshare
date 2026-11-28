@@ -1,10 +1,12 @@
 import type { Kysely } from 'kysely'
+import { nanoid } from 'nanoid'
 import Stripe from 'stripe'
 import type { Locale } from '~/i18n/messages'
 import {
   isActiveSubscriptionStatus,
   type BillingPlan,
 } from '~/lib/billing-plan.server'
+import { nowIso } from '~/lib/datetime'
 import { isPaidPlan } from '~/lib/plan-tier'
 import type { DB } from '~/types/db'
 import { defaultBillingCurrency } from '~/lib/billing-prices'
@@ -48,6 +50,7 @@ export type BillingMutationResult =
   | { kind: 'invalid' }
   | { kind: 'already-subscribed' }
   | { kind: 'no-subscription' }
+  | { kind: 'checkout-in-progress' }
   | { kind: 'external-failed' }
 
 export type WorkspaceBillingRow = {
@@ -203,11 +206,26 @@ export async function createCheckoutSession(
   const fixedPriceId = fixedPriceIdForPlan(plan, interval, prices)
   if (!fixedPriceId) return { kind: 'invalid' }
 
+  // Two presses at once would both find no open Checkout and no subscription,
+  // and both create a Checkout. The lease lets one request at a time run the
+  // checks below and create the session.
+  const leaseToken = await acquireCheckoutLease(db, workspace.id)
+  if (!leaseToken) return { kind: 'checkout-in-progress' }
+
   try {
+    // Read the row again under the lease: a request that held it before may
+    // have saved a customer, and a sync may have saved a paid plan.
+    const current = await db
+      .selectFrom('workspaces')
+      .select(['plan', 'stripe_customer_id'])
+      .where('id', '=', workspace.id)
+      .executeTakeFirstOrThrow()
+    if (isPaidPlan(current.plan)) return { kind: 'already-subscribed' }
+
     // The customer may already have a subscription the workspace row does not
     // show yet, or a Checkout still open in another tab. Either way, paying
     // would start a second subscription, and the sync tracks only one.
-    const existingCustomer = workspace.stripe_customer_id
+    const existingCustomer = current.stripe_customer_id
     if (existingCustomer) {
       const open = await stripe.checkout.sessions.list({
         customer: existingCustomer,
@@ -232,7 +250,12 @@ export async function createCheckoutSession(
       }
     }
 
-    const customerId = await ensureStripeCustomer(db, stripe, workspace, locale)
+    const customerId = await ensureStripeCustomer(
+      db,
+      stripe,
+      { id: workspace.id, stripe_customer_id: existingCustomer },
+      locale,
+    )
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       currency,
@@ -257,6 +280,56 @@ export async function createCheckoutSession(
   } catch (error) {
     console.error('billing_checkout_session_create_failed', error)
     return { kind: 'external-failed' }
+  } finally {
+    await releaseCheckoutLease(db, workspace.id, leaseToken)
+  }
+}
+
+// Longer than one checkout request takes. A request that dies holding the
+// lease blocks Upgrade for at most this long.
+const CHECKOUT_LEASE_MS = 60_000
+
+async function acquireCheckoutLease(
+  db: Kysely<DB>,
+  workspaceId: string,
+): Promise<string | null> {
+  const token = nanoid()
+  const now = nowIso()
+  const update = await db
+    .updateTable('workspaces')
+    .set({
+      checkout_lease_token: token,
+      checkout_lease_expires_at: new Date(
+        Date.now() + CHECKOUT_LEASE_MS,
+      ).toISOString(),
+    })
+    .where('id', '=', workspaceId)
+    .where((eb) =>
+      eb.or([
+        eb('checkout_lease_token', 'is', null),
+        eb('checkout_lease_expires_at', '<', now),
+      ]),
+    )
+    .executeTakeFirst()
+  return Number(update.numUpdatedRows ?? 0n) === 1 ? token : null
+}
+
+async function releaseCheckoutLease(
+  db: Kysely<DB>,
+  workspaceId: string,
+  token: string,
+): Promise<void> {
+  // Only the holder clears the lease; an expired one may belong to another
+  // request by now. If this fails, the lease runs out on its own.
+  try {
+    await db
+      .updateTable('workspaces')
+      .set({ checkout_lease_token: null, checkout_lease_expires_at: null })
+      .where('id', '=', workspaceId)
+      .where('checkout_lease_token', '=', token)
+      .execute()
+  } catch (error) {
+    console.error('billing_checkout_lease_release_failed', error)
   }
 }
 

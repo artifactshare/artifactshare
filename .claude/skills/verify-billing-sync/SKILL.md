@@ -24,18 +24,20 @@ Run the check when a change touches any of these. The model describes them as of
 
 | Code | Model actions |
 | --- | --- |
-| `apps/web/app/services/billing.server.ts` `createCheckoutSession` | `TabReadWorkspace`, `TabListOpen`, `TabExpire`, `TabListSubscriptions`, `TabEnsureCustomer`, `TabCreateSession` |
+| `apps/web/app/services/billing.server.ts` `createCheckoutSession` | `TabReadWorkspace`, `TabAcquireLease`, `TabListOpen`, `TabExpire`, `TabListSubscriptions`, `TabEnsureCustomer`, `TabCreateSession`, `TabReleaseLease` |
+| same file, `acquireCheckoutLease`, `releaseCheckoutLease` (`workspaces.checkout_lease_token`, `checkout_lease_expires_at`) | `ws.lease`, `TabAcquireLease`, `TabReleaseLease` |
 | same file, `ensureStripeCustomer` | `TabEnsureCustomer` |
 | same file, `BILLABLE_SUBSCRIPTION_STATUSES`; `apps/web/app/lib/billing-plan.server.ts` `ACTIVE_SUBSCRIPTION_STATUSES` | `BillableStatuses`, `ActiveStatuses` |
-| `apps/web/app/services/billing-sync.server.ts` `syncWorkspaceSubscription`, `resolveWorkspaceForSubscription`, `derivePlanFromSubscription` | `SyncRetrieve`, `SyncReadWorkspace`, `SyncWrite`, `DerivedPlan` |
+| `apps/web/app/services/billing-sync.server.ts` `syncWorkspaceSubscription`, `resolveWorkspaceForSubscription`, `readWorkspaceSubscriptionRow`, `derivePlanFromSubscription` | `SyncReadWorkspace`, `SyncRetrieve`, `DerivedPlan` |
+| same file, `writeWorkspaceSubscription`, `commitSync`, `processedMark` (`workspaces.stripe_sync_token`) | `SyncWrite`, `ws.ver` |
 | same file, `syncReturnedCheckout` (calls the same sync without an event) | covered by the sync actions |
-| `apps/web/app/routes/api.stripe.webhook.tsx` `action`, `recordWebhookEvent` (an event stays pending until its sync commits) | `pending`, `SyncRetrieve`, `SyncWrite` |
+| `apps/web/app/routes/api.stripe.webhook.tsx` `action`, `recordWebhookEvent` (an event stays pending until its sync commits; a `conflict` answers 500 so Stripe delivers it again) | `pending`, `SyncReadWorkspace`, `SyncWrite` |
 | `apps/web/app/routes/_protected/settings/_content/billing.tsx` the `checkout` intent (loads the workspace, then calls `createCheckoutSession`) | `TabReadWorkspace` |
 
-**Sync commit: `8fe2ded44af30485c9ace8ee59d3eb1d9d28a633`.** To see whether covered code moved since then:
+**Sync commit: `1453ba5315206c2426045efa9220327a38c56649`.** To see whether covered code moved since then:
 
 ```sh
-git diff --stat 8fe2ded44af30485c9ace8ee59d3eb1d9d28a633 -- apps/web/app/services/billing.server.ts apps/web/app/services/billing-sync.server.ts apps/web/app/routes/api.stripe.webhook.tsx apps/web/app/lib/billing-plan.server.ts apps/web/app/routes/_protected/settings/_content/billing.tsx
+git diff --stat 1453ba5315206c2426045efa9220327a38c56649 -- apps/web/app/services/billing.server.ts apps/web/app/services/billing-sync.server.ts apps/web/app/routes/api.stripe.webhook.tsx apps/web/app/lib/billing-plan.server.ts apps/web/app/routes/_protected/settings/_content/billing.tsx
 ```
 
 If a covered function changed, read the diff against the model before you trust a pass. A pass on a model that no longer matches the code proves nothing.
@@ -53,9 +55,9 @@ It needs Java 11 or later and `curl` on PATH. The runner is `scripts/lib/tlc-che
 The command prints one line per check:
 
 1. **baseline**: one full exploration with every rule that should hold in the full scope.
-2. **known finding**: each rule in `KNOWN_FINDINGS` in `check.mjs`, which the current code breaks. Expect `ok ... violated` with the recorded path.
-3. **scoped baseline**: each rule in the sequential scope (`SEQUENTIAL` in `check.mjs`: one tab pressing Upgrade twice, one webhook handler, up to 3 Stripe changes), where neither finding can happen. Expect `ok ... pass`.
-4. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model, run in the sequential scope. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail.
+2. **known finding**: each rule in `KNOWN_FINDINGS` in `check.mjs`, which the current code breaks. Expect `ok ... violated` with the recorded path. The list is empty at the sync commit.
+3. **scoped baseline**: each rule in a narrower or deeper scope that a mutation runs in. `SEQUENTIAL` is one tab pressing Upgrade twice, one webhook handler, and up to 3 Stripe changes. `DEEP` is one tab pressing twice, two handlers, and 2 Stripe changes, the smallest scope where an ignored event that keeps the old `stripe_sync_token` lets a stale write win. Expect `ok ... pass`.
+4. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model, run in the full scope or the scope it names. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail.
 
 It ends with `All checks behaved as recorded.` and exit code 0, or names each check that did not, with the path TLC found and its output file, and exits 1. When a fix lands for a known finding, the finding's line turns into a failure: remove the entry from `KNOWN_FINDINGS` and confirm the rule now passes in the baseline.
 
@@ -65,8 +67,8 @@ Read every TLC result with the pstack `/statechart` skill. Give it `model/Billin
 
 Then decide whether the path is a real bug or a modeling error. Replay it against the code, one step per action:
 
-- Sync paths: `apps/web/app/services/billing-sync.server.test.ts` mocks `runD1Batch` so that `beforeNextWrite.run` runs a step of your choice after a sync has read Stripe and the workspace and before it writes. Give `stripe.subscriptions.retrieve` a mutable subscription so that the step can change what Stripe returns, then run the second sync inside `beforeNextWrite.run`.
-- Checkout paths: in `apps/web/app/services/billing.server.test.ts`, give `createCheckoutSession` a fake Stripe whose `checkout.sessions.list`, `expire`, `create`, and `subscriptions.list` share one in-memory list, and start two calls with `Promise.all`. The awaits interleave the calls the way two Workers requests do.
+- Sync paths: `apps/web/app/services/billing-sync.server.test.ts` mocks `runD1Batch` so that `beforeNextWrite.run` runs a step of your choice after a sync has read the workspace and Stripe and before it writes. The tests under "a webhook that read Stripe before a later change" show the pattern: a mutable subscription behind `stripe.subscriptions.retrieve`, and the second sync inside `beforeNextWrite.run`.
+- Checkout paths: the tests under "createCheckoutSession with two presses of Upgrade" in `apps/web/app/services/billing.server.test.ts` use a fake Stripe whose `checkout.sessions.list`, `expire`, `create`, and `subscriptions.list` share one in-memory list, and start two calls with `Promise.all`. The awaits interleave the calls the way two Workers requests do.
 
 If the code does what the path says, it is a real bug: report it with that test, and add it to `KNOWN_FINDINGS` only if the user decides not to fix it now. If the code does not, the model is wrong: fix the model so it matches the code. Never weaken a rule or remove a step to make a check pass.
 
@@ -81,7 +83,7 @@ If the code does what the path says, it is a real bug: report it with that test,
 
 ## Scope
 
-Verified, full scope (`model/BillingSync.cfg`): every interleaving of 2 tabs pressing Upgrade once each, 2 concurrent webhook handlers, up to 2 Checkout sessions (so up to 2 subscriptions), and 1 Stripe-side change (cancel, failed renewal, recovered renewal, or plan change). Sequential scope: 1 tab pressing twice, 1 handler, up to 3 Stripe-side changes. The workspace starts free, with or without a Stripe customer.
+Verified, full scope (`model/BillingSync.cfg`): every interleaving of 2 tabs pressing Upgrade once each, 2 concurrent webhook handlers, up to 2 Checkout sessions (so up to 2 subscriptions), and 1 Stripe-side change (cancel, failed renewal, recovered renewal, or plan change). Sequential scope: 1 tab pressing twice, 1 handler, up to 3 Stripe-side changes. Deep scope: 1 tab pressing twice, 2 handlers, up to 2 Stripe-side changes. The workspace starts free, with or without a Stripe customer.
 
 Left out:
 
@@ -89,11 +91,14 @@ Left out:
 - `changePlan` and `previewPlanChange` as our code paths; a plan change appears only as a Stripe-side change.
 - Unknown prices and a workspace that the sync cannot find (both return before writing).
 - Storage overage billing (`billing-usage.server.ts`), the billing portal itself, and several Stripe customers for one workspace (the `ensureStripeCustomer` race leaves one id in the row, which the model keeps).
+- Time. The Checkout lease never expires in the model. In the code it expires after 60 seconds, so a request that still runs after that could race a new press. A Checkout request takes a few Stripe calls, far less than that.
+- The retry in `syncWorkspaceSubscription` when `commitSync` cannot see its own token although its write committed (a later sync replaced it). That retry writes what Stripe says at its new read under the same token guard, like any other sync.
+- The routing `stripe.subscriptions.retrieve` that only finds the workspace, and the guards on the `plan.change` audit insert.
 
-## Known findings
+## Fixed findings
 
-Both were reproduced on the real code with the tests described under "Read a result".
+Both rules broke on the code before the sync commit, and both repros are now regression tests.
 
-**`SyncedWhenQuiet`**: `syncWorkspaceSubscription` reads the subscription from Stripe, then writes the workspace with an UPDATE that has no condition on what it read. A handler that read Stripe before a change can commit after the handler that read it after. Path: the owner pays; handler A reads the active subscription; the owner cancels in the portal; handler B reads the canceled subscription and writes free; handler A writes the active plan back. Every event is now processed, so nothing corrects it: the workspace stays on the paid plan while Stripe bills nothing. The same order with a failed renewal leaves the status at `active` while Stripe has `past_due`.
+**`SyncedWhenQuiet`**: `syncWorkspaceSubscription` wrote the workspace with an UPDATE that had no condition on what it read, so a handler that read Stripe before a cancel could commit after the handler that read it after, and leave the workspace on the paid plan. The UPDATE now requires `stripe_sync_token` to be the token it read, writes a new one, and retries from a fresh read when the token moved. An ignored event also writes a new token. Mutations `sync-without-token-check` and `ignored-sync-keeps-token` remove those guards.
 
-**`AtMostOneBillableSubscription`**: `createCheckoutSession` lists open Checkout sessions, expires them, and lists subscriptions before it creates a new session. Two requests that run those steps at the same time both see nothing and both create a session. If the owner pays on both pages, the customer has two subscriptions. The earlier fix covers a second press after the first Checkout page exists, not two presses at once.
+**`AtMostOneBillableSubscription`**: two `createCheckoutSession` calls at once both found no open Checkout and no subscription, and both created a session. A per-workspace lease now lets one call at a time run the checks and create the session; the other answers `checkout-in-progress`. Under the lease the call reads the workspace row again. Mutations `checkout-without-lease` and `checkout-trusts-loaded-row` remove those guards.

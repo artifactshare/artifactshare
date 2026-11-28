@@ -186,8 +186,14 @@ const stripeList = (data: unknown[]) => ({
 const requestLine = (request: Request) =>
   `${request.method} ${new URL(request.url).pathname}`
 
-function checkoutForReturningCustomer() {
-  return createCheckoutSession(
+async function checkoutForReturningCustomer() {
+  // createCheckoutSession reads the customer from the row under its lease.
+  await db
+    .updateTable('workspaces')
+    .set({ stripe_customer_id: returningCustomer.stripe_customer_id })
+    .where('id', '=', returningCustomer.id)
+    .execute()
+  return await createCheckoutSession(
     db,
     createStripeClient(env),
     env,

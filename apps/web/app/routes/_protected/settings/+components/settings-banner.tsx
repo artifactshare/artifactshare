@@ -63,6 +63,7 @@ export type BillingStatusKey =
   | 'checkout-cancelled'
   | 'plan-change-requested'
   | 'already-subscribed'
+  | 'checkout-in-progress'
   | 'no-subscription'
   | 'plan-required'
   | 'invalid-policy'
@@ -142,6 +143,10 @@ const SETTINGS_STATUS_NOTICES: Record<
   },
   'already-subscribed': {
     message: 'billing.status.alreadySubscribed',
+    kind: 'warning',
+  },
+  'checkout-in-progress': {
+    message: 'billing.status.checkoutInProgress',
     kind: 'warning',
   },
   'no-subscription': {

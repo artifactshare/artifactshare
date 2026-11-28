@@ -267,6 +267,9 @@ interface WorkspacesTable {
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   stripe_subscription_status: Generated<string>
+  stripe_sync_token: string | null
+  checkout_lease_token: string | null
+  checkout_lease_expires_at: string | null
   link_sharing_enabled: Generated<number>
   external_posting_enabled: Generated<number>
   // Generated reflects the legacy 30 / 90 DB defaults. Product workspace

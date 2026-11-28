@@ -3101,7 +3101,10 @@ describe('Worker integration harness', () => {
         expect((await deliver()).status).toBe(200)
         expect(retrievals).toBe(beforeDuplicate)
       }
-      expect(retrievals).toBe(4)
+      // One failed delivery, then two retrievals per sync: one finds the
+      // workspace, and one after the workspace row is read gives the state
+      // the guarded write saves.
+      expect(retrievals).toBe(1 + 2 * shapes.length)
       expect(
         await env.DB.prepare(
           "SELECT plan, stripe_subscription_id, stripe_subscription_status FROM workspaces WHERE id = 'ws-stripe'",
