@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { parseSync, Visitor } from 'oxc-parser'
@@ -34,17 +34,33 @@ const QUIRK_VENDORS = [
 ]
 
 const CALLS = {
-  effect: new Set(['useEffect', 'useLayoutEffect']),
+  effect: new Set(['useEffect', 'useLayoutEffect', 'useInsertionEffect']),
   timer: new Set([
     'setTimeout',
     'setInterval',
+    'setImmediate',
     'requestAnimationFrame',
     'requestIdleCallback',
     'queueMicrotask',
   ]),
 }
-const TEMPLATE_TIMER =
-  /\b(setTimeout|setInterval|requestAnimationFrame|requestIdleCallback|queueMicrotask)\s*\(/g
+const CALL_MODULES = {
+  effect: new Set(['react']),
+  timer: new Set([
+    'node:timers',
+    'node:timers/promises',
+    'timers',
+    'timers/promises',
+  ]),
+}
+const TEMPLATE_TIMER = new RegExp(
+  `\\b(${[...CALLS.timer].join('|')})\\s*\\(`,
+  'g',
+)
+const TEMPLATE_COMMENT =
+  /^\s*\/\/(?![a-z0-9-]+(?:\.[a-z0-9-]+)+(?=[/:?#'"]|\s*$))/i
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/
+const TAG_LINES = 3
 const CODE_FILE = /\.[cm]?[jt]sx?$/
 const SCANNED_ROOT = /^(?:apps|packages|scripts)\//
 const NOT_PRODUCT =
@@ -85,7 +101,7 @@ const FIXES = {
   timer: (hooks) =>
     `wait for an observed condition instead of a delay: an event or an acknowledgment message for frame and network ordering, a ref callback or flushSync for render, AbortSignal.timeout(ms) for a deadline, or a named hook from ${HOOKS_DIRECTORY}${hooks.includes('useCopyState') ? ' such as useCopyState for a reset after a delay' : ''}. If the timer must stay, put // agent-allow(timer): <reason> on the line above it`,
   comment: () =>
-    `put the reason in a name, a type, a test, or the PR body. These comments do not count: a tool directive with a reason (oxlint-disable-next-line <rule> -- <reason>, react-doctor-disable-next-line <rule> -- <reason>, @ts-expect-error <reason>), /// <reference>, @vite-ignore, JSDoc types in a .js file, quirk(<vendor>): about the behavior of ${QUIRK_VENDORS.join(', ')}, compat: about a shipped CLI or wire format, and invariant: <what holds> (test: <path of an existing test>). If the comment must stay, start it with agent-allow(comment): <reason>`,
+    `put the reason in a name, a type, a test, or the PR body. The count is comment lines, so growing a comment fails too. JSDoc types in a .js file do not count, and neither does a comment of at most ${TAG_LINES} lines that starts with a tool directive with a reason (oxlint-disable-next-line <rule> -- <reason>, react-doctor-disable-next-line <rule> -- <reason>, @ts-expect-error <reason>), /// <reference>, @vite-ignore, quirk(<vendor>): about the behavior of ${QUIRK_VENDORS.join(', ')}, compat: about a shipped CLI or wire format, or invariant: <what holds> (test: <path of a tracked test file>). If the comment must stay, start it with agent-allow(comment): <reason>`,
 }
 
 class RatchetError extends Error {}
@@ -120,8 +136,27 @@ function lineOf(starts, offset) {
   return low + 1
 }
 
-function calleeName(callee) {
-  if (callee.type === 'Identifier') return callee.name
+function importedCalls(program) {
+  const names = new Map()
+  for (const node of program.body) {
+    if (node.type !== 'ImportDeclaration' || node.importKind === 'type')
+      continue
+    const rule = Object.keys(CALL_MODULES).find((name) =>
+      CALL_MODULES[name].has(node.source.value),
+    )
+    if (!rule) continue
+    for (const specifier of node.specifiers) {
+      if (specifier.type !== 'ImportSpecifier') continue
+      const imported = specifier.imported.name ?? specifier.imported.value
+      if (CALLS[rule].has(imported)) names.set(specifier.local.name, imported)
+    }
+  }
+  return names
+}
+
+function calleeName(callee, imports) {
+  if (callee.type === 'Identifier')
+    return imports.get(callee.name) ?? callee.name
   if (callee.type !== 'MemberExpression') return null
   if (!callee.computed) return callee.property.name
   return typeof callee.property.value === 'string'
@@ -179,7 +214,7 @@ function templateParts(source, quasis, starts) {
     for (const [index, segment] of raw.split('\n').entries()) {
       const at = offset + lineStart
       lineStart += segment.length + 1
-      const comment = index > 0 && /^\s*\/\//.test(segment)
+      const comment = index > 0 && TEMPLATE_COMMENT.test(segment)
       if (comment) {
         const line = lineOf(starts, at)
         comments.push({
@@ -199,6 +234,10 @@ function templateParts(source, quasis, starts) {
   return { comments, timers }
 }
 
+function lineCount(text) {
+  return Math.max(1, text.split('\n').filter(Boolean).length)
+}
+
 function classify(block, path, exists) {
   if (
     block.type === 'Block' &&
@@ -206,6 +245,13 @@ function classify(block, path, exists) {
     block.text.split('\n').every((line) => JSDOC_TYPE.test(line))
   )
     return { allowed: true }
+  const verdict = tagVerdict(block, exists)
+  return (verdict.allowed || verdict.allow) && lineCount(block.text) > TAG_LINES
+    ? { hint: `a tag covers a comment of at most ${TAG_LINES} lines` }
+    : verdict
+}
+
+function tagVerdict(block, exists) {
   const allow = ALLOW.exec(block.text)
   if (allow) {
     const [, rule, reason] = allow
@@ -233,9 +279,11 @@ function classify(block, path, exists) {
   if (block.text.startsWith('invariant:')) {
     const test = INVARIANT_TEST.exec(block.text)?.[1]
     if (!test) return { hint: 'invariant: needs (test: <path>)' }
+    if (!TEST_FILE.test(test))
+      return { hint: `invariant test ${test} is not a test file` }
     return exists(test)
       ? { allowed: true }
-      : { hint: `invariant test ${test} does not exist` }
+      : { hint: `invariant test ${test} is not a tracked file` }
   }
   return {}
 }
@@ -253,9 +301,10 @@ function scan(source, path, exists) {
   const starts = lineStarts(source)
   const calls = []
   const templateComments = []
+  const imports = importedCalls(parsed.program)
   new Visitor({
     CallExpression(node) {
-      const name = calleeName(node.callee)
+      const name = calleeName(node.callee, imports)
       for (const rule of ['effect', 'timer'])
         if (rules.includes(rule) && CALLS[rule].has(name))
           calls.push({ rule, line: lineOf(starts, node.start), label: name })
@@ -297,6 +346,7 @@ function scan(source, path, exists) {
     counts.comment.push({
       line: block.line,
       endLine: block.endLine,
+      lines: lineCount(block.text),
       label: summary(block.text),
       hint: verdict.hint,
     })
@@ -324,6 +374,7 @@ function scan(source, path, exists) {
       counts.comment.push({
         line: escape.line,
         endLine: escape.endLine,
+        lines: lineCount(escape.text),
         label: summary(escape.text),
         hint: `agent-allow(${escape.rule}) is not on the line above a ${escape.rule} call`,
       })
@@ -498,11 +549,19 @@ function ratchet({ root, base, head, env = {} }) {
           : null,
       )
   const inBase = (path) => readBlobs(root, [`${mergeBase}:${path}`])[0] !== null
+  const untrackedSet = new Set(untracked)
+  const indexed = head
+    ? null
+    : new Set(nameList(git(root, ['ls-files', '--cached', '-z'])))
   const inHead = head
     ? (path) => readBlobs(root, [`${head}:${path}`])[0] !== null
-    : (path) => existsSync(join(root, path))
+    : (path) =>
+        (indexed.has(path) || untrackedSet.has(path)) &&
+        (statSync(join(root, path), { throwIfNoEntry: false })?.isFile() ??
+          false)
   const added = addedLines(root, mergeBase, head)
-  const untrackedSet = new Set(untracked)
+  const weight = (occurrences) =>
+    occurrences.reduce((sum, { lines = 1 }) => sum + lines, 0)
   const rules = Object.fromEntries(
     ['effect', 'timer', 'comment'].map((rule) => [
       rule,
@@ -516,14 +575,10 @@ function ratchet({ root, base, head, env = {} }) {
     const isAdded = (line) =>
       untrackedSet.has(path) || (added.get(path)?.has(line) ?? false)
     for (const [rule, total] of Object.entries(rules)) {
-      total.base += before[rule].length
-      total.head += after[rule].length
-      if (after[rule].length > before[rule].length)
-        total.files.push({
-          path,
-          base: before[rule].length,
-          head: after[rule].length,
-        })
+      const counts = { base: weight(before[rule]), head: weight(after[rule]) }
+      total.base += counts.base
+      total.head += counts.head
+      if (counts.head > counts.base) total.files.push({ path, ...counts })
       for (const occurrence of after[rule]) {
         const last = occurrence.endLine ?? occurrence.line
         for (let line = occurrence.line; line <= last; line++)

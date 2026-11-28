@@ -55,7 +55,7 @@ function repository(t) {
 test('fails on the comment fda6f9d added inside the preview shell inline script', (t) => {
   const result = repository(t).replay('comment-panel-rebuild')
   assert.equal(result.status, 1, result.stdout)
-  assert.match(result.stderr, /comment rose from 2 to 3 in 1 changed file/)
+  assert.match(result.stderr, /comment rose from 2 to 5 in 1 changed file/)
   assert.match(
     result.stderr,
     /packages\/cli\/src\/preview\/shell\.ts:5 "Saves, screen reports and anchor verdicts/,
@@ -71,7 +71,7 @@ test('fails on the effect, timer and comments the initial frame focus added', (t
   assert.ok(result.stderr.includes(`${frame}:55 useEffect`), result.stderr)
   assert.match(result.stderr, /timer rose from 1 to 2/)
   assert.ok(result.stderr.includes(`${frame}:48 setTimeout`), result.stderr)
-  assert.match(result.stderr, /comment rose from 0 to 4/)
+  assert.match(result.stderr, /comment rose from 0 to 8/)
   for (const line of [28, 40, 46, 57])
     assert.ok(result.stderr.includes(`${frame}:${line} "`), result.stderr)
   assert.match(result.stderr, /fix: compute the value during render/)
@@ -87,7 +87,7 @@ test('fails on the polling timer the search capture added', (t) => {
     /apps\/web\/app\/services\/auth\.server\.ts:35 setTimeout/,
   )
   assert.match(result.stderr, /AbortSignal\.timeout/)
-  assert.match(result.stderr, /comment rose from 0 to 1/)
+  assert.match(result.stderr, /comment rose from 0 to 3/)
 })
 
 test('fails on the effect that reacts to a settings fetcher result', (t) => {
@@ -103,7 +103,7 @@ test('passes when the same effect, timer and comments move into a hook file', (t
   assert.equal(result.status, 0, result.stderr)
   assert.match(
     result.stdout,
-    /ok \(effect 1 -> 1, timer 2 -> 2, comment 4 -> 4 in 2 changed files/,
+    /ok \(effect 1 -> 1, timer 2 -> 2, comment 8 -> 8 in 2 changed files/,
   )
 })
 
@@ -192,7 +192,7 @@ test('counts a directive, quirk, invariant or agent-allow that does not hold', (
   assert.match(result.stderr, /frame\.tsx:3 .*"netscape" is not in the list/)
   assert.match(
     result.stderr,
-    /frame\.tsx:5 .*apps\/web\/app\/missing\.test\.ts does not exist/,
+    /frame\.tsx:5 .*apps\/web\/app\/missing\.test\.ts is not a tracked file/,
   )
   assert.match(result.stderr, /frame\.tsx:7 .*agent-allow needs a reason/)
   assert.match(
@@ -256,4 +256,130 @@ test('fails closed in CI without a base and compares with AGENT_RATCHET_BASE whe
   const named = repo.run([], { CI: 'true', AGENT_RATCHET_BASE: base })
   assert.equal(named.status, 0, named.stderr)
   assert.match(named.stdout, /in 1 changed file since/)
+})
+
+test('counts comment lines, so growing a comment or hanging lines under a tag fails', (t) => {
+  const repo = repository(t)
+  const kept = [
+    '// Opens the panel.',
+    '// Keeps focus.',
+    'export const panel = 1',
+    '// quirk(react): a short quirk',
+    '// stays free.',
+    'export const other = 2',
+  ]
+  repo.write({ 'apps/web/app/panel.ts': [...kept, ''].join('\n') })
+  const base = repo.commit('base')
+  repo.write({
+    'apps/web/app/panel.ts': [
+      ...kept.slice(0, 2),
+      '// And restores it on close.',
+      ...kept.slice(2),
+      '// quirk(react): strict mode runs effects twice,',
+      '// so the panel opens once per mount,',
+      '// which the reader sees as a flicker,',
+      '// on every route change.',
+      'export const third = 3',
+      '',
+    ].join('\n'),
+  })
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /comment rose from 2 to 7/)
+  assert.match(result.stderr, /panel\.ts:1 "Opens the panel\."/)
+  assert.match(
+    result.stderr,
+    /panel\.ts:8 "quirk\(react\): .*a tag covers a comment of at most 3 lines/,
+  )
+})
+
+test('counts effects and timers called through an import alias', (t) => {
+  const repo = repository(t)
+  const base = repo.commit('base')
+  repo.write({
+    'apps/web/app/frame.tsx': [
+      "import { useEffect as ue, useInsertionEffect } from 'react'",
+      "import { setTimeout as sleep } from 'node:timers/promises'",
+      "import { setInterval as every } from 'timers'",
+      'export function Frame() {',
+      '  ue(() => {}, [])',
+      '  useInsertionEffect(() => {}, [])',
+      '  return null',
+      '}',
+      'export const wait = () => sleep(10)',
+      'export const poll = () => every(check, 100)',
+      '',
+    ].join('\n'),
+    'apps/web/app/local.ts':
+      'const sleep = (ms: number) => ms\nconst ue = () => 1\nexport const value = sleep(ue())\n',
+  })
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /effect rose from 0 to 2/)
+  assert.match(result.stderr, /frame\.tsx:5 useEffect/)
+  assert.match(result.stderr, /frame\.tsx:6 useInsertionEffect/)
+  assert.match(result.stderr, /timer rose from 0 to 2/)
+  assert.match(result.stderr, /frame\.tsx:9 setTimeout/)
+  assert.match(result.stderr, /frame\.tsx:10 setInterval/)
+  assert.doesNotMatch(result.stderr, /local\.ts/)
+})
+
+test('admits an invariant only when it names a tracked test file', (t) => {
+  const repo = repository(t)
+  repo.write({
+    '.gitignore': 'apps/web/app/ignored.test.ts\n',
+    'apps/web/app/frame.ts': 'export {}\n',
+    'apps/web/app/frame.test.ts': 'export {}\n',
+    'apps/web/app/panel.ts': 'export {}\n',
+    'apps/web/app/ignored.test.ts': 'export {}\n',
+  })
+  const base = repo.commit('base')
+  repo.write({
+    'apps/web/app/panel.ts': [
+      '// invariant: one panel per route (test: apps)',
+      'export const a = 1',
+      '// invariant: one panel per route (test: apps/web/app/frame.ts)',
+      'export const b = 2',
+      '// invariant: one panel per route (test: apps/web/app/ignored.test.ts)',
+      'export const c = 3',
+      '// invariant: one panel per route (test: apps/web/app/frame.test.ts)',
+      'export const d = 4',
+      '',
+    ].join('\n'),
+  })
+  const expectFailures = (result) => {
+    assert.equal(result.status, 1, result.stdout)
+    assert.match(result.stderr, /comment rose from 0 to 3/)
+    assert.match(result.stderr, /panel\.ts:1 .*test apps is not a test file/)
+    assert.match(result.stderr, /panel\.ts:3 .*frame\.ts is not a test file/)
+    assert.match(
+      result.stderr,
+      /panel\.ts:5 .*ignored\.test\.ts is not a tracked file/,
+    )
+  }
+  expectFailures(repo.run(['--base', base]))
+  const head = repo.commit('head')
+  expectFailures(repo.run(['--base', base, '--head', head]))
+})
+
+test('does not count a protocol-relative URL at the start of a template line', (t) => {
+  const repo = repository(t)
+  const base = repo.commit('base')
+  repo.write({
+    'packages/cli/src/preview/page.ts': [
+      'export const sources = `',
+      '  //cdn.example.com/lib.js',
+      '  //fonts.example.net:443/a.css',
+      '`',
+      'export const note = `',
+      '  // the fonts load after the script',
+      '`',
+      '',
+    ].join('\n'),
+  })
+  const result = repo.run(['--base', base])
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /comment rose from 0 to 1/)
+  assert.match(result.stderr, /page\.ts:6 "the fonts load after the script"/)
+  assert.doesNotMatch(result.stderr, /example\.(?:com|net)/)
 })
