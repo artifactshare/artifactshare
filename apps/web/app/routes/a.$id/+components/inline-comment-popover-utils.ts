@@ -96,9 +96,6 @@ export function useInlinePopoverPosition(
   return style
 }
 
-// 選択しただけではフォーカスを奪わず (= iframe 内の選択が残り Cmd+C が通る)、
-// このチップを押して初めてコメント入力を開く。textarea へ focus するのは
-// 入力を開いた後だけにする。
 function popoverStyle(
   rect: TextSelectionMessage['rect'],
   width: number,
@@ -158,7 +155,6 @@ export function withoutRect(anchor: PendingTextAnchor) {
     textStart: anchor.textStart,
     textEnd: anchor.textEnd,
     cssPath: anchor.cssPath,
-    // Static sites only; HTML and Markdown anchors keep the entry page.
     ...(anchor.targetPath ? { targetPath: anchor.targetPath } : {}),
   }
 }

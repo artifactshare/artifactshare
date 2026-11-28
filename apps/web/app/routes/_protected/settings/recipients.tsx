@@ -9,8 +9,6 @@ import {
   searchAssetTransferRecipients,
 } from '~/services/team-management.server'
 
-// Only the asset-transfer confirmation fetches this, so an expired session is
-// a 401 the confirmation handles, not a redirect to the sign-in page.
 export const middleware = [requireUserApiMiddleware]
 
 export function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
@@ -26,7 +24,6 @@ export async function loader({
   const query = url.searchParams.get('q')?.trim() ?? ''
   const exclude = url.searchParams.get('exclude') ?? undefined
 
-  // fetcher 呼び出しのため throw しない (途中の権限喪失や一時障害で画面全体を壊さない)。
   try {
     const db = createDb()
     const authorized = await requireWorkspaceAdmin(db, user)

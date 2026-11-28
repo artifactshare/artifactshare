@@ -68,7 +68,6 @@ function parseCursor(value: string | null): FilesCursor | undefined {
   return undefined
 }
 
-// The shared header narrows its search to this project.
 export const handle: AppShellHandle = {
   searchProject: (data) => {
     const { ctx } = data as LoaderData
@@ -144,8 +143,6 @@ export default function ProjectFiles({
   const rowActions = useFileRowActions()
   const busy = fetcher.state !== 'idle'
   const [uploadOpen, setUploadOpen] = useState(false)
-  // 追加読み込みは「初期 loader データ + 追加ページ」で持ち、render 中に導出する
-  // (ホームの動きの履歴と同じ adjust-state-during-render パターン)。
   const [acc, setAcc] = useState<{ base: LoaderData; pages: LoaderData[] }>({
     base: loaderData,
     pages: [],

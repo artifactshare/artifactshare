@@ -50,15 +50,12 @@ function ProjectSlackDialogContent({
   const { t } = useT()
   const fetcher = useFetcher<SlackData | { intent: string; ok: true }>()
   const busy = fetcher.state !== 'idle'
-  // POST 応答 ({ intent, ok }) と loader 応答 (SlackData) の union を絞る。
   const data =
     fetcher.data && 'current' in fetcher.data ? fetcher.data : undefined
   const closeAfterClear = useEffectEvent(() => {
     onOpenChange(false)
   })
   useEffect(() => {
-    // 解除成功の POST 応答 ({ intent, ok }) は表示用データを持たないため、
-    // 開いたままだと読込中表示に落ちる。成功したら閉じる。
     if (fetcher.data && 'ok' in fetcher.data && fetcher.data.ok)
       closeAfterClear()
   }, [fetcher.data])

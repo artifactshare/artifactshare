@@ -12,9 +12,6 @@ import { AppShell } from '~/routes/_protected/+components/app-shell'
 import { loadAppShell } from '~/routes/_protected/+lib/app-shell.server'
 import { appShellShouldRevalidate } from '~/routes/_protected/+lib/app-shell-revalidation'
 
-// The layout of `/`: the landing page signed out, and signed in the shared
-// header around Home. Home's other lists get the same header from the shell
-// route and the same body from `_home/_protected/_layout.tsx`.
 export async function loader({
   context,
 }: Route.LoaderArgs): Promise<HomeLayoutData> {

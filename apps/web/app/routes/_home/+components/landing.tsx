@@ -36,9 +36,6 @@ export function Landing({
   const maintenance = rootData?.maintenance === true
   const [params] = useSearchParams()
   const next = params.get('next')
-  // Any redirect that carries a destination (an invite link or a protected
-  // route bouncing a signed-out visitor) keeps the focused sign-in view the
-  // old landing had; only cold visits get the marketing page.
   const focusedSignIn = regression?.inviteMode ?? next != null
   const inviteMode = regression?.inviteMode ?? next?.startsWith('/a/') ?? false
 

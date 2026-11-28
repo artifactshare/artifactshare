@@ -15,7 +15,6 @@ import {
 } from './settings-request.server'
 import { planTier } from '~/lib/plan-tier'
 
-/** The admin gate's decision for this request; unset means not decided. */
 export const settingsAdminGate = createContext<'allowed' | 'forbidden' | null>(
   null,
 )
@@ -34,7 +33,6 @@ export const settingsAdminMiddleware: MiddlewareFunction<Response> = async (
   const page = settingsAdminPageFor(pattern)
   const role = await settingsActiveRole(context)
   const isAdmin = role === 'owner' || role === 'admin'
-  // The plan matters only to an admin opening Team-only inventory.
   const team =
     isAdmin &&
     page === 'inventory' &&
@@ -47,10 +45,6 @@ export const settingsAdminMiddleware: MiddlewareFunction<Response> = async (
   return next()
 }
 
-/**
- * Every loader and action under the admin gate starts here, before any
- * protected read or write.
- */
 export function requireSettingsAdminPage(
   context: Readonly<RouterContextProvider>,
 ) {

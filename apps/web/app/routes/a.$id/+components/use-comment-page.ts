@@ -9,12 +9,10 @@ import {
 import type { CommentSession } from './comment-session'
 import { useLatestRef } from '~/hooks/use-latest-ref'
 
-/** One provider covers panel and inline consumers; every consumer requires its display Session. */
 export const CommentPageSessionContext = createContext<CommentSession | null>(
   null,
 )
 
-/** A consumer rendered outside its provider, which must fail before it reads anything. */
 export class MissingCommentPageSessionError extends Error {
   constructor() {
     super('Comment pages require a display Session')

@@ -117,9 +117,6 @@ interface ArtifactSummary {
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
-  // Viewer list (who viewed): present on the ok / static_site payloads only.
-  // { false, 0 } whenever the loader gate fails, the count query degrades,
-  // or the requester is not an active human member of the file's workspace.
   showViewerListMetaEntry?: boolean
   viewerListCount?: number
   defaultReturnTo: string
@@ -183,8 +180,6 @@ export type LoaderData =
         name: string
         derivedTitle: string | null
         titleOverride: string | null
-        // CTA 分岐に使う: workspace はアクセス依頼、private は creator
-        // (= owner) に Artifact Share 側で grants 追加依頼
         visibility: Visibility
         ownerEmail: string | null
       }
@@ -264,9 +259,6 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  // versions は leftJoin。version 行欠落 (NULL current_version_id か
-  // dangling FK) のとき owner には source-missing を返したい。owner
-  // 以外には share の存在を露呈しないため 404 に倒す。
   const shareable = await db
     .selectFrom('shareables')
     .innerJoin('users', 'users.id', 'shareables.owner_user_id')
@@ -448,9 +440,6 @@ export async function loader({
     linkAccess?.kind === 'suspended' &&
     shareable.workspace_id !== user.workspaceId
   ) {
-    // A signed-in outsider who only had the link gets the paused page, not an
-    // access-request form that would send the owner traffic about a pause.
-    // Colleagues keep the access-request path they had before.
     return forbidden({
       kind: 'unavailable',
       user: userInfo,
@@ -460,8 +449,6 @@ export async function loader({
 
   if (
     displayCheck.kind === 'access-denied' ||
-    // viewerDisplayCheck returns this only for anonymous requests; the
-    // signed-in path treats it as denied for exhaustiveness.
     displayCheck.kind === 'link-suspended'
   ) {
     if (ownerManagementAccess) {
@@ -488,7 +475,6 @@ export async function loader({
           name: shareable.name,
           derivedTitle: shareable.derived_title,
           titleOverride: shareable.title_override,
-          // visibility 別に PermissionDenied の CTA が変わる:
           visibility: shareable.visibility,
           ownerEmail: shareable.owner_email,
         },
@@ -608,8 +594,6 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
   const displayedVersionOrdinal = displayedHistoryVersion.ordinal
-  // creator なら visibility に関わらず grants を pre-load する。
-  // private / workspace の切り替え時に、既存の個別許可を最初から見せる。
   const grantResult = isOwner
     ? await listGrants(db, user, shareable.id)
     : undefined
@@ -626,10 +610,6 @@ export async function loader({
     entrypointPath: shareable.entrypoint_path,
     r2Key: shareable.r2_key,
   })
-  // Viewer-list gate. The spec expression also requires
-  // `displayCheck.kind === 'access-granted'`; by this point every non-granted
-  // displayCheck kind has already returned, so the equivalence assumes this
-  // post-access-granted evaluation position.
   const viewerListGate = Boolean(detectedRenderType) && !isHistoricalVersion
   const [
     comments,
@@ -660,7 +640,6 @@ export async function loader({
           shareableId: shareable.id,
           requesterUserId: user.id,
         }).catch((error: unknown) => {
-          // Degrade to no viewer-list entry rather than failing the page.
           console.error('viewer list count failed', error)
           return null
         })
@@ -669,17 +648,11 @@ export async function loader({
       ? loadBridgeAttributionOrNull(db, displayedVersion.id)
       : Promise.resolve(null),
   ])
-  // When the gate fails, the query fails, or the requester is outside the
-  // audience, the serialized fields collapse to { false, 0 } so the loader
-  // data never leaks a count. canViewViewerList stays loader-internal; the UI
-  // gates on showViewerListMetaEntry only.
   const canViewViewerList = viewerListStats?.requesterEligible ?? false
   const showViewerListMetaEntry = canViewViewerList
   const viewerListCount = canViewViewerList
     ? Number(viewerListStats?.viewerCount ?? 0)
     : 0
-  // Owner or Team workspace admin may move it. Reuse the admin flag the comment
-  // access check already resolved rather than querying workspace_members again.
   const canMove = isOwner || commentAccess.isTeamWorkspaceAdmin
   const ownerName = shareable.owner_name
   const ownerKind = shareable.owner_kind
@@ -733,7 +706,6 @@ export async function loader({
       linkAccess?.kind === 'expired' ||
       (linkAccess?.kind === 'suspended' && linkAccess.expired),
     linkSuspended: linkAccess?.kind === 'suspended',
-    // The operator's note is for the owner, not for every viewer with access.
     linkSuspendedReason:
       isOwner && linkAccess?.kind === 'suspended' ? linkAccess.reason : null,
     canAppealLinkSuspension: isOwner,
@@ -1034,8 +1006,6 @@ async function buildLinkAnonymousResponse(
     ownerImage: shareable.owner_image,
     ownerInitial,
     ownerIsExternal: bridgeRequester.isExternal,
-    // This query path doesn't join users.kind; the reserved bot email domain
-    // is equally authoritative (sign-up rejects it).
     ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
       ? ('bot' as const)
       : ('human' as const),
@@ -1337,7 +1307,6 @@ function viewFollowUps({
       })
     followUps.push(nameWrite)
   }
-  // The recency row copies the file name, so it waits for the name update.
   const recencyWrite = nameWrite
     .then(() =>
       recordViewerRecency(db, shareableId, user.id, {
@@ -1458,8 +1427,6 @@ async function loadHistoryVersions(
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
     .executeTakeFirst()
-  // Retention may commit between the first version lookup and history loading.
-  // Let the caller resolve that newly missing version through its tombstone.
   if (!displayedRow) return versions
 
   return [

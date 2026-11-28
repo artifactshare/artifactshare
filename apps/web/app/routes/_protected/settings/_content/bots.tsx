@@ -21,11 +21,6 @@ import type { Route } from './+types/bots'
 // React Router passes loaderData only to a default export declared here.
 export default BotsPage
 
-// Settings action for bot management. Tokens are returned only in this
-// action's response body — never via redirect, flash/session storage, URL
-// parameters, or logs. The bot-members feature flag gates creation only:
-// stop/reissue keep working for existing bots regardless of the flag.
-
 export async function loader({
   context,
 }: Route.LoaderArgs): Promise<BotsLoaderData> {

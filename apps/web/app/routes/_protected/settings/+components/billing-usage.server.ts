@@ -32,10 +32,6 @@ export type UsageLoaderData = {
   contributorCount: number | null
 }
 
-/**
- * This month's overage projection, computed at most once however many billing
- * views ask for it. A failed projection reads as none.
- */
 export function sharedOverageProjection(
   workspaceId: string,
   now: Date,

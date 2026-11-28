@@ -111,7 +111,6 @@ export function meta(
   return landingMeta(loaderData?.locale ?? 'en')
 }
 
-// The route only serves the current Home data contract.
 export function shouldRevalidate({
   currentUrl,
   nextUrl,

@@ -6,10 +6,6 @@ import {
   requireSettingsState,
 } from './+components/settings-states'
 
-// Development only: the real Settings shell and pages, fed fixture data, so
-// workspace situations that need Stripe, a nearly full workspace or a team's
-// history can be opened and captured on the local stack. The shared header
-// around them shows the fixture workspace and viewer.
 export function loader({ params }: Route.LoaderArgs) {
   return requireSettingsState(params.state).shell
 }

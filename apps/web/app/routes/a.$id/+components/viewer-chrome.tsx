@@ -100,8 +100,6 @@ export function historicalViewerShareUrl(href: string): string | null {
 const topbarClassName =
   'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
 // 展開/折りたたみで衝突する高さ・余白・可視性は ternary で単一ソース化する
-// (utility と arbitrary property は tailwind-merge で畳まれず、media variant は
-//  非 responsive な上書きに後勝ちするため、両方を同時に出すと沈黙事故になる)
 const expandedTopbarClassName =
   'h-auto min-h-topbar-expanded border-b-border py-0 max-phone:min-h-topbar-compact max-phone:py-1.5'
 const collapsedTopbarClassName =
@@ -167,14 +165,10 @@ interface ViewerChromeProps {
     linkExpiryDefaultDays?: number | null
     linkExpiryMaxDays?: number | null
     canReopenExpiredLink?: boolean
-    // ok / static_site の現行バージョン表示時のみ loader が true を渡す。
-    // 個人ワークスペースや資格なしでは false / 省略 (入口なし)。
     showViewerListMetaEntry?: boolean
-    // loader 時点の閲覧した人数 (社内のみ)。パネルヘッダーは API 値を使う。
     viewerListCount?: number
   }
   user: UserInfo | null
-  /** Set for anonymous link-share views: shows the origin ⓘ next to the author. */
   linkOrigin?: { shareableId: string } | null
   appOrigin?: string
   analyticsMode?: 'enabled' | 'disabled'
@@ -320,9 +314,6 @@ export function ViewerChrome({
     user !== null &&
     artifact.showViewerListMetaEntry === true &&
     onViewerListEntrySelect !== undefined
-  // {n} は閲覧回数 (匿名・社外込み)、vw.viewerListCount の値は m = 閲覧した
-  // 人数 (社内のみ)。「 · 」ごと単一テキストノードに連結し、可視文字列と
-  // アクセシブルネームを文字単位で対応させる (aria-hidden セパレータ不使用)。
   const viewerListEntryText = showViewerListEntry
     ? `${viewCountLabel} · ${tPlural('vw.viewerListCount', artifact.viewerListCount ?? 0)}`
     : null
@@ -367,7 +358,6 @@ export function ViewerChrome({
           appOrigin={appOrigin}
           className="max-phone:row-span-2 max-phone:self-center"
         />
-        {/* dense title/meta cluster: gap-0.5 / gap-px is the intended rhythm */}
         <div data-gap-audit-exempt className={titleClassName}>
           <div className={titleRowClassName}>
             <FileTypeIcon renderType={renderType} size="sm" />
@@ -658,8 +648,6 @@ function ViewerMeta({
           {viewCountLabel}
         </span>
       )}
-      {/* Link recipients cannot act on the owner's filing location; give the
-          width to the author instead. */}
       {linkOrigin ? null : (
         <ViewerFilingLocation
           artifact={artifact}
@@ -669,9 +657,6 @@ function ViewerMeta({
           returnTo={returnTo}
         />
       )}
-      {/* Separator and owner segment share one collapsing container so the
-          separator never remains as an orphan when the owner segment is
-          clipped away on narrow viewports. */}
       <span
         data-viewer-owner-segment
         className={cn(
@@ -1238,8 +1223,6 @@ function viewerChromeCapabilities(
     user !== null &&
     artifact.canChangeVisibility === true &&
     currentVisibility !== null
-  // title 編集は visibility 編集の可否とは独立して owner のみ許可。
-  // 将来 editableVisibility が無い visibility が増えても owner なら編集可。
   const canEditTitle = user !== null && artifact.canChangeVisibility === true
   const canMove = user !== null && artifact.canMove === true
   return {

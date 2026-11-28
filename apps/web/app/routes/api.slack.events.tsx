@@ -61,7 +61,6 @@ function createSlackEventsApp(ctx: ExecutionContext) {
 
   app.event('link_shared', ({ payload, body }) => {
     // Slack の 3 秒 timeout を確実に守るため、handler は即時 return し、
-    // 重い処理は waitUntil で background 実行
     ctx.waitUntil(
       processSlackLinkShared(
         createDb(),

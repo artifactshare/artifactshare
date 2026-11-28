@@ -47,8 +47,6 @@ export function useEditTitle(
       }),
     })
     if (!response.ok) throw new Error('Failed to update title override')
-    // input unmount に伴う合成 blur が submit を再発火させても二重 PATCH に
-    // ならないよう保険。次回 start() で false に戻る。
     skipNextSubmitRef.current = true
     setIsEditing(false)
     revalidator.revalidate()

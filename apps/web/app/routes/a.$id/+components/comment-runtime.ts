@@ -14,8 +14,6 @@ type ArtifactRecord = {
   listeners: Set<(settlement: CommentMutationSettlement) => void>
 }
 
-/** Owned by a browser viewer environment, never a server module singleton.
- * Display and read leases can end while a captured mutation is still pending. */
 export function createCommentRuntime(
   reportSubscriberError: (error: unknown) => void = (error) =>
     console.error('comment_runtime_subscriber_failed', error),
@@ -66,7 +64,6 @@ export function createCommentRuntime(
           assertActive()
           return Math.max(captured.epoch, captured.threads.get(threadId) ?? 0)
         },
-        /** Client-side settlement token, not a server revision or request ID. */
         getSettlementRevision() {
           assertActive()
           return captured.settlementRevision
@@ -87,7 +84,6 @@ export function createCommentRuntime(
         },
         subscribe(listener: (settlement: CommentMutationSettlement) => void) {
           assertActive()
-          // Each lease owns its registration even if callers reuse a listener.
           const subscription = (value: CommentMutationSettlement) =>
             listener(value)
           subscriptions.add(subscription)
@@ -115,7 +111,6 @@ export function createCommentRuntime(
               if (captured.pending.size === 0) captured.overlapping = false
               advance(captured, result.threadId ?? threadId)
               captured.settlementRevision = epoch
-              // Subscribers added during delivery wait for the next settlement.
               const listeners = [...captured.listeners]
               try {
                 for (const listener of listeners) {
@@ -123,8 +118,6 @@ export function createCommentRuntime(
                   try {
                     listener({ ...result, clientMutationId })
                   } catch (error) {
-                    // Match browser event delivery: one subscriber must not
-                    // prevent another viewer from observing the settlement.
                     try {
                       reportSubscriberError(error)
                     } catch {

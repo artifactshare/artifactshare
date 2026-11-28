@@ -22,7 +22,6 @@ export function SettingsBanner({
 }: Omit<ComponentProps<typeof Alert>, 'role'> & {
   kind: SettingsNoticeKind
   urgent?: boolean
-  // False when an enclosing live region already announces the message.
   announce?: boolean
 }) {
   const Icon =

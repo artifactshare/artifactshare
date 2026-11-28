@@ -43,7 +43,6 @@ type LoaderData = {
   error?: boolean
 }
 
-// The shared header narrows its search to this project.
 export const handle: AppShellHandle = {
   searchProject: (data) => {
     const { ctx } = data as LoaderData

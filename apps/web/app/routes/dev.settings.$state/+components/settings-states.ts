@@ -27,10 +27,6 @@ import type { GeneralLoaderData } from '~/routes/_protected/settings/+components
 import type { SettingsLoaderData } from '~/routes/_protected/settings/_layout'
 import { planTier } from '~/lib/plan-tier'
 
-/**
- * What each Settings page's loader returns. The analytics page has no
- * loader, so a state that covers it gives an empty object.
- */
 export interface SettingsPageData {
   tokens: TokensLoaderData
   analytics: Record<string, never>
@@ -47,10 +43,6 @@ export interface SettingsPageData {
 
 export type SettingsPageId = keyof SettingsPageData
 
-/**
- * Each page's path under the Settings shell, which the dev routes mirror, in
- * the order of the Settings menu.
- */
 export const SETTINGS_PAGE_PATHS = {
   tokens: 'tokens',
   analytics: 'analytics',
@@ -65,12 +57,6 @@ export const SETTINGS_PAGE_PATHS = {
   general: 'general',
 } satisfies Record<SettingsPageId, string>
 
-/**
- * A workspace situation the local stack cannot reach on its own, such as a
- * Stripe contract, a workspace close to its storage limit or a team with a
- * history. It holds what the Settings shell loader would return, and what
- * each page it covers would load.
- */
 interface SettingsState {
   description: string
   shell: SettingsLoaderData
@@ -82,9 +68,6 @@ const GB = 1024 ** 3
 const PERIOD_START = '2029-12-01T00:00:00.000Z'
 const RENEWS_AT = '2030-01-01T00:00:00.000Z'
 
-// One lived-in workspace: the people, projects and history its pages show.
-// Its dates are fixed, so a relative time ("3 days ago") reads them against
-// the day of the capture.
 const PEOPLE = {
   aoi: { id: 'user-aoi', name: 'Aoi Tanaka', email: 'aoi.tanaka@example.test' },
   kenji: {
@@ -133,14 +116,12 @@ function shell(
   }
 }
 
-/** The projects the header's project menu lists for every state. */
 export const JOINED_PROJECTS = [
   { id: 'project-website', name: 'Website redesign', newCount: 3 },
   { id: 'project-launch', name: 'Q4 launch campaign', newCount: 0 },
   { id: 'project-research', name: 'User research 2026', newCount: 1 },
 ]
 
-/** A monthly JPY contract renewing this month, with this projected overage. */
 function subscription(plan: 'plus' | 'team', overageGb: number) {
   const amount = BILLING_PRICES[plan].jpy.month
   const overageAmount = overageGb * STORAGE_OVERAGE_PRICES.jpy
@@ -246,7 +227,6 @@ const MAYA = contributor(
   '2026-03-11T05:20:00.000Z',
   '2026-11-25T09:15:00.000Z',
 )
-// Joined last week and has not uploaded anything yet.
 const LUCAS = contributor('lucas', 'member', null, null)
 
 const TEAM_MEMBERS = [
@@ -673,7 +653,6 @@ const ARTIFACTS: InventoryArtifactEntry[] = [
   },
 ]
 
-/** The pages a Team workspace shows everyone, its members included. */
 function teamPages(billing: BillingLoaderData, tokens: TokensLoaderData) {
   return {
     tokens,
@@ -752,7 +731,6 @@ export const SETTINGS_STATES = {
       billing: {
         ...TEAM,
         contract: { ...TEAM_SUBSCRIPTION.contract, cancelAtPeriodEnd: true },
-        // A contract that ends at renewal is not charged for the next period.
         monthlyEstimate: {
           ...TEAM_SUBSCRIPTION.monthlyEstimate,
           planAmount: 0,
@@ -773,11 +751,9 @@ export const SETTINGS_STATES = {
     shell: shell('team', 18 * GB, 'member'),
     pages: {
       ...teamPages(
-        // Only owners load the contract, and the estimate needs it.
         { ...TEAM, canManage: false, contract: null, monthlyEstimate: null },
         MEMBER_TOKENS,
       ),
-      // Removed members load for admins only.
       members: members(TEAM_MEMBERS, []),
     },
   },
@@ -807,14 +783,12 @@ function isSettingsStateId(value: unknown): value is SettingsStateId {
   return typeof value === 'string' && Object.hasOwn(SETTINGS_STATES, value)
 }
 
-/** The state a dev route names; a 404 outside Vite dev or for any other. */
 export function requireSettingsState(state: string | undefined): SettingsState {
   if (!isViteDev() || !isSettingsStateId(state))
     throw new Response(null, { status: 404 })
   return SETTINGS_STATES[state]
 }
 
-/** A page of the state a dev route names; a 404 if the state lacks it. */
 export function requireSettingsPage<P extends SettingsPageId>(
   state: string | undefined,
   page: P,

@@ -9,7 +9,6 @@ export interface FileRowData {
   fileName: string
   derivedTitle: string | null
   titleOverride: string | null
-  /** null for legacy rows whose MIME no longer maps to a supported type. */
   renderType: ArtifactType | null
   ownerEmail: string | null
   ownerId: string
@@ -17,11 +16,6 @@ export interface FileRowData {
   ownerImage: string | null
   ownerInitial: string
   ownerIsExternal: boolean
-  /**
-   * Derived from the reserved bot email domain: only server-created bot rows
-   * can hold a `.invalid` address (sign-up rejects the domain), so the email
-   * is as authoritative as users.kind without widening every list query.
-   */
   ownerIsBot?: boolean
   modifiedTime: string | null
   createdTime?: string | null
@@ -41,11 +35,8 @@ export interface FileRowData {
   } | null
   unreadCommentRemainingCount?: number
   recentAttribute?: 'own' | 'joined-project' | 'direct-share' | null
-  /** Whether the registered user is the same as the current user. */
   registeredByMe: boolean
-  /** Client-side ownership gate for list actions; server authorization is unchanged. */
   isOwner?: boolean
-  /** Recent-item placeholder for a shareable the viewer can no longer access. */
   lostAccess?: boolean
   isUnopened?: boolean
   hasDirectGrants?: boolean

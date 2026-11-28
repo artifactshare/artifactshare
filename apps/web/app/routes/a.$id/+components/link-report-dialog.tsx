@@ -34,10 +34,6 @@ export function canSubmitLinkReport(
   return reason !== '' && state !== 'submitting'
 }
 
-/**
- * Report dialog for content reached through a link share. Controlled by the
- * caller so the origin popover and sheet can open it.
- */
 export function LinkReportDialog({
   shareableId,
   open,
@@ -47,7 +43,6 @@ export function LinkReportDialog({
   shareableId: string
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Element to focus when the dialog closes (the caller's trigger). */
   returnFocusTo?: RefObject<HTMLElement | null>
 }) {
   const { t } = useT()
@@ -55,10 +50,6 @@ export function LinkReportDialog({
   const [reason, setReason] = useState<LinkReportReason | ''>('')
   const [note, setNote] = useState('')
   const [state, setState] = useState<ReportDialogState>('editing')
-  // Adjust state when `open` turns true, during render (no effect): a sent
-  // report starts a fresh form, an error keeps the fields, a submission
-  // continues. The caller keys this component by shareable, so a draft never
-  // outlives the artifact it was written for.
   const [seenOpen, setSeenOpen] = useState(open)
   if (open !== seenOpen) {
     setSeenOpen(open)
@@ -94,11 +85,9 @@ export function LinkReportDialog({
       <DialogContent
         onCloseAutoFocus={(event) => {
           const target = returnFocusTo?.current
-          // Only claim the return focus when the ⓘ is still shown.
           if (!target || !target.isConnected || target.offsetParent === null)
             return
           event.preventDefault()
-          // The ⓘ sits in a clipped meta row; do not scroll it into view.
           target.focus({ preventScroll: true })
         }}
       >

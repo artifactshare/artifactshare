@@ -62,9 +62,6 @@ export async function loader({ context }: Route.LoaderArgs) {
     return Response.json(ProjectsListResponseSchema.parse({ projects }))
   }
 
-  // In-workspace projects only, unpaginated — same scope and reasoning as the
-  // MCP list_projects tool: projects are a small curated set, and the token
-  // must not reach outside its own workspace.
   const projects = await withDb(
     async (db) => await listPlacementProjects(db, user.workspaceId, user),
   )

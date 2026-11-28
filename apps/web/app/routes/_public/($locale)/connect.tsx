@@ -112,7 +112,6 @@ export function meta({ loaderData }: Route.MetaArgs) {
 }
 
 // Brand accent for the host marker dot. These are external product brand
-// colors, not part of the core token palette.
 const HOST_DOT: Record<string, string> = {
   claude: '#d97757',
   chatgpt: '#10a37f',
@@ -146,8 +145,6 @@ const connectHostSectionFollowClassName = cn(
   guideSectionFollowClassName,
 )
 
-// Tokenize the connector config so keys and string values can be colored.
-// Numbers/whitespace stay plain — restraint over a full highlighter.
 function highlightJson(code: string): ReactNode[] {
   const out: ReactNode[] = []
   const stringPattern = /"(?:[^"\\]|\\.)*"/y
@@ -268,9 +265,6 @@ function ConnectHostSection({
               className={connectOneClickCtaClassName}
               href={host.oneClick.href}
               // Web connector links (Claude) open in a new tab so the setup
-              // guide stays put. App-scheme links (Cursor's cursor://) stay
-              // in this tab — the OS handles them and a new tab would just be
-              // left blank.
               {...(host.oneClick.href.startsWith('http')
                 ? { target: '_blank', rel: 'noopener noreferrer' }
                 : {})}

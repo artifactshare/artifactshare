@@ -22,8 +22,6 @@ import {
   type ProjectShareDefault,
 } from '~/services/projects.server'
 
-// プロジェクト詳細とサブページ (ファイル全件 / 動きの履歴) で共有する行クエリ。
-// 絞り込み (where) だけ呼び出し側で変える。
 export function projectFileRowsQuery(
   db: Kysely<DB>,
   containerId: string,
@@ -81,8 +79,6 @@ export type ProjectSubpageContext = {
   shareDefaults: ProjectShareDefault[]
 }
 
-// サブページ共通のアクセス判定とアップロードダイアログ用の文脈。
-// アクセス権はプロジェクト詳細と同じ判定 (member または共有された関係者)。
 export async function loadProjectSubpageContext(
   db: Kysely<DB>,
   user: SessionUser,

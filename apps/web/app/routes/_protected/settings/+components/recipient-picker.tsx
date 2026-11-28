@@ -37,7 +37,6 @@ export function RecipientPicker({
   const trimmed = query.trim()
   const fetcher = useFetcher<RecipientSearchData | SessionExpired>()
   const { load } = fetcher
-  // The picker only exists inside an open confirmation, opened on this entry.
   const [openedOn] = useState(useLocation().key)
   useSignInOnSessionExpired(fetcher.data, openedOn)
 
@@ -174,7 +173,6 @@ function RecipientOption({
   )
 }
 
-// Only the current query can supply selectable results or search status.
 function recipientSearchState(
   response: RecipientSearchData | undefined,
   state: string,

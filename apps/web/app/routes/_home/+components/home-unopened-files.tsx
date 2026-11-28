@@ -39,7 +39,6 @@ export function HomeUnopenedFiles({
         titleId="home-unopened-heading"
         title={t('home.unopenedTitle')}
         actions={
-          // Every loaded, nonempty card offers /files, even with no remaining rows.
           !error && files.length > 0 ? (
             <AppMoreLink className="text-xs" to="/files">
               {remaining > 0

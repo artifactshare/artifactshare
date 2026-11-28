@@ -14,8 +14,6 @@ import {
 import { useT } from '~/hooks/use-t'
 import { LinkReportDialog } from './link-report-dialog'
 
-// Mirrors --breakpoint-phone in styles/theme.css; the phone layout gets a bottom sheet
-// instead of a popover.
 const PHONE_QUERY = '(max-width: 519.98px)'
 
 function subscribePhone(onChange: () => void) {
@@ -32,11 +30,6 @@ function useIsPhone(): boolean {
   )
 }
 
-/**
- * Small ⓘ next to the author of a link-shared page. Opening it explains that
- * the page was published by an Artifact Share user and offers the report
- * action; nothing is shown until the viewer asks.
- */
 export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
   const { t } = useT()
   const isPhone = useIsPhone()
@@ -80,7 +73,6 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
             side="bottom"
             className="gap-3 p-4"
             onCloseAutoFocus={(event) => {
-              // The report dialog takes focus when it opens from the sheet.
               if (reportOpen) event.preventDefault()
             }}
           >
@@ -110,7 +102,6 @@ export function LinkOriginInfo({ shareableId }: { shareableId: string }) {
               collisionPadding={8}
               aria-label={t('vw.linkOrigin.title')}
               onCloseAutoFocus={(event) => {
-                // The report dialog takes focus when it opens from here.
                 if (reportOpen) event.preventDefault()
               }}
               className="bg-popover text-popover-foreground ring-foreground/10 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 z-50 flex w-[var(--width-viewer-attribution-popover)] origin-(--radix-popover-content-transform-origin) flex-col gap-3 rounded-[var(--r-md)] p-3 shadow-md ring-1 outline-none"

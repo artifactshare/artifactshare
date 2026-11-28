@@ -19,8 +19,6 @@ import {
 import type { Route } from './+types/api.auth.$'
 
 // Tell the browser to drop cookies + localStorage / IndexedDB on sign-out so
-// no UI prefs (locale, view mode) or stale auth tokens leak across sessions
-// or accounts on a shared browser. Requires HTTPS — a no-op on http:// dev.
 const CLEAR_SITE_DATA = '"cookies", "storage"'
 
 function maybeClearSiteData(url: URL, response: Response): Response {
@@ -37,7 +35,6 @@ function maybeClearSiteData(url: URL, response: Response): Response {
 export async function loader({ request, url }: Route.LoaderArgs) {
   const response = await authHandlerWithHangDetection(request)
   // The device plugin reports expired verification codes as 400. Preserve
-  // existing presets while letting publisher approval show its expired state.
   if (url.pathname === '/api/auth/device' && response.status === 400) {
     const payload = await response
       .clone()
@@ -73,8 +70,6 @@ export async function action({ context, request, url }: Route.ActionArgs) {
   }
   const handled = authHandlerWithHangDetection(request)
   // Better Auth verifies a code under a lock kept on the cached auth instance,
-  // and removes the row while it compares. A client abort must not strand
-  // either, or the next attempt for this address hangs or loses a valid code.
   if (path.includes('email-otp'))
     context.get(ctxContext).waitUntil(handled.catch(() => undefined))
   return maybeClearSiteData(url, await handled)
@@ -100,7 +95,6 @@ async function readDeviceRequestBody(
   }
   try {
     // Match the delegated handler's form decoding, including last-value wins
-    // for repeated fields. Never leave a supported body uninspected.
     const payload: unknown = isJson
       ? await request.clone().json()
       : Object.fromEntries(await request.clone().formData())

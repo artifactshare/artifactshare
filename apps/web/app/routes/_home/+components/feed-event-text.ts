@@ -58,7 +58,6 @@ function publishedText(row: FeedEventRow, actor: string, t: Translate) {
     : t('home.publishedRangeInline', range)
 }
 
-// Preserve placeholders so the renderer inserts links at the translated position.
 export function feedEventText(row: FeedEventRow, t: Translate) {
   const actor = row.actorName ?? t('home.unknownActor')
   const vars = { actor, title: '{title}' }

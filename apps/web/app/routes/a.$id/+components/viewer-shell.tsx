@@ -138,7 +138,6 @@ interface ViewerCommentState {
   focusTargetOnOpen: boolean
   targetThreadId: string | null
   targetThreadScroll: 'center' | 'start'
-  /** Counts conversation choices, so choosing the same one again reopens it. */
   targetThreadRequest: number
   pendingTextAnchor: PendingTextAnchor | null
   pendingComposerOpen: boolean
@@ -244,8 +243,6 @@ export function shouldPromoteLatestVersionRetry(
   return existingKind === 'fallback' && requestedKind === 'reconcile'
 }
 
-// 本文範囲コメントは html / md と static_site の現在の版。static_site はページの
-// 場所 (ファイル・ルートのパスとハッシュルート) ごとに付く。
 export function viewerTextAnchorsEnabled(
   renderType: string | null | undefined,
   isHistoricalVersion: boolean,
@@ -288,7 +285,6 @@ export function viewerCommentReducer(
 ): ViewerCommentState {
   switch (action.type) {
     case 'data-status-changed':
-      // Session owns errors; notify presentation without synthesizing row adoption.
       return { ...state }
     case 'artifact-changed':
       return createViewerCommentState(
@@ -339,8 +335,6 @@ export function viewerCommentReducer(
             ...state,
             panelOpen: true,
             panelHasOpened: true,
-            // Without a matching new message, open normally and preserve
-            // existing deep-link/anchor navigation without a new focus request.
             targetThreadId: action.revisitThreadId ?? state.targetThreadId,
             targetThreadScroll:
               action.revisitThreadId == null
@@ -411,8 +405,6 @@ export function viewerCommentReducer(
     case 'pending-text-anchor-cleared':
       return { ...state, pendingTextAnchor: null, pendingComposerOpen: false }
     case 'comment-location-changed':
-      // A selection or inline conversation belongs to the location it was
-      // opened on; panel conversations stay open.
       return {
         ...state,
         pendingTextAnchor: null,
@@ -443,7 +435,6 @@ export function useViewerComments({
   onPanelOpened,
   commentLocation,
 }: {
-  /** Static sites: the displayed location; other locations are not checked here. */
   commentLocation?: string | null
   framePresent: boolean
   artifactId: string
@@ -596,8 +587,6 @@ export function useViewerComments({
       newCommentMessages?: ReadonlyArray<NewCommentMessage>,
     ) => {
       returnFocusRef.current = returnFocusTo ?? getActiveElement()
-      // Only the first ordinary open gets the entry shortcut. Reopening must
-      // not replay it, and explicit navigation always keeps its own target.
       const pairs =
         newCommentMessages ??
         (!state.panelHasOpened && !state.targetThreadId
@@ -624,7 +613,6 @@ export function useViewerComments({
     ],
   )
 
-  // Construct read-only owners during render; attach only for the committed artifact.
   const createDisplay = () => {
     let settlementListener: (() => void) | null = null
     let attached = false
@@ -638,8 +626,6 @@ export function useViewerComments({
     const contacts = {
       subscribeSettlement(listener: () => void) {
         settlementListener = listener
-        // Layout attachment can observe settlement before socket policy registers.
-        // Coalesce only that active owner's continuation, not its data notification.
         if (attached && pendingSettlement) {
           pendingSettlement = false
           listener()
@@ -679,8 +665,6 @@ export function useViewerComments({
       },
     }
   }
-  // Revalidation and version props must not replace a committed owner.
-  // Render-local state is rolled back with an abandoned navigation render.
   const [owner, setOwner] = useState(() => ({
     artifactId,
     display: createDisplay(),
@@ -730,8 +714,6 @@ export function useViewerComments({
     session.ensureTarget()
   }, [session, acceptedTargetId])
 
-  // The socket lifecycle keeps authorization recovery independent from the
-  // ordinary comments refresh scheduler.
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup
   useEffect(() => {
     type ConnectionKind = 'ordinary' | 'renewal' | 'bounded'
@@ -906,7 +888,6 @@ export function useViewerComments({
         ) {
           return { outcome: 'cancelled' }
         }
-        // A same-sequence abort is the ordinary deadline, not supersession.
         if (controller.signal.aborted) return { outcome: 'indeterminate' }
         return completion.outcome === 'authorized'
           ? { ...completion, capture }
@@ -1207,8 +1188,6 @@ export function useViewerComments({
           stopRecovery()
           return
         }
-        // The first connection's summary must not cancel initial navigation.
-        // Later connections reconcile changes missed while the socket was down.
         if (hasOpenedSocket) session.invalidatePages()
         hasOpenedSocket = true
         finishAttempt('success')
@@ -1217,7 +1196,6 @@ export function useViewerComments({
         ordinaryCheckUsed = false
         ordinaryIndeterminate = false
         renewalActive = false
-        // An open completes the episode; hiding pending work preserves these.
         renewalAttempts = 0
         boundedAttempts = 0
         reconnectStopped = false
@@ -1343,8 +1321,6 @@ export function useViewerComments({
           return
         }
         session.retainRecovery(result.capture, result.threads)
-        // HTTP authorization and reconciliation must not depend on WebSocket
-        // availability. Reuse the same bounded windows/ranges as socket open.
         if (reconcileAfterRecovery) {
           reconcileAfterRecovery = false
           if (!session.applyRecovery()) {
@@ -1560,7 +1536,6 @@ function useLatestVersionNotice({
   const isAnonymousLookup = requestedLookupUrl?.endsWith('/current-version')
   const lookupUrl =
     isAnonymousLookup && anonymousLookupDenied ? null : requestedLookupUrl
-  // Authenticated pointer updates must not reset the polling cadence or cooldown.
   const anonymousVersionId = isAnonymousLookup ? currentVersionId : null
   const lookupUrlRef = useLatestRef(lookupUrl)
   const currentVersionIdRef = useLatestRef(currentVersionId)
@@ -1697,7 +1672,6 @@ function useLatestVersionNotice({
           url === lookupUrlRef.current &&
           !controller.signal.aborted
         ) {
-          // A revoked anonymous link stays disabled until the page is reopened.
           lookupUrlRef.current = null
           latestCheckSeqRef.current += 1
           clearLatestVersionRetry()
@@ -1835,8 +1809,6 @@ function useViewerShellController({
     artifact.id,
     createViewerShellState,
   )
-  // artifact 切替はコメント reducer と同じく render-phase 比較で検知し、
-  // 閲覧者パネルを閉じる (取得済みリストは useViewerList が破棄する)。
   if (state.artifactId !== artifact.id) {
     dispatch({ type: 'artifact-changed', artifactId: artifact.id })
   }
@@ -1888,10 +1860,6 @@ function useViewerShellController({
     routerLocation.search,
     targetCommentId,
   ])
-  // コメントパネル (全体コメントの表示・新規作成) と live 接続 (在席・
-  // comments-changed) はコメント可能な種別で有効化する。接続は本文を抱える
-  // sandbox iframe ではなく apex 側の閲覧画面から張るため、static_site でも
-  // sandbox の隔離に触れない。
   const [liveConnected, setLiveConnected] = useState(false)
   const latestVersion = useLatestVersionNotice(
     latestVersionOptions(
@@ -1924,8 +1892,6 @@ function useViewerShellController({
   const handleCommentsPanelOpened = useCallback(() => {
     closeAccessRequests()
     dispatch({ type: 'history-open-changed', open: false })
-    // コメントパネルが開く合流点。閲覧者パネルとの排他 (AC 7) をここで足す。
-    // 強制閉鎖なのでフォーカスは入口へ戻さない (開いたパネルに残す)。
     dispatch({
       type: 'viewer-list-open-changed',
       open: false,
@@ -1936,12 +1902,7 @@ function useViewerShellController({
     renderType,
     isHistoricalVersion,
   )
-  // static_site で表示中のコメントの場所。別の場所の会話は確認待ちにしない。
   const [commentLocation, setCommentLocation] = useState<string | null>(null)
-  // 全体コメントの新規作成 composer は static_site と pdf と video。html / md は本文選択で付ける。
-  // pdf / video の本文も別オリジンの iframe にあり、位置・時刻コメントは後続タスク。
-  // PDFs: the page the viewer shows, on the version it was reported for. A
-  // new comment from the panel is placed on it; a page comment opens its page.
   const [shownPdfPage, setShownPdfPage] = useState<PdfCommentPage | null>(null)
   const [pdfOpenRequest, setPdfOpenRequest] = useState<{
     pageNumber: number
@@ -1963,8 +1924,6 @@ function useViewerShellController({
               ),
             openRequest: pdfOpenRequest,
             displayedVersionId: artifact.currentVersionId ?? null,
-            // The request names the version the card's navigation was
-            // decided for; only a frame showing that version moves.
             openPage: (pageNumber, versionId) =>
               setPdfOpenRequest({ pageNumber, versionId }),
           }
@@ -1991,7 +1950,6 @@ function useViewerShellController({
     },
     [clearLocationComments],
   )
-  // 閲覧者パネル。入口 (メタ行・メニュー) は showViewerListMetaEntry ゲート。
   const viewerListAvailable = artifact.showViewerListMetaEntry === true
   const viewerListReturnFocusRef = useRef<HTMLElement | null>(null)
   const viewerList = useViewerList({
@@ -2003,7 +1961,6 @@ function useViewerShellController({
     (open: boolean) => {
       if (open) {
         closeAccessRequests()
-        // 双方向排他: 閲覧者パネルを開くとコメントパネルも閉じる (AC 7)。
         comments.changePanelOpen(false)
         viewerList.openFetch()
       }
@@ -2145,9 +2102,6 @@ function useViewerShellController({
     targetCommentId,
   ])
 
-  // 新 version 登録成功後に panel を auto-close するための timer。
-  // 1.2s 遅延で「list に新 version が積まれた」を user が視認してから閉じる。
-  // 再開時 / unmount 時には残ってる timer を clear して race を防ぐ。
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleClosePanel = useCallback(() => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -2198,10 +2152,6 @@ function useViewerShellController({
     }
 
     // OS file drag は drag source が OS のため `dragend` が window で発火しない。
-    // drop が history panel 内 dropzone で発火して stopPropagation された場合も
-    // viewer の DropCatcher が active のまま残るので、window-level の `drop` で
-    // 必ず catcher を off にする (capture phase で常に拾う)。viewport 外への
-    // dragleave (relatedTarget が null) も同様に clear する。
     function onWindowDrop() {
       clearDropState()
     }
@@ -2253,8 +2203,6 @@ function useViewerShellController({
   }
 
   const showLatestVersion = () => {
-    // The notice button disappears, and the frame remounts on refresh.
-    // Keep focus on the viewer that survives both updates.
     if (!canViewHistory) viewerRef.current?.focus({ preventScroll: true })
     latestVersion.clearNewerVersion()
     revalidator.revalidate()
@@ -2596,7 +2544,6 @@ function viewerCapabilities(
     renderType === 'static_site' ||
     renderType === 'pdf' ||
     renderType === 'video'
-  // A static site's text comments live on its pages; the panel names the page.
   const commentLocationsShown = renderType === 'static_site'
   const exportSupported =
     !isHistoricalVersion && artifactSupportsExport(renderType)
@@ -2783,8 +2730,6 @@ function ViewerTextComments({
         onThreadsChange={comments.replaceThreads}
         onClose={comments.closeInlinePopover}
         onOpenConversation={(threadId) => {
-          // 履歴・閲覧者パネルのクローズは targetThread → onPanelOpened
-          // (handleCommentsPanelOpened) が担うため、直接 dispatch しない。
           comments.targetThread(threadId, { scroll: 'start' })
         }}
       />

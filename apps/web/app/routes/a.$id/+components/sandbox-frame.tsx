@@ -117,7 +117,6 @@ function addFrameOffset(
   }
 }
 
-// A conversation jump that opened another static-site location.
 type PendingJump = { threadId: string; location: string }
 
 type PdfPage = { pageNumber: number; pageCount: number }
@@ -137,7 +136,6 @@ type SandboxFrameProps = {
   fallbackToIndex: boolean
   commentThreads: ReadonlyArray<CommentThreadView>
   targetThreadId: string | null
-  /** Changes on every conversation choice, including the same one again. */
   targetRequest?: number
   highlightThreadId: string | null
   followsAppTheme: boolean
@@ -149,7 +147,6 @@ type SandboxFrameProps = {
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
   onOutsidePointerDown: () => void
   onFramePathChange?: (path: string) => void
-  /** Static sites: the displayed comment location, or null when unusable. */
   onCommentLocationChange?: (location: string | null) => void
   sandboxPermissions: 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
   children?: ReactNode
@@ -161,8 +158,6 @@ export const SANDBOX_FRAME_ALLOW =
 const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
 const AUTOMATIC_RECOVERY_ATTEMPT_LIMIT = 1
 
-// A ready-check can be lost while the frame document is still swapping. The
-// cadence only has to beat the probe below, so tests wait for it by name.
 export const FRAME_READY_CHECK_INTERVAL_MS = 250
 
 export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
@@ -173,8 +168,6 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 
 export function SandboxFrame(props: SandboxFrameProps) {
   const { t } = useT()
-  // The app marks cutover unavailability before the execution Worker is ready.
-  // Do not mount the frame controller: probing or renewing cannot recover it.
   if (new URL(props.url).pathname === DELIVERY_UNAVAILABLE_PATH) {
     return (
       <ViewerBodySurface>
@@ -209,8 +202,6 @@ function ActiveSandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
   const hydrated = useHydrated()
-  // An SSR instance leaves src owned by its bootstrap script. Hydration and
-  // unrelated renders must never spend its one-time delivery token again.
   const [clientMounted] = useState(hydrated)
   const frameSrc =
     clientMounted || controller.frameSourceChanged
@@ -326,7 +317,6 @@ function ExternalLinkInterstitial({
 export function ViewerBodySurface(props: ComponentProps<'main'>) {
   return (
     <main
-      // full-bleed by design: the viewer body sits flush under the topbar
       data-gap-audit-allow-touch
       className="bg-surface-warm relative min-h-0 flex-auto overflow-hidden overscroll-none"
       {...props}
@@ -504,24 +494,14 @@ function useSandboxFrameController({
   const readyFallbackTimeoutRef = useRef<number | null>(null)
   const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
-  // Counts chosen frame destinations (links, jumps, recovery).
   const frameDestinationRef = useRef(0)
-  // Counts conversation jump choices; a pending jump checks it is the latest.
   const jumpGenerationRef = useRef(0)
-  // The reader moved elsewhere (a highlight choice on this page, or a history
-  // or authored route change): a destination whose renewal is still pending
-  // must not replace the page the reader is now on.
   const supersedePendingDestination = () => {
     frameDestinationRef.current += 1
     jumpGenerationRef.current += 1
   }
-  // A jump whose navigation has started and whose location has not yet been
-  // checked. If the opened document settles elsewhere (an SPA redirect), the
-  // conversation cannot be found there.
   const pendingJumpRef = useRef<PendingJump | null>(null)
   const markJumpUnavailable = useEffectEvent((threadId: string) => {
-    // The cannot-find verdict for a page this version does not serve, or one
-    // the opened document left, is known only once the jump is checked.
     // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
     onAnchorResolutions?.([
       {
@@ -544,16 +524,12 @@ function useSandboxFrameController({
   useEffect(() => () => hashSync.clear(), [hashSync])
   const mermaidRenderChallengeRef = useRef<string | null>(null)
   const trustedMessageOrigin = new URL(frameUrl).origin
-  // PDFs: the page shown by the current document, from its last report, and
-  // the viewer's bridge to the comment panel.
   const pdfBridge = use(PdfPageContext)
   const pdfBridgeRef = useRef(pdfBridge)
   useLayoutEffect(() => {
     pdfBridgeRef.current = pdfBridge
   })
   const pdfPageRef = useRef<PdfPage | null>(null)
-  // The sync token given to the document that last answered the ready
-  // check; reports carrying any other token come from another document.
   const pdfPageTokenRef = useRef<string | null>(null)
   const setPdfPage = useCallback(
     (page: PdfPage | null) => {
@@ -580,9 +556,6 @@ function useSandboxFrameController({
     }),
     [locale],
   )
-  // Static sites scope comments to the displayed page location: the file or
-  // route path plus a hash route. Same-document route changes are reported by
-  // the frame; until then the frame URL is the best known location.
   const locationScoped = renderType === 'static_site'
   const servedFiles = useMemo(() => new Set(bundlePaths), [bundlePaths])
   const servedLocation = useCallback(
@@ -618,9 +591,6 @@ function useSandboxFrameController({
     servedLocation,
     fallbackToIndex,
   ])
-  // Recovery reopens the route the document last reported (an SPA may have
-  // moved there through history), not the iframe's original source. It is
-  // read after the renewal response, so a held response uses the latest one.
   const recoveryDestinationRef = useRef(frameUrl)
   useLayoutEffect(() => {
     const parsed = new URL(frameUrl)
@@ -635,13 +605,11 @@ function useSandboxFrameController({
       ? new URL(href, parsed.origin).href
       : frameUrl
   }, [locationScoped, commentLocation, frameUrl, fallbackToIndex])
-  // The parent learns the location each document reports for itself.
   const parentLocationRef = useRef<string | null | undefined>(undefined)
   const highlights = useMemo(() => {
     const textHighlights = commentThreads.flatMap((thread) => {
       const subject = thread.subject
       if (subject.kind !== 'text') return []
-      // Only conversations on the displayed location are highlighted.
       if (locationScoped && subject.targetPath !== commentLocation) return []
       return {
         ...subject,
@@ -684,7 +652,6 @@ function useSandboxFrameController({
         message.targetPath !== commentLocation
       )
         return
-      // Verdicts apply only to conversations on the measured location.
       const scoped = locationScoped
         ? {
             ...message,
@@ -698,7 +665,6 @@ function useSandboxFrameController({
             ),
           }
         : message
-      // A settled verdict on the jump's location completes the jump.
       const jump = pendingJumpRef.current
       if (
         jump?.location === message.targetPath &&
@@ -864,8 +830,6 @@ function useSandboxFrameController({
           message.versionId !== versionId)
       )
         return
-      // A static-site selection belongs to the location its document measured,
-      // which must be the location shown now.
       if (
         locationScoped &&
         (!message.selectorFormat ||
@@ -910,21 +874,17 @@ function useSandboxFrameController({
   const handleTextSelectionClearedMessage = useEffectEvent(() => {
     onTextSelectionClear()
   })
-  // In-artifact frame navigation, for link clicks and conversation jumps.
   const navigateFrame = useEffectEvent(
     (
       destination: string,
       isCurrent: () => boolean = () => true,
       jump: PendingJump | null = null,
     ) => {
-      // Only a conversation jump's own navigation awaits its location.
       pendingJumpRef.current = null
       onFramePathChange?.(
         normalizeStaticSiteFramePath(new URL(destination).pathname),
       )
       frameNavigationIdRef.current += 1
-      // Repeated ready answers advance frameNavigationIdRef (liveness), so a
-      // renewal is superseded only by a later choice of frame destination.
       const destinationId = (frameDestinationRef.current += 1)
       automaticRecoveryAttemptsRef.current = 0
       const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
@@ -934,9 +894,6 @@ function useSandboxFrameController({
         hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
         clearReadyFallback()
-        // A conversation jump navigates from its target effect: the target is
-        // set by several callers (panel, notifications, deep links), and the
-        // frame must load that location before the jump can complete.
         // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
         setViolations([])
         pendingJumpRef.current = jump
@@ -944,22 +901,18 @@ function useSandboxFrameController({
         setLoadState('loading')
         setFrameUrl(destination)
         // The same src would not navigate a document that moved away from it
-        // through history; load it again.
         if (destination === frameUrl) restartFrameInstance()
         return
       }
       void refreshSandboxFrameUrl(shareableId, versionId, destination, {
         navigation: true,
       }).then((nextFrameUrl) => {
-        // A later navigation or conversation choice supersedes this renewal.
         if (destinationId !== frameDestinationRef.current || !isCurrent())
           return
         if (!nextFrameUrl) {
           toast(t('toast.linkRecoveryFailed'))
           return
         }
-        // The current document remains active when refresh fails. Invalidate
-        // its handshake only once the replacement navigation can proceed.
         securityTokenRef.current = null
         hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
@@ -1021,8 +974,6 @@ function useSandboxFrameController({
     const challenge = ensureSandboxChallenge(securityChallengeRef.current)
     securityChallengeRef.current = challenge
     // ready-check response は表示監視の liveness signal でもある。ready-check は非機密の確認メッセージ。soft navigation 直後の初期
-    // about:blank に sandbox origin 指定で送ると Chrome が mismatch を
-    // console に出すため、親から子への送信だけ targetOrigin を広くする。
     frameRef.current?.contentWindow?.postMessage(
       {
         ...SANDBOX_READY_CHECK_MESSAGE,
@@ -1071,9 +1022,6 @@ function useSandboxFrameController({
     fallbackToIndex,
   ])
 
-  // The common viewers (PDF and video) show their controls in the app's
-  // language and theme. These are presentation only and separate from the
-  // ready handshake's token.
   const showsViewerPreferences = renderType === 'pdf' || renderType === 'video'
   const sendViewerPreferences = useCallback(() => {
     if (!showsViewerPreferences) return
@@ -1087,10 +1035,6 @@ function useSandboxFrameController({
     )
   }, [locale, showsViewerPreferences, trustedMessageOrigin])
 
-  // Opening a document should let the keyboard reach it without a click, once,
-  // and only while the reader has not started doing something in the viewer.
-  // Later answers (revalidation, reconnects, in-frame navigation) never offer
-  // it again, and a comment link keeps its own destination.
   const initialFocusRef = useRef<'pending' | 'settled'>(
     targetThreadId ? 'settled' : 'pending',
   )
@@ -1099,14 +1043,12 @@ function useSandboxFrameController({
   const offerInitialFocus = useEffectEvent(() => {
     if (initialFocusRef.current === 'settled' || !frameAnsweredRef.current)
       return
-    // A background tab is offered focus when it is first shown.
     if (document.visibilityState !== 'visible') return
     initialFocusRef.current = 'settled'
     if (readerActedRef.current) return
     const selection = window.getSelection()
     if (selection && !selection.isCollapsed) return
     // A task, not an animation frame: a page that is not painting yet still
-    // receives the focus, and the same guard keeps a control chosen meanwhile.
     window.setTimeout(() => {
       if (readerActedRef.current) return
       const active = document.activeElement
@@ -1116,7 +1058,6 @@ function useSandboxFrameController({
   })
   useEffect(() => {
     const acted = (event: Event) => {
-      // The frame gaining focus is not the reader working in the viewer.
       if (event.target === frameRef.current) return
       readerActedRef.current = true
     }
@@ -1145,11 +1086,9 @@ function useSandboxFrameController({
     frameAnsweredRef.current = false
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
-    // A new document reports its own page once it has answered.
     pdfPageTokenRef.current = null
     setPdfPage(null)
     hashSync.flush()
-    // A destination confirmed from a previous document must not survive it.
     setPendingExternalNavigation(null)
     mermaidRenderChallengeRef.current = null
     requestFrameReady()
@@ -1171,7 +1110,6 @@ function useSandboxFrameController({
     )
     if (!message) return
     if (message.kind === 'pdf-page-changed') {
-      // Only the PDF document that answered this frame's latest ready check.
       if (
         renderType !== 'pdf' ||
         !pdfPageTokenRef.current ||
@@ -1184,7 +1122,6 @@ function useSandboxFrameController({
           : null,
       )
     } else if (message.kind === 'csp-violation') {
-      // Keep early reports without letting environment noise evict artifact reports.
       const entry = { ...message, id: crypto.randomUUID() }
       setViolations((prev) =>
         retainCspViolation(prev, entry, trustedMessageOrigin, renderType),
@@ -1200,11 +1137,8 @@ function useSandboxFrameController({
         sandboxExternalLinkPolicyMessage(lowTrust ? 'parent' : 'direct'),
         trustedMessageOrigin,
       )
-      // Every document that answers, including a reloaded or replacement
-      // one, gets the current preferences.
       sendViewerPreferences()
       if (renderType === 'pdf') {
-        // The answering document reports its page under a token of its own.
         pdfPageTokenRef.current = createSandboxChallenge()
         frameRef.current?.contentWindow?.postMessage(
           pdfPageSyncMessage(pdfPageTokenRef.current),
@@ -1220,8 +1154,6 @@ function useSandboxFrameController({
       )
         return
       if (locationScoped) {
-        // The URL alone decides the location; in-page fragments are not part
-        // of it. Paths outside this version's files have no location.
         const location = servedLocation(
           commentLocationFromUrl(message.path, message.hash, fallbackToIndex),
         )
@@ -1232,9 +1164,6 @@ function useSandboxFrameController({
             ? current
             : { frameUrl, frameInstance, location },
         )
-        // The jump's document settled on another location (for example an
-        // SPA redirect): the conversation's place is not shown, so the jump
-        // ends in the cannot-find state rather than waiting for its text.
         const jump = pendingJumpRef.current
         if (jump && jump.location !== location) {
           pendingJumpRef.current = null
@@ -1298,7 +1227,6 @@ function useSandboxFrameController({
     }
   })
   useLayoutEffect(() => {
-    // Subscribe during commit, before the iframe can report while parsing.
     const onMessage = (event: MessageEvent) => handleFrameMessage(event)
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
@@ -1321,7 +1249,6 @@ function useSandboxFrameController({
     } else if (loadState === 'ready') {
       reportAnchorChecking(true)
     } else {
-      // Recovery transitions retain the deadline established for this frame URL.
       reportAnchorChecking(remaining > 0)
       if (remaining > 0) {
         timer = window.setTimeout(() => reportAnchorChecking(false), remaining)
@@ -1338,8 +1265,6 @@ function useSandboxFrameController({
     sendHighlights()
   }, [loadState, sendHighlights])
 
-  // A language change re-runs this; a theme change is applied to the root
-  // element first (see the theme menus), so it is observed there.
   useEffect(() => {
     if (!showsViewerPreferences || loadState !== 'ready') return
     sendViewerPreferences()
@@ -1351,14 +1276,11 @@ function useSandboxFrameController({
     return () => observer.disconnect()
   }, [loadState, showsViewerPreferences, sendViewerPreferences])
 
-  // A frame that is not showing its document, or is gone, shows no page.
   useEffect(() => {
     if (loadState !== 'ready') setPdfPage(null)
   }, [loadState, setPdfPage])
   useEffect(() => () => setPdfPage(null), [setPdfPage])
 
-  // Each choice is handled once, by the frame shown when it is made: it
-  // opens a page only in a document showing a page, and only one it has.
   const handledPdfOpenRef = useRef(pdfOpenPage)
   useEffect(() => {
     if (!pdfOpenPage || handledPdfOpenRef.current === pdfOpenPage) return
@@ -1368,7 +1290,6 @@ function useSandboxFrameController({
       renderType !== 'pdf' ||
       loadState !== 'ready' ||
       !shown ||
-      // A frame still showing another version has different pages.
       pdfOpenPage.versionId !== versionId ||
       pdfOpenPage.pageNumber > shown.pageCount
     )
@@ -1391,9 +1312,6 @@ function useSandboxFrameController({
     })
   }, [loadState])
 
-  // A conversation on another static-site location opens that location first
-  // (routes load through the version's fallback to index). Only the latest
-  // choice navigates; the jump completes once its text is verified there.
   const targetLocation = useMemo(() => {
     if (!locationScoped || !targetThreadId) return null
     const thread = commentThreads.find((item) => item.id === targetThreadId)
@@ -1405,14 +1323,9 @@ function useSandboxFrameController({
       targetThreadId && targetLocation
         ? `${targetRequest}\n${targetThreadId}\n${targetLocation}`
         : null
-    // A jump waits until the frame's document is ready: on first load that
-    // document carries the entry authority that lets the frame open other
-    // paths, so a deep link or notification must not replace it early.
     if (request && targetLocation !== commentLocation && loadState !== 'ready')
       return
     if (request === jumpRequestRef.current) return
-    // Any new choice, including one that needs no navigation or clears the
-    // target, supersedes a jump whose renewal is still pending.
     jumpRequestRef.current = request
     jumpGenerationRef.current += 1
     pendingJumpRef.current = null
@@ -1422,12 +1335,10 @@ function useSandboxFrameController({
     const href = servedLocation(targetLocation)
       ? commentLocationHref(targetLocation, fallbackToIndex)
       : null
-    // A page this version no longer serves cannot hold the text.
     if (!href) {
       markJumpUnavailable(targetThreadId)
       return
     }
-    // Opening the location also updates the export path, as link clicks do.
     // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
     navigateFrame(
       new URL(href, trustedMessageOrigin).href,
@@ -1588,7 +1499,6 @@ export async function refreshSandboxFrameUrl(
   options: {
     navigation?: boolean
     getHash?: () => string
-    // Recovery reads its destination after the response, like its hash.
     getTargetUrl?: () => string
   } = {},
 ): Promise<string | null> {
@@ -1628,8 +1538,6 @@ export async function refreshSandboxFrameUrl(
   if (typeof body?.sandboxUrl !== 'string') return null
   let nextUrl = new URL(options.getTargetUrl?.() ?? targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
-  // A renewal may advance the published version, but never the artifact,
-  // authorization kind, or deployment's execution domain.
   const executionEnv = {
     APP_ENV: nextUrl.hostname.endsWith(SANDBOX_DEV_SUFFIX)
       ? 'development'
@@ -1643,9 +1551,6 @@ export async function refreshSandboxFrameUrl(
     entrypointUrl.hostname,
     executionEnv,
   )
-  // The app server issues both frame URLs. In development the sandbox may run
-  // on a non-default port (`DEV_SANDBOX_PORT`), so the renewal must
-  // stay on the port of the server-issued entrypoint instead of a constant.
   const expectedPort =
     executionEnv.APP_ENV === 'production' ? '' : entrypointUrl.port
   if (
@@ -1661,8 +1566,6 @@ export async function refreshSandboxFrameUrl(
     entrypointUrl.port !== expectedPort
   )
     return null
-  // The frame src may still be the previous renewal entry URL. Recover its
-  // validated in-artifact destination before constructing the next renewal.
   const previousNext = nextUrl.searchParams.get('as_next')
   const isRenewalEntry = nextUrl.searchParams.has('__as_token')
   if (isRenewalEntry) {
@@ -1695,7 +1598,6 @@ export async function refreshSandboxFrameUrl(
       nextUrl.hash = entrypointUrl.hash
     } else {
       // Redirects without a fragment inherit the request fragment. Keep a
-      // subpage's destination independent of the entrypoint's outer hash.
       entrypointUrl.hash = nextUrl.hash
     }
     entrypointUrl.searchParams.set(

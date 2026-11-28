@@ -66,9 +66,6 @@ export interface RecentContentProps {
   hasHiddenHistory?: boolean
   historyCardinality?: number
   now?: string
-  /** この route loader が評価したフラグ。`recentRowActivitySelects` で出し分けた
-   * 列 (版数・最新版・未読 2 列) を読む表示は、すべてこの値でゲートする。親 layout の
-   * 評価とずれると、列が無いのに表示しようとする不整合になる */
   unreadEnabled?: boolean
   pagination?: boolean
   error?: boolean

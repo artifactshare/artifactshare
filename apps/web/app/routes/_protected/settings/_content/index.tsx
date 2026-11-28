@@ -39,8 +39,6 @@ export async function loader({
   const user = requireUser(context)
   const filters = parseMembersPageFilters(new URL(request.url).searchParams)
   const db = createDb()
-  // The role shown on the page comes from the Settings shell. Removed members
-  // are still authorized here, on the request's own active membership.
   const [membersPage, admin] = await Promise.all([
     loadWorkspaceMembersPage(db, user.workspaceId, filters),
     settingsActiveAdmin(context, request),
@@ -88,8 +86,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         const userId = stringValue(form.get('userId'))
         if (!userId) return settingsFailure(intent, 'invalid')
         result = await removeWorkspaceMember(db, user, userId)
-        // A retry after a lost response finds the member already removed.
-        // The first request committed the removal, so finish the transfer.
         if (
           result.kind === 'not-found' &&
           (await isRemovedWorkspaceMember(db, user.workspaceId, userId))

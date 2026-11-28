@@ -50,7 +50,6 @@ import { cn } from '~/lib/utils'
 import type { TKey } from '~/i18n/messages'
 import type { Route } from './+types/device'
 // better-auth の device-authorization 既定コード長。この長さに達する前に verify を
-// 叩くと、入力途中で invalid エラーが表示される。
 const USER_CODE_LENGTH = 8
 
 const useIsomorphicLayoutEffect =
@@ -399,7 +398,6 @@ function useDeviceCodeInput(initialCode: string) {
       ? codeInput.editedValue
       : formatUserCode(initialCode)
   const initialCleanCode = cleanUserCode(initialCode).slice(0, USER_CODE_LENGTH)
-  // Completing a partial prefill or changing its formatting is not manual entry.
   const requiresConfirmation =
     initialCleanCode.length > 0 &&
     cleanUserCode(userCode).startsWith(initialCleanCode)
@@ -688,7 +686,6 @@ export default function Device({ loaderData }: Route.ComponentProps) {
   )
 }
 
-// Context can disappear after verification when another tab handles the code.
 async function reverifyMissingApproval(code: string): Promise<VerifyState> {
   try {
     const next = verifyStateFrom(await deviceVerify(code), code)

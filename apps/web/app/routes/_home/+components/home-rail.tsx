@@ -16,8 +16,6 @@ import { AppSectionHeader } from '~/components/app/app-section-header'
 
 const EMPTY_RECENT: FileRowData[] = []
 
-// レール行の数値: 閲覧は常時、コメントは 1 件以上のときだけ (企画 §3 項 8)。
-// コメント数はモバイル幅で落としてよいが閲覧数は落とさない (§4)
 function RailCounts({ data }: { data: FileRowData }) {
   const { tPlural } = useT()
   return (

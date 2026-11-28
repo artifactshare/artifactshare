@@ -20,8 +20,6 @@ export function retainCspViolation<T extends CspViolationMessage>(
       renderType,
       entry.blockedURI,
     )
-    // Before the type settles, reserve a separate bounded group for CDN
-    // sources that could become artifact reports. Markdown never uses it.
     const group =
       renderType === null &&
       classification === 'environment' &&

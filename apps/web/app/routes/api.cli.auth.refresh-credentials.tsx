@@ -52,8 +52,6 @@ export async function action({ request }: Route.ActionArgs) {
       401,
     )
   }
-  // Preserve legacy per-field normalization: malformed metadata must not
-  // discard a valid sibling field, especially the ID used for superseding.
   const payload = await request.json().catch(() => null)
   const readMetadata = (field: 'device_name' | 'device_id') => {
     const value =

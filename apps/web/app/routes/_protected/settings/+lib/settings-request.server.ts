@@ -8,11 +8,6 @@ import { workspaceAdminQuery } from '~/services/access.server'
 import { createDb } from '~/services/db.server'
 import { planTier } from '~/lib/plan-tier'
 
-/**
- * The workspace row Settings reads once per request. It stays on the server:
- * the shell serializes only its display projection, and billing and external
- * access derive their own feature responses from it.
- */
 export type SettingsWorkspaceSnapshot = {
   id: string
   name: string
@@ -33,8 +28,6 @@ type SettingsRequestReads = {
   role?: Promise<WorkspaceMemberRole | null>
 }
 
-// Kept in the request's own router context, so a read never outlives its
-// request.
 const settingsRequestReads = createContext<SettingsRequestReads | null>(null)
 
 function readsFor(context: Readonly<RouterContextProvider>) {
@@ -46,10 +39,6 @@ function readsFor(context: Readonly<RouterContextProvider>) {
   return reads
 }
 
-/**
- * The viewer's workspace, read at most once per request whichever of the
- * Settings middleware and loaders asks first.
- */
 export function settingsWorkspace(
   context: Readonly<RouterContextProvider>,
 ): Promise<SettingsWorkspaceSnapshot> {
@@ -58,10 +47,6 @@ export function settingsWorkspace(
   return reads.workspace
 }
 
-/**
- * The viewer's role from their active membership in the current workspace, or
- * null without one. Read at most once per request.
- */
 export function settingsActiveRole(
   context: Readonly<RouterContextProvider>,
 ): Promise<WorkspaceMemberRole | null> {
@@ -72,26 +57,14 @@ export function settingsActiveRole(
 
 export const SETTINGS_SHELL_ROUTE_ID = 'routes/_protected/settings/_layout'
 
-/**
- * Whether this request runs the Settings shell loader. A document always
- * does; a Single Fetch data request does only when it names the shell among
- * the routes it loads. Pages use the shell's reads when it runs and their own
- * feature readers when only they revalidate.
- */
 export function settingsShellLoads(request: Request) {
   const url = new URL(request.url)
   // Only a Single Fetch data request (`.data`) filters its loaders; a document
-  // runs every matched loader whatever its query says.
   if (!url.pathname.endsWith('.data')) return true
   const routes = url.searchParams.get('_routes')
   return !routes || routes.split(',').includes(SETTINGS_SHELL_ROUTE_ID)
 }
 
-/**
- * Whether the viewer is an active admin. The shell's role read answers it
- * when the shell runs in this request; a page revalidating alone checks with
- * the shared admin query.
- */
 export async function settingsActiveAdmin(
   context: Readonly<RouterContextProvider>,
   request: Request,
@@ -109,7 +82,6 @@ export async function settingsActiveAdmin(
   return Boolean(row)
 }
 
-/** The serialized Settings shell: display fields only, for every viewer. */
 export async function loadSettingsShell(
   context: Readonly<RouterContextProvider>,
 ): Promise<SettingsShellData> {

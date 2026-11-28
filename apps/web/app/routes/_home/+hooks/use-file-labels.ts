@@ -9,7 +9,6 @@ export interface FileLabels {
   views: string
   activity: string
   visibility: string
-  /** null when modifiedTime is unset — callers choose their own placeholder. */
   modified: string | null
 }
 

@@ -10,8 +10,6 @@ export function feedLocation(
   const isDigest = typeof row.viewedFileCount === 'number'
   const isAddDigest =
     row.type === 'artifact_created' && (row.addCount ?? 0) >= 2
-  // 場所は単一対象の行だけ。閲覧ダイジェスト (複数ファイル束ね) と追加束ね
-  // (本文のプロジェクト名が場所) には出さない
   return showLocation &&
     !isDigest &&
     !isAddDigest &&

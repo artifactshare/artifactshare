@@ -12,7 +12,6 @@ type Props = Omit<
   member: TeamMember
   intent: 'remove-member' | 'transfer-removed-assets'
   committed: boolean
-  // A request that may have reached the server is retried unchanged.
   interrupted: boolean
   submit: (recipient: string) => void
 }
@@ -41,7 +40,6 @@ export function RemoveMemberDialog({
       title={t(`${copy}.title`, { name: displayName(member) })}
       description={t(`${copy}.body`, { name: displayName(member) })}
       action={committed ? null : t(`${copy}.action`)}
-      // After the removal went through, dismissing cannot undo it.
       dismissLabel={committed ? t('common.close') : dialog.dismissLabel}
       onConfirm={() => submit(recipient)}
       result={

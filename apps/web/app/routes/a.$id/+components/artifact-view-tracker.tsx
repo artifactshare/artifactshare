@@ -51,8 +51,6 @@ function recordArtifactView(input: {
     [ANALYTICS_PARAMS.utmTerm]: utm?.utm_term,
     [ANALYTICS_PARAMS.utmContent]: utm?.utm_content,
   })
-  // Mark seen only once actually sent, so a pre-consent view can still fire if
-  // consent is granted later (which re-runs the effect via shouldLoad).
   if (sent) seenArtifactViews.add(input.key)
   if (input.viewerState === 'authenticated') {
     const attempt = readAuthAttempt()

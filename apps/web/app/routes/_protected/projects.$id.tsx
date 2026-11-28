@@ -166,8 +166,6 @@ const projectAudienceSummaryClassName = 'text-foreground font-medium'
 
 const projectVisibilityClassName = 'text-xs py-1 px-2 leading-tight'
 
-// 社内メンバー向け (フル) と、別組織から共有された関係者向け (閲覧専用) で
-// loader の戻り値を分ける。閲覧専用では編集系のデータを一切引かない。
 type MemberLoaderData = {
   access: 'member'
   project: ProjectSummary
@@ -209,7 +207,6 @@ type SharedLoaderData = {
 type LoaderData = MemberLoaderData | SharedLoaderData
 type ProjectActivityData = {
   pins: Awaited<ReturnType<typeof listProjectPins>>
-  /** null は取得失敗 (レールを出さない)。空配列は動きなし。 */
   feed: FeedEventRow[] | null
   ranking: Awaited<ReturnType<typeof listProjectViewRanking>>
   now: string
@@ -287,7 +284,6 @@ async function loadProjectActivity(
   }
 }
 
-// The shared header narrows its search to this project.
 export const handle: AppShellHandle = {
   searchProject: (data) => {
     const { project } = data as LoaderData
@@ -313,8 +309,6 @@ export async function loader({
     user,
   )
   if (!project) {
-    // 自分のワークスペースに無いプロジェクトは、関係者として共有されている場合だけ
-    // 閲覧専用で開ける。それ以外は 404。
     const shared = await findSharedProjectForViewer(db, projectId, user)
     if (!shared) throw new Response('Not found', { status: 404 })
     return loadSharedProject(db, user, shared, timeZone)
@@ -403,16 +397,12 @@ export async function loader({
   }
 }
 
-// Read-only project load for an audience member from another workspace. Only
-// project-visibility and individually granted artifacts are listed; none of the
-// management data (share defaults, edit rights, impact counts) is fetched.
 async function loadSharedProject(
   db: ReturnType<typeof createDb>,
   user: SessionUser,
   project: SharedProjectSummary,
   timeZone = 'UTC',
 ): Promise<SharedLoaderData> {
-  // external posting フラグは workspace / rows と独立なので同じ Promise.all で引く。
   const [workspace, rows, externalPostingEnabled, slackChannel] =
     await Promise.all([
       db
@@ -442,7 +432,6 @@ async function loadSharedProject(
           project.sourceWorkspaceHd,
         )
       : []
-  // 投稿者自身は「共有先」に数えない (関係者リストには自分も含まれるため除く)。
   const viewerEmail = normalizeGrantEmail(user.email)
   const audienceOthers = defaults.filter((d) => d.email !== viewerEmail)
   const audienceCount = audienceOthers.length
@@ -513,9 +502,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
   if (intent === 'pin' || intent === 'unpin') {
     const db = createDb()
-    // ピンは「そのプロジェクトへ投稿できる人」が操作できる。
-    // member は workspace メンバー全員、共有された関係者は
-    // contributor / manager のみ。アーカイブ済みは不可。
     const project = await findWorkspaceProject(
       db,
       user.workspaceId,
@@ -527,13 +513,11 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     } else {
       const shared = await findSharedProjectForViewer(db, projectId, user)
       if (!shared) throw new Response('Not found', { status: 404 })
-      // getProjectShareRoleForEmail はアーカイブ済みプロジェクトで null を返す
       const role = await getProjectShareRoleForEmail(db, projectId, user.email)
       if (role !== 'contributor' && role !== 'manager')
         throw new Response('Forbidden', { status: 403 })
     }
     const shareableId = String(form.get('shareableId') ?? '')
-    // 読めないファイルはピン操作の対象にもしない (loader と同じ可視性で解決する)
     const target = await db
       .selectFrom('shareables')
       .select('container_id')
@@ -562,9 +546,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
 
   const db = createDb()
-  // 編集は自分のワークスペースのプロジェクトに限る。別組織から共有された
-  // (閲覧専用の) プロジェクトは findWorkspaceProject が null を返すため 404 になり、
-  // 書き込み経路へ進めない。プロジェクトの面の読み取り専用はここで担保する。
   const project = await findWorkspaceProject(
     db,
     user.workspaceId,
@@ -629,8 +610,6 @@ export default function ProjectDetail({
   const seenFetcher = useFetcher()
   const { submit: submitSeen } = seenFetcher
   const projectId = loaderData.project.id
-  // useT の t は render ごとに新しくなるため deps に入れると再発火する。
-  // toast + query 除去は「query が現れた 1 回」だけ実行する。
   const announceSlackResult = useEffectEvent((status: string) => {
     if (status === 'connected') {
       toast(
@@ -656,7 +635,6 @@ export default function ProjectDetail({
       announceSlackResult(slackStatus)
   }, [slackStatus])
   // projectId intentionally retriggers the client-only clear on in-place navigation;
-  // doing this in the loader would also clear unread state during prefetch.
   useEffect(() => {
     submitSeen({ intent: 'seen' }, { method: 'post' })
   }, [submitSeen, projectId])
@@ -710,7 +688,6 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
       label: project.name,
       baseVisibility: project.baseVisibility,
       hasSlackChannel: Boolean(loaderData.slackChannel),
-      // 既存の保存済み行は # 付きのことがあるため表示前に正規化する。
       slackChannelName:
         loaderData.slackChannel?.channelName.replace(/^#/, '') ?? null,
       slackRequiresReauthorization:
@@ -897,9 +874,6 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
     </>
   )
 }
-
-// 新詳細ではメタ行を「チップ + ファイル N 件 · X更新」の 1 本に畳む。
-// 現行はラベル + 値の 3 項目のまま。
 
 export function MemberDetailActions({
   bare = false,
@@ -1277,8 +1251,6 @@ function memberProjectAudienceSummary(
   const externalShareDefaultCount = shareDefaults.filter(
     (entry) => entry.isExternal,
   ).length
-  // いま誰がこのプロジェクトを見られるかを文章で示す。組織内では社内全員 (＋社外
-  // の関係者)、プライベートでは関係者のみ (関係者ゼロなら自分だけ)。
   const audienceSummary =
     project.baseVisibility === 'workspace'
       ? externalShareDefaultCount > 0

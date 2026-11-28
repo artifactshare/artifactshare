@@ -59,9 +59,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       return errorResponse('not-empty', 'Project still has files.', 409)
     }
     if (typeof result === 'object') {
-      // The holder name is only revealed to callers who may delete the
-      // project (creator or workspace admin), which deleteProjectContainer
-      // has already verified.
       const holder = result.holderName ?? 'another member'
       return Response.json(
         {

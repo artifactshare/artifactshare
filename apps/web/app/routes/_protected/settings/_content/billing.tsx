@@ -51,8 +51,6 @@ import BillingPage, {
 } from '../+components/billing-page'
 
 // The page lives in +components so development fixtures can render it without
-// this module's server code. React Router passes loaderData only to a default
-// export declared in the route module, so `export { default } from` would not.
 export default BillingPage
 export {
   CheckoutActions,
@@ -69,8 +67,6 @@ export async function loader({
   const user = requireUser(context)
   const db = createDb()
 
-  // The same workspace row and active membership the Settings shell reads in
-  // this request; billing-only fields stay in this response.
   const [workspace, role] = await Promise.all([
     settingsWorkspace(context),
     settingsActiveRole(context),
@@ -81,7 +77,6 @@ export async function loader({
     isActiveSubscriptionStatus(workspace.stripe_subscription_status),
   )
   const billingConfigured = isBillingConfigured(env)
-  // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
   const canManage = role === 'owner'
   const [activeProjectCount, externalPostingEnabled, contract] =
     await Promise.all([
@@ -99,8 +94,6 @@ export async function loader({
         : Promise.resolve(null),
     ])
 
-  // projection と計上判定で月境界をまたがないよう同じ時刻を使う。使用量と月額見込みは
-  // 同じ projection を共有する。
   const estimateNow = new Date()
   const readProjection = sharedOverageProjection(user.workspaceId, estimateNow)
   const projection = canManage && contract ? await readProjection() : null
@@ -152,8 +145,6 @@ export async function loader({
   }
 }
 
-// Billing reads the same workspace row as the shell, so a submission that
-// keeps the shell (opening the Stripe portal) keeps billing's data too.
 export const shouldRevalidate = settingsShellShouldRevalidate
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -185,8 +176,6 @@ async function submitBilling(
   if (authorized.kind !== 'ok') return settingsFailure(intent, authorized.kind)
   if (!['change-plan', 'checkout', 'portal'].includes(intent))
     return settingsFailure(intent, 'invalid')
-  // Vite dev のプロキシ経由では request.url の origin がポートを落とすため、
-  // Stripe への戻り先 URL は BETTER_AUTH_URL を正とする。
   const origin = env.BETTER_AUTH_URL ?? new URL(request.url).origin
 
   if (!isBillingConfigured(env)) {

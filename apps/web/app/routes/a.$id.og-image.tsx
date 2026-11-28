@@ -71,9 +71,6 @@ export async function loader({
     throw new Response('Not found', { status: 404 })
   }
 
-  // Only link-visibility shares render a preview card, and their share URL is
-  // the per-ID viewer host itself, so the label is that host. App-hosted owner
-  // avatars still resolve against the app origin.
   const canonicalUrl = new URL(
     linkViewerUrl(isProduction(env), shareable.id, devAppPort(env)),
   )

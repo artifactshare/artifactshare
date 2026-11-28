@@ -13,11 +13,6 @@ import {
 } from '~/services/link-suspension.server'
 import type { Route } from './+types/ops.link.$id'
 
-// Operator page reached from the Slack judgment notification. The signed
-// token in the URL is the only credential; it names one shareable and
-// expires. Every move here is a person's decision: the judgment never
-// pauses a link by itself.
-
 // The token travels in the query string: never leak it as a referrer.
 const NO_STORE = {
   'Cache-Control': 'private, no-store',
