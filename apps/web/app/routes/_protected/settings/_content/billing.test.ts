@@ -880,6 +880,87 @@ describe('/settings/billing action', () => {
       'ja',
     )
   })
+
+  describe('with the real Stripe calls', () => {
+    const stripeRequests: string[] = []
+
+    function stubStripe(replies: Record<string, unknown>) {
+      stripeRequests.length = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(input, init)
+          const line = `${request.method} ${new URL(request.url).pathname}`
+          stripeRequests.push(line)
+          return Response.json(replies[line] ?? {})
+        }),
+      )
+    }
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<
+        typeof import('~/services/billing.server')
+      >('~/services/billing.server')
+      createCheckoutSessionMock.mockImplementation(actual.createCheckoutSession)
+      await seedAdmin(db, 'u-a', 'ws-a')
+      await db
+        .updateTable('workspaces')
+        .set({ stripe_customer_id: 'cus_1' })
+        .where('id', '=', 'ws-a')
+        .execute()
+      requireUserMock.mockReturnValue(sessionUser('u-a', 'ws-a'))
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    test('checkout for a customer who still has a billable subscription redirects to the billing portal', async () => {
+      stubStripe({
+        'GET /v1/checkout/sessions': { object: 'list', data: [] },
+        'GET /v1/subscriptions': {
+          object: 'list',
+          data: [{ object: 'subscription', id: 'sub_1', status: 'past_due' }],
+        },
+        'POST /v1/billing_portal/sessions': {
+          url: 'https://portal.test/session',
+        },
+      })
+
+      const response = await action({
+        request: postForm({
+          intent: 'checkout',
+          plan: 'plus',
+          interval: 'monthly',
+          currency: 'usd',
+        }),
+        context: new RouterContextProvider(),
+      } as never)
+
+      expect((response as Response).headers.get('Location')).toBe(
+        'https://portal.test/session',
+      )
+      expect(stripeRequests).not.toContain('POST /v1/checkout/sessions')
+    })
+
+    test('the portal intent redirects to the billing portal', async () => {
+      stubStripe({
+        'POST /v1/billing_portal/sessions': {
+          url: 'https://portal.test/session',
+        },
+      })
+
+      const response = await action({
+        request: postForm({ intent: 'portal' }),
+        context: new RouterContextProvider(),
+      } as never)
+
+      expect((response as Response).headers.get('Location')).toBe(
+        'https://portal.test/session',
+      )
+      expect(stripeRequests).toEqual(['POST /v1/billing_portal/sessions'])
+    })
+  })
 })
 
 async function seedBase(db: Kysely<DB>) {

@@ -228,7 +228,7 @@ test.each(['active', 'trialing', 'past_due', 'unpaid', 'incomplete'])(
       'no second Checkout session is created',
     ).not.toContain('POST /v1/checkout/sessions')
     expect(result).toEqual({
-      kind: 'ok',
+      kind: 'portal',
       url: 'https://portal.example.test/local',
     })
     expect(
@@ -342,7 +342,7 @@ test('portal uses its dedicated configuration and consumes the session URL', asy
       'cus_local',
       'https://app.example.test',
     ),
-  ).toEqual({ kind: 'ok', url: 'https://portal.example.test/local' })
+  ).toEqual({ kind: 'portal', url: 'https://portal.example.test/local' })
   expect(requests).toHaveLength(1)
   expect(
     Object.fromEntries(new URLSearchParams(await requests[0]!.text())),

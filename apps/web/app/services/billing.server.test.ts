@@ -380,7 +380,7 @@ describe('billing service', () => {
       'https://artifactshare.test',
     )
 
-    expect(result).toEqual({ kind: 'ok', url: 'https://portal.test' })
+    expect(result).toEqual({ kind: 'portal', url: 'https://portal.test' })
     expect(stripe.billingPortal.sessions.create).toHaveBeenCalledWith({
       customer: 'cus_1',
       configuration: env.STRIPE_PORTAL_CONFIGURATION,
