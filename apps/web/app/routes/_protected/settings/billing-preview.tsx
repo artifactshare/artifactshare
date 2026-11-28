@@ -11,6 +11,8 @@ import { createDb } from '~/services/db.server'
 import {
   createStripeClient,
   isBillingConfigured,
+  parseBillingInterval,
+  parseCheckoutPlan,
   previewPlanChange,
   type PlanChangePreview,
 } from '~/services/billing.server'
@@ -30,14 +32,9 @@ export async function loader({
   }
 
   const query = new URL(request.url).searchParams
-  const plan = query.get('plan')
-  const interval = query.get('interval')
-  if (
-    (plan !== 'plus' && plan !== 'team') ||
-    (interval !== 'monthly' && interval !== 'yearly')
-  ) {
-    return { kind: 'invalid' }
-  }
+  const plan = parseCheckoutPlan(query.get('plan'))
+  const interval = parseBillingInterval(query.get('interval'))
+  if (!plan || !interval) return { kind: 'invalid' }
 
   const db = createDb()
   const [authorized, workspace] = await Promise.all([

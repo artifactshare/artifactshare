@@ -73,11 +73,17 @@ vi.mock('~/services/cli-refresh-credentials.server', () => ({
   revokeAllCliRefreshCredentialFamilies: mutate,
   revokeCliRefreshCredentialFamily: mutate,
 }))
-vi.mock('~/services/billing.server', () => ({
-  isBillingConfigured: () => true,
-  createStripeClient: () => ({}),
-  changePlan: mutate,
-}))
+vi.mock('~/services/billing.server', async (original) => {
+  const { parseBillingInterval, parseCheckoutPlan } =
+    await original<typeof import('~/services/billing.server')>()
+  return {
+    isBillingConfigured: () => true,
+    createStripeClient: () => ({}),
+    changePlan: mutate,
+    parseBillingInterval,
+    parseCheckoutPlan,
+  }
+})
 vi.mock('cloudflare:workers', () => ({
   env: { STRIPE_SECRET_KEY: 'local-test-only' },
 }))

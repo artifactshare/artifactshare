@@ -18,17 +18,19 @@ import {
   createPortalSession,
   createStripeClient,
   changePlan,
-  hasActiveSubscription,
   isBillingConfigured,
   loadSubscriptionContract,
+  parseBillingInterval,
   parseCheckoutCurrency,
+  parseCheckoutPlan,
   resolveCheckoutCurrency,
-  type BillingInterval,
   type CheckoutCurrency,
-  type CheckoutPlan,
   resolveMonthlyEstimate,
 } from '~/services/billing.server'
-import { allowsStorageOverage } from '~/lib/billing-plan.server'
+import {
+  allowsStorageOverage,
+  isActiveSubscriptionStatus,
+} from '~/lib/billing-plan.server'
 import { createDb } from '~/services/db.server'
 import { requireWorkspaceOwner } from '~/services/team-management.server'
 import {
@@ -76,7 +78,7 @@ export async function loader({
 
   const hasSubscription = Boolean(
     workspace.stripe_subscription_id &&
-    hasActiveSubscription(workspace.stripe_subscription_status),
+    isActiveSubscriptionStatus(workspace.stripe_subscription_status),
   )
   const billingConfigured = isBillingConfigured(env)
   // 契約管理用の応答はオーナーに限る。使用量は従来の Usage と同じ読み取り境界を保つ。
@@ -111,14 +113,9 @@ export async function loader({
   )
 
   const query = new URL(request.url).searchParams
-  const initialPlan =
-    query.get('plan') === 'plus' || query.get('plan') === 'team'
-      ? (query.get('plan') as CheckoutPlan)
-      : 'team'
+  const initialPlan = parseCheckoutPlan(query.get('plan')) ?? 'team'
   const initialInterval =
-    query.get('interval') === 'yearly'
-      ? ('yearly' as const)
-      : ('monthly' as const)
+    parseBillingInterval(query.get('interval')) ?? 'monthly'
   const initialCurrency =
     parseCheckoutCurrency(query.get('currency')) ??
     resolveCheckoutCurrency(request.cf?.country)
@@ -280,18 +277,4 @@ async function submitBilling(
   }
 
   return settingsFailure(intent, 'invalid')
-}
-
-function parseCheckoutPlan(
-  value: string | null | undefined,
-): CheckoutPlan | null {
-  if (value === 'plus' || value === 'team') return value
-  return null
-}
-
-function parseBillingInterval(
-  value: string | null | undefined,
-): BillingInterval | null {
-  if (value === 'monthly' || value === 'yearly') return value
-  return null
 }

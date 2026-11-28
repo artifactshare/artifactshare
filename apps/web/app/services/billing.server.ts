@@ -27,6 +27,20 @@ export function parseCheckoutCurrency(
   return null
 }
 
+export function parseCheckoutPlan(
+  value: string | null | undefined,
+): CheckoutPlan | null {
+  if (value === 'plus' || value === 'team') return value
+  return null
+}
+
+export function parseBillingInterval(
+  value: string | null | undefined,
+): BillingInterval | null {
+  if (value === 'monthly' || value === 'yearly') return value
+  return null
+}
+
 export type StripePrices = {
   plusMonthly: string
   plusYearly: string
@@ -123,10 +137,6 @@ export function allFixedPriceIds(prices: StripePrices): Set<string> {
     prices.teamMonthly,
     prices.teamYearly,
   ])
-}
-
-export function hasActiveSubscription(status: string): boolean {
-  return isActiveSubscriptionStatus(status)
 }
 
 export async function ensureStripeCustomer(
@@ -521,7 +531,7 @@ export async function previewPlanChange(
 ): Promise<PlanChangePreview> {
   if (
     !workspace.stripe_subscription_id ||
-    !hasActiveSubscription(workspace.stripe_subscription_status)
+    !isActiveSubscriptionStatus(workspace.stripe_subscription_status)
   ) {
     return { kind: 'no-subscription' }
   }
@@ -587,10 +597,10 @@ export async function changePlan(
 ): Promise<
   Exclude<BillingMutationResult, { kind: 'ok' }> | { kind: 'accepted' }
 > {
-  if (!workspace.stripe_subscription_id) {
-    return { kind: 'no-subscription' }
-  }
-  if (!hasActiveSubscription(workspace.stripe_subscription_status)) {
+  if (
+    !workspace.stripe_subscription_id ||
+    !isActiveSubscriptionStatus(workspace.stripe_subscription_status)
+  ) {
     return { kind: 'no-subscription' }
   }
 
