@@ -66,7 +66,7 @@ test('successful finish retains displaced original and removes only owned stagin
   boundary.keep(root)
   const unused = await boundary.privateDirectory(boundary.workspace)
   await boundary.write(join(unused, 'partial'), 'temporary')
-  await boundary.finish()
+  await boundary.cleanup()
   await assert.rejects(fs.lstat(unused), { code: 'ENOENT' })
   assert.equal(boundary.backupPaths.length, 1)
   assert.deepEqual(await fs.readdir(root), ['new'])
@@ -519,7 +519,7 @@ test('successful finish leaves originals and unknown backup entries untouched', 
   boundary.keep(root)
   const backup = boundary.backupPaths[0]!
   await fs.writeFile(join(backup, 'newcomer'), 'keep')
-  await boundary.finish()
+  await boundary.cleanup()
   assert.deepEqual(boundary.backupPaths, [backup])
   assert.equal(await fs.readFile(join(backup, 'old'), 'utf8'), 'original')
   assert.equal(await fs.readFile(join(backup, 'newcomer'), 'utf8'), 'keep')

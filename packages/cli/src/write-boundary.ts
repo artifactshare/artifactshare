@@ -418,10 +418,6 @@ export class WriteBoundary {
     } catch {}
   }
 
-  async finish() {
-    await this.cleanup()
-  }
-
   keep(path: string) {
     path = resolve(path)
     for (const [, entry] of this.subtree(path)) entry.owned = false
