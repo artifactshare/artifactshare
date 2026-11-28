@@ -3196,8 +3196,11 @@ export async function prepareUpload(
       workspaceRow.plan,
       workspaceRow.stripe_subscription_status,
     ) &&
-    workspaceRow.storage_used_bytes + file.size >
-      workspaceRow.storage_quota_bytes
+    !storageWriteFits(
+      workspaceRow.storage_used_bytes,
+      workspaceRow.storage_quota_bytes,
+      file.size,
+    )
   ) {
     return { kind: 'quota-exceeded' } as const
   }
@@ -3471,6 +3474,25 @@ function shouldEnforceStorageQuotaPreCheck(
   return !allowsStorageOverage(plan, subscriptionStatus)
 }
 
+/**
+ * A write fits when the bytes already stored plus the new bytes stay within
+ * the workspace quota. `reserveQuota` has to ask the same question inside the
+ * UPDATE that reserves the bytes, so the SQL form lives here beside the
+ * TypeScript one: the two spellings of this one rule stay together, instead of
+ * a `>` in the pre-check and a `<=` in the statement drifting apart.
+ */
+function storageWriteFits(
+  storageUsedBytes: number,
+  storageQuotaBytes: number,
+  sizeBytes: number,
+): boolean {
+  return storageUsedBytes + sizeBytes <= storageQuotaBytes
+}
+
+function storageWriteFitsSql(sizeBytes: number) {
+  return sql<boolean>`storage_used_bytes + ${sizeBytes} <= storage_quota_bytes`
+}
+
 export async function reserveQuota(
   db: Kysely<DB>,
   workspaceId: string,
@@ -3487,7 +3509,7 @@ export async function reserveQuota(
     WHERE id = ${workspaceId}
       AND (
         (${planInTierSql('plan', PAID_TIERS)} AND stripe_subscription_status IN (${activeStatuses}))
-        OR storage_used_bytes + ${sizeBytes} <= storage_quota_bytes
+        OR ${storageWriteFitsSql(sizeBytes)}
       )
   `.execute(db)
   if (Number(result.numAffectedRows ?? 0n) === 1) return 'ok'
