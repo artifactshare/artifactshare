@@ -856,11 +856,20 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   function renderPanel() {
     if (ended) return;
+    // Saves, screen reports and anchor verdicts each rebuild every thread,
+    // whenever they arrive. Keep the keyboard's place in the panel, or a
+    // reader on a control lands on the body between two keystrokes.
+    const active = document.activeElement;
+    const focused = active && active.closest ? active.closest('.thread') : null;
+    const keep = focused && threadsEl.contains(focused)
+      ? { thread: focused.dataset.thread, control: active.classList[0] || '' }
+      : null;
     threadsEl.textContent = '';
     const ordered = annotations.slice().reverse();
     ordered.forEach((annotation, index) => {
       const thread = document.createElement('div');
       thread.className = 'thread';
+      thread.dataset.thread = annotation.thread;
       if (annotation.status === 'in_progress') thread.classList.add('working');
       if (annotation.status === 'resolved') thread.classList.add('resolved');
       if (annotation.status === 'dismissed') thread.classList.add('dismissed');
@@ -947,6 +956,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       });
       threadsEl.appendChild(thread);
     });
+    if (keep) {
+      const again = Array.from(threadsEl.children)
+        .find((thread) => thread.dataset.thread === keep.thread);
+      const control = again ? again.getElementsByClassName(keep.control)[0] : null;
+      if (control) control.focus();
+    }
     panelEmpty.style.display = annotations.length === 0 ? '' : 'none';
     const drafts = annotations.filter((entry) => entry.status === 'draft');
     const hasActiveBatch = annotations.some(

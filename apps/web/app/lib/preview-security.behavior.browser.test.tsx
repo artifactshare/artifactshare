@@ -133,6 +133,7 @@ test('interactive documents can be operated and annotated per screen', async () 
     'highlights-per-screen',
     'restore-default-screen',
     'restore-superseded',
+    'keeps-keyboard-place',
   ])
 }, 90000)
 

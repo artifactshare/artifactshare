@@ -1014,6 +1014,29 @@ export const previewSecurity = defineBrowserCommand(
           0,
         )
         result.checks.push('restore-superseded')
+
+        // A save, a screen report or an anchor verdict rebuilds every thread
+        // at any moment. A reader keeps their place in the panel across one,
+        // so the Enter below still reaches the control they are on.
+        await otherScreen('Slide two note').focus()
+        await frame.evaluate(() => {
+          location.hash = '#/3'
+        })
+        await otherScreen('Slide three note').waitFor({ state: 'detached' })
+        assert.equal(
+          await shell.evaluate(() => {
+            const active = document.activeElement
+            const thread = active?.closest('.thread')
+            return [
+              active?.className,
+              thread?.textContent?.includes('Slide two note'),
+            ].join(' ')
+          }),
+          'screen-link true',
+        )
+        await shell.keyboard.press('Enter')
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        result.checks.push('keeps-keyboard-place')
         return result
       }
       if (view === 'popover') {
