@@ -118,7 +118,6 @@ try {
     existsSync(join(installed, 'skills/artifactshare/artifactshare.mdc')),
     false,
   )
-  // Compare every packaged reference, including arbitrarily nested files.
   const sourceSkill = join(packageDir, 'skills/artifactshare')
   for (const relative of readdirSync(sourceSkill, {
     recursive: true,
@@ -132,7 +131,6 @@ try {
       readFileSync(source),
     )
   }
-  // Exercise folder loading even before the production prose is split.
   const overlay = join(temporary, 'folder-overlay')
   cpSync(installed, overlay, { recursive: true })
   const nested = 'references/nested/detail.txt'

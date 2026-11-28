@@ -44,12 +44,8 @@ const MAX_BODY_BYTES = 1024 * 1024
 const WATCH_DEBOUNCE_MS = 200
 const SSE_HEARTBEAT_MS = 15_000
 
-/** Name the main binary explicitly because the package also installs provider
- * launchers, and keep subdirectory paths relative to the current workspace. */
 export function previewResumeCommand(filePath: string): string {
   const from = relativeTo(process.cwd(), filePath)
-  // A path outside the working directory reads better absolute than as a
-  // chain of parent hops.
   const relative = from === '' || from.startsWith('..') ? filePath : from
   const quoted = /^[\w./@-]+$/.test(relative)
     ? relative
@@ -58,7 +54,6 @@ export function previewResumeCommand(filePath: string): string {
 }
 
 export interface PreviewServerOptions {
-  /** Absolute realpath of the previewed .md or .html file. */
   filePath: string
   store: PreviewStore
   sessionId: string
@@ -69,9 +64,7 @@ export interface PreviewServerOptions {
     registration: PreviewAgentNotificationRegistration,
   ) => void
   openBrowser?: boolean
-  /** Directory for local review history; omitted means no history. */
   historyDir?: string
-  /** Extra CLI options; accepted for forward compatibility, unused here. */
   cliOptions?: Record<string, unknown>
 }
 
@@ -80,10 +73,7 @@ export interface PreviewServer {
   sharePort: number
   url: string
   agent: PreviewAgentNotificationProjection
-  /** Trusted local registration, including the private target. Never project
-   * this object to the browser or CLI output. */
   notificationRegistration: PreviewAgentNotificationRegistration
-  /** Resolves once the server has fully shut down. */
   closed: Promise<void>
   close(): Promise<void>
 }
@@ -162,9 +152,6 @@ async function readBodyJson(
   }
 }
 
-/** Neutralise any <meta http-equiv="Content-Security-Policy"> tag so the
- * previewed HTML cannot block the injected reporter script. Robust to
- * attribute order, quoting style, and case. */
 export function stripMetaCsp(html: string): string {
   return html.replace(
     /<meta\b[^>]*http-equiv\s*=\s*(?:"content-security-policy"|'content-security-policy'|content-security-policy)[^>]*>/gi,
@@ -214,8 +201,6 @@ export async function startPreviewServer(
   const history = options.historyDir
     ? createPreviewHistory(options.historyDir, fileName)
     : null
-  // History is a local by-product of review: a failed write must not turn a
-  // committed submission or report into a failed request.
   function recordHistory(action: () => void): void {
     try {
       action()
@@ -266,7 +251,6 @@ export async function startPreviewServer(
     })
   }
 
-  // --- file watching -------------------------------------------------------
   let watcher: FSWatcher | null = null
   let debounceTimer: NodeJS.Timeout | null = null
   try {
@@ -292,8 +276,6 @@ export async function startPreviewServer(
   } catch {
     watcher = null
   }
-
-  // --- request handling ----------------------------------------------------
 
   function guard(request: IncomingMessage, response: ServerResponse): boolean {
     if (!hostAllowed(request.headers.host)) {
@@ -331,7 +313,6 @@ export async function startPreviewServer(
       return
     }
     if (isMarkdown) {
-      // The ready envelope is the only line this process writes to stdout.
       const document = renderMarkdownDocument(bytes.toString('utf8'), {
         logTiming: false,
       })
@@ -356,8 +337,6 @@ export async function startPreviewServer(
       }, SSE_HEARTBEAT_MS),
     }
     sseClients.add(client)
-    // Initial annotation state so the shell can render without racing the
-    // first fetch.
     response.write(
       `event: annotations\ndata: ${JSON.stringify({
         annotations: store.all(),
@@ -400,7 +379,6 @@ export async function startPreviewServer(
       if (immediate.length > 0) broadcastAnnotations()
       return sendJson(response, 200, result)
     }
-    // Long-poll: wait for a submit (or shutdown / timeout).
     activeWait = true
     notification.setWaitConnected(true)
     broadcastAnnotations()
@@ -471,9 +449,6 @@ export async function startPreviewServer(
 
     if (method === 'GET') {
       if (path === '/') {
-        // The artifact server binds first, so a request can arrive before the
-        // share origin has a port. Reading it then throws rather than
-        // rendering, so say "not ready" the way the share server does.
         if (shareOrigin === null) {
           return sendJson(response, 503, { error: 'preview_not_ready' })
         }
@@ -518,7 +493,6 @@ export async function startPreviewServer(
       if (!isPreviewAnchor(body.anchor) || typeof body.comment !== 'string') {
         return sendJson(response, 400, { error: 'invalid_annotation' })
       }
-      // A rewrite replaces exactly the text the anchor captured.
       const rewrite = body.rewrite
       if (
         rewrite !== undefined &&
@@ -590,8 +564,6 @@ export async function startPreviewServer(
           }
         }
       } finally {
-        // The submission is already committed even if a later dispatch-state
-        // write fails. Publish the actual persisted state, never stale drafts.
         broadcastAnnotations()
       }
       return sendJson(response, 200, {
@@ -632,7 +604,6 @@ export async function startPreviewServer(
             changed = true
         }
       } finally {
-        // Announce committed state changes even when a later save fails.
         if (changed) broadcastAnnotations()
       }
       return sendJson(response, 200, { updated: updates.length })
@@ -650,14 +621,9 @@ export async function startPreviewServer(
         : []
       const results: Array<{ thread: string; discarded: boolean }> = []
       try {
-        // Draft, resolved and dismissed annotations are removed in one store
-        // transaction each, so a persistence failure cannot leave a finished
-        // comment saved as a fresh draft. In-flight annotations
-        // (requested/in_progress) are left for the agent to report on.
         for (const thread of threads)
           results.push({ thread, discarded: store.discardOrphan(thread).ok })
       } finally {
-        // Announce threads already committed even when a later save fails.
         broadcastAnnotations()
       }
       return sendJson(response, 200, { results })
@@ -682,8 +648,6 @@ export async function startPreviewServer(
         thread: item.thread,
         result: outcomes[index] ?? 'unknown_thread',
       }))
-      // Only accepted items changed state; announcing the rest would flash and
-      // re-toast threads that a retry left untouched.
       const accepted = items.filter(
         (_, index) => outcomes[index] === 'accepted',
       )
@@ -768,10 +732,6 @@ export async function startPreviewServer(
     })
   })
 
-  // Share origin. A separate origin so the artifact document cannot script
-  // the dialog or call the share API (cross-origin, no CORS). Both the origin
-  // and the handler are late-bound because they need ports that are only known
-  // once the servers start listening.
   let shareOrigin: string | null = null
   let shareHandler:
     | ((request: IncomingMessage, response: ServerResponse) => void)
@@ -801,8 +761,6 @@ export async function startPreviewServer(
       shareServer.listen(0, '127.0.0.1', () => resolve())
     })
   } catch (error) {
-    // The artifact server is already bound; leaving it would hold a port that
-    // no session file records.
     watcher?.close()
     await new Promise<void>((resolve) => artifactServer.close(() => resolve()))
     throw error

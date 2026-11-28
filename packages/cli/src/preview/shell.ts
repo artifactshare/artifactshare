@@ -9,10 +9,8 @@ import type { PREVIEW_MESSAGES } from './messages.generated.js'
 
 export interface PreviewShellOptions {
   fileName: string
-  /** The command that restarts this exact preview, shown when it ends. */
   resumeCommand: string
   shareOrigin: string
-  /** Both locale dictionaries; the client picks by navigator.language. */
   messages: typeof PREVIEW_MESSAGES
 }
 
@@ -24,7 +22,6 @@ export function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;')
 }
 
-/** Serialise for embedding inside a <script> block. */
 function scriptJson(value: unknown): string {
   return JSON.stringify(value).replaceAll('<', '\\u003c')
 }

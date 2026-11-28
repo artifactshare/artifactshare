@@ -89,7 +89,6 @@ export function uploadReadError(error: unknown, display: string): CliError {
 
 type RecordEntry = { path: string; display: string; stat: BigIntStats }
 type Checkpoint = 'entry' | 'before_open' | 'after_open' | 'after_read'
-/** Narrow injection seam for deterministic filesystem tests, never a CLI option. */
 export type UploadBoundaryDependencies = {
   cwd?: string
   paths?: Pick<
@@ -252,7 +251,6 @@ export async function prepareUploadSelection(
     } else {
       selected = await get(selectedPath, input)
       checkType(selected, input)
-      // Resolve only the trusted immediate parent, not its ancestor chain.
       const parentPath = await physicalPath(paths.dirname(selectedPath), input)
       const parent = await get(parentPath, input)
       checkType(parent, input)
@@ -363,7 +361,6 @@ export async function prepareUploadSelection(
         failed = true
         throw error
       } finally {
-        // Preserve the read/boundary failure; a close failure alone still fails.
         if (failed) await handle.close().catch(() => {})
         else await handle.close()
       }
@@ -375,7 +372,6 @@ export async function prepareUploadSelection(
       error instanceof UploadReadFailure
     )
       throw error
-    // Keep the original exception internal; never serialize filesystem messages.
     throw new UploadReadFailure(uploadReadError(error, offending), error)
   }
 }

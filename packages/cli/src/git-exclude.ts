@@ -54,9 +54,7 @@ export async function ensureGitExclude(
   } catch {
     try {
       await boundary.cleanup()
-    } catch {
-      /* Keep unknown or changed entries intact. */
-    }
+    } catch {}
     return {
       applied: false,
       warning: `Could not update ${excludePath}; add ${line} to the repository's Git excludes manually.`,

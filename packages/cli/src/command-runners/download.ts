@@ -77,8 +77,6 @@ type ProjectResult = {
   reason?: string
 }
 
-// Previous run's id → version_id pairs from <output>/index.json, used for the
-// incremental re-run. A missing or corrupt index means no previous knowledge.
 function validateIds(entries: unknown[]): void {
   const seen = new Set<string>()
   for (const entry of entries) {
@@ -372,8 +370,6 @@ async function runProjectDownload(
   const request = await requestConfig(parsed.options)
   if (request.error) throw new DownloadFailure(request.error)
   const baseUrl = baseUrlOf(parsed.options)
-  // A project download can outlive an expired session, so refresh once mid-run
-  // and funnel every authenticated request through this fetch.
   let credential = resolved
   let refreshAttempted = false
   const authFetch = async (url: URL) => {
@@ -466,8 +462,6 @@ async function runProjectDownload(
     const page = await list(cursor)
     if (page.error) {
       if (first && page.authFailure) {
-        // authFetch already spent the single session-refresh attempt, so fall
-        // straight to the login flow instead of refreshing a second time.
         return handleCredentialFailure(
           command,
           {
@@ -505,8 +499,6 @@ async function runProjectDownload(
   }
   await boundary.directory(output)
   boundary.keep(output)
-  // Project publication replaces children, so keep staging and backups on
-  // the output filesystem even when output itself is a mount point.
   boundary.workspace = await boundary.privateDirectory(output)
   const results: ProjectResult[] = entries.map((item) => ({
     id: item.id as string,
@@ -570,8 +562,6 @@ async function runProjectDownload(
             `Invalid download manifest for artifact ${result.id}.`,
           )
         }
-        // Re-runs are an incremental sync: an unchanged version with its output
-        // still on disk needs no file requests. --force wins and re-downloads.
         if (
           !parsed.options.force &&
           rootExists &&

@@ -20,16 +20,10 @@ import {
 import type { PreviewAgentNotificationRegistration } from './contract.js'
 import { isPreviewNotificationRegistration } from './notification.js'
 
-/** What the running server will share under. A reuse that changed any of
- * these would publish from the wrong account or origin, so the values are
- * recorded rather than guessed from the new invocation's flags. The token is
- * kept only as a fingerprint; the session file never holds the secret. */
 export interface PreviewSessionCredentials {
   profile: string | null
   base_url: string | null
   token_fingerprint: string | null
-  /** Credentials also come from the working directory's config, so two starts
-   * from different directories are different contexts even with equal flags. */
   cwd: string
 }
 
@@ -56,7 +50,6 @@ export type LiveSessionResult =
   /** A matching identity answered, but the process predates the notification
    * contract. It may be stopped, but must not be reused for agent commands. */
   | { state: 'legacy'; session: PreviewSessionFile }
-  /** The recorded session neither answered nor refused; it may still serve. */
   | { state: 'unverified'; session: PreviewSessionFile }
   | { state: 'none'; reclaimed?: boolean }
 
@@ -69,8 +62,6 @@ export function previewsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(base, 'previews')
 }
 
-/** A recorded pid that still exists means the process is alive, even when its
- * port is not answering probes. */
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -88,8 +79,6 @@ export function sessionIdForPath(realpath: string): string {
   return createHash('sha256').update(realpath).digest('hex').slice(0, 16)
 }
 
-/** Session ids are the 16-hex prefix of a sha256; anything else could escape
- * the previews directory when interpolated into a path. */
 export function isSessionId(value: string): boolean {
   return /^[0-9a-f]{16}$/.test(value)
 }
@@ -114,7 +103,6 @@ export function annotationsFilePath(
   return join(previewsDir(env), `annotations-${sessionId}.json`)
 }
 
-/** Per-session review history: one JSON file per submitted batch. */
 export function historyDirPath(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -133,9 +121,6 @@ export function previewRealpath(input: string): PreviewRealpathResult {
   }
 }
 
-/** A source deleted or renamed while its server runs has no realpath of its
- * own, but its directory usually still does, and the recorded identity was
- * built from the resolved path. */
 export function previewIdentityPath(input: string): string {
   const real = previewRealpath(input)
   if (real.ok) return real.realpath
@@ -258,18 +243,12 @@ export async function resolveLiveSession(
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<LiveSessionResult> {
-  // The recorded path is the identity, not the file on disk: deleting or
-  // renaming the source must not strand a running server that stop and next
-  // still need to reach.
   const sessionId = sessionIdForPath(previewIdentityPath(filePath))
   const session = readSessionFile(sessionId, env)
   if (!session) return { state: 'none' }
   return await probeSession(session, fetchImpl, env)
 }
 
-/** Probe a record the caller already holds. `--session <id>` names one exactly,
- * and re-deriving its id from the recorded path would follow a symlink that has
- * since been repointed and miss the record the caller asked for. */
 export async function probeSession(
   session: PreviewSessionFile,
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
@@ -278,19 +257,12 @@ export async function probeSession(
   const sessionId = session.session_id
 
   let identity: unknown = null
-  // A timeout means the probe was inconclusive, not that the session is dead:
-  // a preview busy rendering a large file can miss the deadline while still
-  // serving. Only an answer from something that is not this session proves the
-  // file is stale, so a timeout leaves the session file alone.
   let answered = false
   try {
     const response = await fetchImpl(
       `http://127.0.0.1:${session.port}${PREVIEW_SESSION_ENDPOINT}`,
       { signal: AbortSignal.timeout(2000) },
     )
-    // Something answered on that port. Whether its body parses says nothing
-    // about that, and letting a parse failure re-arm the timeout path would
-    // leave a recycled port unverified forever.
     answered = true
     if (response.ok) identity = await response.json().catch(() => null)
   } catch (error) {
@@ -313,12 +285,10 @@ export async function probeSession(
 
   if (!answered) return { state: 'unverified', session }
 
-  // Stale: reclaim the session file, keep the annotations file for later.
   removeSessionFile(sessionId, env)
   return { state: 'none', reclaimed: true }
 }
 
-/** A refused connection proves nothing listens on the recorded port. */
 export function isConnectionRefused(error: unknown): boolean {
   const causeCode = (error as { cause?: { code?: unknown } } | null)?.cause
     ?.code
@@ -326,10 +296,6 @@ export function isConnectionRefused(error: unknown): boolean {
   return causeCode === 'ECONNREFUSED' || code === 'ECONNREFUSED'
 }
 
-/** Claim the right to start a session for this path. The lock file is created
- * exclusively, so two `preview <same file>` invocations racing before either
- * writes its session file cannot both win and end up sharing one annotation
- * store. */
 export function claimSessionStart(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -339,8 +305,6 @@ export function claimSessionStart(
   const lockPath = join(dir, `${sessionId}.lock`)
   try {
     const handle = openSync(lockPath, 'wx', 0o600)
-    // The pid lets forced cleanup tell an in-flight start from an abandoned
-    // lock, so --force never frees a claim that is still being used.
     writeSync(handle, String(process.pid))
     closeSync(handle)
   } catch {
@@ -354,9 +318,6 @@ export function claimSessionStart(
   }
 }
 
-/** Clears an abandoned claim and reports whether none remains. A live
- * claimant means a start is still in flight: freeing its lock would let a
- * second server open the same annotation store. */
 export function releaseStaleClaim(
   sessionId: string,
   env: NodeJS.ProcessEnv = process.env,

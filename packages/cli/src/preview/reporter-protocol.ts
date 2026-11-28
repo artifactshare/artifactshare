@@ -1,5 +1,3 @@
-/** Self-contained so the exact validator can also run in the local shell.
- * This admits display observations only, never authorization or commands. */
 export function validPreviewObservation(value: unknown): boolean {
   const record = (v: unknown): v is Record<string, unknown> =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -93,7 +91,6 @@ export function validPreviewObservation(value: unknown): boolean {
           typeof value.editable === 'boolean') &&
         rect(value.rect)
       )
-    // In-place edit drafts: plain text, bounded like a rewrite.
     case 'edit-text':
       return (
         keys(value, [...base, 'pickSequence', 'text']) &&
@@ -127,7 +124,6 @@ export function validPreviewObservation(value: unknown): boolean {
           'selectorFormat',
           'textHash',
           'ambiguousAtCreation',
-          // Creation context is not used by local preview.
           ...(Object.hasOwn(value, 'locus') ? ['locus'] : []),
           'versionId',
           'cssPath',

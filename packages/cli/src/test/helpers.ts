@@ -19,10 +19,6 @@ const defaultConfigHome = join(
   'artifactshare-cli-test-config-missing',
 )
 const defaultHome = join(tmpdir(), 'artifactshare-cli-test-home-missing')
-/** Project config is discovered by walking up from the working directory, so
- * running from inside this checkout lets a developer's own
- * `.artifactshare/config.local.json` answer tests that assume no credential.
- * Every run starts outside the repository unless a test picks its own place. */
 export const testCwd = join(tmpdir(), 'artifactshare-cli-test-cwd')
 mkdirSync(testCwd, { recursive: true })
 
@@ -52,9 +48,6 @@ type JsonPayload = {
  * so a rebuilt CLI is never served a stale entry. */
 const compileCache = join(tmpdir(), 'artifactshare-cli-test-compile-cache')
 
-/** The CLI routes requests through a proxy named in the environment, so a
- * developer's own proxy settings would reroute the loopback stubs. Tests that
- * exercise the proxy set these themselves. */
 export function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...env }
   for (const name of [

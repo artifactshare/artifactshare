@@ -51,9 +51,6 @@ export async function readProfileToken(
     if (parsed.ok) return { ...parsed, store: native.kind }
     if (parsed.reason === 'legacy') return parsed
   }
-  // The flag gates plaintext *writes* only; an existing 0600 file is always
-  // readable so commands after `login --allow-plaintext-token-store` work
-  // without repeating the flag.
   const plaintext = parseStoredProfileCredential(
     await readPlaintextToken(account),
   )
@@ -68,16 +65,9 @@ export async function readProfileToken(
   }
 }
 
-// Cheap, non-destructive predicate mirroring saveProfileCredential's success
-// conditions. Used before consuming a one-time bot token so a locally
-// detectable "nowhere to store it" failure never costs the token. An actual
-// write can still fail afterwards (e.g. keychain denial mid-flight); that
-// residual case keeps its explicit lost-token error.
 export async function probeTokenStoreWritable(
   profile: string,
   options: CliOptions,
-  // A forced import deletes the existing entry before saving, so that entry
-  // cannot serve as proof that a plaintext write will be allowed afterwards.
   {
     ignoreExistingEntry = false,
     platform = process.platform,
@@ -278,8 +268,6 @@ export type TokenStoreDiagnostics = {
 let nativeStorePromise: Promise<NativeStore | null> | undefined
 
 function nativeStore(): Promise<NativeStore | null> {
-  // Test seam, checked outside the memo: keeps the test suite away from the
-  // developer's real keychain even when tests share a process.
   if (process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE === '1') {
     return Promise.resolve(null)
   }
@@ -720,8 +708,6 @@ async function writePlaintextToken(
   return true
 }
 
-// Other CLI processes read tokens.json at any moment, so they must see the old
-// file or the new one, never a truncated one.
 async function replacePlaintextTokens(
   home: string,
   tokens: Record<string, unknown>,
@@ -758,10 +744,6 @@ function plaintextTokensPath(home: string): string {
   return join(home, 'tokens.json')
 }
 
-// Returns null when no user config location exists; callers must not fall
-// back to the working directory (tokens must never land in a checked-out
-// repo, and a repo-local config.json must not influence credential
-// resolution).
 function pendingDeviceAuthPath(home: string): string {
   return join(home, 'pending-device-auth.json')
 }

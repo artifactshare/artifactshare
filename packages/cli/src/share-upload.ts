@@ -24,9 +24,6 @@ export interface ShareUploadBody {
   warnings: { code: 'slack_reauthorization_required'; message: string }[]
 }
 
-/** Perform the upload POST shared by `share` and the preview share dialog.
- * Auth retry stays with the callers; this maps transport and API errors
- * into a typed result. */
 export async function postShareUpload(
   args: ShareUploadArgs,
   baseUrl: string,

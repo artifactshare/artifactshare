@@ -110,11 +110,6 @@ export async function handleCredentialFailure(
     return writeFailure(command, credential.error, mode, 1)
   }
 
-  // A bot profile can never sign in: refresh already failed by the time we
-  // get here, and a device login would store a HUMAN session under the bot
-  // profile, mis-attributing every later upload. Key on the profile's stored
-  // kind (not the error shape) so locally-detected failures — missing or
-  // unavailable token-store entries — are covered too.
   const failedProfile = profileForAutoLogin(credential)
   if (failedProfile) {
     const globalConfig = await readGlobalConfig()
@@ -247,8 +242,6 @@ export async function runAuthenticatedApi<T>(
   return await request(refreshed.credential)
 }
 
-// Another CLI process sharing this profile can rotate the session at any time,
-// so refresh with the refresh token the store holds now.
 async function refreshStoredProfileSession(
   profile: string,
   options: CliOptions,
@@ -293,9 +286,6 @@ async function refreshStoredProfileSession(
   const { response, body } = result
   if (!response.ok) {
     if (response.status === 401) {
-      // The server rejects a refresh token that another process rotated while
-      // this request was in flight. Retry once if that process stored a newer
-      // one.
       return rejectedRefreshToken === undefined
         ? await refreshStoredProfileSession(profile, options, refreshToken)
         : { ok: false }

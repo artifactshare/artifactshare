@@ -61,9 +61,6 @@ export function writeSuccess(
   process.stdout.write(humanSuccess(command, data))
 }
 
-/** Emit a success envelope as a single line. `preview` keeps running after it
- * reports readiness, so a launcher cannot wait for EOF to parse the payload;
- * one line lets it read the envelope and move on. */
 export function writeSuccessLine(
   command: string,
   data: unknown,
@@ -128,9 +125,6 @@ export function writeText(text: string): void {
   process.stdout.write(text)
 }
 
-// Progress events go to stderr as one JSON line so stdout stays reserved for
-// the single final success JSON. Failure JSON is distinguishable by its
-// schema_version/ok envelope.
 export function writeEvent(data: unknown): void {
   process.stderr.write(`${JSON.stringify(data)}\n`)
 }
@@ -261,8 +255,6 @@ function initHumanOutput(data: unknown): string {
   return `${body}\nNext command: ${nextCommand}\n`
 }
 
-// Surface the first not-yet-done onboarding step (sign in, then share) as the
-// actionable next command, the same way open and doctor do.
 function initNextCommand(data: unknown): string | null {
   if (!isRecord(data) || data.mode !== 'onboarding') return null
   const steps = data.next_steps

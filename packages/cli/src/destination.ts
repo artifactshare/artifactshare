@@ -35,8 +35,6 @@ export function resolveDestination(
 ): Destination {
   const conflict = destinationConflictError(options)
   if (conflict) return { error: conflict }
-  // An explicit --home must beat the working-directory default project, or
-  // the artifact silently lands in the configured project instead of home.
   if (options.home) return { containerId: null }
   const containerId = options.projectId ?? config?.default_project_id ?? null
   if (containerId) return { containerId }

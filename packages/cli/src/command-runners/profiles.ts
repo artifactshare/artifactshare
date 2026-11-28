@@ -59,8 +59,6 @@ export async function runProfilesList(
   const profiles: ProfilesListEntry[] = await Promise.all(
     Object.entries(config.profiles ?? {}).map(async ([name, rawEntry]) => {
       const entry = isRecord(rawEntry) ? (rawEntry as ProfileConfigEntry) : {}
-      // Each profile is bound to the base URL it logged in against, so the
-      // token lookup must use that URL — never the current --base-url.
       const stored = await readProfileToken(name, {
         ...parsed.options,
         baseUrl: nonEmpty(entry.base_url) ?? DEFAULT_BASE_URL,
@@ -108,8 +106,6 @@ export async function runProfilesUse(
     return writeFailure(command, configHomeUnavailableError(name), mode, 1)
   }
   const config = (await readGlobalConfig()) ?? {}
-  // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing as
-  // saved profile names.
   if (!Object.hasOwn(config.profiles ?? {}, name)) {
     return writeFailure(command, profileNotFoundError(name), mode, 1)
   }
@@ -184,7 +180,6 @@ export async function runProfilesImportToken(
   if (token.startsWith(BOT_TOKEN_PREFIX)) {
     return await importBotTokenProfile(command, profile, token, parsed, mode)
   }
-  // --force is a no-op for API-token imports; it only guards bot tokens.
 
   const request = await requestConfig(parsed.options)
   if (request.error) {
@@ -270,10 +265,6 @@ export async function runProfilesDelete(
   return writeSuccess(command, data, mode)
 }
 
-// Bot tokens (asb_) are one-time refresh credentials: the first rotation
-// consumes the displayed token, so every locally detectable failure (profile
-// conflict, token store availability) is checked BEFORE the rotation call.
-// No whoami pre-check runs — the rotation refresh itself is the validation.
 async function importBotTokenProfile(
   command: string,
   profile: string,
@@ -308,11 +299,6 @@ async function importBotTokenProfile(
     return writeFailure(command, request.error, mode, 1)
   }
 
-  // Prove the credential store is writable BEFORE the rotation-consuming
-  // refresh: on a headless machine with no keychain and no
-  // --allow-plaintext-token-store, failing here keeps the one-time token
-  // unconsumed instead of losing it. A forced import deletes the existing
-  // entry below, so that entry must not count as writability proof.
   const forcedReplace = Boolean(entry && parsed.options.force === true)
   if (
     !(await probeTokenStoreWritable(profile, parsed.options, {
@@ -327,14 +313,6 @@ async function importBotTokenProfile(
     )
   }
 
-  // A forced replacement may repoint the profile at a different base URL.
-  // Delete the credential stored under the OLD origin first, otherwise it
-  // stays live but hidden: profiles delete would only remove the new one.
-  // Order: local request validation and the store probe ran first, so this
-  // logout only happens for an import that can actually proceed; an aborted
-  // deletion still leaves the one-time token unconsumed. The flip side is
-  // accepted --force semantics: if the new token then turns out invalid, the
-  // previous credential is already gone (the failure hint says so).
   if (forcedReplace && entry) {
     const removed = await deleteCredentialForProfileEntry(
       profile,
@@ -354,9 +332,6 @@ async function importBotTokenProfile(
     }
   }
 
-  // Prove the profile config file is writable before the rotation consumes
-  // the token: if the post-save config write failed, the profile would lose
-  // its kind:'bot' marker and later auth could fall into human device login.
   let configWritable = false
   try {
     configWritable = await writeGlobalConfig(config)
@@ -372,10 +347,6 @@ async function importBotTokenProfile(
     )
   }
 
-  // The first rotation-consuming refresh both validates the token and yields
-  // the credential that will actually be stored. The rotation_request_id is
-  // fixed before the first attempt so a lost response can be replayed: the
-  // server re-serves the same rotation for a short window keyed on this id.
   const rotationRequestId = randomUUID()
   let result = await apiPostPublic(
     '/api/cli/auth/refresh',
@@ -426,9 +397,6 @@ async function importBotTokenProfile(
     )
   }
 
-  // Persist the rotated credential BEFORE reporting success: the displayed
-  // token is now consumed, so a failed save means the token is lost and only
-  // a reissue can recover.
   const saved = await saveProfileSessionCredential(
     profile,
     {
@@ -464,9 +432,6 @@ async function importBotTokenProfile(
 
   const latest = (await readGlobalConfig()) ?? {}
   const profiles = latest.profiles ?? {}
-  // writeGlobalConfig throws on I/O failure (its false case is only the
-  // missing config home, excluded by the preflight) — catch so a disk error
-  // after the token was consumed surfaces the explicit recovery message.
   let configSaved = false
   try {
     configSaved = await writeGlobalConfig({

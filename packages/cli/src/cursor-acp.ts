@@ -85,18 +85,14 @@ export async function runCursorAcp(): Promise<void> {
       if (readFileSync(lockPath, 'utf8').trim() === String(process.pid)) {
         rmSync(lockPath, { force: true })
       }
-    } catch {
-      /* already released */
-    }
+    } catch {}
   }
   acquireWorkspaceLock()
   process.once('exit', releaseWorkspaceLock)
   let prior: { session_id?: string; cwd?: string } = {}
   try {
     prior = JSON.parse(readFileSync(statePath, 'utf8'))
-  } catch {
-    /* first run */
-  }
+  } catch {}
 
   const agent = spawn('agent', ['acp'], {
     cwd,
@@ -338,8 +334,6 @@ export async function runCursorAcp(): Promise<void> {
       response.writeHead(409).end()
       return
     }
-    // Claim the single managed conversation before reading the body. Otherwise
-    // two requests can both pass the guard and overwrite the one active prompt.
     busy = true
     let bodyComplete = false
     request.once('aborted', () => {

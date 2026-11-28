@@ -59,7 +59,6 @@ async function info(path: string) {
     throw error
   }
 }
-// Configured folder aliases are resolved; descendant user links are never followed.
 class SkillFolderResolutionError extends Error {
   constructor(
     path: string,
@@ -141,7 +140,6 @@ export async function isProtectedLink(
   }
   return false
 }
-// Preserve the observed blocking entry kind independently of the public message.
 export class SkillPathError extends Error {
   constructor(
     message: string,
@@ -150,7 +148,6 @@ export class SkillPathError extends Error {
     super(message)
   }
 }
-// Without protected entries (an unowned folder), every link is a user link.
 async function inspectTree(
   root: string,
   cleanup = false,
@@ -181,7 +178,6 @@ async function inspectTree(
       continue
     }
     if (item.isDirectory() && root === folderRoot && stagingName.test(name)) {
-      // Inspect staging descendants before recursive cleanup, too.
       await inspectTree(path, false, folderRoot, protectedEntries, userLinks)
       if (
         cleanup &&
@@ -230,7 +226,6 @@ async function safe(
   ]
   for (let i = 0; i < parts.length; i++) {
     const item = await info(parts[i]!)
-    // A validated retired file may become a directory during this update.
     if (
       i < parts.length - 1 &&
       item?.isFile() &&
@@ -273,8 +268,6 @@ export type SkillFolderInspection = {
   linkedEntry: boolean
   error?: Error
 }
-// Presence includes invalid and dangling records; never inspect their referents.
-// Legacy authority affects folder ownership, not the entry's state or safety.
 async function inspectAt(
   root: string,
   managedLegacy: boolean,
@@ -418,7 +411,6 @@ async function ownership(
     return { status: 'invalid' }
   }
 }
-// Only recorded intent hashes authorize partially committed content, never the bundle.
 async function recoveryOwnership(root: string, state: ManagedState) {
   const pending = await ownership(root, state, PENDING)
   const owned = await ownership(root, state, MANIFEST, pending.manifest)
@@ -428,7 +420,6 @@ async function recoveryOwnership(root: string, state: ManagedState) {
         ? { 'SKILL.md': hash((await bytesAt(root, 'SKILL.md'))!) }
         : {})),
   }
-  // Preserve the old hashes across the manifest-before-entry commit window.
   for (const [path, expected] of Object.entries(
     pending.manifest?.previous_files ?? {},
   )) {
@@ -441,7 +432,6 @@ async function recoveryOwnership(root: string, state: ManagedState) {
     const bytes = await bytesAt(root, path).catch(() => null)
     if (bytes !== null && hash(bytes) === expected) recorded[path] = expected
   }
-  // A committed file replacement makes the old descendants inaccessible.
   for (const [path, expected] of Object.entries(
     pending.manifest?.files ?? {},
   )) {
@@ -450,7 +440,6 @@ async function recoveryOwnership(root: string, state: ManagedState) {
       for (const old of Object.keys(recorded))
         if (old.startsWith(`${path}/`)) delete recorded[old]
   }
-  // Conversely, an intended descendant can replace an old file with a directory.
   for (const path of Object.keys(recorded))
     if (
       (await info(join(root, path)).catch(() => null))?.isDirectory() &&
@@ -629,7 +618,6 @@ export async function preflightFolder(
   }
   for (const path of Object.keys(removing ? {} : (bundle?.files ?? {}))) {
     if (!blockers.some((ancestor) => path.startsWith(`${ancestor}/`))) {
-      // Check ancestors before inspecting or traversing the destination.
       await safe(root, path, retiredAncestors, new Set([join(root, path)]))
       if ((await info(join(root, path)))?.isDirectory())
         await checkDirectory(path)
@@ -728,8 +716,6 @@ export async function writeSkillFolder(
       ...files,
       [PENDING]: intent,
     })) {
-      // Keep skill entry names out of every staging directory, including
-      // nested references. Root-level UUID names cannot collide with bundle paths.
       const temp = join(
         stagingDir,
         basename(path) === 'SKILL.md' ? `${randomUUID()}.tmp` : path,
@@ -756,8 +742,6 @@ export async function writeSkillFolder(
     } catch (error) {
       if (internalStaging || (error as NodeJS.ErrnoException).code !== 'EXDEV')
         throw error
-      // Restage known payloads on the destination filesystem, then retain the
-      // same rename order and rollback bookkeeping. Never copy to live paths.
       await stageInside()
       await rename(staged.get(path)!, join(root, path))
     }
@@ -806,7 +790,6 @@ export async function writeSkillFolder(
     await unlink(join(root, PENDING))
     await prune(root, retired)
   } catch (error) {
-    // Undo new paths before restoring files that became directories (or vice versa).
     for (const path of [...changed].reverse()) {
       if (path === PENDING) continue
       if ((await info(join(root, path)))?.isFile())
@@ -855,7 +838,6 @@ export async function removeSkillFolder(
       if (error.code !== 'ENOENT') throw error
     })
   await prune(root, Object.keys(previous))
-  // Keep configured aliases usable, including aliases on an ancestor.
   let path = dirname(entry)
   while (path !== dirname(path)) {
     if ((await info(path))?.isSymbolicLink()) retainRoot = true

@@ -335,10 +335,7 @@ export async function runShare(
         ? { type: 'project', project_id: destination.containerId }
         : { type: 'home' },
       share: {
-        // The server may adjust the stored visibility for the destination, so
-        // report its confirmed value over the requested one.
         visibility: visibility ?? requestedVisibility,
-        // Only a newly created artifact got its audience from this default.
         ...(accountVisibility?.privateDefault &&
         created &&
         visibility === 'private'

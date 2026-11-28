@@ -146,9 +146,6 @@ async function resolveProfileCredential(
   configPath: string | null,
   configKind: 'local' | 'shared' | null,
 ): Promise<CredentialResolution> {
-  // A profile is bound to the base URL it logged in against. Adopting it into
-  // options here makes both the token-store lookup and every later
-  // baseUrlOf() call target that host; explicit --base-url / env still win.
   const profileBaseUrl = nonEmpty(globalConfig?.profiles?.[profile]?.base_url)
   if (
     profileBaseUrl &&
