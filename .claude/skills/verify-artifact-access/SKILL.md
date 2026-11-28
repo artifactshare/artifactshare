@@ -42,15 +42,15 @@ Run the check when a change touches any of these. The model describes them as of
 | `services/project-membership.server.ts` `listProjectsForIndex` with `visibleShareableToDatabaseViewerSql` (its own copy of the link clause) and `visibleSharedProjectShareableToDatabaseViewerSql` | `IndexListed`, `MemberVisibleInIndex`, `SharedVisibleInIndex`, `ProjectFileCount` |
 | same file, `suggestProjects`, `listJoinedProjectsForDropdown`, `visibleProjectContainerToViewerSql` | `SuggestListed`, `DropdownListed`, `Joinable` |
 | same file, `joinProject`, `leaveProject` | `JoinProject`, `LeaveProject` |
-| `services/events.server.ts` `listFeedEvents`, slice `mine`: the scope filter and the access predicate | `ActivityFeed` |
+| `services/events.server.ts` `listFeedEvents`, slice `mine`: the scope filter and the access predicate `mineFeedVisibleSql` | `ActivityFeed` |
 | `services/search-discovery.server.ts` `discoveryEligibility` and the `includeArchived` filter in `discoveryQuery` | `Search` |
 | `services/home.server.ts` `recentShareableAccessPredicate` | `Recent` |
 | `services/views.server.ts` `recordViewerRecency` (a row when the viewer opens the page) | `ViewArtifact` |
 
-**Sync commit: `4a9c3988f6ce648fdca901d5a47533f2faede2ce`.** To see whether covered code moved since then:
+**Sync commit: `e8d95c84b165ea557077df58b59319f790d021f4`.** To see whether covered code moved since then:
 
 ```sh
-git diff --stat 4a9c3988f6ce648fdca901d5a47533f2faede2ce -- apps/web/app/modules/access apps/web/app/services/access.server.ts apps/web/app/services/projects.server.ts apps/web/app/services/project-membership.server.ts apps/web/app/services/events.server.ts apps/web/app/services/search-discovery.server.ts apps/web/app/services/home.server.ts apps/web/app/services/views.server.ts 'apps/web/app/routes/_protected/projects.$id.tsx'
+git diff --stat e8d95c84b165ea557077df58b59319f790d021f4 -- apps/web/app/modules/access apps/web/app/services/access.server.ts apps/web/app/services/projects.server.ts apps/web/app/services/project-membership.server.ts apps/web/app/services/events.server.ts apps/web/app/services/search-discovery.server.ts apps/web/app/services/home.server.ts apps/web/app/services/views.server.ts 'apps/web/app/routes/_protected/projects.$id.tsx'
 ```
 
 These files are large, so a diff there does not always touch a covered function. Read the diff of each covered function against its operator before you trust a pass. A pass on a model that no longer matches the code proves nothing.
@@ -69,7 +69,7 @@ The command runs three kinds of check and prints one line each:
 
 1. **baseline**: one full exploration with every rule that should hold. Expect `ok ... pass`.
 2. **known finding**: each rule in `KNOWN_FINDINGS` in `check.mjs`, which the current code breaks. Expect `ok ... violated` with the recorded path.
-3. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail. **scoped baseline** runs a rule with `AudienceStable = TRUE`, where a viewer from another workspace who has joined a project keeps a verified audience entry. Its known finding cannot happen there, so its mutations have a passing baseline to break.
+3. **mutation**: each entry in `MUTATIONS` is a broken copy of one guard in the code, written as a text change to the model. Expect `ok ... violated` on the rule that guards it. This shows that each rule can still fail.
 
 It ends with `All checks behaved as recorded.` and exit code 0, or names each check that did not, with the path TLC found and its output file, and exits 1.
 
@@ -77,7 +77,7 @@ It ends with `All checks behaved as recorded.` and exit code 0, or names each ch
 
 Read every TLC result with the pstack `/statechart` skill. Give it `model/ArtifactAccess.tla`, the config, and `model/statechart-view.mjs` as the view. The model has more states than a chart can show, so the report gives the shortest path to each broken rule in the viewer's words. It reports the first broken rule and stops checking the rest, so to read a second finding, list only that rule under INVARIANTS in a scratch copy of the config.
 
-Then decide whether the path is a real bug or a modeling error. Replay it against the code as a test on SQLite: `createMigratedInMemoryDb` from `~/test/sqlite-fixture` gives a migrated database. Insert the facts of the path's first state as rows, run each step through the service the coverage table names (or the row write it makes), and compare the list function with `viewerAccessAllowed(await facts(db, { shareableId, viewerUserId, now }))`. `vi.mock('cloudflare:workers', () => ({ env: {} }))` is needed before the service imports. The replay of the known findings below is such a test.
+Then decide whether the path is a real bug or a modeling error. Replay it against the code as a test on SQLite: `createMigratedInMemoryDb` from `~/test/sqlite-fixture` gives a migrated database. Insert the facts of the path's first state as rows, run each step through the service the coverage table names (or the row write it makes), and compare the list function with `viewerAccessAllowed(await facts(db, { shareableId, viewerUserId, now }))`. `vi.mock('cloudflare:workers', () => ({ env: {} }))` is needed before the service imports. `services/project-audience-removal.server.test.ts` replays the findings below this way.
 
 If the code does what the path says, it is a real bug: report it with that test, and add it to `KNOWN_FINDINGS` only if the user decides not to fix it now. If the code does not, the model is wrong: fix the model so it matches the code. Never weaken a rule or remove a step to make a check pass.
 
@@ -113,11 +113,6 @@ Left out:
 
 Observed, not a rule: `activeLinkExpiry` (SQL) and `checkAnonymousLinkAccess` (TypeScript) disagree on an expiry with more than three fraction digits that falls less than one millisecond after now, such as `2026-09-15T00:00:00.0005Z` at `2026-09-15T00:00:00.000Z`. SQL reads it as live and TypeScript as expired, because `Date.parse` drops digits past milliseconds. The window is under one millisecond.
 
-## Known findings
+## Fixed findings
 
-Both come from one cause: the `project_members` row stays after the viewer leaves the project audience, and two lists accept that row in place of a current audience entry. `viewerAccessAllowed` does not, so the artifact page denies what the list shows.
-
-- `ActivityFeedOpens`: a viewer from another workspace is in a project's audience and joins the project. The host removes them from the audience. The activity feed (slice `mine`) still shows the project's artifacts with their titles, and comment text once the viewer has opened one, because its cross-workspace branch requires only a `project_members` row and `visibleSharedProjectShareableToViewerSql`, which passes every `project` artifact.
-- `RecentOpens`: the same viewer opens one of those artifacts before the removal. Recents keep showing it as a live row with its current title, owner, version and unread counts, and the search palette matches it, because the `crossProject` branch of `recentShareableAccessPredicate` accepts `NOT revoked AND project_members` without an audience entry. A viewer from another workspace has no membership to revoke. The viewer cannot clear the stale row: `leaveProject` returns `not-found` once they are out of the audience.
-
-Reproduced on the real code at the sync commit with a test that seeds both workspaces, calls `joinProject` and `recordViewerRecency`, deletes the viewer's `project_share_defaults` row, and then finds the artifact in `listFeedEvents` and `listRecentArtifactsLimited` while `viewerAccessAllowed` and `findSharedProjectForViewer` deny it. The existing test `cross-workspace joined project flows with shared visibility only` in `services/events.server.test.ts` seeds a `project_members` row with no audience entry and expects the feed to show the artifact, so it encodes this behavior.
+The first run of this check found that a viewer from another workspace who joined a project and was then removed from its audience kept seeing the project's artifacts in the activity feed (slice `mine`) and in recents and the search palette, while the artifact page denied them. The `project_members` row stays after removal, and both lists accepted it in place of a current audience entry. `visibleSharedProjectShareableToViewer` and the `crossProject` branch of `recentShareableAccessPredicate` now ask for the audience entry, as `viewerAccessAllowed` does. The mutations `activity-feed-trusts-project-members-row` and `recent-trusts-project-members-row` restore the old guards and break `ActivityFeedOpens` and `RecentOpens`.

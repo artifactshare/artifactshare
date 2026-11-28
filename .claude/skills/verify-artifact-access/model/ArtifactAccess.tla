@@ -27,10 +27,6 @@
 (* Email matching (lowerEmail, grantMatchEmail) is one boolean per grant.  *)
 (***************************************************************************)
 
-CONSTANTS
-    AudienceStable \* TRUE: a viewer from another workspace who has joined a project
-                   \* keeps a verified audience entry (a narrower scope)
-
 Visibilities == {"private", "workspace", "project", "link"}
 (* link_expires_at, by how activeLinkExpiry (SQL) reads it at "now".       *)
 (*   none        NULL                                                      *)
@@ -168,10 +164,12 @@ SharedProjectFound == kind = "project" /\ ~archived /\ verified /\ projectGrant
 ProjectOpen == WorkspaceProjectFound \/ SharedProjectFound
 
 (* projects.$id.tsx loadSharedProject: visibleSharedProjectShareableToViewer *)
+SharedVisible ==
+    \/ vis = "project" /\ verified /\ projectGrant
+    \/ shareGrant /\ verified
 SharedProjectFiles ==
     /\ ~WorkspaceProjectFound /\ SharedProjectFound
-    /\ \/ vis = "project"
-       \/ shareGrant /\ verified
+    /\ SharedVisible
 
 (* project-membership.server.ts listProjectsForIndex fileCount:
    visibleShareableToDatabaseViewerSql in the viewer's workspace,
@@ -197,12 +195,14 @@ ProjectFileCount ==
 
 (* events.server.ts listFeedEvents, slice 'mine': the scope
    (shareables.workspace_id = user.workspaceId OR a project_members row), then
-   visibleShareableToViewerSql in the workspace, and outside it a
-   project_members row AND visibleSharedProjectShareableToViewerSql. *)
+   visibleShareableToViewerSql in the workspace, and outside it
+   (mineFeedVisibleSql) a project_members row AND either
+   visibleSharedProjectShareableToViewerSql, which asks a 'project' artifact
+   for a current audience entry, or the viewer's own artifact. *)
 ActivityFeed ==
     /\ sameWs \/ joined
     /\ \/ sameWs /\ WorkspaceListPredicate
-       \/ ~sameWs /\ joined /\ (vis = "project" \/ (shareGrant /\ verified))
+       \/ ~sameWs /\ joined /\ (SharedVisible \/ (owner /\ ~Revoked))
 
 (* search-discovery.server.ts discoveryEligibility, with the
    includeArchived = false filter (c.kind IS NOT 'project' OR c.archived_at IS NULL). *)
@@ -231,9 +231,7 @@ Recent ==
             \/ ListLinkAccess
             \/ vis = "project" /\ ~ArchivedContainer
        \/ ~sameWs /\                                                 \* crossProject / activeLink
-            \/ ~ArchivedContainer /\ vis = "project" /\
-                 \/ ~Revoked /\ joined
-                 \/ projectGrant /\ verified
+            \/ ~ArchivedContainer /\ vis = "project" /\ projectGrant /\ verified
             \/ ListLinkAccess
 
 -----------------------------------------------------------------------------
@@ -335,7 +333,6 @@ ArchiveOrRestoreProject == kind = "project" /\ archived' = ~archived
                    botStopped, verified, shareGrant, projectGrant, suspended, expiry,
                    linkSharing, joined, recency>>
 ChangeAudience == kind = "project" /\ projectGrant' = ~projectGrant
-    /\ ((AudienceStable /\ ~sameWs /\ joined) => projectGrant')
     /\ UNCHANGED <<vis, owner, sameWs, kind, baseVis, creator, archived, member, teamPlan,
                    botStopped, verified, shareGrant, suspended, expiry,
                    linkSharing, joined, recency>>
@@ -358,7 +355,6 @@ StopOrRestartBot == botStopped' = ~botStopped
                    linkSharing, joined, recency>>
 (* Sign-in with a provider that does or does not assert a verified email. *)
 ChangeEmailVerification == verified' = ~verified
-    /\ ((AudienceStable /\ ~sameWs /\ joined) => verified')
     /\ UNCHANGED <<vis, owner, sameWs, kind, baseVis, creator, archived, member, teamPlan,
                    botStopped, shareGrant, projectGrant, suspended, expiry,
                    linkSharing, joined, recency>>

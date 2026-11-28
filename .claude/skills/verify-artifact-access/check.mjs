@@ -7,22 +7,6 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
-// Invariants the current code is known to break. Each entry is a reported
-// finding, not a pass. Remove the entry when the code is fixed.
-const KNOWN_FINDINGS = {
-  ActivityFeedOpens:
-    'The activity feed keeps showing a project artifact to a viewer from another workspace who joined the project and was then removed from its audience.',
-  RecentOpens:
-    'Recent keeps showing a project artifact to a viewer from another workspace who joined the project, opened it, and was then removed from its audience.',
-}
-
-// Narrower scopes where a known finding cannot happen, so a mutation of the
-// code that the finding's invariant guards still has a passing baseline to break.
-const SCOPED_BASELINES = [
-  { invariant: 'ActivityFeedOpens', constants: { AudienceStable: 'TRUE' } },
-  { invariant: 'RecentOpens', constants: { AudienceStable: 'TRUE' } },
-]
-
 const MUTATIONS = [
   {
     name: 'list-link-ignores-suspension',
@@ -69,8 +53,8 @@ const MUTATIONS = [
   {
     name: 'shared-project-lists-every-artifact',
     code: 'loadSharedProject drops visibleSharedProjectShareableToViewer',
-    find: '    /\\ \\/ vis = "project"\n       \\/ shareGrant /\\ verified',
-    replace: '    /\\ TRUE',
+    find: '    /\\ ~WorkspaceProjectFound /\\ SharedProjectFound\n    /\\ SharedVisible',
+    replace: '    /\\ ~WorkspaceProjectFound /\\ SharedProjectFound',
     breaks: 'SharedProjectFilesOpen',
   },
   {
@@ -97,18 +81,16 @@ const MUTATIONS = [
   {
     name: 'activity-feed-cross-workspace-unfiltered',
     code: "listFeedEvents 'mine' drops visibleSharedProjectShareableToViewerSql from the cross-workspace branch",
-    find: '       \\/ ~sameWs /\\ joined /\\ (vis = "project" \\/ (shareGrant /\\ verified))',
+    find: '       \\/ ~sameWs /\\ joined /\\ (SharedVisible \\/ (owner /\\ ~Revoked))',
     replace: '       \\/ ~sameWs /\\ joined',
     breaks: 'ActivityFeedOpens',
-    constants: { AudienceStable: 'TRUE' },
   },
   {
     name: 'recent-cross-workspace-any-visibility',
     code: "recentShareableAccessPredicate: crossProject loses shareables.visibility = 'project'",
-    find: '            \\/ ~ArchivedContainer /\\ vis = "project" /\\',
-    replace: '            \\/ ~ArchivedContainer /\\',
+    find: '            \\/ ~ArchivedContainer /\\ vis = "project" /\\ projectGrant /\\ verified',
+    replace: '            \\/ ~ArchivedContainer /\\ projectGrant /\\ verified',
     breaks: 'RecentOpens',
-    constants: { AudienceStable: 'TRUE' },
   },
   {
     name: 'recent-grant-ignores-email-verification',
@@ -116,14 +98,32 @@ const MUTATIONS = [
     find: '       \\/ shareGrant /\\ verified                                     \\* direct',
     replace: '       \\/ shareGrant',
     breaks: 'RecentOpens',
-    constants: { AudienceStable: 'TRUE' },
+  },
+  {
+    name: 'activity-feed-trusts-project-members-row',
+    code: "visibleSharedProjectShareableToViewer lists every 'project' artifact without a project_share_defaults row, so the feed trusts the project_members row left after audience removal",
+    find: '    \\/ vis = "project" /\\ verified /\\ projectGrant\n    \\/ shareGrant /\\ verified\nSharedProjectFiles',
+    replace: '    \\/ vis = "project"\n    \\/ shareGrant /\\ verified\nSharedProjectFiles',
+    breaks: 'ActivityFeedOpens',
+  },
+  {
+    name: 'recent-trusts-project-members-row',
+    code: 'recentShareableAccessPredicate: crossProject accepts a project_members row in place of the audience entry',
+    find: '            \\/ ~ArchivedContainer /\\ vis = "project" /\\ projectGrant /\\ verified',
+    replace: '            \\/ ~ArchivedContainer /\\ vis = "project" /\\ ((~Revoked /\\ joined) \\/ (projectGrant /\\ verified))',
+    breaks: 'RecentOpens',
+  },
+  {
+    name: 'activity-feed-owner-ignores-revocation',
+    code: "mineFeedVisibleSql: the owner clause loses NOT workspaceAccessRevoked",
+    find: '       \\/ ~sameWs /\\ joined /\\ (SharedVisible \\/ (owner /\\ ~Revoked))',
+    replace: '       \\/ ~sameWs /\\ joined /\\ (SharedVisible \\/ owner)',
+    breaks: 'ActivityFeedOpens',
   },
 ]
 
 await runModelChecks({
   modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
   module: 'ArtifactAccess',
-  knownFindings: KNOWN_FINDINGS,
-  scopedBaselines: SCOPED_BASELINES,
   mutations: MUTATIONS,
 })
