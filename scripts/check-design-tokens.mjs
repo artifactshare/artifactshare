@@ -671,6 +671,42 @@ export function collectThemeBreakpointNames(appCss) {
   return names
 }
 
+export function collectThemeBreakpointPixels(appCss) {
+  const themeBlock = extractAtThemeBlock(appCss)
+  const pixels = new Map()
+  if (!themeBlock) return pixels
+  for (const match of themeBlock.matchAll(
+    /--breakpoint-([A-Za-z0-9_-]+)\s*:\s*(\d+(?:\.\d+)?)px/g,
+  ))
+    pixels.set(match[1], Number(match[2]))
+  return pixels
+}
+
+const SCRIPTED_WIDTH_MEDIA_QUERY_RE =
+  /\(\s*max-width:\s*(\d+(?:\.\d+)?)px\s*\)/g
+
+// A matchMedia() string in TSX cannot read a theme custom property: media
+// queries reject var(), and there is no DOM at module scope. So the number is
+// written out, and this check is what keeps it tied to the breakpoint it means.
+// A query must sit within a pixel below a theme breakpoint; the step itself
+// (0.02px or 1px) is the component's business.
+export function findScriptedWidthMediaQueries(source, breakpointPixels) {
+  const violations = []
+  const seen = new Set()
+  const widths = [...breakpointPixels.values()]
+  for (const match of stripTsxComments(source).matchAll(
+    SCRIPTED_WIDTH_MEDIA_QUERY_RE,
+  )) {
+    const width = Number(match[1])
+    if (widths.some((edge) => width < edge && edge - width <= 1)) continue
+    const detail = `(max-width: ${match[1]}px)`
+    if (seen.has(detail)) continue
+    seen.add(detail)
+    violations.push(detail)
+  }
+  return violations
+}
+
 export function collectThemeContainerNames(appCss) {
   const themeBlock = extractAtThemeBlock(appCss)
   if (!themeBlock) return new Set()
@@ -1794,6 +1830,7 @@ export function runAllChecks() {
     })
   }
   const themeBreakpointNames = collectThemeBreakpointNames(themeCssContent)
+  const themeBreakpointPixels = collectThemeBreakpointPixels(themeCssContent)
   const themeContainerNames = collectThemeContainerNames(themeCssContent)
 
   const sourceFiles = walkSourceFiles(APP_DIR, true).filter(
@@ -1821,6 +1858,16 @@ export function runAllChecks() {
     for (const match of findNumericBreakpointVariants(content)) {
       violations.push({
         check: 'numeric-breakpoint-variant',
+        file: rel(file),
+        detail: match,
+      })
+    }
+    for (const match of findScriptedWidthMediaQueries(
+      content,
+      themeBreakpointPixels,
+    )) {
+      violations.push({
+        check: 'scripted-width-media-query',
         file: rel(file),
         detail: match,
       })

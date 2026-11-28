@@ -14,6 +14,10 @@ import {
 import { useT } from '~/hooks/use-t'
 import { LinkReportDialog } from './link-report-dialog'
 
+// The edge below --breakpoint-phone in app/styles/theme.css. A media query
+// cannot read a custom property, so the number is written out here;
+// scripts/check-design-tokens.mjs fails if it stops sitting below that
+// breakpoint.
 const PHONE_QUERY = '(max-width: 519.98px)'
 
 function subscribePhone(onChange: () => void) {
