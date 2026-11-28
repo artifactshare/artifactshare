@@ -149,6 +149,20 @@ export function createTextAnchorEngine(
       ? selector.quotedText
       : selector.quotedText.replace(/\s+/g, ' ').trim()
   }
+  // Selectors written before normalized-v1 carry no offsets and no text
+  // hash, so context is all there is: the quote resolves only when one
+  // position matches, with or without the whitespace the old writers
+  // trimmed off the prefix and suffix.
+  function matchLegacyContext(quote: string, prefix: string, suffix: string) {
+    const positions = new Set<number>()
+    for (const before of prefix && !prefix.endsWith(' ') ? ['', ' '] : [''])
+      for (const after of suffix && !suffix.startsWith(' ') ? ['', ' '] : [''])
+        for (const at of hits(text, prefix + before + quote + after + suffix))
+          positions.add(at + prefix.length + before.length)
+    if (positions.size !== 1) return null
+    const start = positions.values().next().value!
+    return { textStart: start, textEnd: start + quote.length }
+  }
   function resolve(selector: TextSelector) {
     if (
       !selector ||
@@ -170,18 +184,8 @@ export function createTextAnchorEngine(
     const prefix = normalize(selector.prefixText || '')
     const suffix = normalize(selector.suffixText || '')
     if (!quote.trim()) return null
-    if (legacy || selector.selectorFormat === 'quote-v1') {
-      const positions = new Set<number>()
-      for (const before of prefix && !prefix.endsWith(' ') ? ['', ' '] : [''])
-        for (const after of suffix && !suffix.startsWith(' ')
-          ? ['', ' ']
-          : [''])
-          for (const at of hits(text, prefix + before + quote + after + suffix))
-            positions.add(at + prefix.length + before.length)
-      if (positions.size !== 1) return null
-      const start = positions.values().next().value!
-      return { textStart: start, textEnd: start + quote.length }
-    }
+    if (legacy || selector.selectorFormat === 'quote-v1')
+      return matchLegacyContext(quote, prefix, suffix)
     const matches = hits(text, prefix + quote + suffix)
     const hit = matches.length === 1 ? matches[0]! + prefix.length : -1
     const context = prefix + quote + suffix

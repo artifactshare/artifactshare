@@ -1,6 +1,6 @@
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { userContext } from './context'
+import { authSourceContext, cliAuthorityContext, userContext } from './context'
 
 const getSessionUserMock = vi.hoisted(() => vi.fn())
 const getSessionUserFromBearerMock = vi.hoisted(() => vi.fn())
@@ -419,6 +419,282 @@ describe('requireUserApiWithBearerMiddleware', () => {
       },
     })
     expect(consoleError).toHaveBeenCalled()
+  })
+})
+
+const cookieUser = { id: 'cookie-user', kind: 'human' }
+const bearerHuman = { id: 'bearer-user', kind: 'human' }
+const bearerBot = { id: 'bearer-bot', kind: 'bot' }
+const unrestrictedAuthority = { kind: 'unrestricted' }
+const agentAuthority = {
+  kind: 'agent',
+  familyId: 'family-1',
+  workspaceId: 'workspace-1',
+  projectId: 'project-1',
+  projectNameSnapshot: 'Project',
+  agentProfileId: 'agent-1',
+}
+
+type CredentialCase = {
+  name: string
+  authorization?: string
+  cookieUser?: typeof cookieUser
+  bearerUser?: unknown
+  authorityResolution?: unknown
+  method?: string
+  path?: string
+  entered: boolean
+  status?: number
+  user: 'cookie' | 'bearer' | null
+  authSource: 'cookie' | 'bearer' | null
+  authority: 'unrestricted' | 'agent' | null
+  bearerChecked: boolean
+  bearerResolved: boolean
+  logged: boolean
+}
+
+// One row per branch of the credential decision. Every row states the whole
+// outcome, so a branch that starts leaking a cookie identity or skipping the
+// bot denial fails here rather than in a route.
+const credentialCases: CredentialCase[] = [
+  {
+    name: 'no bearer header falls back to the cookie session',
+    cookieUser,
+    entered: true,
+    user: 'cookie',
+    authSource: 'cookie',
+    authority: null,
+    bearerChecked: false,
+    bearerResolved: false,
+    logged: false,
+  },
+  {
+    name: 'no bearer header and no cookie session is unauthorized',
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: false,
+    bearerResolved: false,
+    logged: false,
+  },
+  {
+    name: 'a malformed bearer scheme never falls back to the cookie',
+    authorization: 'Bearer .suffix',
+    cookieUser,
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: false,
+    bearerResolved: false,
+    logged: false,
+  },
+  {
+    name: 'an empty bearer credential never falls back to the cookie',
+    authorization: 'Bearer',
+    cookieUser,
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: false,
+    bearerResolved: false,
+    logged: false,
+  },
+  {
+    name: 'an unresolvable bearer never falls back to the cookie',
+    authorization: 'Bearer session-token',
+    cookieUser,
+    bearerUser: null,
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: true,
+    bearerResolved: false,
+    logged: true,
+  },
+  {
+    name: 'an API token for a bot is denied',
+    authorization: 'Bearer ast_api_token',
+    cookieUser,
+    bearerUser: bearerBot,
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: true,
+    bearerResolved: false,
+    logged: true,
+  },
+  {
+    name: 'an API token for a person is unrestricted',
+    authorization: 'Bearer ast_api_token',
+    bearerUser: bearerHuman,
+    entered: true,
+    user: 'bearer',
+    authSource: 'bearer',
+    authority: 'unrestricted',
+    bearerChecked: true,
+    bearerResolved: true,
+    logged: true,
+  },
+  {
+    name: 'a session token without an authority is unauthorized',
+    authorization: 'Bearer session-token',
+    cookieUser,
+    bearerUser: bearerHuman,
+    authorityResolution: null,
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: true,
+    bearerResolved: false,
+    logged: true,
+  },
+  {
+    name: 'a session token whose authority is denied is unauthorized',
+    authorization: 'Bearer session-token',
+    cookieUser,
+    bearerUser: bearerHuman,
+    authorityResolution: 'denied',
+    entered: false,
+    status: 401,
+    user: null,
+    authSource: null,
+    authority: null,
+    bearerChecked: true,
+    bearerResolved: false,
+    logged: true,
+  },
+  {
+    name: 'a session token with an in-scope authority enters the route',
+    authorization: 'Bearer session-token',
+    cookieUser,
+    bearerUser: bearerHuman,
+    authorityResolution: unrestrictedAuthority,
+    entered: true,
+    user: 'bearer',
+    authSource: 'bearer',
+    authority: 'unrestricted',
+    bearerChecked: true,
+    bearerResolved: true,
+    logged: true,
+  },
+  {
+    name: 'a session token with an out-of-scope authority is scope denied',
+    authorization: 'Bearer session-token',
+    bearerUser: bearerHuman,
+    authorityResolution: agentAuthority,
+    method: 'POST',
+    path: '/api/cli/projects/p1',
+    entered: false,
+    status: 403,
+    user: 'bearer',
+    authSource: 'bearer',
+    authority: 'agent',
+    bearerChecked: true,
+    bearerResolved: true,
+    logged: true,
+  },
+]
+
+describe('requireUserApiWithBearerMiddleware credential branches', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    getSessionUserMock.mockReset()
+    getSessionUserFromBearerMock.mockReset()
+    resolveCliAuthorityBySessionTokenMock.mockReset()
+    readBearerSessionTokenMock.mockClear()
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test.each(credentialCases)('$name', async (branch) => {
+    const context = createContext()
+    if (branch.cookieUser) context.set(userContext, branch.cookieUser)
+    getSessionUserFromBearerMock.mockResolvedValue(branch.bearerUser ?? null)
+    resolveCliAuthorityBySessionTokenMock.mockResolvedValue(
+      branch.authorityResolution ?? null,
+    )
+    const request = new Request(
+      `https://example.test${branch.path ?? '/api/cli/artifacts'}`,
+      {
+        method: branch.method ?? 'GET',
+        ...(branch.authorization
+          ? { headers: { Authorization: branch.authorization } }
+          : {}),
+      },
+    )
+    const next = vi.fn()
+
+    const thrown = await Promise.resolve(
+      requireUserApiWithBearerMiddleware(createArgs(request, context), next),
+    ).catch((error: unknown) => error)
+
+    expect(next).toHaveBeenCalledTimes(branch.entered ? 1 : 0)
+    if (branch.status === undefined) {
+      expect(thrown).not.toBeInstanceOf(Response)
+    } else {
+      expect(thrown).toBeInstanceOf(Response)
+      expect((thrown as Response).status).toBe(branch.status)
+    }
+    const expectedUser =
+      branch.user === 'cookie'
+        ? branch.cookieUser
+        : branch.user === 'bearer'
+          ? branch.bearerUser
+          : null
+    expect(context.get(userContext) ?? null).toEqual(expectedUser)
+    expect(context.get(authSourceContext) ?? null).toBe(branch.authSource)
+    const expectedAuthority =
+      branch.authority === 'unrestricted'
+        ? unrestrictedAuthority
+        : branch.authority === 'agent'
+          ? agentAuthority
+          : null
+    expect(context.get(cliAuthorityContext) ?? null).toEqual(expectedAuthority)
+    expect(getSessionUserFromBearerMock).toHaveBeenCalledTimes(
+      branch.bearerChecked ? 1 : 0,
+    )
+    expect(logSpy).toHaveBeenCalledTimes(branch.logged ? 1 : 0)
+    if (branch.logged) {
+      expect(JSON.parse(logSpy.mock.calls[0]![0] as string)).toMatchObject({
+        phase: 'bearer_api',
+        hasBearer: true,
+        bearerChecked: branch.bearerChecked,
+        bearerResolved: branch.bearerResolved,
+        cookieUserResolved: false,
+      })
+    }
+  })
+
+  test('an API token never consults the CLI authority table', async () => {
+    const context = createContext()
+    getSessionUserFromBearerMock.mockResolvedValue(bearerHuman)
+    const request = new Request('https://example.test/api/cli/artifacts', {
+      headers: { Authorization: 'Bearer ast_api_token' },
+    })
+
+    await requireUserApiWithBearerMiddleware(
+      createArgs(request, context),
+      vi.fn(),
+    )
+
+    expect(resolveCliAuthorityBySessionTokenMock).not.toHaveBeenCalled()
   })
 })
 

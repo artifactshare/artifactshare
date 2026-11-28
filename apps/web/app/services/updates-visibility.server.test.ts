@@ -30,14 +30,15 @@ vi.mock('cloudflare:workers', () => ({
   env: { APP_ENV: 'development' },
 }))
 
+import { trustedHtmlFixture } from '~/test/trusted-html'
 const baseEntry: UpdateEntry = {
   slug: '2026-07-01-sample',
   title: 'Sample',
   date: '2026-07-01',
   products: ['web'],
   kind: 'new',
-  bodyHtml: '<p>Body</p>',
-  summaryHtml: '<p>Summary</p>',
+  bodyHtml: trustedHtmlFixture('<p>Body</p>'),
+  summaryHtml: trustedHtmlFixture('<p>Summary</p>'),
   hasMore: false,
 }
 

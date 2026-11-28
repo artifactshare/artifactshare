@@ -1,3 +1,4 @@
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import { GuideStaticPage } from '~/components/app/guide-static-page'
 import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
@@ -68,7 +69,7 @@ export function TokushohoPage({
   html,
   locale,
 }: {
-  html: string
+  html: TrustedHtml
   locale: Locale
 }) {
   return <GuideStaticPage html={html} locale={locale} path="/tokushoho" />

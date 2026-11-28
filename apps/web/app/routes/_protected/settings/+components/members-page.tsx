@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import {
   useMemo,
   useState,
@@ -82,7 +82,7 @@ export default function TeamMembersPage({
 
   const [target, setTarget] = useState<MemberTarget | null>(null)
   const fetcher = useFetcher<typeof action>()
-  useSettingsEntryChange(fetcher.reset)
+  useSettingsEntryChangeIgnoringReplace(fetcher.reset)
   const { reset } = fetcher
   const { revalidate } = useRevalidator()
   const result = fetcher.state === 'idle' ? fetcher.data : undefined

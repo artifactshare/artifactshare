@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, writeFile, rm, cp, stat } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  writeFile,
+  rm,
+  cp,
+  stat,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { test } from 'node:test'
@@ -95,6 +103,33 @@ test('a changed reporter source fails check without writing tracked or temporary
     /missing or stale/,
   )
   assert.equal(await readFile(output, 'utf8'), before.source)
+})
+
+test('renaming a guarded security function fails generation', async (t) => {
+  const directory = await temporary(t)
+  await cp(dirname(entryPath), join(directory, 'reporter'), { recursive: true })
+  await cp(
+    join(dirname(entryPath), '../reporter-constants.ts'),
+    join(directory, 'reporter-constants.ts'),
+  )
+  const entry = join(directory, 'reporter/entry.ts')
+  assert.equal(
+    (await renderReporter({ entry })).body,
+    (await renderReporter()).body,
+  )
+  for (const name of await readdir(join(directory, 'reporter'))) {
+    const file = join(directory, 'reporter', name)
+    const source = await readFile(file, 'utf8')
+    if (!source.includes('installCspViolations')) continue
+    await writeFile(
+      file,
+      source.replaceAll('installCspViolations', 'installCspViolationsRenamed'),
+    )
+  }
+  await assert.rejects(renderReporter({ entry }), {
+    message:
+      'Unsafe reporter bundle: security function installCspViolations is not declared in the reporter sources; update securityFunctions in this script',
+  })
 })
 
 test('structural guard accepts inert declarations and the frame-guard/capture order', () => {

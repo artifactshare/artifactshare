@@ -16,6 +16,7 @@ import { Badge } from '~/components/ui/badge'
 import { Inline } from '~/components/layout/inline'
 import { Stack } from '~/components/layout/stack'
 import { useT } from '~/hooks/use-t'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 import { withLang } from '~/lib/connect-link'
 import { cn } from '~/lib/utils'
@@ -61,7 +62,7 @@ function parseUpdateDate(date: string): Date {
   return new Date(Date.UTC(year!, month! - 1, day!))
 }
 
-function UpdatesEntryHtml({ html }: { html: string }) {
+function UpdatesEntryHtml({ html }: { html: TrustedHtml }) {
   return (
     // react-doctor-disable-next-line react-doctor/dangerous-html-sink
     <GuideProse dangerouslySetInnerHTML={{ __html: html }} />

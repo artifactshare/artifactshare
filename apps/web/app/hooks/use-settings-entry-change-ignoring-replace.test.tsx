@@ -3,12 +3,12 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { expect, test, vi } from 'vitest'
-import { useSettingsEntryChange } from './use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from './use-settings-entry-change-ignoring-replace'
 
 test('another entry of the page clears feedback; a replace of this entry keeps it', async () => {
   const clear = vi.fn()
   function Page() {
-    useSettingsEntryChange(clear)
+    useSettingsEntryChangeIgnoringReplace(clear)
     return null
   }
   const router = createMemoryRouter(

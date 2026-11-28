@@ -15,11 +15,18 @@ import {
   getPublicGuideVerifiedDate,
   PUBLIC_GUIDE_KEYS,
 } from '~/lib/public-guide-freshness'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 import { Stack } from '~/components/layout/stack'
 import { GuideHtmlWithFreshness } from './guide-freshness'
 
-function GuideMarkdown({ html, locale }: { html: string; locale: Locale }) {
+function GuideMarkdown({
+  html,
+  locale,
+}: {
+  html: TrustedHtml
+  locale: Locale
+}) {
   return (
     <GuideProse>
       <GuideHtmlWithFreshness
@@ -43,7 +50,7 @@ export function PrivateMobileDesignHandoffPage({
 }: {
   locale: Locale
   source: string
-  html: string
+  html: TrustedHtml
 }) {
   const { t } = useT()
   const content = privateMobileDesignHandoffContent(locale)

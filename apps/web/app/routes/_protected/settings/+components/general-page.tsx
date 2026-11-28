@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { Link, useActionData, useFetcher, useOutletContext } from 'react-router'
 import type { action } from '../_content/general'
 import { StatusBanner } from './settings-banner'
@@ -31,7 +31,7 @@ export default function GeneralPage({
 }) {
   const shell = useOutletContext<SettingsLayoutContext>()
   const fetcher = useFetcher<typeof action>()
-  useSettingsEntryChange(fetcher.reset)
+  useSettingsEntryChangeIgnoringReplace(fetcher.reset)
   // A submission made before hydration arrives as the route's action data.
   const nativeResult = useActionData<typeof action>()
   const result = fetcher.data ?? nativeResult

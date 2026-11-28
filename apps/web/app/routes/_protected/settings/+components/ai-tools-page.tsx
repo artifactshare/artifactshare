@@ -1,4 +1,4 @@
-import { useSettingsEntryChange } from '~/hooks/use-settings-entry-change'
+import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useActionData, useFetcher } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
@@ -43,7 +43,7 @@ export default function ApiTokensPage({
   const [successCount, setSuccessCount] = useState(() =>
     nativeResult?.ok && nativeResult.code === 'created' ? 1 : 0,
   )
-  useSettingsEntryChange(() => {
+  useSettingsEntryChangeIgnoringReplace(() => {
     fetcher.reset()
     setSuccessCount(0)
   })

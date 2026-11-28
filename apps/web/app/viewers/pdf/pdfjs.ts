@@ -89,7 +89,7 @@ export interface PdfLinkService {
 }
 
 export interface PdfFindController {
-  // pdfjs-dist 5.4.624: a query change is recounted after a short delay;
+  // pdfjs-dist 6.5.438: a query change is recounted after a short delay;
   // until then counts may still mix the old and new query.
   _dirtyMatch: boolean
   state: { query?: unknown } | null

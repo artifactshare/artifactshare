@@ -107,6 +107,7 @@ export function CopyableCodeBlock({
             <Button
               type="button"
               variant={copyButtonVariant ?? 'ghost'}
+              iconSize="auto"
               aria-label={label}
               tabIndex={copyTabIndex}
               onClick={copy}
@@ -119,17 +120,12 @@ export function CopyableCodeBlock({
               {state === 'copied' ? (
                 <IconCheck
                   aria-hidden="true"
-                  className="text-success size-auto"
+                  className="text-success"
                   size={15}
                   strokeWidth={2.4}
                 />
               ) : (
-                <IconCopy
-                  aria-hidden="true"
-                  className="size-auto"
-                  size={15}
-                  strokeWidth={2.1}
-                />
+                <IconCopy aria-hidden="true" size={15} strokeWidth={2.1} />
               )}
               <span>{label}</span>
             </Button>

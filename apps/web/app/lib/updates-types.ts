@@ -1,3 +1,4 @@
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 
 export type UpdateProduct = 'web' | 'cli' | 'agent' | 'mcp' | 'admin'
@@ -12,8 +13,8 @@ export interface UpdateEntry {
   kind: UpdateKind
   notice?: true
   flag?: string
-  bodyHtml: string
-  summaryHtml: string
+  bodyHtml: TrustedHtml
+  summaryHtml: TrustedHtml
   hasMore: boolean
   detailsHref?: string
 }

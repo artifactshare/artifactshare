@@ -1,4 +1,5 @@
 import { renderMarkdownBody as renderMarkdown } from '~/lib/markdown-renderer.server'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 
 const modules = import.meta.glob(
@@ -13,7 +14,7 @@ const modules = import.meta.glob(
 export interface PrivateMobileDesignHandoffRenderedContent {
   locale: Locale
   source: string
-  html: string
+  html: TrustedHtml
 }
 
 export function getPrivateMobileDesignHandoffContent(

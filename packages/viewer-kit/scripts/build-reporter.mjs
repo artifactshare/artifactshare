@@ -677,6 +677,14 @@ export async function renderReporter({ entry = entryPath } = {}) {
             sourceFunctions.add(node.id.name)
         })
       }
+      // validateSecurityFunction matches by name, so a renamed function would
+      // silently lose its guard. Fail instead.
+      for (const name of securityFunctions) {
+        if (!sourceFunctions.has(name))
+          fail(
+            `security function ${name} is not declared in the reporter sources; update securityFunctions in this script`,
+          )
+      }
     }
     const body = validateBundle(output, sourceFunctions)
       .replace(/\r\n/g, '\n')

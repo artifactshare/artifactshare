@@ -1,3 +1,7 @@
+import {
+  sliceTrustedHtml,
+  type TrustedHtml,
+} from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 import { guideFreshnessClassName } from './guide-styles'
 
@@ -51,7 +55,7 @@ export function GuideHtmlWithFreshness({
   html,
   freshness,
 }: {
-  html: string
+  html: TrustedHtml
   freshness: GuideFreshnessProps
 }) {
   const closingHeading = html.search(/<\/h1>/i)
@@ -69,12 +73,14 @@ export function GuideHtmlWithFreshness({
     <>
       <div
         // react-doctor-disable-next-line react-doctor/dangerous-html-sink
-        dangerouslySetInnerHTML={{ __html: html.slice(0, headingEnd) }}
+        dangerouslySetInnerHTML={{
+          __html: sliceTrustedHtml(html, 0, headingEnd),
+        }}
       />
       <GuideFreshness {...freshness} />
       <div
         // react-doctor-disable-next-line react-doctor/dangerous-html-sink
-        dangerouslySetInnerHTML={{ __html: html.slice(headingEnd) }}
+        dangerouslySetInnerHTML={{ __html: sliceTrustedHtml(html, headingEnd) }}
       />
     </>
   )

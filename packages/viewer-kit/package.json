@@ -8,13 +8,16 @@
     "./markdown-render": "./src/markdown-render.ts",
     "./markdown-renderer": "./src/markdown-renderer.ts",
     "./tanstack-highlight": "./src/tanstack-highlight.ts",
+    "./trusted-html": "./src/trusted-html.ts",
     "./markdown-autolink": "./src/markdown-autolink.ts",
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",
+    "./pdf-page-limits": "./src/pdf-page-limits.ts",
     "./script-policy-sources": "./src/script-policy-sources.ts",
     "./inject": "./src/inject.ts",
     "./reporter/anchor-engine": "./src/reporter/anchor-engine.ts",
     "./reporter/comment-location": "./src/reporter/comment-location.ts",
+    "./reporter/refused-extensions": "./src/reporter/refused-extensions.ts",
     "./reporter/static-site-paths": "./src/reporter/static-site-paths.ts"
   },
   "scripts": {

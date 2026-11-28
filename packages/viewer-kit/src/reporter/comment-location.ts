@@ -1,3 +1,4 @@
+import { hasRefusedExtension } from './refused-extensions.js'
 import { staticSitePathCandidates } from './static-site-paths.js'
 
 export const MAX_COMMENT_LOCATION_LENGTH = 1000
@@ -25,7 +26,7 @@ export function canonicalCommentPathname(
   }
   const parts = decoded.replaceAll('\\', '/').split('/')
   if (parts.includes('..')) return null
-  if (/\.(?:exe|sh|php|py|rb|bat|cmd|dll|so)$/i.test(decoded)) return null
+  if (hasRefusedExtension(decoded)) return null
   const segments = parts.filter((segment) => segment !== '' && segment !== '.')
   if (segments.length === 0) return fallbackToIndex ? '/' : '/index.html'
   if (segments.length === 1) {

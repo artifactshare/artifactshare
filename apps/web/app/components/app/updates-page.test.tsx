@@ -36,13 +36,14 @@ vi.mock('~/hooks/use-t', () => ({
   }),
 }))
 
+import { trustedHtmlFixture } from '~/test/trusted-html'
 const baseEntry = {
   slug: 'structured-details',
   title: 'Structured details',
   date: '2026-07-13',
   products: ['cli'] as const,
   kind: 'new' as const,
-  summaryHtml: '<p>Summary</p>',
+  summaryHtml: trustedHtmlFixture('<p>Summary</p>'),
   hasMore: false,
 }
 
@@ -83,7 +84,7 @@ describe('Updates details links', () => {
         entry={{
           ...baseEntry,
           products: [...baseEntry.products],
-          bodyHtml: '<p>本文</p>',
+          bodyHtml: trustedHtmlFixture('<p>本文</p>'),
           detailsHref: '/ja/guides/cli',
         }}
       />,

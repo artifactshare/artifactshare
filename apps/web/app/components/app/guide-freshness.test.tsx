@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { trustedHtmlFixture } from '~/test/trusted-html'
 import { GuideFreshness, GuideHtmlWithFreshness } from './guide-freshness'
 import {
   getPublicGuideVerifiedDate,
@@ -80,7 +81,7 @@ describe('GuideFreshness', () => {
   test('places freshness after the first guide heading', () => {
     const html = renderToStaticMarkup(
       <GuideHtmlWithFreshness
-        html="<h1>Guide</h1><p>Body</p>"
+        html={trustedHtmlFixture('<h1>Guide</h1><p>Body</p>')}
         freshness={{
           kind: 'verified',
           locale: 'en',

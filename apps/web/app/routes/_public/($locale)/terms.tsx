@@ -1,3 +1,4 @@
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import { GuideStaticPage } from '~/components/app/guide-static-page'
 import { type Locale } from '~/i18n/messages'
 import { APEX_HOST } from '~/lib/hosts'
@@ -65,7 +66,13 @@ export function meta({ loaderData }: Route.MetaArgs) {
   return termsMeta(loaderData?.locale ?? 'en')
 }
 
-export function TermsPage({ html, locale }: { html: string; locale: Locale }) {
+export function TermsPage({
+  html,
+  locale,
+}: {
+  html: TrustedHtml
+  locale: Locale
+}) {
   return <GuideStaticPage html={html} locale={locale} path="/terms" />
 }
 
