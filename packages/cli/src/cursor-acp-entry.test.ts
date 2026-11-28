@@ -21,12 +21,34 @@ const roots: string[] = []
 const children: ChildProcess[] = []
 
 afterEach(async () => {
+  // The wrapper spawns the preview server and the ACP agent as its own
+  // children, and only its SIGTERM handler stops them. SIGKILL skipped that
+  // handler, so a test that failed before its own teardown left a preview
+  // server holding a port and a session record for the rest of the run. Ask
+  // for the graceful stop first and wait for it, with SIGKILL as the backstop.
   for (const child of children.splice(0)) {
-    if (child.exitCode === null) child.kill('SIGKILL')
+    if (child.exitCode !== null) continue
+    child.kill('SIGTERM')
+    const stopped = await exited(child, 2000)
+    if (stopped) continue
+    child.kill('SIGKILL')
+    await exited(child, 2000)
   }
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true })
 })
+
+function exited(child: ChildProcess, budgetMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null)
+    return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), budgetMs)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+}
 
 async function start(
   root: string,

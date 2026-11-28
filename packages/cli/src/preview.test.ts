@@ -133,6 +133,29 @@ async function browserApi(
   return (await response.json()) as Record<string, unknown>
 }
 
+/** The projection reports `waiting` exactly while the server holds an active
+ * long poll, so this is how a test observes that a `preview next --wait` child
+ * owns the session rather than guessing how long its startup takes. */
+async function waitForAgentState(
+  server: LiveServer,
+  expected: string,
+  budgetMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + budgetMs
+  let seen: unknown
+  while (Date.now() <= deadline) {
+    const body = await browserApi(server, 'GET', '/api/annotations')
+    seen = (body.agent as { state?: unknown } | undefined)?.state
+    if (seen === expected) return
+    // test-wait: elapsed-time — the pacing between polls, not the contract;
+    // the loop returns on the observed state above.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(
+    `preview agent state stayed ${JSON.stringify(seen)}, never ${expected}`,
+  )
+}
+
 function writeLp(dir: string): string {
   const filePath = join(dir, 'lp.html')
   writeFileSync(
@@ -399,7 +422,7 @@ test('preview next times out with no submission and errors with no session', asy
 test('a competing preview wait returns retry guidance', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)
-  await startPreview(env, filePath)
+  const server = await startPreview(env, filePath)
   const firstWait = spawn(
     process.execPath,
     [cliPath, 'preview', 'next', filePath, '--wait', '10', '--json'],
@@ -410,10 +433,16 @@ test('a competing preview wait returns retry guidance', async () => {
     },
   )
   try {
-    // test-wait: elapsed-time — the first wait must own the session before the competing command.
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    // The server rejects a second long poll only while it holds the first, so
+    // wait until it reports that wait connected. A 200ms sleep lost that race
+    // under load: the competing command became the active wait itself and held
+    // its own --wait budget until run()'s 10s spawnSync timeout killed it,
+    // leaving no status and no payload to assert on. One second of budget is
+    // enough for the conflict, which the server answers before it reads the
+    // budget at all, and bounds the damage if the order ever slips again.
+    await waitForAgentState(server, 'waiting')
     const competing = run(
-      ['preview', 'next', filePath, '--wait', '10', '--json'],
+      ['preview', 'next', filePath, '--wait', '1', '--json'],
       env,
     )
     const failure = expectFailure(competing, {

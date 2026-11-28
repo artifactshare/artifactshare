@@ -12,11 +12,28 @@ const FIXTURE_ROOT = path.resolve(
   '../../../../fixtures/static-sites',
 )
 
+// `fixtures/static-sites/` is git-ignored and built by `pnpm fixtures:build`,
+// so a fresh checkout fails these tests with a bare ENOENT from readdir that
+// names neither the fixture nor the command that produces it. Building the
+// fixtures here is not an option: it runs vite, react-router and next, which
+// takes minutes. Name the recovery in the failure instead.
+function missingFixtureError(name: string, root: string, cause: unknown) {
+  return new Error(
+    `Static site fixture "${name}" is missing at ${root}. Run \`pnpm fixtures:build\` from the repository root, then rerun this test.`,
+    { cause },
+  )
+}
+
 export async function loadStaticSiteFixture(
   name: string,
 ): Promise<StaticSiteFixtureFile[]> {
   const root = path.join(FIXTURE_ROOT, name)
-  const files = await listFiles(root)
+  const files = await listFiles(root).catch((error: unknown) => {
+    const failure = error as { code?: string; path?: string }
+    if (failure?.code === 'ENOENT' && failure.path === root)
+      throw missingFixtureError(name, root, error)
+    throw error
+  })
   return await Promise.all(
     files.map(async (absolutePath) => {
       const relativePath = path

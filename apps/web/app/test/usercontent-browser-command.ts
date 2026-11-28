@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { usercontentUnhandledFrame } from './worker-network-policy'
 import { openPopup, waitForMenuClose } from './browser-waits'
 import assert from 'node:assert/strict'
@@ -34,7 +35,7 @@ import {
 } from '../lib/sandbox-block-report.js'
 
 const run = promisify(execFile)
-const webRoot = new URL('../..', import.meta.url).pathname
+const webRoot = fileURLToPath(new URL('../..', import.meta.url))
 const secret = 'usercontent-browser-fixture-only-'.repeat(3)
 
 // A loopback-only reverse proxy maps these reserved test sites one-to-one to

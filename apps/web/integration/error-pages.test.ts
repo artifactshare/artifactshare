@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { createHmac } from 'node:crypto'
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,7 +15,7 @@ import {
 
 test('production document errors render localized root and Settings content', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'error-pages-'))
-  const webRoot = new URL('..', import.meta.url).pathname
+  const webRoot = fileURLToPath(new URL('..', import.meta.url))
   try {
     await buildUsercontentApp(directory, async (project) => {
       for (const [fault, module] of [

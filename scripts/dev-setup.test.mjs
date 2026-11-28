@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -585,17 +586,21 @@ test('missingStaticSiteFixtures lists absent fixtures and directories without an
   }
 })
 
-test('STATIC_SITE_FIXTURE_NAMES match the fixture builder', () => {
-  const builder = readFileSync(
-    join(import.meta.dirname, '../tools/static-site-fixtures/build.mjs'),
-    'utf8',
+test('STATIC_SITE_FIXTURE_NAMES match the fixture builder packages', () => {
+  // The names are what the build declares it writes. Each one still needs a
+  // builder package to build it, and a builder package nobody builds is dead
+  // weight, so hold the two lists level in both directions. The build runs
+  // every entry, so an empty or file-polluted list would also make every
+  // fixture check pass by vacuity.
+  const builders = readdirSync(
+    join(import.meta.dirname, '../tools/static-site-fixtures/builders'),
+    { withFileTypes: true },
   )
-  // The names come from the builder packages, so an empty or file-polluted
-  // read would make every fixture check pass by vacuity.
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
   assert.ok(STATIC_SITE_FIXTURE_NAMES.length >= 3)
-  assert.ok(!STATIC_SITE_FIXTURE_NAMES.includes('README.md'))
-  for (const name of STATIC_SITE_FIXTURE_NAMES)
-    assert.ok(builder.includes(name), `${name} is built`)
+  assert.deepEqual(STATIC_SITE_FIXTURE_NAMES, builders)
 })
 
 test('prepareFixtures builds only when something is missing and reports build failures', () => {

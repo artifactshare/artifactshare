@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
@@ -18,11 +19,10 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '~': new URL('./app', import.meta.url).pathname,
-      '@artifactshare/contract': new URL(
-        '../../packages/contract/src/index.ts',
-        import.meta.url,
-      ).pathname,
+      '~': fileURLToPath(new URL('./app', import.meta.url)),
+      '@artifactshare/contract': fileURLToPath(
+        new URL('../../packages/contract/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,7 @@ import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
-const webRoot = new URL('../..', import.meta.url).pathname
+const webRoot = fileURLToPath(new URL('../..', import.meta.url))
 
 // Cloudflare also writes .wrangler/deploy/config.json and React Router writes
 // generated metadata beneath the project root. Own that root as well as output

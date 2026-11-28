@@ -1,6 +1,7 @@
+import { fileURLToPath } from 'node:url'
 import { applyBrowserFixtureSchema } from './browser-fixture-schema'
 
-const webRoot = new URL('../..', import.meta.url).pathname
+const webRoot = fileURLToPath(new URL('../..', import.meta.url))
 
 async function startSandboxWorker(secret: string) {
   const { createTestHarness } = await import('wrangler')

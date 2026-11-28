@@ -236,9 +236,17 @@ describe('slackNotificationEnqueueQuery', () => {
 })
 
 describe('processSlackNotificationOutbox', () => {
-  test('scheduledJobForCron が cron を振り分ける', () => {
+  test('scheduledJobForCron は表にある cron だけを振り分ける', () => {
     expect(scheduledJobForCron('*/5 * * * *')).toBe('slack-notifications')
     expect(scheduledJobForCron('0 17 * * *')).toBe('reconciliation')
+    // 表にない cron を reconciliation とみなすと、reconciliation の cron を
+    // 書き換えてもこのテストが通ってしまう。
+    expect(scheduledJobForCron('0 18 * * *')).toBeNull()
+    expect(scheduledJobForCron('*/10 * * * *')).toBeNull()
+    expect(scheduledJobForCron('')).toBeNull()
+    // Object の prototype のキーも cron ではない。
+    expect(scheduledJobForCron('toString')).toBeNull()
+    expect(scheduledJobForCron('constructor')).toBeNull()
   })
 
   test('wrangler.production.jsonc の crons が両 job を 1 つずつ覆う', async () => {
@@ -257,6 +265,8 @@ describe('processSlackNotificationOutbox', () => {
     const jobs = crons.map((cron) => scheduledJobForCron(cron))
     expect(jobs.filter((j) => j === 'slack-notifications')).toHaveLength(1)
     expect(jobs.filter((j) => j === 'reconciliation')).toHaveLength(1)
+    // 本番の cron に、どの job にも対応しないものがない。
+    expect(jobs.filter((j) => j === null)).toHaveLength(0)
   })
 
   test('タイトルと投稿者名の Slack 制御列がエスケープされる', async () => {

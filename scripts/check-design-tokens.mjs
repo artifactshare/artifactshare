@@ -7,7 +7,7 @@ import {
   isAllowedInteractiveSpacingSource,
 } from './interactive-spacing-annotation-policy.mjs'
 
-const ROOT = new URL('..', import.meta.url).pathname
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const APP_DIR = join(ROOT, 'apps/web/app')
 const STYLES_DIR = join(APP_DIR, 'styles')
 export const APP_CSS = join(APP_DIR, 'app.css')

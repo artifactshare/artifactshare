@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { integrationWorkerConfig } from '../app/test/integration-worker-config'
 // Bot member lifecycle against a real D1 (Workers test harness). Rollback and
 // atomicity assertions live here on purpose: the SQLite service tests run
@@ -25,10 +26,9 @@ import {
 mkdirSync(new URL('../../.wrangler/integration-logs', import.meta.url), {
   recursive: true,
 })
-process.env.WRANGLER_LOG_PATH = new URL(
-  '../../.wrangler/integration-logs',
-  import.meta.url,
-).pathname
+process.env.WRANGLER_LOG_PATH = fileURLToPath(
+  new URL('../../.wrangler/integration-logs', import.meta.url),
+)
 const { createTestHarness, unstable_readConfig, unstable_splitSqlQuery } =
   await import('wrangler')
 
@@ -47,10 +47,14 @@ const productionConfig = JSON.parse(
 const publicIntegration = process.env.PUBLIC_INTEGRATION === '1'
 const runtimeConfig = unstable_readConfig(
   {
-    config: new URL(
-      publicIntegration ? '../wrangler.jsonc' : '../wrangler.production.jsonc',
-      import.meta.url,
-    ).pathname,
+    config: fileURLToPath(
+      new URL(
+        publicIntegration
+          ? '../wrangler.jsonc'
+          : '../wrangler.production.jsonc',
+        import.meta.url,
+      ),
+    ),
   },
   { hideWarnings: true },
 )
@@ -60,13 +64,15 @@ const integrationConfig = integrationWorkerConfig(productionConfig, {
 await writeFile(integrationConfigUrl, JSON.stringify(integrationConfig))
 const sandboxName = unstable_readConfig(
   {
-    config: new URL('../wrangler.sandbox.jsonc', import.meta.url).pathname,
+    config: fileURLToPath(
+      new URL('../wrangler.sandbox.jsonc', import.meta.url),
+    ),
     ...(publicIntegration ? {} : { env: 'production' }),
   },
   { hideWarnings: true },
 ).name
 const harness = createTestHarness({
-  root: new URL('..', import.meta.url).pathname,
+  root: fileURLToPath(new URL('..', import.meta.url)),
   workers: [
     {
       configPath: 'build/server/wrangler.bot-members-integration.json',

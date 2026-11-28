@@ -88,11 +88,17 @@ vi.mock('../app/services/reconcile.server', () => ({
   runReconciliation: runReconciliationMock,
 }))
 
-vi.mock('../app/services/slack-notifications.server', () => ({
-  processSlackNotificationOutbox: processSlackNotificationOutboxMock,
-  scheduledJobForCron: (cron: string) =>
-    cron === '*/5 * * * *' ? 'slack-notifications' : 'reconciliation',
-}))
+// scheduledJobForCron is the real one: a hand-copied mock of it let the
+// worker's branch be tested against a mapping the service does not have.
+vi.mock(
+  '../app/services/slack-notifications.server',
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import('../app/services/slack-notifications.server')
+    >()),
+    processSlackNotificationOutbox: processSlackNotificationOutboxMock,
+  }),
+)
 
 vi.mock('../app/services/cli-refresh-credentials.server', () => ({
   cleanupExpiredCliRotationReplays: cleanupExpiredCliRotationReplaysMock,
@@ -522,7 +528,7 @@ describe('app worker scheduled cleanup', () => {
     const waitUntil = vi.fn()
     app.scheduled?.(
       {
-        cron: '0 0 * * *',
+        cron: '0 17 * * *',
         scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
       } as never,
       productionEnv({ maintenance: false }),
@@ -555,6 +561,28 @@ describe('app worker scheduled cleanup', () => {
     expect(cleanupExpiredAnonymousViewSignalsMock).toHaveBeenCalledTimes(1)
   })
 
+  test('reports a cron no job claims and still reconciles', async () => {
+    // A trigger added to the deploy config without a job here must not leave
+    // the invocation doing nothing in silence.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const waitUntil = vi.fn()
+    app.scheduled?.(
+      {
+        cron: '7 3 * * 1',
+        scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
+      } as never,
+      productionEnv({ maintenance: false }),
+      { waitUntil } as never,
+    )
+
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
+    expect(console.error).toHaveBeenCalledWith('scheduled_cron_unmapped', {
+      cron: '7 3 * * 1',
+    })
+    expect(runReconciliationMock).toHaveBeenCalledTimes(1)
+    expect(processSlackNotificationOutboxMock).not.toHaveBeenCalled()
+  })
+
   test('does not fail reconciliation when signal cleanup fails', async () => {
     cleanupExpiredAnonymousViewSignalsMock.mockRejectedValue(
       new Error('cleanup failed'),
@@ -563,7 +591,7 @@ describe('app worker scheduled cleanup', () => {
     const waitUntil = vi.fn()
     app.scheduled?.(
       {
-        cron: '0 0 * * *',
+        cron: '0 17 * * *',
         scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
       } as never,
       productionEnv({ maintenance: false }),
@@ -586,7 +614,7 @@ describe('app worker scheduled cleanup', () => {
     const waitUntil = vi.fn()
     app.scheduled?.(
       {
-        cron: '0 0 * * *',
+        cron: '0 17 * * *',
         scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
       } as never,
       productionEnv({ maintenance: false }),
@@ -609,7 +637,7 @@ describe('app worker scheduled cleanup', () => {
     const waitUntil = vi.fn()
     app.scheduled?.(
       {
-        cron: '0 0 * * *',
+        cron: '0 17 * * *',
         scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
       } as never,
       productionEnv({ maintenance: false }),
@@ -638,7 +666,7 @@ describe('app worker scheduled cleanup', () => {
     const waitUntil = vi.fn()
     app.scheduled?.(
       {
-        cron: '0 0 * * *',
+        cron: '0 17 * * *',
         scheduledTime: Date.parse('2026-09-06T00:00:00.000Z'),
       } as never,
       productionEnv({ maintenance: false }),

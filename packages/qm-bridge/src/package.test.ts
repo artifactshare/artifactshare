@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'node:url'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const packageRoot = new URL('..', import.meta.url).pathname
+const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 const cliPath = join(packageRoot, 'dist', 'cli.js')
 
 describe('package boundaries', () => {

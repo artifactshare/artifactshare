@@ -943,7 +943,10 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async ({
     `document.getElementById('targets').innerHTML = '<a id="/billing" name="/billing"></a><a id="!/billing" name="!/billing"></a>'`,
   )
   phase = 'read painted highlight'
-  expect(await painted()).toEqual(['Common hash'])
+  // The verdict is the parent's view of a message the document sent. The
+  // document itself settles after that, so read it through the same wait the
+  // earlier reads use rather than on the first attempt.
+  await waitFor(async () => expect(await painted()).toEqual(['Common hash']))
   expectedHash = '#!/billing'
   phase = 'retarget bang billing (act render)'
   await render({
@@ -955,7 +958,9 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async ({
   phase = 'wait for bang billing attached verdict'
   await waitFor(() => expect(verdict('#!/billing')).toBe('attached'))
   phase = 'read final hash'
-  expect(await frame<string>('location.hash')).toBe('#!/billing')
+  await waitFor(async () =>
+    expect(await frame<string>('location.hash')).toBe('#!/billing'),
+  )
   phase = 'final verdict identifiers assertion'
   expect(verdicts.map((result) => result.threadId)).toEqual(['#!/billing'])
   phase = 'test body complete'
