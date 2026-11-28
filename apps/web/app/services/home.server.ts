@@ -178,7 +178,7 @@ export function recentShareableAccessPredicate(
     sql.ref('shareables.workspace_id'),
     viewerUserId,
   )
-  const crossProject = sql<boolean>`shareables.visibility = 'project' AND ((NOT ${workspaceAccessRevoked} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id = ${containerId} AND pm.user_id = ${viewerUserId})) OR EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)}))`
+  const crossProject = sql<boolean>`shareables.visibility = 'project' AND EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id = ${containerId} AND ${lowerEmail('d.email')} = ${grantMatchEmail(user)})`
   return sql<boolean>`(
     (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevoked})
     OR ${direct}

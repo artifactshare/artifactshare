@@ -2059,6 +2059,17 @@ describe('project slice and ranking', () => {
         locale: null,
       })
       .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'audience-u9',
+        project_container_id: 'proj1',
+        email: 'guest@partner.example.com',
+        created_by_id: 'u1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
     // p1 を project 可視へ、p2 は private のまま
     await db
       .updateTable('shareables')
@@ -2401,6 +2412,17 @@ describe('mine participation feed', () => {
         owner_user_id: null,
         created_by_id: 'u9',
         name: 'Remote project',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'audience-u1',
+        project_container_id: 'proj-remote',
+        email: feedUser.email,
+        created_by_id: 'u9',
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       })
