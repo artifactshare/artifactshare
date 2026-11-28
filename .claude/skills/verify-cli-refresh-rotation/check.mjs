@@ -204,15 +204,15 @@ async function main() {
       name: mutation.name,
       code: mutation.code,
       expect: 'violated',
-      run: async () => {
+      run: () => {
         const mutated = mutate(mutation)
         if (mutated === null)
-          return {
+          return Promise.resolve({
             verdict: 'error',
             dir: root,
             out: '',
             note: `The text this mutation replaces is not in the model exactly once: ${mutation.find}. Update MUTATIONS in check.mjs to match the model.`,
-          }
+          })
         return runTlc(jar, root, `mutation-${mutation.name}`, mutated, configFor([mutation.breaks], mutation.constants))
       },
     })
