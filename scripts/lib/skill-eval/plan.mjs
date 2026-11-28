@@ -18,7 +18,42 @@ export const personas = [
   'team-owner',
   'team-member',
 ]
-export const usage = `pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model[:effort]] [--effort low|medium|high|xhigh|max] [--scenario all|${scenarioIds.join('|')}] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]`
+export const efforts = ['low', 'medium', 'high', 'xhigh', 'max']
+
+// One table per option: the usage line and the argv parser both read it, so a
+// new option cannot reach one without the other. Order here is the order the
+// usage line prints.
+const options_ = [
+  { flag: '--dry-run' },
+  { flag: '--persona', field: 'persona', value: () => personas.join('|') },
+  {
+    flag: '--combination',
+    field: 'combinations',
+    value: 'agent:model[:effort]',
+  },
+  { flag: '--effort', field: 'effort', value: () => efforts.join('|') },
+  {
+    flag: '--scenario',
+    field: 'scenarios',
+    value: () => `all|${scenarioIds.join('|')}`,
+  },
+  { flag: '--skill-version', field: 'sources', value: 'directory' },
+  { flag: '--runs', field: 'runs', value: 'N' },
+  { flag: '--timeout-ms', field: 'timeoutMs', value: 'N' },
+  { flag: '--max-turns', field: 'maxTurns', value: 'N' },
+  { flag: '--base-url', field: 'baseUrl', value: 'origin' },
+  { flag: '--output-dir', field: 'outputDir', value: 'directory' },
+]
+const optionFields = Object.fromEntries(
+  options_.filter((o) => o.field).map((o) => [o.flag, o.field]),
+)
+export const usage = `pnpm skill-eval -- ${options_
+  .map(({ flag, value }) =>
+    value
+      ? `[${flag} ${typeof value === 'function' ? value() : value}]`
+      : `[${flag}]`,
+  )
+  .join(' ')}`
 export const fingerprint = (bytes) =>
   createHash('sha256').update(bytes).digest('hex')
 export function localOrigin(value) {
@@ -115,7 +150,7 @@ export function parseCombination(id) {
       throw new Error(
         'Cursor effort is part of the model name; omit the effort segment',
       )
-    if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))
+    if (!efforts.includes(effort))
       throw new Error(`Unsupported effort ${effort} for ${agent}`)
     if (agent === 'codex' && effort === 'max')
       throw new Error(
@@ -185,18 +220,6 @@ export async function plan(argv) {
     outputDir: join(tmpdir(), 'artifactshare-skill-eval'),
     dryRun: false,
   }
-  const names = {
-    '--combination': 'combinations',
-    '--scenario': 'scenarios',
-    '--skill-version': 'sources',
-    '--persona': 'persona',
-    '--effort': 'effort',
-    '--runs': 'runs',
-    '--timeout-ms': 'timeoutMs',
-    '--max-turns': 'maxTurns',
-    '--base-url': 'baseUrl',
-    '--output-dir': 'outputDir',
-  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--') continue
@@ -205,7 +228,7 @@ export async function plan(argv) {
       options.dryRun = true
       continue
     }
-    const name = names[arg]
+    const name = optionFields[arg]
     if (!name || !argv[i + 1] || argv[i + 1].startsWith('--'))
       throw new Error(`Invalid or missing argument: ${arg}\n${usage}`)
     const value = argv[++i]
@@ -222,7 +245,7 @@ export async function plan(argv) {
   // --effort applies one effort to every combination; Cursor encodes effort
   // in the model name, so only its low and high variants exist.
   if (options.effort !== null) {
-    if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort))
+    if (!efforts.includes(options.effort))
       throw new Error(`Unsupported effort ${options.effort}\n${usage}`)
     options.combinations = options.combinations.map((id) => {
       const { agent, model } = parseCombination(id)
