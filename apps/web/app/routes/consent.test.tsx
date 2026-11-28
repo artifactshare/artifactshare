@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import Consent, { consentInfoFrom } from './consent'
 import { oauthClientInfo, oauthConsent } from '~/lib/auth-client'
+import type { AuthFetchResult } from '~/lib/auth-client'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ t: (key: string) => key }),
@@ -110,7 +111,7 @@ describe('/consent', () => {
   })
 
   test('keeps loading non-interactive until client info is ready', async () => {
-    let resolveInfo!: (value: unknown) => void
+    let resolveInfo!: (value: AuthFetchResult) => void
     oauthClientInfoMock.mockReturnValue(
       new Promise((resolve) => {
         resolveInfo = resolve
@@ -175,7 +176,7 @@ describe('/consent', () => {
   )
 
   test('resets to loading when consent parameters change', async () => {
-    let resolveInfo!: (value: unknown) => void
+    let resolveInfo!: (value: AuthFetchResult) => void
     oauthClientInfoMock.mockResolvedValue({
       data: { client_name: 'Example app' },
     })
@@ -262,7 +263,7 @@ describe('/consent', () => {
     oauthClientInfoMock.mockResolvedValue({
       data: { client_name: 'Example app' },
     })
-    let resolveConsent!: (value: unknown) => void
+    let resolveConsent!: (value: AuthFetchResult) => void
     oauthConsentMock.mockReturnValue(
       new Promise((resolve) => {
         resolveConsent = resolve
