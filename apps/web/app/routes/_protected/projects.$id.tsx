@@ -634,6 +634,7 @@ export default function ProjectDetail({
       announceSlackResult(slackStatus)
   }, [slackStatus])
   // projectId intentionally retriggers the client-only clear on in-place navigation;
+  // doing this in the loader would also clear unread state during prefetch.
   useEffect(() => {
     submitSeen({ intent: 'seen' }, { method: 'post' })
   }, [submitSeen, projectId])

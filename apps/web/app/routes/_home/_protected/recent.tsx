@@ -41,7 +41,6 @@ export async function loader({
   const locale = getLocale(request, user.locale)
   const unavailableTitle = t(locale, 'recent.unavailableTitle')
   const now = new Date().toISOString()
-  // `url` has the framework's own bits removed. `request.url` keeps the `.data`
   const {
     relation,
     unread,

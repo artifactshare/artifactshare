@@ -186,7 +186,6 @@ type ProjectUploadShareDefault = {
   isExternal: boolean
 }
 
-// オプトアウトは「今回だけ」の指定。programmatic open では Radix の
 function useSlackNotifyOptOut(open: boolean) {
   const [disabled, setDisabled] = useState(false)
   const [prevOpen, setPrevOpen] = useState(open)

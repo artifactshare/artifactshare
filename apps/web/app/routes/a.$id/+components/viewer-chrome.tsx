@@ -99,7 +99,6 @@ export function historicalViewerShareUrl(href: string): string | null {
 
 const topbarClassName =
   'relative gap-1.5 px-2 transition-[min-height,opacity,translate] duration-[var(--duration-fast)] ease-[ease,ease,ease] motion-reduce:transition-none max-phone:grid max-phone:grid-cols-[auto_minmax(0,1fr)_auto] max-phone:grid-rows-[auto_auto] max-phone:items-center max-phone:gap-x-viewer-topbar-gap max-phone:gap-y-0.5 max-phone:px-2'
-// 展開/折りたたみで衝突する高さ・余白・可視性は ternary で単一ソース化する
 const expandedTopbarClassName =
   'h-auto min-h-topbar-expanded border-b-border py-0 max-phone:min-h-topbar-compact max-phone:py-1.5'
 const collapsedTopbarClassName =

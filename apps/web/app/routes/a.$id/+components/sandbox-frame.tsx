@@ -933,6 +933,7 @@ function useSandboxFrameController({
         pendingJumpRef.current = jump
         dispatchFrame({ type: 'navigate', url: destination })
         // The same src would not navigate a document that moved away from it
+        // through history; load it again.
         if (destination === frameUrl) restartFrameInstance()
         return
       }
@@ -1003,6 +1004,8 @@ function useSandboxFrameController({
     const challenge = ensureSandboxChallenge(securityChallengeRef.current)
     securityChallengeRef.current = challenge
     // ready-check response は表示監視の liveness signal でもある。ready-check は非機密の確認メッセージ。soft navigation 直後の初期
+    // about:blank に sandbox origin 指定で送ると Chrome が mismatch を
+    // console に出すため、親から子への送信だけ targetOrigin を広くする。
     frameRef.current?.contentWindow?.postMessage(
       {
         ...SANDBOX_READY_CHECK_MESSAGE,
@@ -1078,6 +1081,7 @@ function useSandboxFrameController({
     const selection = window.getSelection()
     if (selection && !selection.isCollapsed) return
     // A task, not an animation frame: a page that is not painting yet still
+    // receives the focus, and the same guard keeps a control chosen meanwhile.
     window.setTimeout(() => {
       if (readerActedRef.current) return
       const active = document.activeElement
@@ -1619,6 +1623,7 @@ export async function refreshSandboxFrameUrl(
       nextUrl.hash = entrypointUrl.hash
     } else {
       // Redirects without a fragment inherit the request fragment. Keep a
+      // subpage's destination independent of the entrypoint's outer hash.
       entrypointUrl.hash = nextUrl.hash
     }
     entrypointUrl.searchParams.set(

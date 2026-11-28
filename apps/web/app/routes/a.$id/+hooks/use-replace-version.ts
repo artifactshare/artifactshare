@@ -56,6 +56,7 @@ export function useReplaceVersion(
           toastId,
           deps: {
             // fetch は Window method で、bare reference として渡すと
+            // 呼び出し時に this binding が外れて "Illegal invocation" になる。
             fetcher: (resource, init) => fetch(resource, init),
             revalidate: () => revalidator.revalidate(),
             t: translator.t,

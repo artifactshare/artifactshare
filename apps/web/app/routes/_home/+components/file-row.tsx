@@ -47,7 +47,6 @@ const rowClassName = cn(
   'max-wide:min-h-16',
 )
 
-// 狭幅 2 列の末尾列幅は行アクション (⋯) の有無で択一適用する。同じ variant の
 const mobileColsClassName = 'max-wide:grid-cols-[minmax(0,1fr)_40px]'
 const mobileColsActionsClassName = 'max-wide:grid-cols-[minmax(0,1fr)_76px]'
 
@@ -57,7 +56,6 @@ const rowLinkClassName =
 const rowLinkActionsClassName =
   'absolute inset-y-0 left-0 right-22 z-1 rounded-[var(--r-sm)] text-inherit no-underline'
 
-// Home's media and container queries overlap below 780px; important keeps the
 const homeCompactRowLinkClassName =
   'max-stack:!right-10 @max-[theme(--breakpoint-stack)]:right-13 @min-[theme(--breakpoint-stack)]:right-22'
 

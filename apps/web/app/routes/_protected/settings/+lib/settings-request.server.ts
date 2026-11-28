@@ -60,6 +60,7 @@ export const SETTINGS_SHELL_ROUTE_ID = 'routes/_protected/settings/_layout'
 export function settingsShellLoads(request: Request) {
   const url = new URL(request.url)
   // Only a Single Fetch data request (`.data`) filters its loaders; a document
+  // runs every matched loader whatever its query says.
   if (!url.pathname.endsWith('.data')) return true
   const routes = url.searchParams.get('_routes')
   return !routes || routes.split(',').includes(SETTINGS_SHELL_ROUTE_ID)

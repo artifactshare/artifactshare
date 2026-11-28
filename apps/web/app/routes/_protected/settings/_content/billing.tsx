@@ -51,6 +51,8 @@ import BillingPage, {
 } from '../+components/billing-page'
 
 // The page lives in +components so development fixtures can render it without
+// this module's server code. React Router passes loaderData only to a default
+// export declared in the route module, so `export { default } from` would not.
 export default BillingPage
 export {
   CheckoutActions,

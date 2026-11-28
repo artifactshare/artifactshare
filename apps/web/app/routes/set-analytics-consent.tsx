@@ -3,7 +3,6 @@ import { analyticsConsentCookieHeader } from '~/lib/analytics-consent.server'
 import type { Route } from './+types/set-analytics-consent'
 
 export async function action({ request }: Route.ActionArgs) {
-  // Reject cross-site submissions so a third-party page cannot force a consent
   const site = request.headers.get('Sec-Fetch-Site')
   if (site) {
     if (site !== 'same-origin') return data(null, { status: 403 })
