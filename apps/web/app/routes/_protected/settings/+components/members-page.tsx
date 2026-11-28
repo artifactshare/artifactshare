@@ -1,12 +1,5 @@
 import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
-import {
-  useMemo,
-  useState,
-  useEffect,
-  useRef,
-  createContext,
-  useContext,
-} from 'react'
+import { useMemo, useState, createContext, useContext } from 'react'
 import {
   Form,
   useFetcher,
@@ -46,6 +39,7 @@ import {
   TableRow,
 } from '~/components/ui/table'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
+import { useFetcherResult } from '~/hooks/use-fetcher-result'
 import { useT } from '~/hooks/use-t'
 import { useRelativeTime } from '~/components/app/render-clock'
 import {
@@ -86,14 +80,11 @@ export default function TeamMembersPage({
   const { reset } = fetcher
   const { revalidate } = useRevalidator()
   const result = fetcher.state === 'idle' ? fetcher.data : undefined
-  const consumed = useRef<typeof result>(undefined)
-  useEffect(() => {
-    if (!result || consumed.current === result) return
-    consumed.current = result
-    if (result.ok) setTarget(null)
-    else if ('removalCommitted' in result && result.removalCommitted)
+  useFetcherResult(fetcher, (data) => {
+    if (data.ok) setTarget(null)
+    else if ('removalCommitted' in data && data.removalCommitted)
       void revalidate()
-  }, [result, revalidate])
+  })
   const pendingId = fetcher.state !== 'idle' ? target?.member.id : undefined
   const controls = useMemo(
     () => ({

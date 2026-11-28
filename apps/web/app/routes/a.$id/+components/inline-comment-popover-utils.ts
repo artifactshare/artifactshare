@@ -1,10 +1,5 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useState,
-  type CSSProperties,
-} from 'react'
+import { useLayoutEffect, useState, type CSSProperties } from 'react'
+import { useEventListener } from '~/hooks/use-event-listener'
 import { type TextSelectionMessage } from '~/lib/csp-reporter'
 import { type PendingTextAnchor } from './viewer-comment-types'
 
@@ -13,13 +8,10 @@ export function useInlinePopoverOutsideDismiss(
   enabled: boolean,
   onClose: () => void,
 ) {
-  const closePopover = useEffectEvent(() => {
-    onClose()
-  })
-
-  useEffect(() => {
-    if (!enabled) return
-    function onPointerDown(event: PointerEvent) {
+  useEventListener(
+    enabled ? 'document' : null,
+    'pointerdown',
+    (event) => {
       const target = event.target
       if (!(target instanceof Node)) return
       if (popoverRef.current?.contains(target)) return
@@ -28,14 +20,10 @@ export function useInlinePopoverOutsideDismiss(
         return
       }
       if (hasOpenInlinePopoverMenu(popoverRef.current)) return
-      closePopover()
-    }
-
-    document.addEventListener('pointerdown', onPointerDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [enabled, popoverRef])
+      onClose()
+    },
+    { capture: true },
+  )
 }
 
 function hasOpenInlinePopoverMenu(popover: HTMLElement | null): boolean {

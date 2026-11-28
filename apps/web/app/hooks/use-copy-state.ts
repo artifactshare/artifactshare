@@ -3,7 +3,10 @@ import { writeClipboardText } from '~/lib/clipboard'
 
 export type CopyState = 'idle' | 'copied' | 'failed'
 
-export function useCopyState(text: string): {
+export function useCopyState(
+  text: string,
+  { resetMs = 2200 }: { resetMs?: number } = {},
+): {
   state: CopyState
   copy: () => void
 } {
@@ -33,7 +36,7 @@ export function useCopyState(text: string): {
       resetTimeout.current = null
       if (!mounted.current) return
       setState('idle')
-    }, 2200)
+    }, resetMs)
   }
 
   const copy = () => {

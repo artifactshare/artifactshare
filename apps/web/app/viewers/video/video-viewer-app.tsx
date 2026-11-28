@@ -21,6 +21,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { Button } from '~/components/ui/button'
+import { useEventListener } from '~/hooks/use-event-listener'
 import { t, type TKey } from '~/lib/i18n'
 import type { PreferencesStore } from '../shared/preferences-store'
 import { useViewerPreferences } from '../shared/use-viewer-preferences'
@@ -395,21 +396,16 @@ function PlaybackSettings({
   const panelRef = useRef<HTMLDivElement>(null)
   const speedRef = useRef<HTMLSelectElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    const onClick = (event: MouseEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        (panelRef.current?.contains(target) ||
-          buttonRef.current?.contains(target))
-      )
-        return
-      setOpen(false)
-    }
-    document.addEventListener('click', onClick)
-    return () => document.removeEventListener('click', onClick)
-  }, [open])
+  useEventListener(open ? 'document' : null, 'click', (event) => {
+    const target = event.target
+    if (
+      target instanceof Node &&
+      (panelRef.current?.contains(target) ||
+        buttonRef.current?.contains(target))
+    )
+      return
+    setOpen(false)
+  })
 
   return (
     <>

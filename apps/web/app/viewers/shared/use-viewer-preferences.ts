@@ -1,4 +1,5 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
+import { useDocumentAttribute } from '~/hooks/use-document-attribute'
 import type { PreferencesStore } from './preferences-store'
 import type { ViewerPreferences } from './preferences'
 
@@ -10,9 +11,7 @@ export function useViewerPreferences(
     preferences.getSnapshot,
   )
   const { locale, theme } = current
-  useEffect(() => {
-    document.documentElement.lang = locale
-    document.documentElement.dataset.theme = theme
-  }, [locale, theme])
+  useDocumentAttribute('lang', locale)
+  useDocumentAttribute('data-theme', theme)
   return current
 }

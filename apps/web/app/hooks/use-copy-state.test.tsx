@@ -12,8 +12,8 @@ import { useCopyState } from './use-copy-state'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
-function CopyProbe() {
-  const { state, copy } = useCopyState('https://example.test/')
+function CopyProbe({ resetMs }: { resetMs?: number }) {
+  const { state, copy } = useCopyState('https://example.test/', { resetMs })
   return (
     <button type="button" onClick={copy}>
       {state}
@@ -61,6 +61,21 @@ describe('useCopyState', () => {
     expect(host.textContent).toBe('failed')
 
     await React.act(async () => vi.advanceTimersByTime(1_900))
+    expect(host.textContent).toBe('idle')
+  })
+
+  test('returns to idle after the reset delay the caller names', async () => {
+    vi.useFakeTimers()
+    writeClipboardText.mockResolvedValue(true)
+    await React.act(async () => root.render(<CopyProbe resetMs={1_500} />))
+
+    await React.act(async () => host.querySelector('button')!.click())
+    expect(host.textContent).toBe('copied')
+
+    await React.act(async () => vi.advanceTimersByTime(1_499))
+    expect(host.textContent).toBe('copied')
+
+    await React.act(async () => vi.advanceTimersByTime(1))
     expect(host.textContent).toBe('idle')
   })
 

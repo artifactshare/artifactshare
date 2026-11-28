@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import {
   IconArrowUpRight,
   IconCheck,
@@ -15,6 +15,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
+import { useCopyState } from '~/hooks/use-copy-state'
 import { useT } from '~/hooks/use-t'
 import { withLang } from '~/lib/connect-link'
 import { MCP_CONNECTOR_URL } from '~/lib/mcp-metadata'
@@ -62,38 +63,13 @@ const HERO_SOURCES = [
 
 function CopyButton({ value }: { value: string }) {
   const { t } = useT()
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-    },
-    [],
-  )
-  const settle = (outcome: 'copied' | 'failed') => {
-    setState(outcome)
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => setState('idle'), 1500)
-  }
-  const copy = async () => {
-    const write = navigator.clipboard?.writeText(value)
-    if (!write) {
-      settle('failed')
-      return
-    }
-    try {
-      await write
-      settle('copied')
-    } catch {
-      settle('failed')
-    }
-  }
+  const { state, copy } = useCopyState(value, { resetMs: 1500 })
   return (
     <>
       <button
         type="button"
         className="border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground inline-flex flex-none cursor-pointer items-center gap-1.5 rounded-sm border px-2.5 py-1 font-sans text-xs font-semibold transition-[color,border-color,transform] duration-150 active:scale-96"
-        onClick={() => void copy()}
+        onClick={copy}
       >
         {state === 'copied' ? (
           <IconCheck className="text-success size-3" aria-hidden="true" />

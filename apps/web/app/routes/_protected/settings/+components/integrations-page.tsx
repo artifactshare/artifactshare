@@ -1,6 +1,6 @@
 import { useSettingsEntryChangeIgnoringReplace } from '~/hooks/use-settings-entry-change-ignoring-replace'
 import { IconAlertTriangle, IconPlug as Plug } from '@tabler/icons-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useFetcher, Link, useOutletContext } from 'react-router'
 import { SettingsPage } from '~/components/form/settings-page'
 import { ConfirmActionDialog } from './confirm-action-dialog'
@@ -31,6 +31,7 @@ import {
 } from '~/components/ui/tooltip'
 import type { action } from '../_content/integrations'
 import type { SettingsLayoutContext } from '../_layout'
+import { useFetcherResult } from '~/hooks/use-fetcher-result'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
 import { useRelativeTime } from '~/components/app/render-clock'
@@ -52,9 +53,9 @@ export default function IntegrationsPage({
   const [open, setOpen] = useState(false)
   const pending = fetcher.state !== 'idle'
   const result = pending ? undefined : fetcher.data
-  useEffect(() => {
-    if (result?.ok) setOpen(false)
-  }, [result])
+  useFetcherResult(fetcher, (data) => {
+    if (data.ok) setOpen(false)
+  })
   const connections = result?.ok
     ? loaderData.connections.filter(
         (connection) => connection.id !== result.connectionId,

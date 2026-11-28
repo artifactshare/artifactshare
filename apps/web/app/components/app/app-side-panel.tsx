@@ -1,12 +1,12 @@
 import {
   type ComponentProps,
   type KeyboardEvent,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from 'react'
 import { Sheet, SheetContent } from '~/components/ui/sheet'
+import { useEventListener } from '~/hooks/use-event-listener'
 import { cn } from '~/lib/utils'
 
 export type SidePanelTopbar = 'app' | 'viewer' | 'none'
@@ -62,10 +62,11 @@ export function AppSidePanel({
     }
   }, [open, topbar])
 
-  useEffect(() => {
-    if (!open || topbar === 'none') return
-    const handleTopbarKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Tab') return
+  useEventListener(
+    open && topbar !== 'none' ? 'document' : null,
+    'keydown',
+    (event) => {
+      if (event.key !== 'Tab' || topbar === 'none') return
       const topbarElement = getTopbarElement(topbar)
       const panelElement = panelRef.current
       if (!topbarElement || !panelElement) return
@@ -83,10 +84,8 @@ export function AppSidePanel({
       if (!target) return
       event.preventDefault()
       target.focus()
-    }
-    document.addEventListener('keydown', handleTopbarKeyDown)
-    return () => document.removeEventListener('keydown', handleTopbarKeyDown)
-  }, [open, topbar])
+    },
+  )
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)
