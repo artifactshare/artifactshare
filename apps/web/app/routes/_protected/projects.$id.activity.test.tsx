@@ -285,6 +285,91 @@ describe('project activity subpage loader', () => {
     expect(new Set(ids).size).toBe(25)
   })
 
+  test('an outside audience member sees project-visibility activity only', async () => {
+    // The feed takes its visibility decision from the loader, which resolved
+    // this project as shared. Workspace-visibility files of the host
+    // workspace stay out, exactly as the project's file list leaves them out.
+    const { db } = await fixture()
+    await db
+      .insertInto('workspaces')
+      .values({
+        id: 'w2',
+        name: 'Other',
+        hd: null,
+        ms_tenant_id: null,
+        email_domain: null,
+        created_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    await db
+      .insertInto('users')
+      .values({
+        id: 'u9',
+        email: 'u9@partner.example',
+        name: 'u9',
+        email_verified: 1,
+        image: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        workspace_id: 'w2',
+        locale: null,
+      })
+      .execute()
+    // reserveContributorSlot gives an external contributor an active
+    // workspace_members row in the host workspace. The viewer is still
+    // outside it: users.workspace_id, not this row, settles the access.
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'w1',
+        user_id: 'u9',
+        role: 'member',
+        status: 'active',
+        pending_uploads: 1,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'psd-u9',
+        project_container_id: 'proj1',
+        email: 'u9@partner.example',
+        role: 'viewer',
+        display_name: null,
+        created_by_id: 'u1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    await db
+      .insertInto('shareables')
+      .values({
+        id: 's3',
+        workspace_id: 'w1',
+        owner_user_id: 'u2',
+        name: 'Artifact s3',
+        artifact_kind: 'markdown_page',
+        visibility: 'project',
+        container_id: 'proj1',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
+    await insertView(db, 'e1', 's1', '2026-07-01T10:00:00Z')
+    await insertView(db, 'e3', 's3', '2026-07-02T10:00:00Z')
+    userState.user = {
+      ...userState.user,
+      id: 'u9',
+      workspaceId: 'w2',
+      email: 'u9@partner.example',
+    }
+    const data = await loader(args())
+    expect(data.ctx.access).toBe('shared')
+    expect(data.rows.map((r) => r.shareableId)).toEqual(['s3'])
+  })
+
   test('unrelated user from another workspace gets 404', async () => {
     const { db } = await fixture()
     await db

@@ -89,9 +89,7 @@ import {
   parseProjectBaseVisibility,
   updateProjectContainer,
   visibleSharedProjectShareableToViewer,
-  visibleSharedProjectShareableToViewerSql,
   visibleShareableToViewer,
-  visibleShareableToViewerSql,
   type ProjectShareDefault,
   type ProjectSummary,
   type SharedProjectSummary,
@@ -127,7 +125,10 @@ import {
   ProjectMembershipControls,
   ProjectParticipantsSummary,
 } from './+components/project-membership-controls'
-import { projectFileRowsQuery } from './+lib/project-subpage.server'
+import {
+  projectFileRowsQuery,
+  projectSubpageVisibleFilter,
+} from './+lib/project-subpage.server'
 import { getViewerTimezone } from '~/lib/viewer-timezone.server'
 import {
   listProjectPins,
@@ -230,10 +231,7 @@ async function loadProjectActivity(
   timeZone: string,
 ): Promise<ProjectActivityData> {
   const now = new Date().toISOString()
-  const visibleTo =
-    access === 'member'
-      ? visibleShareableToViewerSql(user)
-      : visibleSharedProjectShareableToViewerSql(user)
+  const visibleTo = projectSubpageVisibleFilter({ access }, user)
   const [
     pins,
     feedResult,
@@ -250,6 +248,7 @@ async function loadProjectActivity(
       user,
       slice: 'project',
       containerId,
+      visibleTo,
       timeZone,
       targetRows: 6,
       maxRawEvents: 1000,
@@ -260,7 +259,7 @@ async function loadProjectActivity(
     listProjectViewRanking(db, {
       containerId,
       now,
-      user,
+      visibleTo,
     }).catch((error) => {
       console.error('project.ranking-load-failed', error)
       return []
