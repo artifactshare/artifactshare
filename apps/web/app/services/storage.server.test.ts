@@ -81,6 +81,20 @@ describe('artifactContentType', () => {
   })
 })
 
+// An R2 object for a ranged read: it answers with the bytes inside the range
+// through either API, so a cut character stays cut the way the real bucket
+// cuts it and the prefix does not depend on how the bytes are decoded.
+// A Uint8Array body stores bytes no encoder would produce.
+function rangedObject(body: string | Uint8Array, maxBytes: number) {
+  const stored =
+    typeof body === 'string' ? new TextEncoder().encode(body) : body
+  const bytes = stored.slice(0, maxBytes)
+  return {
+    bytes: () => Promise.resolve(bytes),
+    text: () => Promise.resolve(new TextDecoder().decode(bytes)),
+  }
+}
+
 describe('R2 wrapper', () => {
   beforeEach(() => {
     bucketMock.put.mockReset()
@@ -135,8 +149,7 @@ describe('R2 wrapper', () => {
   })
 
   test('getArtifactPrefixText reads a byte range and returns text', async () => {
-    const textMock = vi.fn().mockResolvedValue('prefix body')
-    bucketMock.get.mockResolvedValue({ text: textMock })
+    bucketMock.get.mockResolvedValue(rangedObject('prefix body', 65536))
 
     const result = await getArtifactPrefixText(
       fakeBucket,
@@ -147,18 +160,85 @@ describe('R2 wrapper', () => {
     expect(bucketMock.get).toHaveBeenCalledWith('artifacts/s/v/index.md', {
       range: { offset: 0, length: 65536 },
     })
-    expect(textMock).toHaveBeenCalledTimes(1)
     expect(result).toBe('prefix body')
   })
 
   test('getArtifactPrefixText drops a trailing replacement char from a split UTF-8 tail', async () => {
-    bucketMock.get.mockResolvedValue({
-      text: vi.fn().mockResolvedValue('本文の途中で切れた末尾の文字�'),
-    })
+    const body = '本文の途中で切れた末尾の文字本'
+    // Stop one byte short of the last character, so the read cuts it in three.
+    const maxBytes = new TextEncoder().encode(body).length - 1
+    bucketMock.get.mockResolvedValue(rangedObject(body, maxBytes))
 
-    const result = await getArtifactPrefixText(fakeBucket, 'a/b/c.md', 65536)
+    const result = await getArtifactPrefixText(fakeBucket, 'a/b/c.md', maxBytes)
 
     expect(result).toBe('本文の途中で切れた末尾の文字')
+  })
+
+  test.each(['é', '本', '😀'])(
+    'getArtifactPrefixText drops %s however the range cuts it',
+    async (character) => {
+      const prefix = 'kept text '
+      const width = new TextEncoder().encode(character).length
+      for (let kept = 1; kept < width; kept += 1) {
+        const maxBytes = prefix.length + kept
+        bucketMock.get.mockResolvedValue(
+          rangedObject(`${prefix}${character}`, maxBytes),
+        )
+
+        await expect(
+          getArtifactPrefixText(fakeBucket, 'a/b/c.md', maxBytes),
+        ).resolves.toBe(prefix)
+      }
+    },
+  )
+
+  test('getArtifactPrefixText keeps replacement chars the object itself stores', async () => {
+    const body = 'abc��'
+    const stored = new TextEncoder().encode(body).length
+
+    // The read fills the range exactly, so the prefix looks cut, yet every
+    // stored replacement char arrived as a whole three-byte sequence.
+    bucketMock.get.mockResolvedValue(rangedObject(body, stored))
+    await expect(
+      getArtifactPrefixText(fakeBucket, 'a/b/c.md', stored),
+    ).resolves.toBe(body)
+
+    bucketMock.get.mockResolvedValue(rangedObject(body, 65536))
+    await expect(
+      getArtifactPrefixText(fakeBucket, 'a/b/c.md', 65536),
+    ).resolves.toBe(body)
+  })
+
+  // Bytes no character can start, and whole sequences that decode to nothing,
+  // are content the object stores rather than damage the range cut did. They
+  // stay, and the decoder turns each into a replacement char.
+  test.each([
+    ['continuation bytes all the way back', [0x61, 0x80, 0x80, 0x80, 0x80], 4],
+    ['a byte no character starts with', [0x61, 0xff], 1],
+    ['one stray continuation byte', [0x61, 0x80], 1],
+    ['a whole sequence that is no character', [0x61, 0xed, 0xa0, 0x80], 3],
+  ])(
+    'getArtifactPrefixText keeps %s at the tail',
+    async (_tail, stored, replacements) => {
+      const bytes = new Uint8Array(stored)
+      // The read fills the range exactly, so the prefix looks cut.
+      bucketMock.get.mockResolvedValue(rangedObject(bytes, bytes.length))
+
+      await expect(
+        getArtifactPrefixText(fakeBucket, 'a/b/c.md', bytes.length),
+      ).resolves.toBe(`a${'�'.repeat(replacements)}`)
+    },
+  )
+
+  test('getArtifactPrefixText drops a cut sequence that was no character either', async () => {
+    // ED A0 80 decodes to nothing, yet the range cut still split it, so the
+    // tail goes the way any cut character's tail goes.
+    const bytes = new Uint8Array([0x61, 0xed, 0xa0])
+    bucketMock.get.mockResolvedValue(rangedObject(bytes, bytes.length))
+
+    await expect(
+      getArtifactPrefixText(fakeBucket, 'a/b/c.md', bytes.length),
+    ).resolves.toBe('a')
   })
 
   test('getArtifactPrefixText returns null when the object is missing', async () => {

@@ -80,8 +80,34 @@ export async function getArtifactPrefixText(
     range: { offset: 0, length: maxBytes },
   })
   if (!object) return null
-  const text = await object.text()
-  return text.replace(/�+$/u, '')
+  const bytes = await object.bytes()
+  // Short of the range limit the object ended on its own, so nothing was cut.
+  const end = bytes.length < maxBytes ? bytes.length : wholeCharacterEnd(bytes)
+  return new TextDecoder().decode(bytes.subarray(0, end))
+}
+
+// A read that fills the range can cut a multi-byte character in half, and
+// decoding that tail yields U+FFFD. Drop those bytes instead, so the caller
+// never sees a replacement character the object does not store. A stored U+FFFD
+// arrives as a complete three-byte sequence, so it survives.
+function wholeCharacterEnd(bytes: Uint8Array): number {
+  for (let back = 1; back <= Math.min(bytes.length, 4); back += 1) {
+    const start = bytes.length - back
+    const lead = bytes[start]
+    if (lead === undefined) break
+    const needed = utf8SequenceLength(lead)
+    if (needed === 0) continue
+    return needed > back ? start : bytes.length
+  }
+  return bytes.length
+}
+
+function utf8SequenceLength(lead: number): number {
+  if (lead < 0x80) return 1
+  if (lead >= 0xc2 && lead <= 0xdf) return 2
+  if (lead >= 0xe0 && lead <= 0xef) return 3
+  if (lead >= 0xf0 && lead <= 0xf4) return 4
+  return 0
 }
 
 export async function deleteArtifact(
