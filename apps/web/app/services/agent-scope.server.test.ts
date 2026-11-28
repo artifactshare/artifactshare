@@ -1,3 +1,4 @@
+import { ArtifactsListEntrySchema } from '@artifactshare/contract'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -248,6 +249,31 @@ describe('agent artifact read scope', () => {
     expect(titles).not.toContain('Linked')
     expect(titles).not.toContain('Ungranted')
     expect(titles).not.toContain('Foreign')
+  })
+
+  test('leaves out a stored kind this build cannot read', async () => {
+    // shareables.artifact_kind is plain TEXT with no CHECK constraint, so a
+    // row written by a newer build reaches this one as an unknown string.
+    sqlite
+      .prepare(
+        `UPDATE shareables SET artifact_kind = 'from_the_future'
+         WHERE id = 'approved-artifact'`,
+      )
+      .run()
+    const result = await listAgentReadableArtifacts(db, user, authority, {
+      baseUrl: 'https://artifactshare.test',
+    })
+
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    const byId = new Map(result.data.artifacts.map((row) => [row.id, row]))
+    expect(byId.get('approved-artifact')!.artifact_kind).toBeUndefined()
+    expect(byId.get('granted-artifact')!.artifact_kind).toBe('markdown_page')
+    // The route answers with ArtifactsListResponseSchema.parse(result.data),
+    // so this field has to drop out of the one entry, not fail the page.
+    const kind = ArtifactsListEntrySchema.shape.artifact_kind
+    for (const row of result.data.artifacts)
+      expect(kind.safeParse(row.artifact_kind).success).toBe(true)
   })
 
   test('search does not match titles outside the read scope', async () => {

@@ -731,7 +731,11 @@ function SearchResultRow({
   return (
     <li id={`search-file-${item.id}`} className="relative space-y-2 py-4 pl-9">
       <div className="absolute top-4 left-0">
-        <FileTypeIcon renderType={renderTypeFromKind(item.artifactKind)} />
+        <FileTypeIcon
+          renderType={
+            item.artifactKind ? renderTypeFromKind(item.artifactKind) : null
+          }
+        />
       </div>
       <SearchRowHeader
         item={item}

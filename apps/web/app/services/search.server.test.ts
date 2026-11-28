@@ -1611,6 +1611,31 @@ test('list adapter combines owner, home/project and updated/viewed periods witho
     expect(JSON.stringify(restricted.data)).not.toContain(key)
 })
 
+test('list adapter leaves out a stored kind this build cannot read', async () => {
+  const { searchCliArtifacts } = await import('./cli-artifacts.server')
+  const { ArtifactsListEntrySchema } = await import('@artifactshare/contract')
+  // shareables.artifact_kind is plain TEXT with no CHECK constraint, so a row
+  // written by a newer build reaches this one as a string it does not know.
+  fixture.sqlite.exec(
+    `UPDATE shareables SET artifact_kind='from_the_future' WHERE id='a'`,
+  )
+  const result = await searchCliArtifacts(
+    fixture.db,
+    () => index(),
+    { id: 'viewer' },
+    { baseUrl: 'https://example.test', source: 'cli', q: 'body' },
+  )
+  if (result.kind !== 'ok') throw new Error('search failed')
+  const byId = new Map(result.data.artifacts.map((row) => [row.id, row]))
+  expect(byId.get('a')!.artifact_kind).toBeUndefined()
+  expect(byId.get('b')!.artifact_kind).toBe('html_page')
+  // The route answers with ArtifactsListResponseSchema.parse(result.data), so
+  // this field has to drop out of the one entry rather than fail the page.
+  const kind = ArtifactsListEntrySchema.shape.artifact_kind
+  for (const row of result.data.artifacts)
+    expect(kind.safeParse(row.artifact_kind).success).toBe(true)
+})
+
 test('list adapter labels any-term fallback and distinguishes capacity from empty success', async () => {
   const { searchCliArtifacts } = await import('./cli-artifacts.server')
   const stub = index()

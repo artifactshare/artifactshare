@@ -1,6 +1,8 @@
+import { ArtifactsListEntrySchema } from '@artifactshare/contract'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import type { ArtifactKind } from '~/lib/shareable-types'
 import type { DB } from '~/types/db'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -177,6 +179,30 @@ describe('listCliArtifacts project scope', () => {
     for (const item of all.data.artifacts) {
       expect(item).not.toHaveProperty('owner_email')
     }
+  })
+
+  test('a project listing leaves out a stored kind this build cannot read', async () => {
+    // shareables.artifact_kind is plain TEXT with no CHECK constraint, so a
+    // row written by a newer build reaches this one as an unknown string.
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'from_the_future' as ArtifactKind })
+      .where('id', '=', 'art-own')
+      .execute()
+    const result = await listCliArtifacts(db, MEMBER, {
+      ...BASE,
+      projectId: 'project-a',
+    })
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    const byId = new Map(result.data.artifacts.map((a) => [a.id, a]))
+    expect(byId.get('art-own')!.artifact_kind).toBeUndefined()
+    expect(byId.get('art-other-ws-vis')!.artifact_kind).toBe('markdown_page')
+    // The route answers with ArtifactsListResponseSchema.parse(result.data),
+    // so this field has to drop out of the one entry, not fail the page.
+    const kind = ArtifactsListEntrySchema.shape.artifact_kind
+    for (const row of result.data.artifacts)
+      expect(kind.safeParse(row.artifact_kind).success).toBe(true)
   })
 
   test.each([MEMBER, EXTERNAL])(
