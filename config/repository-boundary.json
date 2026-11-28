@@ -134,6 +134,7 @@
   ],
   "canonical_prefixes": [
     ".claude/skills/verify-artifactshare/",
+    ".claude/skills/verify-cli-refresh-rotation/",
     "apps/web/app/",
     "apps/web/db/",
     "apps/web/fixtures/",
