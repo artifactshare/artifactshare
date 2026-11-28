@@ -37,6 +37,7 @@
     "check:d1-compatibility": "node scripts/check-d1-compatibility.mjs",
     "check:cli-refresh-model": "node .claude/skills/verify-cli-refresh-rotation/check.mjs",
     "check:billing-model": "node .claude/skills/verify-billing-sync/check.mjs",
+    "check:access-model": "node .claude/skills/verify-artifact-access/check.mjs",
     "generate:contract-surfaces": "pnpm --filter @artifactshare/contract generate",
     "check:contract-surfaces": "pnpm --filter @artifactshare/contract check:surfaces",
     "check:cli-changelog": "node scripts/check-cli-changelog.mjs",

@@ -137,6 +137,7 @@
     ".claude/skills/verify-artifactshare/",
     ".claude/skills/verify-cli-refresh-rotation/",
     ".claude/skills/verify-billing-sync/",
+    ".claude/skills/verify-artifact-access/",
     "apps/web/app/",
     "apps/web/db/",
     "apps/web/fixtures/",
