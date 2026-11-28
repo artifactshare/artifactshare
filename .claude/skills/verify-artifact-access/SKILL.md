@@ -28,7 +28,7 @@ Each rule is an INVARIANT in `model/ArtifactAccess.tla`. "Open" means `viewerAcc
 
 ## When to use
 
-Run the check when a change touches any of these. The model describes them as of the sync commit below. All paths are under `apps/web/app/`.
+Run the check when a change touches any of these. The model describes them as of the sync commit below. All paths are under `apps/web/app/`. `COVERS` in `check.mjs` lists these files. CI runs this check on a pull request that changes one of them, the model, `check.mjs`, or `scripts/lib/tlc-check.mjs`, and in every merge group.
 
 | Code | Model operators |
 | --- | --- |
@@ -53,7 +53,7 @@ Run the check when a change touches any of these. The model describes them as of
 **Sync commit: `e8d95c84b165ea557077df58b59319f790d021f4`.** `ProjectActivity` was written against the project activity as it is now, when `listFeedEvents` slice `project` and `listProjectViewRanking` started taking `visibleTo` from the caller. The commit is not moved with it, because the other operators were not re-read at that point and the covered files have changed since. To see whether covered code moved since then:
 
 ```sh
-git diff --stat e8d95c84b165ea557077df58b59319f790d021f4 -- apps/web/app/modules/access apps/web/app/services/access.server.ts apps/web/app/services/projects.server.ts apps/web/app/services/project-membership.server.ts apps/web/app/services/events.server.ts apps/web/app/services/search-discovery.server.ts apps/web/app/services/home.server.ts apps/web/app/services/views.server.ts 'apps/web/app/routes/_protected/projects.$id.tsx'
+git diff --stat e8d95c84b165ea557077df58b59319f790d021f4 -- $(node -e "import('./.claude/skills/verify-artifact-access/check.mjs').then((m) => console.log(m.COVERS.join(' ')))")
 ```
 
 These files are large, so a diff there does not always touch a covered function. Read the diff of each covered function against its operator before you trust a pass. A pass on a model that no longer matches the code proves nothing.

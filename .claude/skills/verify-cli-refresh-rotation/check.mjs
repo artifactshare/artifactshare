@@ -6,6 +6,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
+export const COVERS = [
+  'apps/web/app/services/cli-refresh-credentials.server.ts',
+  'apps/web/app/services/auth.server.ts',
+  'apps/web/app/lib/d1-batch.server.ts',
+]
+
 // Invariants the current code is known to break. Each entry is a reported
 // finding, not a pass. Remove the entry when the code is fixed.
 const KNOWN_FINDINGS = {
@@ -72,10 +78,11 @@ const MUTATIONS = [
   },
 ]
 
-await runModelChecks({
-  modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
-  module: 'CliRefreshRotation',
-  knownFindings: KNOWN_FINDINGS,
-  scopedBaselines: SCOPED_BASELINES,
-  mutations: MUTATIONS,
-})
+if (import.meta.main)
+  await runModelChecks({
+    modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
+    module: 'CliRefreshRotation',
+    knownFindings: KNOWN_FINDINGS,
+    scopedBaselines: SCOPED_BASELINES,
+    mutations: MUTATIONS,
+  })

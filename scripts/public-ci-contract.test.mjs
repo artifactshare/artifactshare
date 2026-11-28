@@ -70,7 +70,7 @@ test('public preview configuration has no remote Flagship binding', () => {
 })
 
 const sameRepositoryGate =
-  /steps\.classify\.outputs\.(?:is_maintainer|run_static) == 'true'/u
+  /steps\.classify\.outputs\.(?:is_maintainer|run_static|run_models) == 'true'/u
 
 function reachableFromPullRequests(job) {
   return job.if === undefined || /pull_request\b/u.test(job.if)
@@ -268,6 +268,7 @@ test('PR summaries are static, distinct per outcome, and fail closed', () => {
 
 const aggregateResultVariables = {
   'static-validation': 'STATIC_RESULT',
+  'model-validation': 'MODEL_RESULT',
   'build-validation': 'BUILD_RESULT',
   'cli-validation': 'CLI_RESULT',
   'windows-cli-validation': 'WINDOWS_CLI_RESULT',
@@ -284,28 +285,31 @@ function runAggregate(eventName, results) {
   })
 }
 
+const pullRequestLanes = new Set(['STATIC_RESULT', 'MODEL_RESULT'])
+
 function aggregateResults(staticResult, otherResult) {
   return Object.fromEntries(
     Object.values(aggregateResultVariables).map((name) => [
       name,
-      name === 'STATIC_RESULT' ? staticResult : otherResult,
+      pullRequestLanes.has(name) ? staticResult : otherResult,
     ]),
   )
 }
 
-test('pull request aggregate requires static success with other lanes skipped', () => {
+test('pull request aggregate requires static and model success with other lanes skipped', () => {
   const healthy = runAggregate(
     'pull_request',
     aggregateResults('success', 'skipped'),
   )
   assert.equal(healthy.status, 0, healthy.stderr)
-  for (const staticResult of ['failure', 'cancelled', 'skipped', '']) {
-    const result = runAggregate(
-      'pull_request',
-      aggregateResults(staticResult, 'skipped'),
-    )
-    assert.notEqual(result.status, 0, `static=${staticResult}`)
-  }
+  for (const name of pullRequestLanes)
+    for (const laneResult of ['failure', 'cancelled', 'skipped', '']) {
+      const result = runAggregate('pull_request', {
+        ...aggregateResults('success', 'skipped'),
+        [name]: laneResult,
+      })
+      assert.notEqual(result.status, 0, `${name}=${laneResult}`)
+    }
   // A lane that ran on a pull request is unexpected, whatever its result.
   for (const otherResult of ['success', 'failure', 'cancelled', '']) {
     const result = runAggregate(
@@ -338,32 +342,39 @@ test('merge group aggregate requires every lane to succeed', () => {
   assert.notEqual(dispatch.status, 0)
 })
 
-test('static validation runs code only for same-repository pull requests', () => {
-  const classify = parsedWorkflow.jobs['static-validation'].steps[0]
-  const decide = (event, head, base) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'static-classify-'))
-    const output = path.join(dir, 'output')
-    fs.writeFileSync(output, '')
-    const run = spawnSync('bash', ['-c', classify.run], {
-      env: {
-        ...process.env,
-        GITHUB_OUTPUT: output,
-        EVENT_NAME: event,
-        PUBLIC_PR_HEAD_REPO: head,
-        PUBLIC_PR_BASE_REPO: base,
-      },
-    })
-    assert.equal(run.status, 0)
-    const result = fs.readFileSync(output, 'utf8').trim()
-    fs.rmSync(dir, { recursive: true, force: true })
-    return result
-  }
-  const repo = 'artifactshare/artifactshare'
-  assert.equal(decide('pull_request', repo, repo), 'run_static=true')
-  assert.equal(decide('pull_request', 'someone/fork', repo), 'run_static=false')
-  assert.equal(decide('pull_request', '', repo), 'run_static=false')
-  assert.equal(decide('merge_group', '', ''), 'run_static=true')
-})
+for (const [lane, decision] of [
+  ['static-validation', 'run_static'],
+  ['model-validation', 'run_models'],
+])
+  test(`${lane} runs code only for same-repository pull requests`, () => {
+    const classify = parsedWorkflow.jobs[lane].steps[0]
+    const decide = (event, head, base) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'static-classify-'))
+      const output = path.join(dir, 'output')
+      fs.writeFileSync(output, '')
+      const run = spawnSync('bash', ['-c', classify.run], {
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          EVENT_NAME: event,
+          PUBLIC_PR_HEAD_REPO: head,
+          PUBLIC_PR_BASE_REPO: base,
+        },
+      })
+      assert.equal(run.status, 0)
+      const result = fs.readFileSync(output, 'utf8').trim()
+      fs.rmSync(dir, { recursive: true, force: true })
+      return result
+    }
+    const repo = 'artifactshare/artifactshare'
+    assert.equal(decide('pull_request', repo, repo), `${decision}=true`)
+    assert.equal(
+      decide('pull_request', 'someone/fork', repo),
+      `${decision}=false`,
+    )
+    assert.equal(decide('pull_request', '', repo), `${decision}=false`)
+    assert.equal(decide('merge_group', '', ''), `${decision}=true`)
+  })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
   const rootPackage = JSON.parse(fs.readFileSync('package.json', 'utf8'))
@@ -444,6 +455,9 @@ test('every merge gate lane keeps the validation only it runs', () => {
     /pnpm validate:static/u,
     /pnpm validate:build/u,
     /pnpm validate:cli/u,
+    /node --run check:access-model/u,
+    /node --run check:billing-model/u,
+    /node --run check:cli-refresh-model/u,
     /pnpm test:behavior-browser/u,
     /pnpm check:browser-local-state/u,
     /node --test scripts\/browser-waits\.integration\.mjs/u,

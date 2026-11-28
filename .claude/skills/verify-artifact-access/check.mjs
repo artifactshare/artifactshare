@@ -7,6 +7,19 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
+export const COVERS = [
+  'apps/web/app/modules/access/',
+  'apps/web/app/services/access.server.ts',
+  'apps/web/app/services/projects.server.ts',
+  'apps/web/app/services/project-membership.server.ts',
+  'apps/web/app/services/events.server.ts',
+  'apps/web/app/services/search-discovery.server.ts',
+  'apps/web/app/services/home.server.ts',
+  'apps/web/app/services/views.server.ts',
+  'apps/web/app/routes/_protected/projects.$id.tsx',
+  'apps/web/app/routes/_protected/+lib/project-subpage.server.ts',
+]
+
 // Invariants the current code is known to break. Each entry is a reported
 // finding, not a pass. Remove the entry when the code is fixed.
 const KNOWN_FINDINGS = {}
@@ -134,9 +147,10 @@ const MUTATIONS = [
   },
 ]
 
-await runModelChecks({
-  modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
-  module: 'ArtifactAccess',
-  knownFindings: KNOWN_FINDINGS,
-  mutations: MUTATIONS,
-})
+if (import.meta.main)
+  await runModelChecks({
+    modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
+    module: 'ArtifactAccess',
+    knownFindings: KNOWN_FINDINGS,
+    mutations: MUTATIONS,
+  })

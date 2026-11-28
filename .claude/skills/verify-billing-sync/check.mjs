@@ -6,6 +6,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
+export const COVERS = [
+  'apps/web/app/services/billing.server.ts',
+  'apps/web/app/services/billing-sync.server.ts',
+  'apps/web/app/routes/api.stripe.webhook.tsx',
+  'apps/web/app/lib/billing-plan.server.ts',
+  'apps/web/app/routes/_protected/settings/_content/billing.tsx',
+]
+
 // Invariants the current code is known to break. Each entry is a reported
 // finding, not a pass. Remove the entry when the code is fixed.
 const KNOWN_FINDINGS = {}
@@ -87,10 +95,11 @@ const MUTATIONS = [
   },
 ]
 
-await runModelChecks({
-  modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
-  module: 'BillingSync',
-  knownFindings: KNOWN_FINDINGS,
-  scopedBaselines: SCOPED_BASELINES,
-  mutations: MUTATIONS,
-})
+if (import.meta.main)
+  await runModelChecks({
+    modelDir: join(dirname(fileURLToPath(import.meta.url)), 'model'),
+    module: 'BillingSync',
+    knownFindings: KNOWN_FINDINGS,
+    scopedBaselines: SCOPED_BASELINES,
+    mutations: MUTATIONS,
+  })

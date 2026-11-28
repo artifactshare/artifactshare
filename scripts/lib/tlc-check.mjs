@@ -252,8 +252,12 @@ export async function runModelChecks({
     if (result.verdict === 'violated' && (!ok || job.kind !== 'mutation'))
       console.log(`       path: ${tracePath(result.out)}`)
     if (result.note) console.log(`       ${result.note}`)
-    else if (!ok)
+    else if (!ok) {
       console.log(`       TLC output: ${join(result.dir, 'tlc.out')}`)
+      if (result.verdict === 'error')
+        for (const line of result.out.trimEnd().split('\n').slice(-20))
+          console.log(`       | ${line}`)
+    }
   }
   if (!process.argv.includes('--keep') && unexpected === 0)
     rmSync(root, { recursive: true, force: true })

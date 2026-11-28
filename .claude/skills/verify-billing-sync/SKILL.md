@@ -20,7 +20,7 @@ Each rule is an INVARIANT in `model/BillingSync.tla`.
 
 ## When to use
 
-Run the check when a change touches any of these. The model describes them as of the sync commit below.
+Run the check when a change touches any of these. The model describes them as of the sync commit below. `COVERS` in `check.mjs` lists these files. CI runs this check on a pull request that changes one of them, the model, `check.mjs`, or `scripts/lib/tlc-check.mjs`, and in every merge group.
 
 | Code | Model actions |
 | --- | --- |
@@ -37,7 +37,7 @@ Run the check when a change touches any of these. The model describes them as of
 **Sync commit: `1453ba5315206c2426045efa9220327a38c56649`.** To see whether covered code moved since then:
 
 ```sh
-git diff --stat 1453ba5315206c2426045efa9220327a38c56649 -- apps/web/app/services/billing.server.ts apps/web/app/services/billing-sync.server.ts apps/web/app/routes/api.stripe.webhook.tsx apps/web/app/lib/billing-plan.server.ts apps/web/app/routes/_protected/settings/_content/billing.tsx
+git diff --stat 1453ba5315206c2426045efa9220327a38c56649 -- $(node -e "import('./.claude/skills/verify-billing-sync/check.mjs').then((m) => console.log(m.COVERS.join(' ')))")
 ```
 
 If a covered function changed, read the diff against the model before you trust a pass. A pass on a model that no longer matches the code proves nothing.
