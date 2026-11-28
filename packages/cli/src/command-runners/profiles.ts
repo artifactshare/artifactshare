@@ -302,7 +302,7 @@ async function importBotTokenProfile(
   const forcedReplace = Boolean(entry && parsed.options.force === true)
   if (
     !(await probeTokenStoreWritable(profile, parsed.options, {
-      ignoreExistingEntry: forcedReplace,
+      existingCredentialRemovedFirst: forcedReplace,
     }))
   ) {
     return writeFailure(

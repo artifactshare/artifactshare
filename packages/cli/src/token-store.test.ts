@@ -41,6 +41,65 @@ test('plaintext token fallback is unavailable on Windows', () => {
   assert.equal(plaintextFallbackSupported('darwin'), true)
 })
 
+// Windows never writes the plaintext token file, so there is no fallback to
+// agree about.
+test.skipIf(!plaintextFallbackSupported())(
+  'the probe and the save agree on when the plaintext fallback is writable',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-token-probe-'))
+    const saved = {
+      ARTIFACTSHARE_CONFIG_HOME: process.env.ARTIFACTSHARE_CONFIG_HOME,
+      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE:
+        process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE,
+    }
+    process.env.ARTIFACTSHARE_CONFIG_HOME = root
+    process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = '1'
+    const options = { baseUrl: 'https://artifactshare.test' }
+    const optedIn = { ...options, allowPlaintextTokenStore: true }
+    const credential = {
+      kind: 'session',
+      session_token: 'session-1',
+      refresh_token: 'refresh-1',
+    } as const
+    try {
+      assert.equal(await probeTokenStoreWritable('default', options), false)
+      assert.deepEqual(
+        await saveProfileSessionCredential('default', credential, options),
+        { ok: false, reason: 'unavailable' },
+      )
+
+      assert.equal(await probeTokenStoreWritable('default', optedIn), true)
+      assert.deepEqual(
+        await saveProfileSessionCredential('default', credential, optedIn),
+        { ok: true, store: 'plaintext_file' },
+      )
+
+      // The entry the opt-in left behind keeps the profile saveable without
+      // the flag, and a save without the flag confirms it.
+      assert.equal(await probeTokenStoreWritable('default', options), true)
+      assert.deepEqual(
+        await saveProfileSessionCredential('default', credential, options),
+        { ok: true, store: 'plaintext_file' },
+      )
+
+      // A forced import removes that entry first, so it cannot vouch for the
+      // save that follows.
+      assert.equal(
+        await probeTokenStoreWritable('default', options, {
+          existingCredentialRemovedFirst: true,
+        }),
+        false,
+      )
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
 test('a legacy plaintext entry cannot prove Windows token-store writability', async () => {
   const previous = process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE
   process.env.ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE = '1'
