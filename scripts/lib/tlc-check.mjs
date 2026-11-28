@@ -126,6 +126,7 @@ function runTlc(MODULE, jar, root, label, specText, configText, workers = '1') {
 }
 
 function tracePath(out) {
+  if (/is violated by the initial state/.test(out)) return 'the initial state'
   return [...out.matchAll(/^State (\d+): <(\w+)/gm)]
     .map(([, n, action]) => `${n}. ${action}`)
     .join('  ')
