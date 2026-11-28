@@ -34,10 +34,10 @@ Run the check when a change touches any of these. The model describes them as of
 | `apps/web/app/routes/api.stripe.webhook.tsx` `action`, `recordWebhookEvent` (an event stays pending until its sync commits; a `conflict` answers 500 so Stripe delivers it again) | `pending`, `SyncReadWorkspace`, `SyncWrite` |
 | `apps/web/app/routes/_protected/settings/_content/billing.tsx` the `checkout` intent (loads the workspace, then calls `createCheckoutSession`) | `TabReadWorkspace` |
 
-**Sync commit: `8fe2ded44af30485c9ace8ee59d3eb1d9d28a633`.** To see whether covered code moved since then:
+**Sync commit: `1453ba5315206c2426045efa9220327a38c56649`.** To see whether covered code moved since then:
 
 ```sh
-git diff --stat SYNC_COMMIT -- apps/web/app/services/billing.server.ts apps/web/app/services/billing-sync.server.ts apps/web/app/routes/api.stripe.webhook.tsx apps/web/app/lib/billing-plan.server.ts apps/web/app/routes/_protected/settings/_content/billing.tsx
+git diff --stat 1453ba5315206c2426045efa9220327a38c56649 -- apps/web/app/services/billing.server.ts apps/web/app/services/billing-sync.server.ts apps/web/app/routes/api.stripe.webhook.tsx apps/web/app/lib/billing-plan.server.ts apps/web/app/routes/_protected/settings/_content/billing.tsx
 ```
 
 If a covered function changed, read the diff against the model before you trust a pass. A pass on a model that no longer matches the code proves nothing.
