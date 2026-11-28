@@ -150,8 +150,13 @@ export async function loadProjectSubpageContext(
   }
 }
 
+/**
+ * The one access decision a project page makes: which artifacts of the project
+ * it may show. The file list, the pins, the activity feed and the view ranking
+ * all take it from here, so they cannot disagree about one project.
+ */
 export function projectSubpageVisibleFilter(
-  ctx: ProjectSubpageContext,
+  ctx: Pick<ProjectSubpageContext, 'access'>,
   user: SessionUser,
 ) {
   return ctx.access === 'member'

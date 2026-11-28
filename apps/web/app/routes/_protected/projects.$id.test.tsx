@@ -472,7 +472,7 @@ describe('project detail loader', () => {
 })
 
 describe('shared project pins visibility', () => {
-  test('external shared viewer does not see workspace-only pinned titles', async () => {
+  test('external shared viewer sees neither workspace-only pins, activity nor ranking', async () => {
     const { db } = await fixture()
     await insertShareable(db, 's-project')
     await db
@@ -492,6 +492,22 @@ describe('shared project pins visibility', () => {
         })
         .execute()
     }
+    // Views inside the ranking's 30-day window, so the ranking has rows to
+    // leak. The feed keeps same-day views of two files as two rows.
+    const viewedAt = new Date(Date.now() - 60_000).toISOString()
+    for (const id of ['s-project', 's-internal'])
+      await db
+        .insertInto('events')
+        .values({
+          id: `ev-${id}`,
+          workspace_id: 'w1',
+          type: 'artifact_viewed',
+          shareable_id: id,
+          actor_user_id: 'u1',
+          subject_id: null,
+          created_at: viewedAt,
+        })
+        .execute()
     await db
       .insertInto('workspaces')
       .values({
@@ -517,6 +533,21 @@ describe('shared project pins visibility', () => {
         locale: null,
       })
       .execute()
+    // reserveContributorSlot gives an external contributor an active
+    // workspace_members row in the host workspace. The viewer is still
+    // outside it: users.workspace_id, not this row, settles the access.
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'w1',
+        user_id: 'u9',
+        role: 'member',
+        status: 'active',
+        pending_uploads: 1,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+      .execute()
     await db
       .insertInto('project_share_defaults')
       .values({
@@ -537,7 +568,17 @@ describe('shared project pins visibility', () => {
       email: 'guest@partner.example.com',
     }
     const data = await loader(loaderArgs())
+    expect(data.access).toBe('shared')
     expect(data.projectActivity.pins.map((p) => p.shareableId)).toEqual([
+      's-project',
+    ])
+    // The activity and the ranking take the page's access decision, so they
+    // hide the host workspace's workspace-visibility file exactly as the
+    // pins and the file list do.
+    expect([
+      ...new Set(data.projectActivity.feed?.map((row) => row.shareableId)),
+    ]).toEqual(['s-project'])
+    expect(data.projectActivity.ranking.map((row) => row.shareableId)).toEqual([
       's-project',
     ])
   })

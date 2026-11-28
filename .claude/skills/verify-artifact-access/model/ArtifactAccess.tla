@@ -14,6 +14,8 @@
 (*   SharedProjectFiles projects.$id.tsx loadSharedProject                *)
 (*   ProjectFileCount   project-membership.server.ts listProjectsForIndex *)
 (*   ActivityFeed       events.server.ts, slice 'mine'                    *)
+(*   ProjectActivity    events.server.ts, slice 'project', and            *)
+(*                      listProjectViewRanking                            *)
 (*   Search             search-discovery.server.ts discoveryEligibility   *)
 (*   Recent             home.server.ts recentShareableAccessPredicate     *)
 (* Projects: projectAccessAllowed, findWorkspaceProject,                  *)
@@ -206,6 +208,19 @@ ActivityFeed ==
     /\ \/ sameWs /\ WorkspaceListPredicate
        \/ ~sameWs /\ joined /\ (SharedVisible \/ (owner /\ ~Revoked))
 
+(* events.server.ts listFeedEvents, slice 'project', and listProjectViewRanking.
+   Both are scoped to shareables.container_id and take visibleTo, the project
+   page's own access decision, from the caller: projectSubpageVisibleFilter and
+   loadProjectActivity pass visibleShareableToViewerSql when
+   findWorkspaceProject resolved the page, and
+   visibleSharedProjectShareableToViewerSql when findSharedProjectForViewer
+   did. The member branch runs under the caller's scope the same way
+   WorkspaceList does, because the container is in the viewer's workspace and
+   the artifact is in the container's. *)
+ProjectActivity ==
+    \/ WorkspaceProjectFound /\ WorkspaceListPredicate
+    \/ SharedProjectFiles
+
 (* search-discovery.server.ts discoveryEligibility, with the
    includeArchived = false filter (c.kind IS NOT 'project' OR c.archived_at IS NULL). *)
 Search ==
@@ -272,6 +287,7 @@ WorkspaceListOpens == WorkspaceList => Open
 SharedProjectFilesOpen == SharedProjectFiles => Open
 ProjectFileCountOpens == ProjectFileCount => Open
 ActivityFeedOpens == ActivityFeed => Open
+ProjectActivityOpens == ProjectActivity => Open
 SearchOpens == Search => Open
 RecentOpens == Recent => Open
 

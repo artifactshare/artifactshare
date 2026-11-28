@@ -12,6 +12,7 @@ import {
 } from './search-logs.server'
 import { sql } from 'kysely'
 import type { Db } from './db.server'
+import { isArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import {
   discoverCandidates,
@@ -88,7 +89,12 @@ export type Metadata = {
   visibility: import('~/lib/shareable-types').Visibility
   updatedAt: string
   lastViewedAt: string | null
-  artifactKind: import('~/lib/shareable-types').ArtifactKind
+  /**
+   * null when the stored `artifact_kind` is not one this build knows.
+   * `shareables.artifact_kind` is plain TEXT with no CHECK constraint, so a
+   * row written by a newer build reads back as a string.
+   */
+  artifactKind: import('~/lib/shareable-types').ArtifactKind | null
   hasBody?: boolean
 }
 export function mergeSearchHits(hits: Hit[], newest: boolean) {
@@ -161,7 +167,7 @@ async function metadata(
   return rows.map(
     ({ containerKind, containerId, containerName, artifactKind, ...row }) => ({
       ...row,
-      artifactKind,
+      artifactKind: isArtifactKind(artifactKind) ? artifactKind : null,
       hasBody: artifactKind !== 'video' && artifactKind !== 'pdf',
       project:
         containerKind === 'project' && containerId

@@ -6,6 +6,8 @@ import { search, type SearchIndexes } from './search.server'
 import { loadArtifactVersionSummaries } from './artifact-version-summary.server'
 import { sql, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
+import type { ArtifactKind } from '~/lib/shareable-types'
+import { isArtifactKind } from '~/lib/shareable-types'
 import { displayTitle } from '~/lib/display-title'
 import { shareUrl } from '~/services/artifact-readback.server'
 import {
@@ -44,7 +46,13 @@ export type CliArtifactsListData = {
     retain_versions?: number | null
     version_count?: number
     total_size_bytes?: number
-    artifact_kind: string
+    /**
+     * Left out when the stored `artifact_kind` is not one this build knows.
+     * `shareables.artifact_kind` is plain TEXT, and the list response declares
+     * the field optional, so an unreadable kind drops out of the one entry
+     * instead of failing the whole page in the route's response parse.
+     */
+    artifact_kind?: ArtifactKind
     excerpt?: string
     group_size?: number
     group_size_relation?: 'eq' | 'gte'
@@ -156,7 +164,9 @@ export async function listCliArtifacts(
           updated_at: item.updated_at,
           project_id: projectId,
           owner_email: item.owner_email,
-          artifact_kind: item.artifact_kind,
+          artifact_kind: isArtifactKind(item.artifact_kind)
+            ? item.artifact_kind
+            : undefined,
         })),
         limit: CLI_ARTIFACTS_LIST_LIMIT,
         has_more: hasMore,
@@ -337,7 +347,9 @@ export async function listAgentReadableArtifacts(
         updated_at: item.updated_at,
         project_id: item.container_id,
         owner_email: item.owner_email,
-        artifact_kind: item.artifact_kind,
+        artifact_kind: isArtifactKind(item.artifact_kind)
+          ? item.artifact_kind
+          : undefined,
       })),
       limit: CLI_ARTIFACTS_LIST_LIMIT,
       has_more: hasMore,
@@ -472,7 +484,7 @@ export async function searchCliArtifacts(
           ? { owner_email: metadata.get(item.id)?.email }
           : {}),
         ...summaries.get(item.id),
-        artifact_kind: item.artifactKind,
+        artifact_kind: item.artifactKind ?? undefined,
         excerpt: item.excerpt,
         group_size: item.groupSize,
         group_size_relation: item.groupSizeRelation,

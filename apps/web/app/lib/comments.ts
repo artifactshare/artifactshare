@@ -2,14 +2,27 @@ export const MAX_COMMENT_BODY_LENGTH = 4000
 
 export type CommentThreadStatus = 'open' | 'resolved'
 
-export const MAX_PDF_PAGE_NUMBER = 100_000
+/**
+ * The page a comment anchor may name. One range, checked in three places: the
+ * contract schema the CLI and MCP parse against, this guard on the web write
+ * paths, and the `comment_anchors.page_number` CHECK, which is the hard one.
+ *
+ * Not the viewer's `MAX_PDF_PAGE_COUNT`, which caps how many pages a sandbox
+ * may report for one document. That is a count, and this range has to cover
+ * it so that every page a viewer can open can be commented on.
+ *
+ * Written here rather than imported from `@artifactshare/contract`: this module
+ * reaches the browser bundle, and the visual lane runs without building the
+ * contract package. comments-contract-parity.test.ts holds the two equal.
+ */
+export const MAX_COMMENT_PAGE_NUMBER = 100_000
 
 export function isPdfPageNumber(value: unknown): value is number {
   return (
     typeof value === 'number' &&
     Number.isSafeInteger(value) &&
     value >= 1 &&
-    value <= MAX_PDF_PAGE_NUMBER
+    value <= MAX_COMMENT_PAGE_NUMBER
   )
 }
 

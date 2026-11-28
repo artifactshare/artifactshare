@@ -10,6 +10,10 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { mergeFeedRows } from '~/lib/feed-merge'
 import { viewerAccessAllowed } from './access.server'
 import {
+  visibleShareableToViewerSql,
+  visibleSharedProjectShareableToViewerSql,
+} from './projects.server'
+import {
   artifactCreatedEventQuery,
   artifactViewedEventQuery,
   listFeedEvents,
@@ -1954,6 +1958,7 @@ describe('project slice and ranking', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'proj1',
+      visibleTo: visibleShareableToViewerSql(feedUser),
       targetRows: 10,
       maxRawEvents: 100,
     })
@@ -1979,6 +1984,7 @@ describe('project slice and ranking', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'proj1',
+      visibleTo: visibleShareableToViewerSql(feedUser),
       targetRows: 10,
       maxRawEvents: 100,
     })
@@ -2028,6 +2034,7 @@ describe('project slice and ranking', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'proj1',
+      visibleTo: visibleShareableToViewerSql(feedUser),
       targetRows: 10,
       maxRawEvents: 100,
     })
@@ -2110,6 +2117,7 @@ describe('project slice and ranking', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'proj1',
+      visibleTo: visibleSharedProjectShareableToViewerSql(guest),
       targetRows: 10,
       maxRawEvents: 100,
     })
@@ -2142,6 +2150,7 @@ describe('project slice and ranking', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'proj1',
+      visibleTo: visibleShareableToViewerSql(feedUser),
       targetRows: 10,
       maxRawEvents: 100,
     })
@@ -2150,7 +2159,7 @@ describe('project slice and ranking', () => {
       await listProjectViewRanking(db, {
         containerId: 'proj1',
         now: '2026-07-03T00:00:00Z',
-        user: feedUser,
+        visibleTo: visibleShareableToViewerSql(feedUser),
       }),
     ).toEqual([])
   })
@@ -2162,7 +2171,7 @@ describe('project slice and ranking', () => {
       await listProjectViewRanking(db, {
         containerId: 'proj1',
         now,
-        user: feedUser,
+        visibleTo: visibleShareableToViewerSql(feedUser),
       }),
     ).toEqual([])
     // 6 個の shareable に閲覧を積む (p1 と新規 5 個)。r5 は 31 日前で窓の外。
@@ -2224,7 +2233,7 @@ describe('project slice and ranking', () => {
     const rows = await listProjectViewRanking(db, {
       containerId: 'proj1',
       now,
-      user: feedUser,
+      visibleTo: visibleShareableToViewerSql(feedUser),
     })
     expect(rows).toHaveLength(5)
     expect(rows.map((r) => r.shareableId)).toEqual([
@@ -2755,13 +2764,14 @@ describe('project activity for a cross-workspace contributor', () => {
       timeZone: 'UTC',
       slice: 'project',
       containerId: 'host-proj',
+      visibleTo: visibleSharedProjectShareableToViewerSql(contributor),
       targetRows: 20,
       maxRawEvents: 100,
     })
     const ranking = await listProjectViewRanking(db, {
       containerId: 'host-proj',
       now: NOW,
-      user: contributor,
+      visibleTo: visibleSharedProjectShareableToViewerSql(contributor),
     })
     return {
       feedShareableIds: [

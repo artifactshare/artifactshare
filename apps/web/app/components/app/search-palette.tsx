@@ -843,7 +843,7 @@ function paletteOptions({
     detail?: string
     excerpt?: string
     path?: string | null
-    artifactKind?: import('~/lib/shareable-types').ArtifactKind
+    artifactKind?: import('~/lib/shareable-types').ArtifactKind | null
     kind?: 'owner' | 'project' | 'file'
     section?: string
     activate: (keyboard?: boolean) => void

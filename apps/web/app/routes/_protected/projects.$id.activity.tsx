@@ -11,6 +11,7 @@ import {
 } from '~/components/app/page-shell-styles'
 import {
   loadProjectSubpageContext,
+  projectSubpageVisibleFilter,
   type ProjectSubpageContext,
 } from './+lib/project-subpage.server'
 import {
@@ -76,6 +77,7 @@ export async function loader({
       user,
       slice: 'project',
       containerId: ctx.projectId,
+      visibleTo: projectSubpageVisibleFilter(ctx, user),
       cursor,
       timeZone,
       targetRows: 20,
