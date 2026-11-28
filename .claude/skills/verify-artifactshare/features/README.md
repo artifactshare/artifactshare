@@ -42,3 +42,4 @@ Each feature has a shipped journey in `scripts/journeys/` that proves it end to 
 - [Who can view](./sharing.md) covers the visibility dialog, adding specific people, refusal pages, link sharing, and `edit --visibility`.
 - [Projects](./projects.md) covers creating a project from the UI and the CLI, sharing into it, and its file list.
 - [Viewer notices](./viewer-notices.md) covers the sandbox security banner and where toasts sit when the comment sheet is open on a phone.
+- [Settings and billing](./settings-billing.md) covers the owner and member views of Settings, renaming the workspace, revoking an API token, storage usage, and every Plan and billing state, the Stripe ones through dev fixtures.
