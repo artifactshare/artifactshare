@@ -1,0 +1,43 @@
+function recentArtifactsQuery(
+  db: Kysely<DB>,
+  user: ShareableViewer & { id: string; workspaceId: string },
+) {
+  return db
+    .selectFrom('shareable_viewer_recency as recency')
+    .innerJoin('shareables', 'shareables.id', 'recency.shareable_id')
+    .innerJoin('users', 'users.id', 'shareables.owner_user_id')
+    .leftJoin(
+      'artifact_containers as containers',
+      'containers.id',
+      'shareables.container_id',
+    )
+    .leftJoin('workspaces', 'workspaces.id', 'containers.workspace_id')
+    .select((eb) => [
+      recentShareableAccessPredicate(user).as('visible'),
+      'shareables.id',
+      'shareables.workspace_id',
+      'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
+      'shareables.artifact_kind',
+      'shareables.owner_user_id',
+      'users.email as owner_email',
+      'users.name as owner_name',
+      'users.image as owner_image',
+      'shareables.visibility',
+      'shareables.view_count',
+      'recency.last_viewed_at as modified_at',
+      'recency.viewed_title',
+      'recency.viewed_owner_name',
+      'containers.id as project_id',
+      'containers.name as project_name',
+      'containers.kind as project_kind',
+      'containers.workspace_id as project_workspace_id',
+      'workspaces.name as project_workspace_name',
+      commentCountSelect(eb),
+      ...recentRowActivitySelects(eb, user.id, user),
+      directGrantsSelect(user.id, user.email),
+    ])
+    .where('recency.viewer_user_id', '=', user.id)
+}
+

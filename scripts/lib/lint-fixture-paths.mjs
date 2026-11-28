@@ -6,7 +6,13 @@
 
 const LINT_FIXTURE_PARENT = 'apps/web/app'
 const MODULES_PARENT = `${LINT_FIXTURE_PARENT}/modules`
-const PLUGINS = ['analytics', 'module-boundary', 'plan-tier', 'file-url-path']
+const PLUGINS = [
+  'analytics',
+  'module-boundary',
+  'plan-tier',
+  'file-url-path',
+  'access',
+]
 
 function assertPlugin(plugin) {
   if (!PLUGINS.includes(plugin))

@@ -1,0 +1,136 @@
+export async function listProjectViewRanking(
+  db: EventDb,
+  {
+    containerId,
+    now,
+    user,
+  }: { containerId: string; now: string; user: FeedUser },
+) {
+  return await db
+    .selectFrom('events')
+    .innerJoin('shareables', 'shareables.id', 'events.shareable_id')
+    .leftJoin(
+      'artifact_containers as projectContainers',
+      'projectContainers.id',
+      'shareables.container_id',
+    )
+    .select([
+      'shareables.id as shareableId',
+      'shareables.name',
+      'shareables.derived_title as derivedTitle',
+      'shareables.title_override as titleOverride',
+      'shareables.artifact_kind as artifactKind',
+      sql<number>`count(*)`.as('viewCount'),
+    ])
+    .where('events.type', '=', 'artifact_viewed')
+    .where('shareables.container_id', '=', containerId)
+    .where(
+      'events.created_at',
+      '>=',
+      // 格納形式 (ISO 8601 T 区切り + Z) と同じ書式で比較する。datetime() の
+      // 空白区切りだと 10 文字目 'T' > ' ' で窓が最大 1 日広がる
+      sql<string>`strftime('%Y-%m-%dT%H:%M:%fZ', ${now}, '-30 days')`,
+    )
+    .where(sql<boolean>`(
+      (EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
+        AND ${visibleShareableToViewerSql(user)})
+      OR (NOT EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
+        AND ${visibleSharedProjectShareableToViewerSql(user)})
+    )`)
+    .groupBy([
+      'shareables.id',
+      'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
+      'shareables.artifact_kind',
+    ])
+    .orderBy('viewCount', 'desc')
+    .orderBy('shareables.id', 'asc')
+    .limit(5)
+    .execute()
+}
+export async function listFeedEvents(
+  db: EventDb,
+  {
+    user,
+    slice,
+    cursor,
+    timeZone,
+    targetRows,
+    maxRawEvents,
+    containerId,
+  }: {
+    user: FeedUser
+    timeZone: string
+    cursor?: FeedCursor
+    targetRows: number
+    maxRawEvents: number
+  } & (
+    | { slice: 'all' | 'mine'; containerId?: undefined }
+    | { slice: 'project'; containerId: string }
+  ),
+): Promise<FeedEventsResult> {
+  const effectiveTimeZone = resolveFeedTimezone(cursor, timeZone)
+  const rows: FeedEventRow[] = []
+  let current = cursor
+  let consumed = 0
+  let hasMore = false
+  while (rows.length < targetRows && consumed < maxRawEvents) {
+    const limit = Math.min(100, maxRawEvents - consumed)
+    let query = db
+      .selectFrom('events')
+      .innerJoin('shareables', 'shareables.id', 'events.shareable_id')
+      .leftJoin(
+        'artifact_containers as projectContainers',
+        'projectContainers.id',
+        'shareables.container_id',
+      )
+      .leftJoin('users as actors', 'actors.id', 'events.actor_user_id')
+      .leftJoin('comment_messages', 'comment_messages.id', 'events.subject_id')
+      .leftJoin(
+        'versions as subject_versions',
+        'subject_versions.id',
+        'events.subject_id',
+      )
+      .select([
+        'events.id as id',
+        'events.type as type',
+        'events.shareable_id as shareableId',
+        sql<string>`coalesce(shareables.title_override, shareables.derived_title, shareables.name)`.as(
+          'shareableTitle',
+        ),
+        'events.actor_user_id as actorId',
+        'actors.name as actorName',
+        'subject_versions.number as versionNumber',
+        'comment_messages.body as commentBody',
+        'events.created_at as createdAt',
+        'shareables.container_id as containerId',
+        'projectContainers.name as containerName',
+        'projectContainers.kind as containerKind',
+        'projectContainers.owner_user_id as containerOwnerId',
+      ])
+      .where('events.type', 'in', FEED_EVENT_TYPES)
+      .where((eb) =>
+        slice === 'project'
+          ? eb('shareables.container_id', '=', containerId)
+          : slice === 'mine'
+            ? eb.or([
+                eb('shareables.workspace_id', '=', user.workspaceId),
+                eb.exists(
+                  sql`(select 1 from project_members pm where pm.container_id = shareables.container_id and pm.user_id = ${user.id})`,
+                ),
+              ])
+            : eb('shareables.workspace_id', '=', user.workspaceId),
+      )
+      .where(
+        slice === 'project'
+          ? sql<boolean>`(
+            (EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
+              AND ${visibleShareableToViewerSql(user)})
+            OR (NOT EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.workspace_id = projectContainers.workspace_id AND wm.user_id = ${user.id} AND wm.status = 'active')
+              AND ${visibleSharedProjectShareableToViewerSql(user)})
+          )`
+          : slice === 'mine'
+            ? mineFeedVisibleSql(user)
+            : visibleShareableToViewerSql(user),
+      )
