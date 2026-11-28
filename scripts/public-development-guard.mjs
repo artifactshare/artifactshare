@@ -16,6 +16,8 @@ const metadataFixes = {
   'private-repository-url': () => 'remove the private repository URL',
   'artifactshare-spec-url': () =>
     'remove the artifact URL and describe the artifact in words',
+  'claude-project-url': () =>
+    'remove the claude.ai project thread link; the attribution comment line is enough',
   'internal-host': () => 'remove the internal host name',
   'internal-helper': () => 'remove the internal command or helper name',
 }
@@ -507,6 +509,10 @@ const forbidden = [
   {
     id: 'artifactshare-spec-url',
     pattern: /https?:\/\/artifactshare\.com\/a\//iu,
+  },
+  {
+    id: 'claude-project-url',
+    pattern: /https?:\/\/claude\.ai\/code\/project\//iu,
   },
   {
     id: 'internal-host',

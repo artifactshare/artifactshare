@@ -113,6 +113,7 @@ test('forbidden metadata is rejected while public metadata is allowed', () => {
     `fix (${'#'}1485)`,
     ['https://github.com', 'techtalkjp/artifactshare', 'issues/1'].join('/'),
     ['https://artifactshare.com', 'a', 'qw1jvt55i8'].join('/'),
+    ['https://claude.ai', 'code', 'project', 'chan_x?thread=y'].join('/'),
     'artifactshare.internal',
     'pnpm deploy',
   ])
