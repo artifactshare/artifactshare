@@ -126,7 +126,6 @@ async function main() {
       persistTo: isolatedState,
     })
     if (!prepared.ok) throw new Error(`Dev setup failed: ${prepared.reason}`)
-    // Bind the owned listener to IPv4 loopback for browser containers.
     server = spawn(
       'pnpm',
       ['--filter', '@artifactshare/web', 'dev:app', '--host', '127.0.0.1'],
@@ -142,8 +141,6 @@ async function main() {
     )
     await waitForServer(server)
 
-    // Keep the anonymous route proof ahead of the navigation proof, which
-    // seeds an authenticated persona into this otherwise shared local state.
     await runCheck('scripts/scenario-route-integration.mjs')
     await runCheck('scripts/in-app-navigation.mjs')
   } finally {

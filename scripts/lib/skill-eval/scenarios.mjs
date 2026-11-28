@@ -1,11 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-// Each scenario names the CLI commands it exercises and, when SKILL.md alone
-// is not enough, the reference an agent has to read to finish the task.
-// Seeds run through the run's own CLI before the agent starts; probes collect
-// local evidence after the agent's action log has been read, and verify turns
-// the gathered evidence into the scenario's `task` check.
 export const initialHtml =
   '<!doctype html><html lang="en"><meta charset="utf-8"><title>Sample report</title><h1>Sample report</h1><p>Draft schedule</p></html>\n'
 export const expectedContent = 'Launch is ready for Friday.'
@@ -259,8 +254,6 @@ export const scenarios = {
       }),
   },
 }
-// Commands an unattended run cannot exercise without affecting the shared
-// credential, the user's installed skills, or an interactive browser.
 export const excludedCommands = {
   login: 'Browser device authorization',
   logout: 'Revokes the credential every run shares',

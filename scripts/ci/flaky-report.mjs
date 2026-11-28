@@ -192,8 +192,6 @@ export function normalizeReport(text, status) {
   return rows.map((row) => ({ ...row, file: normalizeFile(row.file, status) }))
 }
 
-// Native case durations can overlap and exclude setup. They are observations,
-// never an invocation wall clock or proof that the first attempt passed.
 export function executionSummary(rows) {
   const cases = rows.filter(
     (row) => !row.diagnosticKind && row.status !== 'skipped',
@@ -296,9 +294,7 @@ export function aggregate({ results, repetitions, sha }) {
             .split('\n')
             .slice(-10)
             .join(' / ')
-        } catch {
-          /* Missing logs are covered by this infrastructure diagnostic. */
-        }
+        } catch {}
         rows.push(
           diagnostic(
             `Missing or invalid result: ${error.code ?? error.message}; process exited ${status?.exitCode ?? 'unknown'}, signal ${status?.signal ?? 'none'}${tail ? `; log tail: ${tail}` : ''}`,

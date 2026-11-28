@@ -56,10 +56,6 @@ function optional(node) {
       (node.type === 'CallExpression' && optional(node.callee)))
   )
 }
-// `await new Promise((resolve) => setTimeout(resolve, 250))` is the same
-// elapsed-time wait as Playwright's waitForTimeout. A zero delay only yields to
-// the task queue, and a timer promise handed to something else (a race arm, a
-// stubbed loader) is a value rather than a wait, so neither one counts.
 function timedSleep(node) {
   if (node.parent?.type !== 'AwaitExpression') return false
   if (node.callee?.type !== 'Identifier' || node.callee.name !== 'Promise')
@@ -134,8 +130,6 @@ export default {
                 message:
                   'Require the test interaction target; optional interaction can silently skip the action.',
               })
-            // Narrow to Playwright sleep calls. Timers in fixtures and fake-clock
-            // tests are not automatically synchronization sleeps.
             if (name === 'waitForTimeout' && !documentedWait(node, source))
               context.report({ node, message: ELAPSED_TIME_MESSAGE })
           },

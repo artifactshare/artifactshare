@@ -12,10 +12,7 @@ const composeFile = 'compose.playwright.yml'
 const pointsFile = 'apps/web/app/test/flaky-repro-points.json'
 const testFilePattern = /^apps\/web\/app\/.+\.behavior\.browser\.test\.tsx$/
 const maxLoad = 8
-// One repetition of the slowest browser behavior file, with a hold, on one CPU.
 const defaultTimeoutMs = 600_000
-// Everything a run writes stays here, so a rerun can clear its own directory
-// without reaching anything else, and .gitignore covers all of it.
 const resultsRoot = '.flaky-repro'
 
 export const holdPoints = (root = repositoryRoot) =>
@@ -49,8 +46,6 @@ the summary can be read as a result, including when repetitions failed, and 1
 when nothing can be concluded: no test ran, a configured hold never held, or a
 repetition failed while holding nothing.`
 
-// Command-line misuse reads as one line in a routine's log; anything else
-// keeps its stack, because it is a defect in this runner.
 export class UsageError extends Error {
   constructor(message) {
     super(message)
@@ -172,10 +167,6 @@ export function parseOptions(argv, { root = repositoryRoot } = {}) {
   }
 }
 
-// A rerun into a directory a run already used must not read what the last one
-// left: a stale summary.json would be reported as this run's result, and a
-// stale holds line would satisfy the refusal that catches a hold which never
-// held. Only this runner's own files are removed.
 export function prepareResults(options, root = repositoryRoot) {
   const directory = path.resolve(root, options.results)
   fs.mkdirSync(directory, { recursive: true })
@@ -208,8 +199,6 @@ export function vitestInvocation(options, { root = repositoryRoot, report }) {
   return invocation
 }
 
-// The image and the toolchain stay pinned in one place: the compose file the
-// visual suite already runs. A second pin here would drift from it.
 export function pinnedRuntime(source) {
   const images = [
     ...new Set([...source.matchAll(/^\s*image:\s*(\S+)$/gmu)].map((m) => m[1])),
@@ -324,8 +313,6 @@ export function dockerInvocation(
   return { command: 'docker', args }
 }
 
-// Paths stay relative to the repository, so a summary a container wrote names
-// the same files on the machine that reads it.
 const collected = (directory, root) => ({
   captures: fs
     .readdirSync(directory)
@@ -337,8 +324,6 @@ const collected = (directory, root) => ({
         .split(path.sep)
         .join('/'),
     ),
-  // A line a crash left half written counts as no holds, which the summary
-  // then reports as a hold that never ran rather than as a reproduction.
   holds: fs.existsSync(path.join(directory, 'holds.jsonl'))
     ? fs
         .readFileSync(path.join(directory, 'holds.jsonl'), 'utf8')
@@ -371,7 +356,6 @@ export function readRun({ directory, run, options, root = repositoryRoot }) {
   } catch (error) {
     return { ...result, incomplete: firstLine(error.message) }
   }
-  // A suite-level diagnostic belongs to no file and still breaks this run.
   const own = rows.filter(
     (row) => row.file === options.file || row.file === '[suite]',
   )
@@ -398,9 +382,6 @@ export function readRun({ directory, run, options, root = repositoryRoot }) {
   }
 }
 
-// What one repetition held. Repetitions are counted apart, because a failure
-// that held nothing is not the failure a delay provokes, however much the
-// other repetitions held.
 export function heldInRun(run) {
   const counts = {}
   for (const recorded of run.holds ?? [])
@@ -444,9 +425,6 @@ export function summarize(options, runs, { where }) {
   }
 }
 
-// A summary nothing can be concluded from is a runner failure, not a result:
-// the test must have run, a configured hold must have held something, and a
-// repetition that failed must have failed while being held.
 export function unusable(summary) {
   if (!summary.observed)
     return `No test ran for ${summary.file} in ${summary.project}; check --file and --test`
@@ -486,11 +464,6 @@ const killContainer = (name) => {
   }
 }
 
-/**
- * Run `cleanup` when this process is asked to stop, so a routine that cancels
- * a run leaves neither busy loops nor a container behind, and return a
- * function that takes the handlers off again.
- */
 export function onSignals(
   cleanup,
   { signals = ['SIGINT', 'SIGTERM'], exit = (code) => process.exit(code) } = {},
@@ -506,11 +479,8 @@ export function onSignals(
   }
 }
 
-// What one repetition did, from its report and from how its process ended.
 export function runOutcome({ status, durationMs, ...rest }) {
   const result = { ...readRun(rest), durationMs, exitCode: status.exitCode }
-  // A repetition this runner had to stop reports no result of its own,
-  // whatever its half-written report says.
   if (status.timedOut)
     result.incomplete = `Timed out after ${rest.options.timeoutMs} ms`
   return result
@@ -562,8 +532,6 @@ async function runLocally(options, root) {
   return runs
 }
 
-// The container is given neither limit as an argument, so its summary takes
-// the conditions back from the invocation that applied them.
 export const dockerSummary = (summary, options) => ({
   ...summary,
   where: 'docker',
@@ -576,12 +544,6 @@ const canonical = (value) =>
     ? JSON.stringify(Object.entries(value).sort())
     : JSON.stringify(value ?? null)
 
-/**
- * The first field in which a summary describes something other than what was
- * asked for, or null. The container is handed this request and writes the
- * summary this runner reports, so a summary describing another request is a
- * leftover or a different run, never this one's result.
- */
 export function mismatched(summary, options) {
   const asked = {
     file: options.file,
@@ -597,12 +559,6 @@ export function mismatched(summary, options) {
   return null
 }
 
-/**
- * The summary the container wrote, once it can stand as the result of what
- * was asked. The container exits 1 when its own summary proves nothing, which
- * this runner reports again; any other non-zero exit means the run did not
- * get as far as a result, so it must not be reported as one.
- */
 export function containerSummary({ status, options, root, log }) {
   const where = path.relative(root, log)
   const summaryFile = path.resolve(root, options.results, 'summary.json')
@@ -634,8 +590,6 @@ async function runInDocker(options, root, live) {
   )
   const name = `flaky-repro-${process.pid}-${Date.now()}`
   const invocation = dockerInvocation(options, { root, runtime, name })
-  // The image installs the toolchain and the workspace once for every
-  // repetition the run makes inside it.
   const timeoutMs = options.timeoutMs * options.repeat + 900_000
   const log = path.resolve(root, options.results, 'docker.log')
   fs.writeFileSync(log, '')

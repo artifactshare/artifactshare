@@ -27,8 +27,6 @@ function propertyName(node, computed) {
     : node.name
 }
 
-// Resolve declaration aliases through lexical bindings, so a same-named local
-// parameter or variable in another scope does not inherit a sender's identity.
 function senderPath(node, source, seen = new Set()) {
   node = unwrap(node)
   if (!node) return []
@@ -82,8 +80,6 @@ export default {
           return {}
         return {
           CallExpression(node) {
-            // Direct calls and embedded snippets remain covered by the text
-            // scan; this visitor handles extracted function aliases only.
             const callee = unwrap(node.callee)
             if (callee?.type !== 'Identifier') return
             const path = senderPath(callee, context.sourceCode)
@@ -101,10 +97,6 @@ export default {
               })
           },
           Program() {
-            // Preserve the retired checker's text scan, including embedded tag
-            // snippets and comments. The suffix match includes window/globalThis
-            // and receiver aliases, with quoted properties, optional access, and
-            // closing parentheses around direct callees.
             const source = context.sourceCode
             const deny =
               /gtag(?:['"]\s*\])?(?:\s*\))*\s*\??\.?\s*\(\s*(['"])event\1|dataLayer(?:['"]\s*\])?\s*(?:\??\.\s*push|(?:\?\.)?\s*\[\s*(['"])push\2\s*\])/g

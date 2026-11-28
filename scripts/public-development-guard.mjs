@@ -6,9 +6,6 @@ import { compileScanConfig, scanValue } from './lib/scan-patterns.mjs'
 const root = process.cwd()
 const defaultGit = (args) =>
   execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8' })
-// Boundary verdicts carry the code and the path they are about, so callers and
-// tests can tell one refusal from another without reading the sentence. Option
-// parsing keeps plain Errors: those are command-line misuse, not verdicts.
 export class BoundaryError extends Error {
   constructor(code, subject, detail) {
     super(subject === undefined ? code : `${code}: ${subject}`)
@@ -25,10 +22,6 @@ export function loadBoundaryManifest(repo = process.cwd()) {
   )
 }
 
-// The baseline manifest must describe the tree it classifies. Reading it from
-// a commit (the diff base) instead of a working tree keeps it aligned when
-// the trusted checkout is the base branch tip: a path removed from the
-// manifest on main must not fail an older base tree that still contains it.
 export function loadBoundaryManifestAt(git, commit) {
   return parseBoundaryManifest(
     git(['show', `${commit}:config/repository-boundary.json`]),
@@ -231,12 +224,6 @@ export function inspectCommitRange({
     .trim()
     .split(/\s+/u)
     .filter(Boolean)
-  // Commits reachable from the trusted tip (history the PR merged in from
-  // the base branch) were already accepted when they landed there. Scanning
-  // them again with today's policy would make a later allowlist removal on
-  // main fail an open PR in a way only a history rewrite could clear. Only
-  // the PR's own commits are inspected; the head tree check below still
-  // covers the final content.
   const ownCommits =
     trustedHead === ''
       ? null
@@ -287,11 +274,6 @@ export function inspectCommitRange({
   return commits
 }
 
-// What a commit itself introduces: the diff to its parent, and for a merge
-// the paths that differ from every parent (the merge's own resolutions).
-// Traversal order is no substitute — commits from an interleaved merged-in
-// branch are not ancestors of one another, so diffing against the previous
-// traversal entry scans changes the commit never made.
 export function changedFromParents(git, sha) {
   const parents = git(['rev-list', '--parents', '-n', '1', sha])
     .trim()
@@ -482,9 +464,6 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  // Only the pre-push hook feeds this on stdin. Draining it up front made
-  // every other mode wait for an EOF its caller never sends, so `--check`
-  // hung with no output whenever it ran with an open stdin.
   const readStdin = async () => {
     let input = ''
     for await (const chunk of process.stdin) input += chunk

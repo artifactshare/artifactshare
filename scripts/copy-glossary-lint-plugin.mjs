@@ -201,18 +201,12 @@ export function extractTypeScriptCopy(source, locale) {
     .join('\n')
 }
 
-// Copy that the owner approved although it uses a glossary term. Keyed by the
-// copy itself, so renaming an i18n key or moving a string keeps the exception,
-// while rewriting the sentence asks for the decision again.
 export const COPY_GLOSSARY_ALLOW = {
   copy: {
-    // Private visibility is distinct from the action of publishing.
     非公開: ['公開'],
-    // Owner-specified publisher consent sentence uses the API resource name.
     'This client can create private files and static sites in your home. It can read, download and update files and sites it created or you assigned to it, and permanently delete them or their older versions. Access continues after you share or move them within this workspace, while you remain the owner.':
       ['artifacts'],
     'AI ツールと接続': ['ツール'],
-    // Owner-approved name for personal AI connections.
     'AI ツールと CLI': ['ツール'],
     'AI ツールや CLI、自動化の処理からの接続を管理します。': ['ツール'],
     管理者から外す: ['外す'],
@@ -226,7 +220,6 @@ export const COPY_GLOSSARY_ALLOW = {
       ['公開'],
     'リンクを再公開しました。': ['公開'],
     'リンクを再公開できませんでした。もう一度お試しください。': ['公開'],
-    // Client identity registration, not publishing a file.
     '別のクライアントとして登録するには、別の名前でログインをやり直してください。作成済み・割り当て済みのファイルや静的サイトを引き続き管理するには、既存のクライアントを使い続けてください。':
       ['登録'],
     'ファイルを登録中です。少し待ってから、もう一度追加してください。': [

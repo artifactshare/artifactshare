@@ -196,9 +196,7 @@ async function launchChrome(options) {
           },
         }
       }
-    } catch {
-      // Chrome is still starting.
-    }
+    } catch {}
     if (child.exitCode !== null) {
       await rm(userDataDir, { recursive: true, force: true })
       throw new Error(`Chrome exited before DevTools was ready.\n${stderr}`)

@@ -1,7 +1,6 @@
 import { resolve } from 'node:path'
 import { parseCombination } from './plan.mjs'
 
-// Conservative tokenization for ordinary command lines. Shell programs remain raw evidence.
 export function words(text) {
   if (typeof text !== 'string') return null
   if (/[`$]|<<|[;&|]/u.test(text)) return null
@@ -143,8 +142,6 @@ export function parseStream(agent, text, cwd = '.') {
         event.id ??
         shell?.args?.toolCallId
       const started = event.type === 'tool_call' && event.subtype === 'started'
-      // A tool-only step may have thinking but no assistant text. Keep
-      // interleaved parallel calls together until every started call finishes.
       if (
         cursorCompleted &&
         cursorPending.size === 0 &&
@@ -197,8 +194,6 @@ export function parseStream(agent, text, cwd = '.') {
     }
   }
   record.commands = [...commands.values()]
-  // File reads are often piped (`cat references/x.md | head -80`), so each
-  // pipeline or list segment is tokenized on its own.
   for (const item of record.commands) {
     let raw = typeof item.raw === 'string' ? item.raw : ''
     const wrapped = raw.match(
@@ -256,12 +251,9 @@ function recoveryEnvelope(output) {
       try {
         const parsed = JSON.parse(candidate)
         if (parsed.error?.recovery) return parsed
-        // Skip a complete unrelated document, including its nested objects.
         start = end
         break
-      } catch {
-        /* Keep collecting a pretty-printed envelope; retain raw warnings. */
-      }
+      } catch {}
     }
   }
 }
@@ -276,15 +268,11 @@ function recoveryAction(argv) {
       positionals.push(...argv.slice(i))
       break
     }
-    // Current recovery commands use these boolean flags. Only --json changes
-    // output rather than the action; its presence is graded independently.
     if (arg === '--json') continue
     if (['--help', '-h', '--version', '-v'].includes(arg))
       flags.push(arg === '-h' ? '--help' : arg === '-v' ? '--version' : arg)
     else positionals.push(arg)
   }
-  // Preserve all other arguments, including values and repetitions. Do not
-  // assume an unrecognized option or an additional positional is harmless.
   return JSON.stringify([positionals, flags.sort()])
 }
 function urlKey(value) {
@@ -296,8 +284,6 @@ function urlKey(value) {
     return null
   }
 }
-// Value-taking options from packages/cli/src/cli.ts. Both public kebab-case
-// spellings and accepted camelCase aliases consume the following argument.
 const valueOptions = new Set(
   [
     'addEmail',
@@ -480,8 +466,6 @@ export function score({
             )
           : unknown('Missing artifact inventory')
       : outcome('not-applicable', 'Existing artifact')
-  // Share URLs are ASCII, so any non-ASCII character such as 」 or following
-  // Japanese text ends the match.
   const urls =
     record.finalMessage.match(/https?:\/\/[^\s<>"`\])\u0080-\uffff]+/gu) ?? []
   checks.finalUrl = after?.share_url
@@ -508,8 +492,6 @@ export function markdown(result) {
     'Pass counts use completed, inspected, uncontaminated runs only. Unknown and not-applicable outcomes are excluded from eligible denominators.',
     '',
   ]
-  // Overview: one row per scenario, one cell per combination, counting runs
-  // of every version together.
   const tally = (runs, name) => {
     const judged = runs.filter((run) =>
       ['pass', 'fail'].includes(run.checks?.[name]?.status),

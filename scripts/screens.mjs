@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-// Captures the development fixture screens (billing states and regression
-// scenarios) from a running dev server, so a UI change can be looked at in
-// states the local stack cannot reach on its own.
 import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
@@ -78,7 +75,6 @@ export function selectScreens(screens, filters) {
   )
 }
 
-/** One capture per screen and theme, viewport and language. */
 export function planCaptures(screens, { themes, viewports, langs }) {
   return screens.flatMap((screen) =>
     langs.flatMap((lang) =>
@@ -115,7 +111,6 @@ async function readScreens(base) {
   }
 }
 
-/** Captures every item and returns the ones that failed. */
 async function capture({ base, out }, captures) {
   const require = createRequire(join(ROOT, 'apps/web/package.json'))
   const { chromium } = require('playwright')
@@ -126,8 +121,6 @@ async function capture({ base, out }, captures) {
   )
   const failures = []
   try {
-    // Locale, viewport and color scheme are context options, so each
-    // combination gets its own context.
     const groups = Map.groupBy(
       captures,
       ({ lang, viewport, theme }) => `${lang}|${viewport}|${theme}`,

@@ -96,7 +96,6 @@ export function runProcess({
       clearTimeout(timer)
       clearTimeout(killTimer)
       signal?.removeEventListener('abort', abort)
-      // Also terminate descendants left behind by a provider that exited early.
       kill('SIGKILL')
       resolve({
         status:

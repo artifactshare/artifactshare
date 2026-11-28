@@ -32,8 +32,6 @@ async function waitForServer(server) {
   throw new Error('Dev server did not become ready within 120 seconds')
 }
 
-// The proof needs one file in the signed-in account. Upload it through the
-// same endpoint the Home upload dialog uses, with the dev session.
 async function uploadArtifact(cookies) {
   const form = new FormData()
   form.append(
@@ -187,7 +185,6 @@ async function main() {
         `Browser context could not read the dev session: HTTP ${browserSessionResponse.status()}; cookies: ${installedCookies.map(({ name }) => name).join(', ') || '(none)'}`,
       )
     }
-    // Open the uploaded file once so it is in Recently seen as well as Home.
     const viewerPage = await context.newPage()
     const viewerResponse = await viewerPage.goto(
       new URL(`/a/${artifactId}`, baseUrl).toString(),
@@ -280,8 +277,6 @@ async function main() {
   } finally {
     await context?.close().catch(() => {})
     await browser?.close().catch(() => {})
-    // Delete the uploaded file so repeated runs against a shared dev server
-    // do not pile files up in the persona's account.
     if (uploaded) await deleteArtifact(uploaded)
     if (ownsServer && server?.pid) {
       try {

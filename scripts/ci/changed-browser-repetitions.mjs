@@ -101,7 +101,6 @@ export async function discoverProjects(
       config: path.join(workspace, configFile),
       watch: false,
       cliExclude: exclude,
-      // Discovery needs project configuration and globs, not an API listener.
       api: false,
     },
     {
@@ -236,8 +235,6 @@ export function planForProject(plan, project) {
   if (project === undefined) return plan
   if (!['chromium', 'firefox', 'webkit'].includes(project))
     throw new Error('Unsupported browser project')
-  // Partition only after discovery and the global pair cap. Applying the cap
-  // independently in each lane would silently expand the requested work.
   const pairs = plan.pairs.filter((pair) => pair.project === project)
   return {
     ...plan,
@@ -656,8 +653,6 @@ export async function runViewerUnits(
 
 export const SOURCE_BUDGET_MS = 180_000
 
-// Known documentation and A/M behavior-browser tests do not trigger this lane.
-// Other application Markdown/assets and renamed/copied/deleted tests remain inputs.
 export function selectSourceFiles(text) {
   const tokens = text.split('\0')
   if (tokens.pop() !== '')
@@ -733,8 +728,6 @@ export async function buildSourcePlan(
     ].sort()
     if (!plan.candidates.length)
       throw new Error('No effective Chromium specifications discovered')
-    // Use exactly the repetition lane's global file/pair caps and effective
-    // config. This shared context remains open until this plan is complete.
     const global = await buildPlan(selection.changed, {
       root,
       discover: () => ({
@@ -743,8 +736,6 @@ export async function buildSourcePlan(
       }),
     })
     plan.delegated = global.pairs.filter((pair) => pair.project === 'chromium')
-    // The import graph is never a completeness proof: browser commands, schema
-    // and compiled Worker/application inputs can have invisible edges.
     plan.fallback.push(
       'Graph is ordering only; Node commands, schema and compiled inputs can have missing edges. All candidates retained before delegation.',
     )
@@ -832,8 +823,6 @@ export async function runSourcePlan(
     beforeFile: (_pair, index) => {
       plan.execution.elapsedMs = clock() - start
       if (plan.execution.elapsedMs >= budgetMs) return false
-      // Record admission before launch. An interrupted/missing report can
-      // never turn started work into queue-deferred work.
       plan.execution.admitted = index + 1
       save(plan)
       return true
@@ -1057,15 +1046,11 @@ export async function main(command, env = process.env) {
       let plan
       try {
         plan = readJson(planPath)
-      } catch {
-        /* Setup may have failed before discovery. */
-      }
+      } catch {}
       if (!plan) {
         try {
           plan = readJson(selectionPath)
-        } catch {
-          /* Selection itself may have failed. */
-        }
+        } catch {}
       }
       const report = render(plan, {
         results: env.RESULTS_DIR,
@@ -1081,7 +1066,6 @@ export async function main(command, env = process.env) {
     } else throw new Error('Expected select, plan, run, or report')
     return 0
   } catch (error) {
-    // The report step owns the heading after a failed selection or plan.
     summary(`${cell(firstLine(error.message))}\n\n`)
     return 1
   }

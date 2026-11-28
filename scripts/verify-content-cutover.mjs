@@ -11,9 +11,6 @@ const deliveryStageRequest = { redirect: 'manual', cache: 'no-store' }
 const classifyDeliveryStage = (body) =>
   body === 'refuse' || body === 'usercontent' ? body : 'malformed'
 
-// Keep only a small prefix, plus an overflow indication: a matching prefix is
-// never sufficient to pass an exact-body check. Cancellation must not extend
-// the request deadline, even if the underlying stream ignores it.
 async function readVerificationBody(response, signal) {
   if (!response.body) return ''
   const reader = response.body.getReader()
@@ -39,7 +36,6 @@ async function readVerificationBody(response, signal) {
   }
 }
 
-/** Only definitive stage responses may select a production deployment path. */
 export async function readContentDeliveryStage(
   fetcher = fetch,
   log = console.info,
@@ -62,7 +58,6 @@ export async function readContentDeliveryStage(
   return stage
 }
 
-/** Read-only checks used between protected deployment stages. */
 export async function verifyContentCutover(
   stage,
   fetcher = fetch,
@@ -112,8 +107,6 @@ export async function verifyContentCutover(
   const deadline = clock() + timeoutMs
   const remaining = () => Math.max(0, deadline - clock())
 
-  // Race both fetch and body consumption: abort alone cannot bound a fetcher
-  // that ignores its signal. Inject timers as well as the clock for stalled I/O.
   async function checkOnce(check) {
     const controller = new AbortController()
     const requestDeadline = Math.min(deadline, clock() + requestTimeoutMs)
@@ -173,14 +166,11 @@ export async function verifyContentCutover(
     } catch {
       return { valid: false, status: 'transport-error' }
     } finally {
-      // Also release I/O when the clock expires before the timer callback runs.
       controller.abort()
       clearTimer(timer)
     }
   }
 
-  // Reserve at least one second of useful I/O time (or the configured request
-  // cap when smaller). Do not replace observed failures with a token attempt.
   const minimumRequestMs = Math.min(1_000, requestTimeoutMs)
   let lastFailure
   for (
@@ -208,12 +198,9 @@ export async function verifyContentCutover(
         return result
       }),
     )
-    // Results retain check order even when responses complete out of order.
     for (const result of results) {
       if (result?.failure) lastFailure = result.failure
     }
-    // Each check already validated its deadline. Do not reject a completed
-    // passing attempt because time elapsed while collecting its results.
     if (results.every((result) => result?.valid)) return
     if (remaining() < intervalMs + minimumRequestMs) break
     await wait(intervalMs)

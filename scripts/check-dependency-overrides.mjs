@@ -7,8 +7,6 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 export const OVERRIDE_REPAIR =
   're-test the D1 suite (`pnpm test:d1`) and update or remove the override'
 
-// The code says which rule refused and the subject says which input it read,
-// so callers and tests do not depend on the sentence around them.
 export class DependencyOverrideError extends Error {
   constructor(code, subject, message, detail) {
     super(`[${code}] ${message}`)
