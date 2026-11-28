@@ -47,6 +47,7 @@ import {
   requireWorkspaceOwner,
   revokeWorkspaceAdmin,
   restoreWorkspaceMember,
+  revokeWorkspaceMemberCliSessions,
   transferWorkspaceOwner,
   transferRemovedMemberAssets,
   updateWorkspaceName,
@@ -2342,7 +2343,90 @@ describe('team-management service', () => {
     expect(readRole(sqlite, 'u1')).toBe('owner')
     expect(readRole(sqlite, 'u2')).toBe('member')
   })
+
+  describe('revokeWorkspaceMemberCliSessions', () => {
+    const activeCredentialCount = (userId: string) =>
+      (
+        sqlite
+          .prepare(
+            'SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = ? AND revoked_at IS NULL',
+          )
+          .get(userId) as { n: number }
+      ).n
+
+    beforeEach(() => {
+      seedWorkspace(sqlite, 'team')
+      seedWorkspace(sqlite, 'team', 'ws2')
+      for (const id of ['u1', 'u2', 'u3']) seedUser(sqlite, id)
+      seedOwner(sqlite, 'u1')
+      seedAdmin(sqlite, 'u3')
+      seedBot(sqlite, 'bot-active', 'ws1', null)
+      seedBot(sqlite, 'bot-stopped', 'ws1', '2026-06-01T00:00:00.000Z')
+      seedBot(sqlite, 'bot-other', 'ws2', null)
+      for (const id of ['u2', 'u3', 'bot-active', 'bot-stopped', 'bot-other'])
+        sqlite
+          .prepare(
+            `INSERT INTO cli_refresh_credentials (
+               id, user_id, token_hash, expires_at, created_at, family_id
+             ) VALUES (?, ?, ?, '2099-01-01T00:00:00.000Z', ?, ?)`,
+          )
+          .run(
+            `cred-${id}`,
+            id,
+            `hash-${id}`,
+            '2026-01-01T00:00:00.000Z',
+            `family-${id}`,
+          )
+    })
+
+    test.each([
+      ['u1', 'u2', 'ok', 0],
+      ['u1', 'u3', 'forbidden', 1],
+      ['u1', 'bot-active', 'bot-revoke-not-supported', 1],
+      ['u1', 'bot-stopped', 'bot-revoke-not-supported', 1],
+      ['u1', 'bot-other', 'not-found', 1],
+      ['u1', 'missing', 'not-found', 0],
+      ['u2', 'bot-active', 'forbidden', 1],
+      ['u2', 'missing', 'forbidden', 0],
+    ] as const)(
+      'actor %s revoking %s answers %s and leaves %i active credentials',
+      async (actorId, targetId, kind, remaining) => {
+        expect(
+          await revokeWorkspaceMemberCliSessions(db, user(actorId), targetId),
+        ).toEqual({ kind })
+        expect(activeCredentialCount(targetId)).toBe(remaining)
+      },
+    )
+  })
 })
+
+function seedBot(
+  db: DatabaseSync,
+  id: string,
+  workspaceId: string,
+  stoppedAt: string | null,
+) {
+  const now = '2026-05-26T00:00:00.000Z'
+  db.prepare(
+    `INSERT INTO users (
+      id, email, email_verified, name, image, created_at, updated_at,
+      workspace_id, locale, kind, bot_stopped_at
+    ) VALUES (?, ?, 1, ?, NULL, ?, ?, ?, NULL, 'bot', ?)`,
+  ).run(
+    id,
+    `${id}@bots.artifactshare.invalid`,
+    id,
+    now,
+    now,
+    workspaceId,
+    stoppedAt,
+  )
+  db.prepare(
+    `INSERT INTO workspace_members (
+      workspace_id, user_id, role, status, created_at, updated_at
+    ) VALUES (?, ?, 'member', 'active', ?, ?)`,
+  ).run(workspaceId, id, now, now)
+}
 
 function user(id: string) {
   return { id, workspaceId: 'ws1' }
