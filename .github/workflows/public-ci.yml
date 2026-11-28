@@ -396,6 +396,8 @@ jobs:
         if: ${{ steps.classify.outputs.run_static == 'true' }}
       - run: pnpm validate:static
         if: ${{ steps.classify.outputs.run_static == 'true' }}
+        env:
+          AGENT_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
 
   model-validation:
     name: TLA+ model checks

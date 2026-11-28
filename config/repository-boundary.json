@@ -32,6 +32,8 @@
     "docs/reference/glossary.md",
     "mise.toml",
     "pnpm-workspace.yaml",
+    "scripts/agent-pattern-ratchet.mjs",
+    "scripts/agent-pattern-ratchet.test.mjs",
     "scripts/analytics-lint-plugin.mjs",
     "scripts/analytics-lint-plugin.test.mjs",
     "scripts/module-boundary-lint-plugin.mjs",
@@ -164,6 +166,7 @@
     "packages/npm-reserved/",
     "packages/qm-bridge/",
     "packages/viewer-kit/",
+    "scripts/fixtures/agent-pattern-ratchet/",
     "proposals/",
     "tools/static-site-fixtures/"
   ],

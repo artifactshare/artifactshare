@@ -40,6 +40,12 @@
   - `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。
 - **復元しない事項**: 機械検査へ置き換わったトークン値や DOM 断片の一覧は復元しません。
 
+## effect・タイマー・コメント
+
+- **機械検査で強制済み**: `pnpm lint` が実行する `scripts/agent-pattern-ratchet.mjs` は、`origin/main` との merge-base（CI では PR とマージキューの base）と比べて、変更したファイル全体で次の数が増えたら失敗します。テストを除く製品コードの `useEffect`・`useLayoutEffect`・`useInsertionEffect`、`setTimeout`・`setInterval`・`setImmediate`・`requestAnimationFrame`・`requestIdleCallback`・`queueMicrotask` への参照（呼び出しに限らず、引数として渡す、メンバーとして読む、分割代入で取り出す、`react` とタイマーモジュールから別名で import する場合を含む。型の位置と `typeof` は除く）、製品コードと `scripts/` のコメント行。テンプレートリテラルでは、`<script>` 要素の中の `//` と `/* */` をすべて数え、それ以外では行頭の `//` だけを数えます（`//cdn.example.com` のようなプロトコル相対 URL は除く）。行で数えるので、既存のコメントに行を足しても失敗します。`.js` の JSDoc 型は数えません。次のどれかで始まる 3 行以内のコメントも数えません。理由つきのツール指示（`oxlint-disable-next-line <rule> -- <理由>`、`react-doctor-disable-next-line <rule> -- <理由>`、`@ts-expect-error <理由>`）、`/// <reference>`、`@vite-ignore`、スクリプト内の一覧にあるベンダーの `quirk(<vendor>):`、`compat:`、git が追跡するテストファイルを名指しする `invariant: … (test: <path>)`。行単位の例外は 3 行以内の `agent-allow(<rule>): <理由>` で、出力に一覧されます。
+- **人が判断する現行規則**: `agent-allow` は、エラー文が示す直し方（レンダー中の計算、イベントハンドラ、`apps/web/app/hooks` の名前付き hook、観測できる条件での待機、`AbortSignal.timeout`、名前・型・テスト・PR 本文）がどれも当てはまらないときだけ使います。
+- **復元しない事項**: なし。
+
 ## Tests
 
 ブラウザ待機、機能判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
