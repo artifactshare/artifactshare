@@ -110,7 +110,8 @@ export async function runProfilesUse(
     return writeFailure(command, profileNotFoundError(name), mode, 1)
   }
   const previous = nonEmpty(config.default_profile) ?? null
-  await writeGlobalConfig({ ...config, default_profile: name })
+  const written = await writeGlobalConfig({ ...config, default_profile: name })
+  if (!written.ok && written.reason === 'write_failed') throw written.cause
   return writeSuccess(
     command,
     { default_profile: name, previous_default: previous },
@@ -248,11 +249,12 @@ export async function runProfilesDelete(
   const { [name]: _removed, ...restProfiles } = config.profiles ?? {}
   const defaultProfile =
     config.default_profile === name ? null : (config.default_profile ?? null)
-  await writeGlobalConfig({
+  const written = await writeGlobalConfig({
     ...config,
     default_profile: defaultProfile,
     profiles: restProfiles,
   })
+  if (!written.ok && written.reason === 'write_failed') throw written.cause
 
   const data: ProfilesDeleteData = {
     profile: name,
@@ -332,12 +334,7 @@ async function importBotTokenProfile(
     }
   }
 
-  let configWritable = false
-  try {
-    configWritable = await writeGlobalConfig(config)
-  } catch {
-    configWritable = false
-  }
+  const configWritable = (await writeGlobalConfig(config)).ok
   if (!configWritable) {
     return writeFailure(
       command,
@@ -432,9 +429,8 @@ async function importBotTokenProfile(
 
   const latest = (await readGlobalConfig()) ?? {}
   const profiles = latest.profiles ?? {}
-  let configSaved = false
-  try {
-    configSaved = await writeGlobalConfig({
+  const configSaved = (
+    await writeGlobalConfig({
       ...latest,
       default_profile: nonEmpty(latest.default_profile) ?? profile,
       profiles: {
@@ -451,9 +447,7 @@ async function importBotTokenProfile(
         },
       },
     })
-  } catch {
-    configSaved = false
-  }
+  ).ok
   if (!configSaved) {
     return writeFailure(
       command,

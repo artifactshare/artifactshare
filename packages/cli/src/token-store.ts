@@ -264,20 +264,32 @@ export async function readGlobalConfig(): Promise<GlobalConfig | null> {
   return await readJsonFile<GlobalConfig>(join(home, 'config.json'))
 }
 
+export type WriteGlobalConfigResult =
+  | { ok: true }
+  | { ok: false; reason: 'config_home_unavailable' }
+  | { ok: false; reason: 'write_failed'; cause: unknown }
+
+// Both ways a write can fail come back as one result. A caller that wants a
+// filesystem failure to keep propagating rethrows `cause` itself, so no caller
+// has to know that one failure returns and the other throws.
 export async function writeGlobalConfig(
   config: GlobalConfig,
-): Promise<boolean> {
+): Promise<WriteGlobalConfigResult> {
   const home = configHome()
-  if (!home) return false
-  await mkdir(home, { recursive: true, mode: 0o700 })
-  await writeFile(
-    join(home, 'config.json'),
-    `${JSON.stringify(config, null, 2)}\n`,
-    {
-      mode: 0o600,
-    },
-  )
-  return true
+  if (!home) return { ok: false, reason: 'config_home_unavailable' }
+  try {
+    await mkdir(home, { recursive: true, mode: 0o700 })
+    await writeFile(
+      join(home, 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`,
+      {
+        mode: 0o600,
+      },
+    )
+  } catch (cause) {
+    return { ok: false, reason: 'write_failed', cause }
+  }
+  return { ok: true }
 }
 
 function accountName(profile: string, baseUrl: string): string {

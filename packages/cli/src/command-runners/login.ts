@@ -647,7 +647,7 @@ export async function writeProfileConfig(
   const currentProfile = Object.hasOwn(profiles, profile)
     ? profiles[profile]
     : undefined
-  await writeGlobalConfig({
+  const written = await writeGlobalConfig({
     ...config,
     default_profile: nonEmpty(config.default_profile) ?? profile,
     profiles: {
@@ -673,6 +673,9 @@ export async function writeProfileConfig(
       },
     },
   })
+  // A login without a resolvable config home keeps its stored credential and
+  // reports success, as it always has; a filesystem failure still propagates.
+  if (!written.ok && written.reason === 'write_failed') throw written.cause
 }
 
 async function resolveAuthorizationPreset(
