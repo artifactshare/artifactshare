@@ -1326,20 +1326,66 @@ export async function updateShareableMetadata(
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
 }
 
-export async function deleteShareable(
+type ShareableDeleteActor = {
+  id: string
+  email?: string | null
+  emailVerified: boolean
+  workspaceId: string
+}
+
+/**
+ * What the caller is allowed to delete. A publisher client can only reach its
+ * own artifacts, so it never also carries the project-manager fallback; the
+ * pair of optional flags this replaces could say otherwise, and the body then
+ * quietly forced the manager flag off.
+ */
+type ShareableDeleteAuthority =
+  | { kind: 'owner' }
+  | { kind: 'owner-or-project-manager' }
+  | { kind: 'publisher'; publisher: PublisherAuthority }
+
+/** Delete as the artifact's owner, or as the admin of a bot that owns it. */
+export function deleteShareable(
   db: Kysely<DB>,
-  user: {
-    id: string
-    email?: string | null
-    emailVerified: boolean
-    workspaceId: string
-  },
+  user: ShareableDeleteActor,
   shareableId: string,
-  options?: {
-    allowManagerDelete?: boolean
-    publisherAuthority?: PublisherAuthority
-  },
+  options?: { publisherAuthority?: PublisherAuthority },
 ): Promise<DeleteShareableResult> {
+  return deleteShareableWithAuthority(
+    db,
+    user,
+    shareableId,
+    options?.publisherAuthority
+      ? { kind: 'publisher', publisher: options.publisherAuthority }
+      : { kind: 'owner' },
+  )
+}
+
+/**
+ * Delete from a surface that lets a manager of the project the artifact sits
+ * in remove a member's artifact. The owner and a bot admin still delete
+ * through this path; it only adds the manager as a fallback when they are
+ * neither.
+ */
+export function deleteShareableAllowingProjectManager(
+  db: Kysely<DB>,
+  user: ShareableDeleteActor,
+  shareableId: string,
+): Promise<DeleteShareableResult> {
+  return deleteShareableWithAuthority(db, user, shareableId, {
+    kind: 'owner-or-project-manager',
+  })
+}
+
+async function deleteShareableWithAuthority(
+  db: Kysely<DB>,
+  user: ShareableDeleteActor,
+  shareableId: string,
+  authority: ShareableDeleteAuthority,
+): Promise<DeleteShareableResult> {
+  const publisherAuthority =
+    authority.kind === 'publisher' ? authority.publisher : undefined
+  const allowManagerDelete = authority.kind === 'owner-or-project-manager'
   const shareable = await db
     .selectFrom('shareables')
     .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
@@ -1357,18 +1403,10 @@ export async function deleteShareable(
   if (!shareable) return { kind: 'not-found' }
 
   if (
-    options?.publisherAuthority &&
-    !(await isPublisherArtifact(
-      db,
-      user.id,
-      options.publisherAuthority,
-      shareableId,
-    ))
+    publisherAuthority &&
+    !(await isPublisherArtifact(db, user.id, publisherAuthority, shareableId))
   )
     return { kind: 'not-found' }
-  const allowManagerDelete = options?.publisherAuthority
-    ? false
-    : (options?.allowManagerDelete ?? false)
   const isOwner =
     shareable.owner_user_id === user.id &&
     !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
@@ -1429,7 +1467,7 @@ export async function deleteShareable(
     workspaceId: shareable.workspace_id,
     containerId: shareable.container_id,
     allowManagerDelete,
-    publisherAuthority: options?.publisherAuthority,
+    publisherAuthority,
   })
   const batch: Compilable<unknown>[] = [
     db

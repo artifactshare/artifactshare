@@ -2,7 +2,7 @@ import { errorResponse } from '~/lib/api-errors'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
-import { deleteShareable } from '~/services/shareables.server'
+import { deleteShareableAllowingProjectManager } from '~/services/shareables.server'
 import type { Route } from './+types/api.artifacts.$id'
 
 export const middleware = [requireUserApiMiddleware]
@@ -17,9 +17,11 @@ async function deleteAction(
   context: Route.ActionArgs['context'],
 ) {
   const user = requireUser(context)
-  const result = await deleteShareable(createDb(), user, params.id, {
-    allowManagerDelete: true,
-  })
+  const result = await deleteShareableAllowingProjectManager(
+    createDb(),
+    user,
+    params.id,
+  )
   switch (result.kind) {
     case 'ok':
       return new Response(null, { status: 204 })

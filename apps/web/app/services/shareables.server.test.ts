@@ -115,6 +115,7 @@ import {
   canUpdateShareableVersion,
   commitDialogChanges,
   deleteShareable,
+  deleteShareableAllowingProjectManager,
   editShareableSettings,
   generateUniqueShareableId,
   getOwnedShareableSummary,
@@ -9130,9 +9131,11 @@ describe('deleteShareable', () => {
       storageUsedBytes: 1200,
     })
 
-    const result = await deleteShareable(db, OWNER, 'poster-share', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'poster-share',
+    )
 
     expect(result).toEqual({ kind: 'ok' })
     expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(
@@ -9187,9 +9190,11 @@ describe('deleteShareable', () => {
         .execute()
     }
 
-    const result = await deleteShareable(db, OWNER, 'manager-race-share', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'manager-race-share',
+    )
 
     expect(result).toEqual({ kind: 'not-found' })
     await expect(
@@ -9240,9 +9245,7 @@ describe('deleteShareable', () => {
     }
 
     await expect(
-      deleteShareable(db, OWNER, 'manager-private-race', {
-        allowManagerDelete: true,
-      }),
+      deleteShareableAllowingProjectManager(db, OWNER, 'manager-private-race'),
     ).resolves.toEqual({ kind: 'not-found' })
     await expect(
       db
@@ -9274,9 +9277,11 @@ describe('deleteShareable', () => {
     }
 
     await expect(
-      deleteShareable(db, OWNER, 'manager-visibility-race', {
-        allowManagerDelete: true,
-      }),
+      deleteShareableAllowingProjectManager(
+        db,
+        OWNER,
+        'manager-visibility-race',
+      ),
     ).resolves.toEqual({ kind: 'not-found' })
     await expect(
       db
@@ -9303,9 +9308,11 @@ describe('deleteShareable', () => {
       storageUsedBytes: 1200,
     })
 
-    const result = await deleteShareable(db, OWNER, 'private-poster', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'private-poster',
+    )
 
     expect(result).toEqual({ kind: 'not-found' })
     const remaining = await db
@@ -9338,9 +9345,11 @@ describe('deleteShareable', () => {
       storageUsedBytes: 1200,
     })
 
-    const result = await deleteShareable(db, OWNER, 'flag-off-share', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'flag-off-share',
+    )
 
     expect(result).toEqual({ kind: 'not-found' })
     const remaining = await db
@@ -9360,9 +9369,11 @@ describe('deleteShareable', () => {
       storageUsedBytes: 1200,
     })
 
-    const result = await deleteShareable(db, OWNER, 'viewer-blocked', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'viewer-blocked',
+    )
 
     expect(result).toEqual({ kind: 'not-found' })
     const remaining = await db
@@ -9437,9 +9448,11 @@ describe('deleteShareable', () => {
       })
       .execute()
 
-    const result = await deleteShareable(db, OWNER, 'granted-private', {
-      allowManagerDelete: true,
-    })
+    const result = await deleteShareableAllowingProjectManager(
+      db,
+      OWNER,
+      'granted-private',
+    )
 
     expect(result).toEqual({ kind: 'ok' })
     const remaining = await db
@@ -9462,7 +9475,7 @@ describe('deleteShareable', () => {
     })
   })
 
-  test('manager cannot delete another poster shareable without allowManagerDelete opt-in', async () => {
+  test('manager cannot delete another poster shareable through the owner-only path', async () => {
     await seedExternalProject(db, {
       posterEmail: OWNER.email,
       role: 'manager',
