@@ -28,7 +28,7 @@ function hookPath(repo) {
   )
 }
 
-test('installs a checkout-independent boundary-only pre-push hook', () => {
+test('installs a checkout-independent pre-push hook', () => {
   const repo = initRepo()
   try {
     execFileSync(process.execPath, [setup], { cwd: repo })
@@ -92,7 +92,7 @@ test('preserves a custom hook', () => {
   }
 })
 
-test('runs only the boundary guard and forwards stdin and remote', () => {
+test('runs the boundary guard and forwards stdin and remote', () => {
   const repo = initRepo()
   try {
     execFileSync(process.execPath, [setup], { cwd: repo })
@@ -133,6 +133,66 @@ test('is harmless outside a repository and skips checks in CI', () => {
     assert.match(result.stdout, /skipped in CI/u)
   } finally {
     fs.rmSync(outside, { recursive: true, force: true })
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+function writeChecks(repo, { format, lint }) {
+  fs.writeFileSync(
+    path.join(repo, 'package.json'),
+    JSON.stringify({
+      name: 'hook-fixture',
+      private: true,
+      scripts: {
+        format: `node -e "process.exit(${format})"`,
+        lint: `node -e "process.exit(${lint})"`,
+      },
+    }),
+  )
+}
+
+for (const [name, checks, message] of [
+  ['formatting', { format: 1, lint: 0 }, /formatting differs/u],
+  ['lint', { format: 0, lint: 1 }, /pnpm lint failed/u],
+]) {
+  test(`refuses a push whose ${name} check fails, before the boundary guard`, () => {
+    const repo = initRepo()
+    try {
+      execFileSync(process.execPath, [setup], { cwd: repo })
+      writeChecks(repo, checks)
+      fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
+      fs.writeFileSync(
+        path.join(repo, 'scripts/public-development-guard.mjs'),
+        `import fs from 'node:fs'\nfs.writeFileSync(process.env.GUARD_LOG, 'ran')\n`,
+      )
+      const log = path.join(repo, 'guard.log')
+      const result = spawnSync(hookPath(repo), ['origin'], {
+        cwd: repo,
+        env: { ...process.env, GUARD_LOG: log },
+        input: '',
+        encoding: 'utf8',
+      })
+      assert.equal(result.status, 1)
+      assert.match(result.stderr, message)
+      assert.equal(fs.existsSync(log), false)
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
+    }
+  })
+}
+
+test('lets a push through when formatting and lint pass', () => {
+  const repo = initRepo()
+  try {
+    execFileSync(process.execPath, [setup], { cwd: repo })
+    writeChecks(repo, { format: 0, lint: 0 })
+    const result = spawnSync(hookPath(repo), ['origin'], {
+      cwd: repo,
+      input: '',
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr)
+  } finally {
     fs.rmSync(repo, { recursive: true, force: true })
   }
 })
