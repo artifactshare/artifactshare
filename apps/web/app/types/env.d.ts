@@ -33,7 +33,6 @@ declare namespace Cloudflare {
     ARTIFACT_LIVE: DurableObjectNamespace<
       import('../../workers/artifact-live-room').ArtifactLiveRoom
     >
-    POST_UPLOAD_WORKFLOW?: Workflow<PostUploadWorkflowSpikePayload>
     OG_IMAGE_WORKER: Fetcher
     STRIPE_SECRET_KEY?: string
     OPENAI_APPS_CHALLENGE_TOKEN?: string
@@ -71,13 +70,6 @@ declare namespace Cloudflare {
 // Wrangler's generated types don't include it, so augment here.
 interface CacheStorage {
   readonly default: Cache
-}
-
-interface PostUploadWorkflowSpikePayload {
-  shareable_id?: string
-  version_id?: string
-  r2_prefix?: string
-  should_fail?: boolean
 }
 
 interface LinkAbuseJudgmentWorkflowPayload {
