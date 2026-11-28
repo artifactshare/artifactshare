@@ -83,6 +83,13 @@ export type FeedEventsResult = {
   hasMore: boolean
 }
 
+// The 'mine' slice: in the viewer's workspace, what visibleShareableToViewer
+// lists; outside it, artifacts of a joined project that open for the viewer:
+// shared with them now, or their own.
+function mineFeedVisibleSql(user: FeedUser) {
+  return sql<boolean>`((shareables.workspace_id = ${user.workspaceId} AND ${visibleShareableToViewerSql(user)}) OR (shareables.workspace_id <> ${user.workspaceId} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id=shareables.container_id AND pm.user_id=${user.id}) AND (${visibleSharedProjectShareableToViewerSql(user)} OR (shareables.owner_user_id = ${user.id} AND NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}))))`
+}
+
 export async function listFeedEvents(
   db: EventDb,
   {
@@ -167,7 +174,7 @@ export async function listFeedEvents(
               AND ${visibleSharedProjectShareableToViewerSql(user)})
           )`
           : slice === 'mine'
-            ? sql<boolean>`((shareables.workspace_id = ${user.workspaceId} AND ${visibleShareableToViewerSql(user)}) OR (shareables.workspace_id <> ${user.workspaceId} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id=shareables.container_id AND pm.user_id=${user.id}) AND ${visibleSharedProjectShareableToViewerSql(user)}))`
+            ? mineFeedVisibleSql(user)
             : visibleShareableToViewerSql(user),
       )
       // 削除済みの comment / version は join が外れたら表示しない (events.md)
@@ -650,9 +657,7 @@ export async function listFeedEvents(
             ),
           ]),
         )
-        .where(
-          sql<boolean>`((shareables.workspace_id = ${user.workspaceId} AND ${visibleShareableToViewerSql(user)}) OR (shareables.workspace_id <> ${user.workspaceId} AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.container_id=shareables.container_id AND pm.user_id=${user.id}) AND ${visibleSharedProjectShareableToViewerSql(user)}))`,
-        )
+        .where(mineFeedVisibleSql(user))
         .where(
           sql<boolean>`(${sql.join(
             keyChunk.map((row) => {
