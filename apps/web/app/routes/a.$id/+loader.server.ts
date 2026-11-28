@@ -14,7 +14,7 @@ import {
 } from '~/lib/artifact-type'
 import * as access from '~/modules/access'
 import { type CommentThreadView } from '~/lib/comments'
-import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
+import { isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
@@ -884,6 +884,7 @@ async function buildLinkAnonymousResponse(
     description: string | null
     owner_user_id: string
     owner_email: string | null
+    owner_kind: 'human' | 'bot'
     owner_name: string | null
     owner_image: string | null
     owner_created_at: string
@@ -971,9 +972,10 @@ async function buildLinkAnonymousResponse(
 
   const { modifiedTime, name: fileName } = displayCheck.meta
   const isStaticSite = shareable.version_artifact_kind === 'static_site'
-  const bridgeAttribution = isReservedBotEmail(shareable.owner_email ?? '')
-    ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
-    : null
+  const bridgeAttribution =
+    shareable.owner_kind === 'bot'
+      ? await loadBridgeAttributionOrNull(db, shareable.current_version_id!)
+      : null
   const ownerName = shareable.owner_name
   const ownerInitial = getOwnerInitial(ownerName, shareable.owner_email ?? '')
   const bridgeRequester = await bridgeRequesterPresentation(
@@ -1000,9 +1002,7 @@ async function buildLinkAnonymousResponse(
     ownerImage: shareable.owner_image,
     ownerInitial,
     ownerIsExternal: bridgeRequester.isExternal,
-    ownerKind: isReservedBotEmail(shareable.owner_email ?? '')
-      ? ('bot' as const)
-      : ('human' as const),
+    ownerKind: shareable.owner_kind,
     modifiedTime,
     viewCount: Number(shareable.view_count ?? 0),
     visibility: shareable.visibility as Visibility,

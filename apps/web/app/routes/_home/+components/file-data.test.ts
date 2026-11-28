@@ -11,6 +11,7 @@ describe('toFileRowData recent contract', () => {
       artifact_kind: 'markdown_page',
       owner_user_id: 'owner',
       owner_email: 'owner@example.com',
+      owner_kind: 'human',
       owner_name: 'Owner',
       owner_image: null,
       visibility: 'project',
@@ -70,6 +71,7 @@ describe('toFileRowData recent contract', () => {
       artifact_kind: 'html_page',
       owner_user_id: 'owner',
       owner_email: 'owner@example.com',
+      owner_kind: 'human',
       owner_name: 'Owner',
       owner_image: null,
       visibility: 'project',
@@ -95,5 +97,28 @@ describe('toFileRowData recent contract', () => {
         currentWorkspaceId: 'ws-viewer',
       }).contextualWorkspaceLabel,
     ).toBeNull()
+  })
+  test('marks the owner as a bot from users.kind, not from the email domain', () => {
+    const row: ShareableFileRow = {
+      id: 'bot-owned',
+      name: 'report.md',
+      derived_title: null,
+      title_override: null,
+      artifact_kind: 'markdown_page',
+      owner_user_id: 'bot',
+      owner_email: 'bot-abc@bots.artifactshare.invalid',
+      owner_kind: 'bot',
+      owner_name: 'Release bot',
+      owner_image: null,
+      visibility: 'project',
+      view_count: 0,
+      comment_count: 0,
+      modified_at: null,
+    }
+    expect(toFileRowData(row, 'viewer').ownerIsBot).toBe(true)
+    // Negative control: the same reserved address under a human row.
+    expect(
+      toFileRowData({ ...row, owner_kind: 'human' }, 'viewer').ownerIsBot,
+    ).toBe(false)
   })
 })
