@@ -91,13 +91,6 @@ export async function deleteArtifact(
   await bucket.delete(key)
 }
 
-export async function headArtifact(
-  bucket: R2Bucket,
-  key: string,
-): Promise<R2Object | null> {
-  return await bucket.head(key)
-}
-
 export interface ListedArtifact {
   key: string
   uploaded: Date

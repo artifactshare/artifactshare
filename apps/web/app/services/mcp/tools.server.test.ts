@@ -27,7 +27,6 @@ const storageMock = vi.hoisted(() => ({
   getArtifact: vi.fn(),
   deleteArtifact: vi.fn(),
   deleteArtifactsByPrefix: vi.fn(),
-  headArtifact: vi.fn(),
   artifactR2Key: vi.fn(
     (args: { shareableId: string; versionId: string; renderType: string }) =>
       `artifacts/${args.shareableId}/${args.versionId}/index.${args.renderType}`,

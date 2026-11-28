@@ -8,7 +8,6 @@ const storageMock = vi.hoisted(() => ({
   putArtifact: vi.fn(),
   getArtifact: vi.fn(),
   deleteArtifact: vi.fn(),
-  headArtifact: vi.fn(),
   listArtifacts: vi.fn(),
   deleteArtifacts: vi.fn(),
   artifactR2Key: vi.fn(),
