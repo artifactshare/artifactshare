@@ -762,6 +762,112 @@ describe('billing sync service', () => {
       ).count,
     ).toBe(1)
   })
+
+  describe('a webhook that read Stripe before a later change', () => {
+    function seedEvents(...ids: string[]) {
+      for (const id of ids) {
+        sqlite.exec(`INSERT INTO billing_webhook_events
+          (stripe_event_id, event_type, received_at) VALUES
+          ('${id}', 'customer.subscription.updated', '2026-07-01T00:00:00.000Z')`)
+      }
+    }
+
+    function processedEvents(): string[] {
+      return (
+        sqlite
+          .prepare(
+            `SELECT stripe_event_id FROM billing_webhook_events
+             WHERE processed_at IS NOT NULL ORDER BY stripe_event_id`,
+          )
+          .all() as Array<{ stripe_event_id: string }>
+      ).map((row) => row.stripe_event_id)
+    }
+
+    test.each([
+      ['a cancel', 'canceled', 'free'],
+      ['a failed renewal', 'past_due', 'plus'],
+    ] as const)(
+      'does not write back over %s',
+      async (_, laterStatus, expectedPlan) => {
+        seedWorkspace(sqlite, {
+          plan: 'plus',
+          stripeCustomerId: 'cus_test',
+          stripeSubscriptionId: 'sub_test',
+          stripeSubscriptionStatus: 'active',
+        })
+        seedEvents('evt_a', 'evt_b')
+        let current = makeSubscription({
+          status: 'active',
+          items: [{ priceId: prices.plusMonthly }],
+        })
+        const stripe = stripeClient({
+          subscriptions: { retrieve: vi.fn(async () => current) },
+        })
+
+        // Handler A has read the active subscription. Stripe changes, and
+        // handler B reads and saves the change before A writes.
+        beforeNextWrite.run = async () => {
+          current = makeSubscription({
+            status: laterStatus,
+            items: [{ priceId: prices.plusMonthly }],
+          })
+          await syncWorkspaceSubscription(db, stripe, env, 'sub_test', {
+            stripeEventId: 'evt_b',
+          })
+        }
+        const result = await syncWorkspaceSubscription(
+          db,
+          stripe,
+          env,
+          'sub_test',
+          { stripeEventId: 'evt_a' },
+        )
+
+        expect(result).toEqual({ kind: 'ok' })
+        expect(readWorkspace(sqlite)).toMatchObject({
+          plan: expectedPlan,
+          stripe_subscription_status: laterStatus,
+        })
+        expect(processedEvents()).toEqual(['evt_a', 'evt_b'])
+      },
+    )
+
+    test('answers conflict and leaves the event pending when every attempt collides', async () => {
+      seedWorkspace(sqlite, {
+        plan: 'plus',
+        stripeCustomerId: 'cus_test',
+        stripeSubscriptionId: 'sub_test',
+        stripeSubscriptionStatus: 'active',
+      })
+      seedEvents('evt_a')
+      const stripe = mockStripeRetrieve(
+        makeSubscription({
+          status: 'active',
+          items: [{ priceId: prices.plusMonthly }],
+        }),
+      )
+      // Another sync commits before each of this sync's writes.
+      const collide = async () => {
+        sqlite.exec(
+          `UPDATE workspaces SET stripe_sync_token = 'other-${Math.random()}'`,
+        )
+        beforeNextWrite.run = collide
+      }
+      beforeNextWrite.run = collide
+
+      const result = await syncWorkspaceSubscription(
+        db,
+        stripe,
+        env,
+        'sub_test',
+        { stripeEventId: 'evt_a' },
+      )
+      beforeNextWrite.run = null
+
+      expect(result).toEqual({ kind: 'conflict' })
+      expect(processedEvents()).toEqual([])
+    })
+  })
 })
 
 describe('syncing on the return from Checkout', () => {

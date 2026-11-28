@@ -12,6 +12,7 @@ export function settingsFailure(intent: string, code: string) {
       ? 404
       : [
             'already-subscribed',
+            'checkout-in-progress',
             'no-subscription',
             'external-failed',
             'billing-unavailable',

@@ -557,6 +557,7 @@
   "billing.status.checkoutCancelled": "Checkout をキャンセルしました。",
   "billing.status.planChangeRequested": "プラン変更を受け付けました。反映まで少し時間がかかることがあります。",
   "billing.status.alreadySubscribed": "すでに有料プランを契約しています。プラン変更はこの画面から行ってください。",
+  "billing.status.checkoutInProgress": "このワークスペースの Checkout を別の画面で開いているところです。少し待ってからもう一度お試しください。",
   "billing.status.noSubscription": "有効な契約が見つかりませんでした。",
   "picker.title": "HTML、Markdown、PDF、MP4 のファイルを選ぶ",
   "upload.hero.title": "AI が作ったファイルを、共有リンクに。",

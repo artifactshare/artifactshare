@@ -509,6 +509,109 @@ describe('billing service', () => {
     )
   })
 
+  describe('createCheckoutSession with two presses of Upgrade', () => {
+    type FakeSession = { id: string; status: string; url: string }
+
+    // One in-memory Stripe account shared by every call, so concurrent calls
+    // see each other's sessions the way two Workers requests do.
+    function sharedStripe() {
+      const sessions: FakeSession[] = []
+      const stripe = {
+        customers: { create: vi.fn() },
+        subscriptions: { list: vi.fn(async () => ({ data: [] })) },
+        checkout: {
+          sessions: {
+            list: vi.fn(async () => ({
+              data: sessions.filter((session) => session.status === 'open'),
+            })),
+            expire: vi.fn(async (id: string) => {
+              const session = sessions.find((item) => item.id === id)
+              if (session) session.status = 'expired'
+              return session
+            }),
+            create: vi.fn(async () => {
+              const n = sessions.length + 1
+              const session = {
+                id: `cs_${n}`,
+                status: 'open',
+                url: `https://checkout.test/${n}`,
+              }
+              sessions.push(session)
+              return session
+            }),
+          },
+        },
+      } as unknown as Stripe
+      return { stripe, sessions }
+    }
+
+    const press = (
+      stripe: Stripe,
+      stripeCustomerId: string | null = 'cus_free',
+    ) =>
+      createCheckoutSession(
+        db,
+        stripe,
+        env,
+        {
+          id: 'ws1',
+          plan: 'free',
+          stripe_customer_id: stripeCustomerId,
+          stripe_subscription_id: null,
+          stripe_subscription_status: 'none',
+        },
+        'plus',
+        'monthly',
+        'https://artifactshare.test',
+        'usd',
+        'en',
+      )
+
+    const openSessions = (sessions: FakeSession[]) =>
+      sessions.filter((session) => session.status === 'open')
+
+    test('presses at the same time leave one Checkout open', async () => {
+      seedWorkspace(sqlite, 'free', 'cus_free')
+      const { stripe, sessions } = sharedStripe()
+
+      const results = await Promise.all([press(stripe), press(stripe)])
+
+      expect(results.map((result) => result.kind).sort()).toEqual([
+        'checkout-in-progress',
+        'ok',
+      ])
+      expect(openSessions(sessions)).toHaveLength(1)
+    })
+
+    test('a later press expires the first Checkout and reads the saved customer', async () => {
+      seedWorkspace(sqlite, 'free', 'cus_free')
+      const { stripe, sessions } = sharedStripe()
+
+      await press(stripe)
+      // The page was loaded before the first press saved a customer.
+      const second = await press(stripe, null)
+
+      expect(second).toEqual({ kind: 'ok', url: 'https://checkout.test/2' })
+      expect(stripe.customers.create).not.toHaveBeenCalled()
+      expect(openSessions(sessions).map((session) => session.id)).toEqual([
+        'cs_2',
+      ])
+    })
+
+    test('a lease left by a request that died expires', async () => {
+      seedWorkspace(sqlite, 'free', 'cus_free')
+      sqlite.exec(`UPDATE workspaces SET checkout_lease_token = 'dead',
+        checkout_lease_expires_at = '2000-01-01T00:00:00.000Z'`)
+      const { stripe } = sharedStripe()
+
+      expect((await press(stripe)).kind).toBe('ok')
+      const lease = sqlite
+        .prepare('SELECT checkout_lease_token FROM workspaces WHERE id = ?')
+        .get('ws1') as { checkout_lease_token: string | null }
+      expect(lease.checkout_lease_token).toBeNull()
+    })
+  })
+
   test('changePlan updates fixed price for team upgrade', async () => {
     const stripe = {
       subscriptions: {

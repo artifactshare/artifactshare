@@ -8,19 +8,19 @@ import { runModelChecks } from '../../../scripts/lib/tlc-check.mjs'
 
 // Invariants the current code is known to break. Each entry is a reported
 // finding, not a pass. Remove the entry when the code is fixed.
-const KNOWN_FINDINGS = {
-  AtMostOneBillableSubscription:
-    'Two tabs that press Upgrade at once both pass the open-Checkout and subscription checks, so paying both pages starts two subscriptions.',
-  SyncedWhenQuiet:
-    'A webhook sync that read Stripe before a change can commit after the sync that read it after, so the workspace keeps a plan Stripe no longer bills (or misses one it does).',
-}
+const KNOWN_FINDINGS = {}
 
-// One tab and one webhook handler: the scope where neither finding can happen,
-// so the mutations below still have a passing baseline to break.
+// One tab and one webhook handler: the mutations of guards that matter even
+// without concurrency run here.
 const SEQUENTIAL = { Tabs: '{t1}', ClicksPerTab: '2', Handlers: '{h1}', MaxChanges: '3' }
+// A deeper scope: two Checkout pages from one tab, two handlers, two Stripe
+// changes. It is the smallest scope where an ignored event that leaves the
+// token alone lets a stale write win.
+const DEEP = { Tabs: '{t1}', ClicksPerTab: '2', Handlers: '{h1, h2}', MaxChanges: '2' }
 const SCOPED_BASELINES = [
   { invariant: 'AtMostOneBillableSubscription', constants: SEQUENTIAL },
   { invariant: 'SyncedWhenQuiet', constants: SEQUENTIAL },
+  { invariant: 'SyncedWhenQuiet', constants: DEEP, label: 'deep' },
 ]
 
 const MUTATIONS = [
@@ -55,6 +55,35 @@ const MUTATIONS = [
     replace: 'DerivedPlan(snap) == snap.plan',
     breaks: 'SyncedWhenQuiet',
     constants: SEQUENTIAL,
+  },
+  {
+    name: 'sync-without-token-check',
+    code: 'syncWorkspaceSubscription writes without WHERE stripe_sync_token IS the token it read',
+    find: 'current == ws.ver = w.ver',
+    replace: 'current == TRUE',
+    breaks: 'SyncedWhenQuiet',
+  },
+  {
+    name: 'ignored-sync-keeps-token',
+    code: 'syncWorkspaceSubscription stops writing a new stripe_sync_token when it ignores an event',
+    find: 'ELSE IF ignored THEN [ws EXCEPT !.ver = ws.ver + 1]',
+    replace: 'ELSE IF ignored THEN ws',
+    breaks: 'SyncedWhenQuiet',
+    constants: DEEP,
+  },
+  {
+    name: 'checkout-without-lease',
+    code: 'createCheckoutSession goes on when another request holds the Checkout lease',
+    find: 'IF ws.lease = "none"',
+    replace: 'IF TRUE',
+    breaks: 'AtMostOneBillableSubscription',
+  },
+  {
+    name: 'checkout-trusts-loaded-row',
+    code: 'createCheckoutSession decides from the row loaded before the lease, which may show no Stripe customer yet',
+    find: 'ELSE IF ws.customer                    \\* existingCustomer',
+    replace: 'ELSE IF FALSE',
+    breaks: 'AtMostOneBillableSubscription',
   },
 ]
 

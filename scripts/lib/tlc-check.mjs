@@ -191,7 +191,7 @@ export async function runModelChecks({
           MODULE,
           jar,
           root,
-          `scoped-${scoped.invariant}`,
+          `scoped-${scoped.invariant}${scoped.label ? `-${scoped.label}` : ''}`,
           spec,
           configFor(baseConfig, [scoped.invariant], scoped.constants),
         ),
