@@ -257,10 +257,10 @@ test('maintainer CI range inspects metadata and the final tree', () => {
       'show',
       'ls-tree',
       'ls-tree',
-      'rev-list',
-      'diff',
       'show',
       'ls-tree',
+      'rev-list',
+      'diff',
     ],
   )
   assert.deepEqual(
@@ -407,6 +407,172 @@ test('standalone check classifies the current repository tree', () => {
   )
 })
 
+function withPushRepo(callback) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'public-guard-'))
+  const original = process.cwd()
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+  const write = (file, value) => {
+    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true })
+    fs.writeFileSync(path.join(repo, file), value)
+  }
+  const commitIndex = (message) => {
+    git('commit', '-qm', message)
+    return git('rev-parse', 'HEAD')
+  }
+  const commit = (message) => {
+    git('add', '-A')
+    return commitIndex(message)
+  }
+  const push = (sha) =>
+    guardPush({
+      input: `refs/heads/topic ${sha} refs/heads/topic ${'0'.repeat(40)}\n`,
+      branch: 'topic',
+    })
+  try {
+    for (const file of [
+      'config/repository-boundary.json',
+      'config/public-repository-scan.json',
+    ])
+      write(file, fs.readFileSync(path.join(original, file), 'utf8'))
+    write('README.md', 'safe\n')
+    git('init', '-q')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    const main = commit('initial')
+    git('update-ref', 'refs/remotes/origin/main', main)
+    process.chdir(repo)
+    callback({ repo, git, write, commit, commitIndex, push, main })
+  } finally {
+    process.chdir(original)
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+}
+
+const customerAddress = ['someone', 'customer.net'].join('@')
+
+test('pre-push content scan reads its policy from the remote main, not the working tree', () => {
+  withPushRepo(({ git, write, commit, push, main }) => {
+    const policyPath = 'config/public-repository-scan.json'
+    const strict = fs.readFileSync(policyPath, 'utf8')
+    const loose = JSON.parse(strict)
+    loose.allowlist.push({
+      category: 'personal-data',
+      pattern: 'customer\\.net',
+      reason: 'test',
+    })
+
+    git('checkout', '-q', '-b', 'loosen', main)
+    write(policyPath, JSON.stringify(loose))
+    write('README.md', `${customerAddress}\n`)
+    const loosening = commit('allow the address on the branch')
+    assert.throws(() => push(loosening), {
+      code: 'changed-content-finding',
+      subject: 'README.md',
+      category: 'personal-data',
+    })
+
+    git('checkout', '-q', '-b', 'landed', main)
+    write(policyPath, JSON.stringify(loose))
+    git('update-ref', 'refs/remotes/origin/main', commit('land allowlist'))
+    git('checkout', '-q', '-b', 'topic', main)
+    assert.equal(fs.readFileSync(policyPath, 'utf8'), strict)
+    write('README.md', `${customerAddress}\n`)
+    assert.doesNotThrow(() => push(commit('add the address')))
+  })
+})
+
+test('pre-push refuses to scan without the remote main policy and names the fetch', () => {
+  withPushRepo(({ git, write, commit, push }) => {
+    write('README.md', 'still safe\n')
+    const head = commit('safe change')
+    git('update-ref', '-d', 'refs/remotes/origin/main')
+    assert.throws(
+      () => push(head),
+      (error) =>
+        error.code === 'missing-scan-policy' &&
+        error.message ===
+          [
+            'missing-scan-policy: origin/main',
+            '  fix: run git fetch origin main, then push again; the content scan reads config/public-repository-scan.json from origin/main, never from the branch being pushed',
+          ].join('\n'),
+    )
+    assert.doesNotThrow(() =>
+      guardPush({
+        input: `refs/heads/topic ${'0'.repeat(40)} refs/heads/topic ${head}\n`,
+        branch: 'topic',
+      }),
+    )
+  })
+})
+
+test('pre-push masks a credential in the content finding', () => {
+  withPushRepo(({ write, commit, push }) => {
+    const credential = ['AKIA', 'Q7'.repeat(8)].join('')
+    write('README.md', `key ${credential}\n`)
+    const head = commit('add key')
+    assert.throws(
+      () => push(head),
+      (error) =>
+        error.code === 'changed-content-finding' &&
+        error.message.includes(
+          'credential: found `AKIA... (20 characters)` at line 1; remove the credential and rotate it',
+        ) &&
+        !error.message.includes(credential),
+    )
+  })
+})
+
+const missingCommit = 'e'.repeat(40)
+
+test('pre-push names the unsafe gitlink before scanning its content', () => {
+  withPushRepo(({ git, commitIndex, push }) => {
+    git(
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${missingCommit},apps/web/app/vendor`,
+    )
+    const head = commitIndex('add submodule')
+    assert.throws(
+      () => push(head),
+      (error) =>
+        error.code === 'unsafe-tree-entry' &&
+        error.subject === 'apps/web/app/vendor' &&
+        error.message.includes(
+          'fix: replace the submodule with a regular file in every outgoing commit',
+        ),
+    )
+  })
+})
+
+test('CI range names a gitlink removed by a later commit', () => {
+  withPushRepo(({ repo, git, commitIndex, main }) => {
+    git(
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${missingCommit},apps/web/app/vendor`,
+    )
+    commitIndex('add submodule')
+    git('rm', '-q', '--cached', 'apps/web/app/vendor')
+    const head = commitIndex('remove submodule')
+    assert.throws(
+      () =>
+        inspectCommitRange({
+          base: main,
+          head,
+          git: (args) =>
+            execFileSync('git', args, { cwd: repo, encoding: 'utf8' }),
+          repo,
+          headRepoFullName: 'artifactshare/artifactshare',
+          baseRepoFullName: 'artifactshare/artifactshare',
+        }),
+      { code: 'unsafe-tree-entry', subject: 'apps/web/app/vendor' },
+    )
+  })
+})
+
 test('default guardPush implementation passes a real temporary repository', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'public-guard-'))
   const original = process.cwd()
@@ -424,7 +590,12 @@ test('default guardPush implementation passes a real temporary repository', () =
     })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
     execFileSync('git', ['add', '.'], { cwd: repo })
-    execFileSync('git', ['commit', '-qm', 'safe commit'], { cwd: repo })
+    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repo })
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], {
+      cwd: repo,
+    })
+    fs.writeFileSync(path.join(repo, 'README.md'), 'safe two\n')
+    execFileSync('git', ['commit', '-qam', 'safe commit'], { cwd: repo })
     const head = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repo,
       encoding: 'utf8',

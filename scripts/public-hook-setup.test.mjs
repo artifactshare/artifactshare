@@ -51,7 +51,7 @@ test('installs a checkout-independent pre-push hook', () => {
     const body = fs.readFileSync(hook, 'utf8')
     assert.equal(fs.statSync(hook).mode & 0o111, 0o111)
     assert.match(body, /exec node "\$repo_root\/scripts\/pre-push\.mjs" "\$@"/)
-    assert.doesNotMatch(body, /pnpm|public-development-guard/)
+    assert.doesNotMatch(body, /pnpm/)
     assert.doesNotMatch(
       body,
       new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
@@ -62,7 +62,10 @@ test('installs a checkout-independent pre-push hook', () => {
       encoding: 'utf8',
     })
     assert.equal(result.status, 0, result.stderr)
-    assert.match(result.stderr, /scripts\/pre-push\.mjs is missing/u)
+    assert.match(
+      result.stderr,
+      /pre-push\.mjs and scripts\/public-development-guard\.mjs are missing/u,
+    )
   } finally {
     fs.rmSync(repo, { recursive: true, force: true })
   }
@@ -264,8 +267,7 @@ test('git push refuses a commit whose content fails the CI scan, even after a la
         cwd: repo,
         encoding: 'utf8',
       })
-    let result = push('HEAD:refs/heads/main')
-    assert.equal(result.status, 0, result.stderr)
+    git(repo, ['push', '-q', '--no-verify', 'origin', 'HEAD:refs/heads/main'])
 
     const address = ['someone', 'customer.net'].join('@')
     git(repo, ['checkout', '-q', '-b', 'topic'])
@@ -274,7 +276,7 @@ test('git push refuses a commit whose content fails the CI scan, even after a la
     const leaking = git(repo, ['rev-parse', 'HEAD']).trim()
     fs.writeFileSync(path.join(repo, 'README.md'), 'safe\n')
     git(repo, ['commit', '-qam', 'remove contact'])
-    result = push('topic')
+    let result = push('topic')
     assert.equal(result.status, 1)
     assert.match(result.stderr, /changed-content-finding: README\.md/u)
     assert.ok(
@@ -292,6 +294,43 @@ test('git push refuses a commit whose content fails the CI scan, even after a la
     git(repo, ['commit', '-qam', 'add contact'])
     result = push('topic')
     assert.equal(result.status, 0, result.stderr)
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+    fs.rmSync(remote, { recursive: true, force: true })
+  }
+})
+
+test('falls back to the boundary guard on a branch without scripts/pre-push.mjs', () => {
+  const repo = initRepo()
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'public-hook-remote-'))
+  try {
+    git(remote, ['init', '-q', '--bare'])
+    git(repo, ['remote', 'add', 'origin', remote])
+    execFileSync(process.execPath, [setup], { cwd: repo })
+    copyFromCheckout(repo, [
+      'scripts/public-development-guard.mjs',
+      'scripts/lib/scan-patterns.mjs',
+      'config/repository-boundary.json',
+      'config/public-repository-scan.json',
+    ])
+    git(repo, ['add', '.'])
+    git(repo, ['commit', '-qm', 'add guard'])
+    git(repo, ['push', '-q', '--no-verify', 'origin', 'HEAD:refs/heads/main'])
+    git(repo, ['checkout', '-q', '-b', 'topic'])
+    git(repo, ['commit', '--allow-empty', '-qm', `fix (${'#'}123)`])
+    const result = spawnSync('git', ['push', '-q', 'origin', 'topic'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /running only the boundary guard/u)
+    assert.ok(
+      result.stderr.includes(
+        `issue-reference: found \`${'#'}123\`; remove \`${'#'}123\` and state the fact in words`,
+      ),
+      result.stderr,
+    )
+    assert.equal(git(remote, ['branch', '--list', 'topic']), '')
   } finally {
     fs.rmSync(repo, { recursive: true, force: true })
     fs.rmSync(remote, { recursive: true, force: true })

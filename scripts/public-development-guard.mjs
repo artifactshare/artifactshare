@@ -93,7 +93,10 @@ const boundaryFixes = {
   'changed-content-finding': ({ category, match, line, commit }) => [
     `${category}: found \`${match}\` at line ${line}; ${contentFixes[category] ?? 'remove it'}`,
     rewriteFix(commit),
-    'fix: if the finding is a false positive, land the allowlist change in config/public-repository-scan.json on main first; the scan reads its policy from main',
+    'fix: if the finding is a false positive, land the allowlist change in config/public-repository-scan.json on main first, then run git fetch and push again; the scan reads its policy from the remote main as of the last fetch',
+  ],
+  'missing-scan-policy': ({ subject, remote }) => [
+    `fix: run git fetch ${remote} main, then push again; the content scan reads config/public-repository-scan.json from ${subject}, never from the branch being pushed`,
   ],
   'forbidden-metadata': ({ subject, violations }) => [
     ...violations.map(
@@ -362,14 +365,14 @@ export function inspectCommitRange({
   const scanConfig = loadScanConfig(manifestRepo)
   for (const sha of commits) {
     if (acceptedOnTrustedTip(sha)) continue
+    inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
+    inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
     inspectChangedContent({
       git,
       head: sha,
       changed: changedFromParents(git, sha),
       scanConfig,
     })
-    inspectMetadata(git(['show', '-s', '--format=%B', sha]), `commit ${sha}`)
-    inspectTree(parseTree(git(['ls-tree', '-r', sha])), headManifest)
   }
   inspectChangedContent({
     git,
@@ -462,17 +465,19 @@ function loadScanConfig(repo) {
 }
 
 function defaultBranchScanConfig(git, remoteName) {
+  let source
   try {
-    return JSON.parse(
-      git([
-        'show',
-        `refs/remotes/${remoteName}/main:config/public-repository-scan.json`,
-      ]),
-    )
+    source = git([
+      'show',
+      `refs/remotes/${remoteName}/main:config/public-repository-scan.json`,
+    ])
   } catch (error) {
     if (error?.status === undefined) throw error
-    return loadScanConfig(process.cwd())
+    throw new BoundaryError('missing-scan-policy', `${remoteName}/main`, {
+      remote: remoteName,
+    })
   }
+  return JSON.parse(source)
 }
 
 export function inspectChangedContent({ git, head, changed, scanConfig }) {
@@ -581,18 +586,18 @@ export function guardPush({ input, branch, remoteName = 'origin', git } = {}) {
     throw new Error(`invalid remote name: ${remoteName}`)
   const gitImpl = git ?? defaultGit
   const commits = outgoingCommits(updates, remoteName, gitImpl)
-  const scanConfig = defaultBranchScanConfig(gitImpl, remoteName)
+  const scanConfig =
+    commits.length > 0 ? defaultBranchScanConfig(gitImpl, remoteName) : null
   for (const sha of commits) {
     const message = gitImpl(['show', '-s', '--format=%B', sha])
     inspectMetadata(message, `commit ${sha}`)
+    inspectTree(parseTree(gitImpl(['ls-tree', '-r', sha])), manifest)
     inspectChangedContent({
       git: gitImpl,
       head: sha,
       changed: changedFromParents(gitImpl, sha),
       scanConfig,
     })
-    const tree = parseTree(gitImpl(['ls-tree', '-r', sha]))
-    inspectTree(tree, manifest)
   }
   return { commits, updates: updates.length }
 }

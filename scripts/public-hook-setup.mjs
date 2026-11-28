@@ -17,11 +17,14 @@ function currentHook() {
   return `#!/bin/sh
 # artifactshare-managed-pre-push
 repo_root=$(git rev-parse --show-toplevel) || exit 1
-if [ ! -f "$repo_root/scripts/pre-push.mjs" ]; then
-  echo "warning: scripts/pre-push.mjs is missing; skipping pre-push checks" >&2
-  exit 0
+if [ -f "$repo_root/scripts/pre-push.mjs" ]; then
+  exec node "$repo_root/scripts/pre-push.mjs" "$@"
 fi
-exec node "$repo_root/scripts/pre-push.mjs" "$@"
+if [ -f "$repo_root/scripts/public-development-guard.mjs" ]; then
+  echo "warning: scripts/pre-push.mjs is missing; running only the boundary guard" >&2
+  exec node "$repo_root/scripts/public-development-guard.mjs" --remote "$1"
+fi
+echo "warning: scripts/pre-push.mjs and scripts/public-development-guard.mjs are missing; skipping pre-push checks" >&2
 `
 }
 
