@@ -5,25 +5,11 @@ import { loadShareableViewAccess } from '~/services/comments.server'
 import { d1DatabaseFor } from '~/services/db.server'
 import type { DB } from '~/types/db'
 
-// Who viewed (viewer list): shared disclosure rule and its two consumers.
-//
-// A user is disclosed in (and eligible to see) the viewer list of a shareable
-// exactly when all three hold:
-//   1. users.workspace_id = shareables.workspace_id
-//   2. users.kind = 'human'
-//   3. an active (status != 'removed') workspace_members row EXISTS for that
-//      workspace
-// Eligibility (the requester side) additionally requires view access to the
-// file itself (loadShareableViewAccess). This module is the only place the
-// predicate is implemented; listing, counting, and requester checks all go
-// through it.
-
 export const VIEWER_LIST_DEFAULT_LIMIT = 50
 export const VIEWER_LIST_MAX_LIMIT = 100
 
 export interface ViewerListRow {
   userId: string
-  // Raw stored value; normalization (unknown-user label, initials) is UI-side.
   name: string | null
   image: string | null
   lastViewedAt: string
@@ -66,7 +52,6 @@ function internalAudienceCondition(
   )
 }
 
-// One audience predicate shared by requester checks, listing, and counting.
 function audienceConditions(
   eb: ExpressionBuilder<DB & { u: DB['users'] }, 'u'>,
   shareableId: string,
@@ -119,7 +104,6 @@ function audienceConditions(
   ])
 }
 
-// Shared query builder: the disclosed viewer rows of one shareable.
 function disclosedViewersQuery(db: Kysely<DB>, shareableId: string) {
   return db
     .selectFrom('shareable_viewer_recency as r')
@@ -128,8 +112,6 @@ function disclosedViewersQuery(db: Kysely<DB>, shareableId: string) {
     .where((eb) => audienceConditions(eb, shareableId))
 }
 
-// The audience predicate applied to one requester (or, without the id filter,
-// to every user).
 function audienceUsersQuery(db: Kysely<DB>, shareableId: string) {
   return db
     .selectFrom('users as u')
@@ -156,8 +138,6 @@ async function runReadBatch(
   return results.map((result) => (result.results ?? []) as unknown[])
 }
 
-// Loader-side stats: the caller (a/:id loader) has already resolved view
-// access, so this does not repeat it. One D1 batch.
 export async function countShareableViewers(
   db: Kysely<DB>,
   input: {
@@ -200,12 +180,6 @@ function encodeViewerCursor(cursor: ViewerCursor & { filter: string }): string {
     .replace(/=+$/, '')
 }
 
-// Opaque base64url JSON cursor. Validation is shape-only: exactly the three
-// string keys, and `filter` must match the requested shareable. There is
-// deliberately no length cap and no datetime-format validation — the column
-// carries no format/length constraint, so accepting anything we issued keeps
-// the re-acceptance guarantee and paging completeness unconditional; size
-// defense is the platform request limit.
 function decodeViewerCursor(
   raw: string,
   shareableId: string,
@@ -245,9 +219,6 @@ function parseViewerListLimit(raw: string | null): number | 'invalid' {
   return value
 }
 
-// API-side listing. Owns existence + view access, requester eligibility, and
-// raw parameter parsing, in that order — an unauthorized caller never learns
-// whether an id exists from a parameter 400.
 export async function listShareableViewers(
   db: Kysely<DB>,
   input: {
@@ -262,9 +233,6 @@ export async function listShareableViewers(
   const access = await loadShareableViewAccess(db, user, shareableId)
   if (!access) return { kind: 'not-found' }
 
-  // Eligibility: the requester must satisfy the shared audience predicate.
-  // Bots and link-only viewers fail it; removed members can still qualify via
-  // a verified file or project audience.
   const [requesterRow] = await audienceUsersQuery(db, shareableId)
     .select('u.id')
     .where('u.id', '=', user.id)
@@ -305,8 +273,6 @@ export async function listShareableViewers(
       ]),
     )
   }
-  // totalViewers is a separate COUNT over the same builder (not derived from
-  // the page query); a ±1 divergence against paging is accepted.
   const totalQuery = disclosedViewersQuery(db, shareableId).select((eb) =>
     eb.fn.countAll<number>().as('count'),
   )
@@ -325,8 +291,6 @@ export async function listShareableViewers(
     Array<{ count: number }>,
   ]
 
-  // limit + 1 lookahead: a next cursor is issued only when a surplus row
-  // proves another page exists (exactly `limit` remaining rows → null).
   const hasMore = pageRows.length > limit
   const visible = hasMore ? pageRows.slice(0, limit) : pageRows
   const lastVisible = visible[visible.length - 1]

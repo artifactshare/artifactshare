@@ -158,7 +158,6 @@ export async function authorizeSandboxDelivery(
   } as const
 }
 
-// Kinds the sandbox delivers. spa / workspace_app have no delivery here.
 function deliveryRenderType(kind: ArtifactKind): ArtifactType | null {
   return kind === 'static_site' ? 'static_site' : renderTypeFromKind(kind)
 }

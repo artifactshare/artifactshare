@@ -1,8 +1,3 @@
-/* Hallmark · component: OG card · genre: editorial · tone: warm precise
- * theme: Artifact Share design system · paper: surface-warm · ink: foreground
- * accent: existing coral brand mark only · contrast: pass · slop: pass
- * pre-emit critique: P5 H5 E5 S5 R5 V4
- */
 import lineSeedJapanese400 from '@fontsource/line-seed-jp/files/line-seed-jp-japanese-400-normal.woff2'
 import lineSeedJapanese700 from '@fontsource/line-seed-jp/files/line-seed-jp-japanese-700-normal.woff2'
 import lineSeedLatin400 from '@fontsource/line-seed-jp/files/line-seed-jp-latin-400-normal.woff2'

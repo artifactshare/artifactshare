@@ -63,31 +63,22 @@ class SearchCleanupError extends Error {
   override name = 'SearchCleanupError'
 }
 
-// Format 13 changes only candidate policy, not extraction or document ranking.
 const compatibleContentFormat = (format: number | string) =>
   Number(format) === INDEX_FORMAT_VERSION ||
   (INDEX_FORMAT_VERSION === 13 && Number(format) === 12)
 
 const BATCH = 5
 const FAILURE_SPACING_MS = 5 * 60_000
-// A file that keeps failing stops holding back rebuild completion and the
-// dispatch queue after this many failures spread over at least this long,
-// so an outage that clears within the hour still blocks, but a file that can
-// never be indexed does not block forever. It is then retried once a day,
-// and a change to the file resets its count.
 const GIVE_UP_FAILURES = 3
 const GIVE_UP_AFTER_MS = 60 * 60_000
 const GIVEN_UP_RETRY_MS = 24 * 60 * 60_000
 // Rows compared with D1, or swept, in one pass step. A D1 lookup binds the
 // workspace and these ids, under its 100-parameter limit.
 const PASS_BATCH = 50
-/** Internal RPC only. No search endpoint or authorization copies. */
 export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private running = false
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env)
-    // Storage is created by the first sync, never by a read: a read can
-    // reach an index that was never synced.
     if (
       ctx.storage.sql
         .exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'")
@@ -95,9 +86,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     )
       this.#initSchema()
   }
-  // Whether this instance has its tables; false before the first sync and
-  // after a leftover object (not named as its recorded workspace's index, or
-  // with no recorded workspace) deleted its storage.
   #schemaReady = false
   protected ensureSchema(): void {
     if (!this.#schemaReady) this.#initSchema()
@@ -154,17 +142,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .toArray()
         .map((row) => row.name),
     )
-    // Failure counts and the readiness record of earlier versions are unused.
     for (const column of ['failures', 'failed_at', 'first_failed_at'])
       if (pendingColumns.has(column))
         this.ctx.storage.sql.exec(`ALTER TABLE pending DROP COLUMN ${column}`)
     this.ctx.storage.sql.exec('DROP TABLE IF EXISTS placement')
-    // When a failed item may be tried again; 0 means now.
     if (!pendingColumns.has('retry_at'))
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0',
       )
-    // A file can finish refreshing access policy even if its text needs a retry.
     if (!pendingColumns.has('policy_dirty'))
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN policy_dirty INTEGER NOT NULL DEFAULT 1',
@@ -172,7 +157,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS pending_dirty_policy ON pending(policy_dirty) WHERE policy_dirty=1',
     )
-    // Consecutive failures since the file last changed, and when they began.
     if (!pendingColumns.has('failed_count'))
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failed_count INTEGER NOT NULL DEFAULT 0',
@@ -181,13 +165,10 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN failing_since INTEGER NOT NULL DEFAULT 0',
       )
-    // Set only by a failure that met the give-up rule; elapsed time alone never sets it.
     if (!pendingColumns.has('given_up'))
       this.ctx.storage.sql.exec(
         'ALTER TABLE pending ADD COLUMN given_up INTEGER NOT NULL DEFAULT 0',
       )
-    // Retain legacy reconciliation columns for additive cutover and rollback.
-    // New code only advances the explicit rebuild checkpoint.
     const stateColumns = new Set(
       this.ctx.storage.sql
         .exec<{ name: string }>('PRAGMA table_info(state)')
@@ -205,7 +186,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         this.ctx.storage.sql.exec(
           `ALTER TABLE state ADD COLUMN ${column} ${definition}`,
         )
-    // Remove the prior persisted query cache and its invalidation triggers.
     for (const table of ['documents', 'chunks', 'active'])
       for (const event of ['INSERT', 'UPDATE', 'DELETE'])
         this.ctx.storage.sql.exec(
@@ -215,7 +195,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       .exec(`DROP TABLE IF EXISTS query_results; DROP TABLE IF EXISTS query_cache; DROP TABLE IF EXISTS query_allowed_ids;
       CREATE INDEX IF NOT EXISTS chunks_document_ordinal ON chunks(document,ordinal);`)
   }
-  /** Build one SQL ranking over the requested document set, never JS-wide row arrays. */
   #matchingPages(input: IndexSearchInput, details = false, titleOnly = false) {
     if (
       input.visibility &&
@@ -317,7 +296,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       CASE tierNumber WHEN 0 THEN 'title' WHEN 1 THEN 'phrase' WHEN 2 THEN 'all' ELSE 'any' END AS tier,activityAt
       ${input.groupKeys ? ',group_key AS groupKey,row_number() OVER(PARTITION BY group_key ORDER BY ' + order + ') AS groupRank' : ''}
       FROM ${!details && input.maxResults !== undefined ? 'top_pages' : 'pages WHERE page=1'} ${details ? '' : input.maxResults !== undefined ? 'ORDER BY rank' : 'ORDER BY rank LIMIT ?'}`
-    // Keep binding order explicit: MATCH terms are data, never query syntax from callers.
     return {
       statement,
       bindings: [
@@ -355,9 +333,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             .all<{ pending: number; rebuildTarget: number | null }>()
         ).results[0]
       : undefined
-    // Dispatch persists policy work before acknowledging its D1 feed identity.
-    // Once policy has converged, a text extraction or object cleanup failure
-    // cannot make the indexed candidate set incomplete indefinitely.
     const local = this.#schemaReady
       ? this.ctx.storage.sql
           .exec<{ pending: number; scannedPolicyTarget: number }>(`SELECT
@@ -412,8 +387,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         )
         .toArray()
     }
-    // Literal-title hits precede every other tier. A full window plus its witness
-    // proves that lower tiers cannot change this bounded relevance page.
     const titles =
       criteria.maxResults !== undefined &&
       criteria.sort !== 'newest' &&
@@ -454,7 +427,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       const query = this.#matchingPages({ ...input, groupKeys: keys })
       const cursor = Math.max(0, input.cursor ?? 0)
       const end = cursor + 2000
-      // Per-key pages let the caller count authorized members, not index rows.
       const rows = this.ctx.storage.sql
         .exec<{
           id: string
@@ -524,8 +496,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         { ...input, query: term, any: false, allowedIds: ids },
         true,
       )
-      // A single-term search builds this same query again; its rows are the
-      // page rows already read, so the index is not searched twice.
       const matches = sameAsPages(evidence)
         ? rows
         : this.ctx.storage.sql
@@ -553,7 +523,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     })
   }
 
-  /** Shared ingestion writer; protected so the test subclass uses identical FTS seams. */
   protected writeChunk(document: number, ordinal: number, columns: string[][]) {
     this.ctx.storage.transactionSync(() => {
       const id = this.ctx.storage.sql
@@ -593,18 +562,8 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       .exec<State>('SELECT workspace, dirty FROM state WHERE singleton=1')
       .toArray()[0]
   }
-  // When this instance last received a sync request, so a failure based on
-  // data read before it does not postpone the retry that sync asked for.
   #syncedAt = 0
 
-  /**
-   * Delete the storage of an object that is not named as the index of the
-   * workspace it recorded (one left from before every index moved to one
-   * location), or that has tables but never recorded a workspace (created by
-   * a read before storage waited for the first sync). A real index records
-   * its workspace in the sync that creates its tables. Returns whether it
-   * deleted.
-   */
   async #dropIfLeftover(): Promise<boolean> {
     if (!this.#schemaReady) return false
     const workspace = this.state()?.workspace
@@ -614,26 +573,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
     this.#schemaReady = false
     return true
   }
-  /** Whether this object is the index named for the workspace. */
   #isNamedIndex(workspace: string): boolean {
     return this.ctx.id.equals(
       this.env.WORKSPACE_SEARCH_INDEX.idFromName(searchIndexName(workspace)),
     )
   }
-  /** Only the index named for this workspace accepts its sync. */
   async sync(workspace: string, mutation = true): Promise<void> {
     workspaceSearchPrefix(workspace)
     if (!this.#isNamedIndex(workspace)) {
-      // A leftover object, judged by the workspace it recorded itself or by
-      // having recorded none, drops its storage when asked; a misrouted sync
-      // never touches a real index.
       await this.#dropIfLeftover()
       throw new Error('search_partition_mismatch')
     }
-    // Tables without a recorded workspace were created by a read before
-    // storage waited for the first sync; they start over here.
     await this.#dropIfLeftover()
-    // Storage is created only for a sync this object accepts by name.
     this.ensureSchema()
     const state = this.state()
     if (state && state.workspace !== workspace)
@@ -643,7 +594,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       workspace,
       Number(mutation),
     )
-    // Only product notifications invalidate retries; cron wakes preserve backoff.
     if (mutation) this.#syncedAt = Date.now()
     await this.ctx.storage.setAlarm(Date.now() + 1000)
     await this.run()
@@ -654,19 +604,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   private async run(): Promise<void> {
     if (this.running) return
     this.running = true
-    // Notifications this run has not consumed. Only ones that arrive while it
-    // runs need an early alarm; a failed run retries on its 30-second alarm.
     let unconsumed = 0
-    // An eviction or exception always leaves a durable continuation.
     try {
       await this.ctx.storage.setAlarm(Date.now() + 30_000)
-      // An index without storage has nothing to run.
       if (!this.#schemaReady) {
         await this.ctx.storage.deleteAlarm()
         return
       }
-      // A leftover object only deletes its storage, so it never writes into
-      // an index's text area.
       if (await this.#dropIfLeftover()) return
       const state = this.state()
       if (!state) return
@@ -692,7 +636,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           .selectAll()
           .where('workspace_id', '=', state.workspace)
           .executeTakeFirst()
-        // Retained targets fence rollback even after seeding and completion.
         if (
           (latest?.target ?? 0) > INDEX_FORMAT_VERSION ||
           (obligation?.target ?? 0) > INDEX_FORMAT_VERSION
@@ -702,7 +645,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         }
         if (state.dirty)
           this.ctx.storage.sql.exec(
-            // Given-up files wait for their daily retry or their own change.
             'UPDATE pending SET retry_at=0 WHERE retry_at>0 AND given_up=0',
           )
         if (
@@ -717,7 +659,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             "INSERT INTO rebuild(singleton,target) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET target=excluded.target,cursor='',sweep='',scanned=0,swept=0 WHERE rebuild.target < excluded.target",
             obligation.target,
           )
-          // A new format tries every file again, including ones given up before.
           if ((previous ?? 0) < obligation.target)
             this.ctx.storage.sql.exec(
               'UPDATE pending SET failed_count=0, failing_since=0, given_up=0, retry_at=0',
@@ -732,7 +673,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             swept: number
           }>('SELECT * FROM rebuild')
           .toArray()[0]
-        // Alternate recent and oldest identities so continuous edits cannot starve tombstones.
         const changes = await db
           .selectFrom('search_index_changes')
           .select(['id', 'shareable_id'])
@@ -822,7 +762,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               ),
             )
             .execute()
-        // Replayed work reloads policy by key; no container mutation visits child files.
         const policies = this.ctx.storage.sql
           .exec<{ kind: 'container' | 'workspace'; key: string }>(
             'SELECT kind,key FROM policy_pending ORDER BY kind,key LIMIT ?',
@@ -830,7 +769,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           )
           .toArray()
         for (const row of policies) {
-          // A failure must leave subsequent durable keys untouched for the next alarm.
           // react-doctor-disable-next-line react-doctor/async-await-in-loop
           await this.refreshPolicy(db, state.workspace, row.kind, row.key)
           this.ctx.storage.sql.exec(
@@ -883,8 +821,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             )
           })
         }
-        // Old queued cleanup uses the same fair retry queue; staged writes wait for replacement.
-        // Exclude already-pending IDs so a failing prefix cannot occupy every slot.
         const cleanup = this.ctx.storage.sql
           .exec<{ id: string }>(
             'SELECT id FROM (SELECT shareable AS id FROM intentions WHERE shareable NOT IN (SELECT id FROM staging) UNION SELECT id FROM reclaims UNION SELECT id FROM cleanup WHERE id NOT IN (SELECT id FROM staging)) WHERE id NOT IN (SELECT id FROM pending) ORDER BY id LIMIT ?',
@@ -896,10 +832,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             'INSERT OR IGNORE INTO pending(id) VALUES(?)',
             row.id,
           )
-        // Drain recent work before older pending rows; one corrupt object cannot block a pass.
-        // A failed item waits until its retry time, so a file that keeps
-        // failing is retried every few minutes rather than keeping the index
-        // busy (and its replies waiting) every second.
         const now = Date.now()
         const pending = this.ctx.storage.sql
           .exec<{ id: string }>(
@@ -945,7 +877,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             const source = sources[position]
             // Keep generation staging serial: concurrent 25 MiB extractions exceed the isolate memory budget.
             if (source) {
-              // Policy and the following generation replacement share the serial item budget.
               // react-doctor-disable-next-line react-doctor/async-await-in-loop
               await this.refreshFilePolicy(db, state.workspace, id)
               this.ctx.storage.sql.exec(
@@ -960,7 +891,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
                 compatibleContentFormat(active.format)
               ) {
                 stage = 'retain'
-                // Format 13 adds policy only: retain the already indexed text generation.
                 this.ctx.storage.sql.exec(
                   'UPDATE active SET format=? WHERE id=?',
                   INDEX_FORMAT_VERSION,
@@ -990,14 +920,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
             }
             this.ctx.storage.sql.exec('DELETE FROM pending WHERE id=?', id)
           } catch (error) {
-            // Report cleanup failures after scheduling their durable retry. The
-            // deduplicated batch must not revisit the failed prefix this run.
             if (error instanceof SearchCleanupError) cleanupFailure ??= error
-            // Wait five minutes before the next try, unless a sync request
-            // arrived after this run began reading D1, since the failure may
-            // come from what it read.
-            // Every failure counts, even when a sync arrived during the run;
-            // a change to this file resets the count when it is handed off.
             const failedAt = Date.now()
             const failure = this.ctx.storage.sql
               .exec<{ failed_count: number; failing_since: number }>(
@@ -1319,7 +1242,6 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           source.current_version_id!,
           page.path,
         )
-        // Persist BEFORE writing, including metadata-only repairs of missing extraction.
         this.ctx.storage.sql.exec(
           'INSERT OR IGNORE INTO intentions(key,shareable) VALUES(?,?)',
           key,

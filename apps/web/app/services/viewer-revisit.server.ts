@@ -65,7 +65,6 @@ export async function loadViewerRevisitContext(
 
   if (!row) return null
   const versionCount = Number(row.versionCount ?? 0)
-  // Both queries use the same captured boundary before the loader records this visit.
   const eligibleMessages = db
     .selectFrom('comment_messages as cm')
     .innerJoin('comment_threads as ct', 'ct.id', 'cm.thread_id')

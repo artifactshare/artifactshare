@@ -2,7 +2,6 @@ import { SearchDailyLimitError } from './search-quota.server'
 import { SearchCapacityError } from './search-index/query'
 import type { MiddlewareFunction } from 'react-router'
 
-/** Map expected failures before React Router handles a resource loader error. */
 export function searchErrorResponse(
   error: SearchDailyLimitError | SearchCapacityError,
 ): Response
@@ -20,7 +19,6 @@ export function searchErrorResponse(error: unknown): Response | undefined {
     )
 }
 
-/** Also cover errors thrown by cookie authentication before the loader runs. */
 export const searchNoStoreMiddleware: MiddlewareFunction<Response> = async (
   _args,
   next,

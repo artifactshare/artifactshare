@@ -16,9 +16,6 @@ async function runMcp(
   executionContext: ExecutionContext,
   version?: { claim: unknown; resource: string; sessionId: unknown },
 ): Promise<Response> {
-  // One D1 connection per request, shared across the tool calls in it. The
-  // tools resolve the workspace-scoped user from it; closing it after the body
-  // is buffered keeps the per-request resources from outliving the response.
   const db = createDb()
   try {
     if (version) {
@@ -55,8 +52,6 @@ async function runMcp(
     // tool handler has run (and finished its D1 reads) before we close `db`.
     return await transport.handleRequest(request)
   } finally {
-    // Swallow a close error so it can't replace an already-computed (successful)
-    // response with a thrown 500.
     await db.destroy().catch((err) => {
       console.error('mcp_db_destroy_failed', err)
     })
@@ -105,17 +100,6 @@ function methodNotAllowed(): Response {
   })
 }
 
-/**
- * Protect /mcp with the OAuth 2.1 access token (JWT). The token is verified
- * locally against the JWKS read from D1, then checked against the current
- * user token version, and unauthenticated requests get a `WWW-Authenticate`
- * header pointing at the protected-resource metadata.
- *
- * A hardcoded dev token bypasses OAuth for protocol smoke tests without a
- * browser login. It authenticates as `dev-user`; the workspace-scoped tools
- * still resolve their identity from D1, so they return data only when a matching
- * user row exists — otherwise OAuth is the real path. Gated to non-production.
- */
 export async function handleMcpRequest(
   request: Request,
   executionContext: ExecutionContext,

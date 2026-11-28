@@ -4,7 +4,6 @@ import { normalizeSearchText } from './normalize'
 export type SearchTier = 'title' | 'phrase' | 'all' | 'any'
 export type IndexSearchInput = {
   query: string
-  /** Workspace routing for read-only pending-feed detection, including cold indexes. */
   workspaceId?: string
   visibility?: SearchVisibility
   includeActiveDocumentCount?: boolean
@@ -14,9 +13,7 @@ export type IndexSearchInput = {
   sort?: 'relevance' | 'newest'
   any?: boolean
   allowedIds?: string[]
-  /** Internal typeahead ranking window; results searches leave this unset. */
   maxResults?: number
-  /** Page-group completion only. */
   groupKeys?: string[]
   limit?: number
   cursor?: number
@@ -43,7 +40,6 @@ export class SearchCapacityError extends Error {
     super('search_capacity_exceeded')
   }
 }
-// Split bindings by bytes, never by the number of discoverable IDs.
 export const ALLOWED_ID_BINDING_BYTES = 1024 * 1024
 export function bindAllowedIds(ids: string[]): string[] {
   const arrays: string[] = []
@@ -77,7 +73,6 @@ export const groupKey = (value: string) =>
   literalKey(value).replace(/\p{Nd}/gu, '')
 const quote = (value: string) => `"${value.replaceAll('"', '""')}"`
 
-/** Only generated syntax reaches MATCH. Katakana runs retain segmented alternatives. */
 export function prepareQuery(value: string) {
   const literal = literalKey(value.trim())
   const terms: string[] = []
@@ -117,11 +112,6 @@ export function prepareQuery(value: string) {
 const graphemeSegmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' })
 const wordSegmenter = new Intl.Segmenter('ja', { granularity: 'word' })
 
-/**
- * Normalize each grapheme on its own and map every normalized code unit back
- * to the grapheme's source offsets. Highlighting and excerpts share this so
- * their matches stay identical.
- */
 function normalizedWithOffsets(body: string, withEnds: boolean) {
   const starts: number[] = [],
     ends: number[] = [],
@@ -137,7 +127,6 @@ function normalizedWithOffsets(body: string, withEnds: boolean) {
   return { normalized: pieces.join(''), starts, ends }
 }
 
-/** Map both literal/prefix and segmented matches back onto original source text. */
 export function searchMatchSpans(
   body: string,
   query: string,
@@ -187,11 +176,6 @@ export function searchMatchSpans(
   return spans
 }
 
-/**
- * The earliest start searchMatchSpans would report, found without building
- * every word token. Word segmentation is read lazily and stops once no later
- * token can start a match before the best one found so far.
- */
 function firstMatchStart(body: string, query: string): number | undefined {
   const prepared = prepareQuery(query)
   const { normalized, starts } = normalizedWithOffsets(body, false)
@@ -199,8 +183,6 @@ function firstMatchStart(body: string, query: string): number | undefined {
   const consider = (start: number) => {
     if (best === undefined || start < best) best = start
   }
-  // Literal and prefix matches: the first occurrence of each term is its
-  // earliest, and normalized positions map to source positions in order.
   for (const term of [...prepared.terms, ...prepared.prefixes]) {
     if (!term) continue
     const at = normalized.indexOf(term)
@@ -209,8 +191,6 @@ function firstMatchStart(body: string, query: string): number | undefined {
   const terms = prepared.terms.filter(Boolean)
   if (!terms.length) return best
   const longest = Math.max(...terms.map((term) => term.length))
-  // Search only the newly appended text plus the tail a match could start
-  // in, so the joined token text is never rescanned or built in full.
   let joinedLength = 0,
     tail = ''
   const tokenStarts: number[] = []
@@ -235,8 +215,6 @@ function firstMatchStart(body: string, query: string): number | undefined {
     const text = tail + added,
       offset = joinedLength - tail.length
     for (const term of terms) {
-      // Matches wholly inside the tail were counted with earlier text; the
-      // first new one is the earliest this text can add.
       let at = text.indexOf(term)
       while (at >= 0 && at + term.length <= tail.length)
         at = text.indexOf(term, at + 1)
@@ -244,8 +222,6 @@ function firstMatchStart(body: string, query: string): number | undefined {
     }
     joinedLength += added.length
     tail = longest > 1 ? text.slice(-(longest - 1)) : ''
-    // Later matches start at or after this point, which maps to source
-    // positions in order, so none can come before the best one.
     const earliestNext = Math.max(0, joinedLength - longest + 1)
     if (
       best !== undefined &&

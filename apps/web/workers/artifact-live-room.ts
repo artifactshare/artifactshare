@@ -48,7 +48,7 @@ type AdmissionBudget = { tokens: number; timestamp: number }
 type PresenceSchedule = {
   due: number | null
   last: number
-  published: string | null // SHA-256 of the last shared snapshot; null means unknown.
+  published: string | null
 }
 
 export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
@@ -87,7 +87,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       ) {
         this.budget = saved
       }
-      // Corrupt persisted budget fails admission closed; it never refills from full.
       const schedule =
         await this.ctx.storage.get<PresenceSchedule>(PRESENCE_KEY)
       if (schedule) {
@@ -110,8 +109,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
           this.invalidate(record)
         }
       }
-      // Base-version storage cannot tell us what retained viewers last saw.
-      // Only an empty room has no recipients needing a corrective snapshot.
       if (!schedule && this.users.size === 0) {
         this.presence.published = presenceDigest(this.presenceBody())
       }
@@ -153,7 +150,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       const [client, accepted] = Object.values(pair)
       server = accepted
       server.serializeAttachment(attachment)
-      // Track even a partially failing acceptance until closure is confirmed.
       record = { socket: server, attachment, eligible: false }
       this.records.set(server, record)
       this.reservations -= 1
@@ -165,8 +161,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
         throw new Error('Live authorization expired during setup')
       const body = this.presenceBody()
       this.send(record, body)
-      // A direct snapshot may differ from what existing viewers last saw.
-      // Even a return to that old projection must then reach this newcomer.
       if (presenceDigest(body) !== this.presence.published) {
         this.presence.published = null
         this.markPresenceDirty()
@@ -179,7 +173,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       if (record) this.invalidate(record, 1011, 'Live connection setup failed')
       else if (server)
         invalidateSocket(server, 1011, 'Live connection setup failed')
-      // Keep cleanup/presence obligations if a setup storage operation failed.
       await this.queueAlarmUpdate().catch(() => {})
       return unavailable(503)
     } finally {
@@ -204,8 +197,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
         this.budget = { tokens: available - 1, timestamp }
         this.budgetNeedsPersistence = true
       }
-      // Unconsumed refill can be recomputed from the last charged state.
-      // Retry a failed charge write even when the next attempt is exhausted.
       if (this.budgetNeedsPersistence) {
         await this.ctx.storage.put(BUDGET_KEY, this.budget)
         this.budgetNeedsPersistence = false
@@ -278,7 +269,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
         : null
     }
     if (this.presence.due !== null && this.presence.due <= Date.now()) {
-      // One validation pass, then one send pass. Send failures queue the next sweep.
       for (const record of this.records.values()) this.valid(record)
       const body = this.presenceBody()
       this.presence.due = null
@@ -382,8 +372,6 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
     )
       return
     this.nextExpiry = null
-    // Visit deadline buckets only when the earliest one is due or removed.
-    // This also keeps legacy reconstruction linear, without sorting L records.
     for (const [deadline, expiring] of this.expirations) {
       if (deadline <= now) {
         for (const record of expiring) this.invalidate(record)
@@ -481,14 +469,10 @@ function invalidateAttachment(
   attachment: ArtifactLiveAttachmentV1 | null,
 ): void {
   try {
-    // Preserve trustworthy ownership for retained-capacity accounting, while
-    // the zero deadline keeps this V1 attachment ineligible after reconstruction.
     ws.serializeAttachment(
       attachment ? { ...attachment, authorizationDeadlineMs: 0 } : null,
     )
-  } catch {
-    // The retained record is already ineligible; send-time deadlines remain authoritative.
-  }
+  } catch {}
 }
 
 function invalidateSocket(
@@ -500,9 +484,7 @@ function invalidateSocket(
   invalidateAttachment(ws, attachment)
   try {
     ws.close(code, reason)
-  } catch {
-    // Send-time validation remains authoritative when closure fails.
-  }
+  } catch {}
 }
 
 export function parseArtifactLiveAdmission(
@@ -546,7 +528,6 @@ function readValidAttachment(
     : null
 }
 
-// Structural ownership remains useful after authorization expires or is cleared.
 function readAttachment(socket: WebSocket): ArtifactLiveAttachmentV1 | null {
   let value: unknown
   try {

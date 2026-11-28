@@ -7,10 +7,6 @@ function component(value: string): string {
     throw new Error('invalid_search_identity')
   return encodeURIComponent(value)
 }
-/**
- * Where an index keeps its extracted text: an area named after its location.
- * An encoded workspace id never starts with `@`.
- */
 export function workspaceSearchPrefix(workspaceId: string): string {
   return `search-text/@${SEARCH_INDEX_LOCATION}/${component(workspaceId)}/`
 }

@@ -6,7 +6,6 @@ import type { CliAuthority } from './cli-authority.server'
 
 export type PublisherAuthority = Extract<CliAuthority, { kind: 'publisher' }>
 
-/** Live membership, client ownership and credential liveness are commit-time facts. */
 export function publisherAuthoritySql(
   userId: string,
   authority: PublisherAuthority,
@@ -51,7 +50,6 @@ export async function isPublisherArtifact(
   )
 }
 
-/** Authorize before exposing metadata or following storage references. */
 export function loadPublisherArtifact(
   db: Kysely<DB>,
   userId: string,

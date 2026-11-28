@@ -6,7 +6,6 @@ export type SearchInput = {
   pageSize: number
   relativeDays?: number
   cursor?: string
-  /** A screen search the same viewer returns to; never a new search. */
   resume?: string
 }
 export type SearchValidation = {

@@ -10,7 +10,7 @@ export function jsonStrings(source: string): string {
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof RangeError))
       throw error
-    return '' // A malformed optional asset must not suppress the site's pages.
+    return ''
   }
   const pending: unknown[] = [value]
   while (pending.length > 0) {
@@ -19,7 +19,6 @@ export function jsonStrings(source: string): string {
       if (japanese.test(current)) parts.push(current)
     } else if (current && typeof current === 'object') {
       const children = Object.values(current)
-      // LIFO traversal preserves the JSON value order without recursive calls.
       for (let index = children.length - 1; index >= 0; index--)
         pending.push(children[index])
     }
@@ -27,7 +26,6 @@ export function jsonStrings(source: string): string {
   return parts.join(' ')
 }
 
-/** Recognize child nodes only within the AST returned by Acorn. */
 function isNode(value: unknown): value is AnyNode {
   return (
     value !== null &&
@@ -41,7 +39,6 @@ function isNode(value: unknown): value is AnyNode {
   )
 }
 
-/** Read static literals only; uploaded code is never executed. */
 export function scriptStrings(source: string): string {
   const sourceTypes: ('script' | 'module')[] = ['script', 'module']
   for (const sourceType of sourceTypes) {

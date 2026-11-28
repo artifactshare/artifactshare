@@ -172,8 +172,6 @@ export class LinkAbuseJudgmentWorkflow extends WorkflowEntrypoint<
   ): Promise<LinkAbuseJudgmentWorkflowResult> {
     if (payload.expiresAt) {
       await step.do('release judgment gate', async () => {
-        // Shorten the gate this instance acquired to at most one minute from
-        // now; never extend it, and never touch a gate a newer trigger refreshed.
         const releaseAt = new Date(Date.now() + 60_000).toISOString()
         await this.env.DB.prepare(
           `UPDATE link_abuse_judgment_gates

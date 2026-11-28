@@ -9,7 +9,6 @@ import {
 } from './search-discovery.server'
 import type { SearchVisibility } from './search-index/visibility'
 
-/** Actor/email-leading relationships only; projects never join their child files. */
 export async function searchVisibilitySources(
   db: Db,
   actor: string,

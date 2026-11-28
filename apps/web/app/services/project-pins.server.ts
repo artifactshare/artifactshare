@@ -3,8 +3,6 @@ import type { DB } from '~/types/db'
 
 type ProjectPinsDb = Kysely<DB>
 
-// visibleTo: 読み手の可視性フィルタ (member は visibleShareableToViewer、共有された
-// 関係者は visibleSharedProjectShareableToViewer)。ピンでも読めないタイトルを漏らさない。
 export async function listProjectPins(
   db: ProjectPinsDb,
   containerId: string,
@@ -40,8 +38,6 @@ export async function listProjectPins(
       'shareables.artifact_kind as artifactKind',
       sql<number>`coalesce(latest.number, 0)`.as('latestVersionNumber'),
       'latest.published_at as latestPublishedAt',
-      // Freshness is independent of the human modification signal. Compare
-      // version numbers so publications sharing a timestamp remain distinct.
       sql<
         string | null
       >`case when newest.number > coalesce(latest.number, 0) then newest.published_at else null end`.as(

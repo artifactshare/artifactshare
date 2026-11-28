@@ -79,15 +79,11 @@ export type ProjectSummary = {
   updatedAt: string
 }
 
-// 別組織から関係者として共有されたプロジェクト。社内向けの ProjectSummary と違い、
-// 公開範囲チップや作成者など社内向けの内部情報は持たず、共有元組織だけを添える。
 export type SharedProjectSummary = {
   id: string
   workspaceId: string
   sourceWorkspaceHd: string | null
   sourceWorkspaceName: string
-  // 共有元プロジェクトの作成者メール。hd の無い個人ワークスペースで投稿者の社外
-  // 判定の基準 (本人) に使う。
   createdByEmail: string | null
   name: string
   description: string | null
@@ -103,10 +99,8 @@ export type ProjectShareDefault = {
   email: string
   createdAt: string
   role: ProjectShareRole
-  // 未登録 email = 招待済み
   invited: boolean
   isExternal: boolean
-  // 関係者がワークスペースのユーザーなら、アバターと名前を出すために持つ。
   user: {
     id: string
     name: string | null
@@ -181,8 +175,6 @@ export function shareableLinkAccessToViewer(
   ])
 }
 
-// MUST: callers scope by shareables.workspace_id. This predicate alone admits
-// link/workspace rows from other workspaces.
 export function visibleShareableToViewer(
   eb: ExpressionBuilder<DB, 'shareables'>,
   viewer: ShareableViewer,
@@ -251,13 +243,6 @@ export function visibleShareableToViewerSql(
   return sql<boolean>`${expression}`
 }
 
-// ワークスペース外の関係者がプロジェクトを開いたときに見える成果物。
-// visibleShareableToViewer は visibility='workspace' を無条件に含み「見る人の
-// ワークスペースで絞り込み済み」を前提にするため、組織外の集計には流用できない
-// (別組織の社内向けが漏れる)。ここでは関係者として見える visibility='project' と、
-// 自分への個別共有だけに限る。'project' は成果物を開く判定と同じく、いまも
-// 関係者 (project_share_defaults) に入っていることを求める。参加行
-// (project_members) は関係者から外されても残るので、それだけでは見せない。
 export function visibleSharedProjectShareableToViewer(
   eb: ExpressionBuilder<DB, 'shareables'>,
   viewer: { email: string; emailVerified: boolean },
@@ -318,7 +303,6 @@ export function normalizeProjectDescription(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed.slice(0, 500) : null
 }
 
-// フォーム値からプロジェクトの公開範囲を読む。不明な値は社内全員に倒す。
 export function parseProjectBaseVisibility(
   value: unknown,
 ): ProjectBaseVisibility {
@@ -445,14 +429,6 @@ export async function getOrCreateInboxContainerId(
   return created.id
 }
 
-// Shared base query for project summaries: the select list plus the per-viewer
-// visible file count / last-update subqueries, scoped to the workspace's
-// projects. With a viewer, only projects that viewer may open are returned;
-// without one it reads unfiltered, for callers that already checked authority.
-// Non-archived by default; pass archived = true for the archive view,
-// or 'any' to read a project regardless of its archive state (used when a single
-// edit_project call both edits and archives, so the response can still read it).
-// Callers add the id/slug discriminator and ordering.
 function projectSummaryQuery(
   db: Kysely<DB>,
   workspaceId: string,
@@ -602,10 +578,6 @@ export async function findWorkspaceProject(
   return row ? toProjectSummary(row) : null
 }
 
-// Like findWorkspaceProject but resolves the project whether or not it is
-// archived. Used by the MCP edit_project tool so a combined edit-and-archive
-// call can still report the resulting state (the archived flag comes from
-// ProjectSummary.archivedAt).
 export async function findWorkspaceProjectAnyState(
   db: Kysely<DB>,
   workspaceId: string,
@@ -619,11 +591,6 @@ export async function findWorkspaceProjectAnyState(
   return row ? toProjectSummary(row) : null
 }
 
-// Shared base query for projects reached as an audience member (cross-workspace).
-// Scoped to non-archived projects where the viewer's email is in
-// project_share_defaults; the visible file count / last-update use the
-// audience-only predicate so another org's workspace-visible files never leak.
-// Callers add the workspace-exclusion (list) or id (single) discriminator.
 function sharedProjectSummaryQuery(
   db: Kysely<DB>,
   viewer: { email: string; emailVerified: boolean },
@@ -674,9 +641,6 @@ function sharedProjectSummaryQuery(
     )
 }
 
-// Projects from other workspaces that the viewer reaches as an audience member.
-// Excludes the viewer's own workspace so in-workspace projects are not listed
-// twice (they already come from listWorkspaceProjects).
 export async function listSharedProjects(
   db: Kysely<DB>,
   viewer: { email: string; emailVerified: boolean; workspaceId: string },
@@ -690,10 +654,6 @@ export async function listSharedProjects(
   return rows.map(toSharedProjectSummary)
 }
 
-// Resolve a single project by id for an audience member, regardless of which
-// workspace it belongs to. Returns null unless the viewer is an audience member.
-// The project page tries findWorkspaceProject first, so this only resolves the
-// cross-workspace case in practice.
 export async function findSharedProjectForViewer(
   db: Kysely<DB>,
   projectId: string,
@@ -724,8 +684,6 @@ export async function getProjectShareRoleForEmail(
   return row?.role ?? null
 }
 
-// 関係者の増減が見える範囲を変える成果物 (visibility='project') の件数。
-// 関係者編集の確認に出す影響範囲を、社内向け / 共有向けの loader で共有する。
 export async function countProjectVisibilityArtifacts(
   db: Kysely<DB>,
   projectId: string,
@@ -754,8 +712,6 @@ export async function getProjectContainerWorkspaceId(
   return row?.workspace_id ?? null
 }
 
-// This hot page-load path uses one target-row SELECT for a single round trip,
-// with the shared SQL authority predicate also used by guarded mutations.
 export async function canEditProjectContainer(
   db: Kysely<DB>,
   workspaceId: string,
@@ -849,8 +805,6 @@ export async function listProjectShareDefaults(
   const rows = await db
     .selectFrom('project_share_defaults as d')
     .innerJoin('artifact_containers as c', 'c.id', 'd.project_container_id')
-    // 保存値の大文字小文字は DB 制約では保証されないので、user プロフィール解決の
-    // join も両側を小文字化して照合する (素の等価だと大文字混じり行で user=null になる)。
     .leftJoin('users as u', (join) =>
       join.on(
         sql<boolean>`${lowerEmail('u.email')} = ${lowerEmail('d.email')}`,
@@ -876,8 +830,6 @@ export async function listProjectShareDefaults(
   return rows.map((row) => toProjectShareDefault(row, workspaceHd))
 }
 
-// 関係者の追加・削除を 1 回でまとめて反映する。上限は変更を加える前に判定して、
-// 超過時に削除だけ適用されて部分的に反映される事故を避ける。
 export async function saveProjectShareDefaults(
   db: Kysely<DB>,
   workspaceId: string,
@@ -924,9 +876,6 @@ export async function saveProjectShareDefaults(
     }
   }
 
-  // 関係者の照合は live (visibility='project' の認可で都度引く) なので、保存時に
-  // 小文字化して、照合側の lower 比較とずれないようにする。owner は自分を関係者に
-  // 入れられないので除外する。
   const owner = normalizeGrantEmail(ownerEmail)
   const addMap = new Map<string, ProjectShareRole>()
   for (const email of normalizeGrantEmailList(
@@ -953,18 +902,11 @@ export async function saveProjectShareDefaults(
     roleChangeMap.set(email, change.role)
   }
 
-  // 削除を適用する前に上限を判定する (削除後に too-many を返すと部分反映になる)。
   const existing = await db
     .selectFrom('project_share_defaults')
     .select('email')
     .where('project_container_id', '=', projectId)
     .execute()
-  // 保存値の大文字小文字は保証されないので、追加・削除・件数の照合キーは
-  // normalizeGrantEmail にそろえる (素の row.email だと大文字違いで論理重複行を
-  // 作れる: UNIQUE(project_container_id, email) は case-sensitive)。
-  // 保存値の大文字小文字は保証されないので、追加・削除・件数の照合キーは
-  // normalizeGrantEmail にそろえる (素の row.email だと大文字違いで論理重複行を
-  // 作れる: UNIQUE(project_container_id, email) は case-sensitive)。
   const existingEmails = new Set(
     existing.map((row) => normalizeGrantEmail(row.email)),
   )
@@ -978,10 +920,6 @@ export async function saveProjectShareDefaults(
     return 'too-many'
   }
 
-  // Bot guard: every grant mutation that targets a bot user passes through
-  // these checks — a copied bot email typed directly must behave like the
-  // candidate picker. Non-user emails stay allowed (sharing to non-users is
-  // an existing feature).
   const grantTargets = [...new Set([...toInsert, ...roleChangeMap.keys()])]
   // Chunked: grantTargets can reach ~150 emails, past the 100-parameter
   // budget the routes were sized against.
@@ -1373,10 +1311,6 @@ function batchSelectRow<T>(result: unknown): T | null {
   return Array.isArray(rows) ? ((rows[0] as T | undefined) ?? null) : null
 }
 
-// A project's audience emails, regardless of archive state, sorted. The MCP
-// edit_project response needs only the emails (no avatar / user join) and must
-// read them even right after the same call archived the project, so this skips
-// the active-only filter that listProjectShareDefaults applies.
 export async function listProjectAudienceEmails(
   db: Kysely<DB>,
   workspaceId: string,
@@ -1394,8 +1328,6 @@ export async function listProjectAudienceEmails(
   return rows.map((row) => row.email)
 }
 
-// ステージング中の関係者にアバターと名前を出すための email → user 解決。
-// 個別共有の lookupGrantUsers に対応する、プロジェクト編集権限つきの版。
 export async function lookupProjectShareDefaultUsers(
   db: Kysely<DB>,
   workspaceId: string,
@@ -1767,8 +1699,6 @@ export async function editProjectContainerSettings(
       if (result === 'too-many') return { kind: 'too-many-grants' }
       if (result === 'role-not-allowed') return { kind: 'validation-failed' }
       if (result !== 'ok') {
-        // Bot-guard failures (stopped bot, invalid role, cross-workspace,
-        // suppressed write) must not be reported as success.
         return { kind: 'bot-grant-rejected', code: result }
       }
     }
@@ -1792,10 +1722,6 @@ export async function editProjectContainerSettings(
   return { kind: 'ok', project: after ?? current, audience }
 }
 
-// Archive, unarchive, and delete target projects regardless of their archived
-// state, so they cannot use canEditProjectContainer (which filters
-// archived_at IS NULL). This loads the creator + admin flag + current archive
-// state in one read so each mutation can gate and check preconditions itself.
 async function loadProjectForManagement(
   db: Kysely<DB>,
   workspaceId: string,
@@ -1849,7 +1775,7 @@ export async function archiveProjectContainer(
   )
   if (!project) return 'not-found'
   if (!project.canManage) return 'forbidden'
-  if (project.archivedAt !== null) return 'ok' // already archived
+  if (project.archivedAt !== null) return 'ok'
 
   const now = nowIso()
   await db
@@ -1892,7 +1818,7 @@ async function restoreProjectContainer(
   )
   if (!project) return 'not-found'
   if (!project.canManage) return 'forbidden'
-  if (project.archivedAt === null && !settings) return 'ok' // already active
+  if (project.archivedAt === null && !settings) return 'ok'
 
   const restoredSettings = settings ?? {
     name: project.name,
@@ -2020,7 +1946,6 @@ async function activeProjectNameExists(
   return Boolean(await query.executeTakeFirst())
 }
 
-// The 0031 trigger aborts a delete when the container still holds shareables.
 function isContainerNotEmptyTriggerError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes(
@@ -2028,9 +1953,6 @@ function isContainerNotEmptyTriggerError(error: unknown): boolean {
   )
 }
 
-// cli_family_authorities.project_id and cli_session_authorities.project_id
-// reference artifact_containers ON DELETE RESTRICT, so a lingering agent
-// credential row blocks project deletion at the FK level.
 function isForeignKeyConstraintError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return String(error).includes('FOREIGN KEY constraint failed')
@@ -2043,10 +1965,6 @@ function isForeignKeyConstraintError(error: unknown): boolean {
   )
 }
 
-// A family is live when it still has a usable credential or a linked live
-// session — the same predicate listCliRefreshCredentialFamilies applies.
-// Everything else (expired, revoked, sessionless) is non-live and must not
-// keep a project undeletable.
 const liveFamilySql = (now: string) => sql<number>`
   EXISTS (
     SELECT 1 FROM cli_refresh_credentials AS credential
@@ -2062,9 +1980,6 @@ const liveFamilySql = (now: string) => sql<number>`
   )
 `
 
-// Name of a user whose LIVE agent credential (family or bootstrap) still
-// targets the project, or null when none does. Callers are already authorized
-// to delete the project, so returning the holder name does not widen access.
 async function findLiveAgentCredentialHolder(
   db: Kysely<DB>,
   projectId: string,
@@ -2099,9 +2014,6 @@ async function findLiveAgentCredentialHolder(
   return { found: false, holderName: null }
 }
 
-// Detach non-live agent credential rows from the project so the FK RESTRICT
-// no longer blocks the delete. project_name_snapshot is kept so credential
-// listings can still show what the credential used to target.
 async function detachNonLiveAgentCredentials(
   db: Kysely<DB>,
   projectId: string,
@@ -2161,10 +2073,6 @@ export async function deleteProjectContainer(
   if (!project) return 'not-found'
   if (!project.canManage) return 'forbidden'
 
-  // The emptiness gate counts every shareable in the container regardless of
-  // visibility, matching the 0031 trigger. The viewer-scoped file_count in
-  // summaries must not decide deletion: a manager who cannot see another user's
-  // private file could otherwise delete a container that still holds it.
   const occupant = await db
     .selectFrom('shareables')
     .select('id')
@@ -2173,11 +2081,6 @@ export async function deleteProjectContainer(
     .executeTakeFirst()
   if (occupant) return 'not-empty'
 
-  // Agent CLI credentials reference the project with ON DELETE RESTRICT. A
-  // live credential blocks deletion with a typed error; non-live ones are
-  // detached (project_id set to NULL) so they stop pinning the project. The
-  // detach commits even when the later DELETE fails — accepted, since the
-  // snapshot name is retained and a non-live credential cannot act anyway.
   const now = nowIso()
   const live = await findLiveAgentCredentialHolder(db, projectId, now)
   if (live.found) {
@@ -2185,7 +2088,6 @@ export async function deleteProjectContainer(
   }
   await detachNonLiveAgentCredentials(db, projectId, now)
 
-  // project_share_defaults rows cascade with the container row.
   try {
     const result = await db
       .deleteFrom('artifact_containers')
@@ -2196,10 +2098,7 @@ export async function deleteProjectContainer(
     if (Number(result.numDeletedRows ?? 0n) !== 1) return 'not-found'
     return 'ok'
   } catch (error) {
-    // A shareable inserted or moved in after the check above trips the trigger.
     if (isContainerNotEmptyTriggerError(error)) return 'not-empty'
-    // A credential created or rotated between the detach above and the DELETE
-    // trips the FK RESTRICT; report it the same way as a live credential.
     if (isForeignKeyConstraintError(error)) {
       const raced = await findLiveAgentCredentialHolder(db, projectId, nowIso())
       return { kind: 'has-agent-credentials', holderName: raced.holderName }
@@ -2227,8 +2126,6 @@ async function resolveCrossWorkspaceProjectContainer(
     }
   | { kind: 'invalid-container' }
 > {
-  // Cross-workspace posting is an email-grant (contributor/manager) authorization,
-  // so only a verified email may claim it — unverified resolves to no container.
   const email = user.emailVerified ? normalizeGrantEmail(user.email) : null
   if (!email) return { kind: 'invalid-container' }
 
@@ -2265,7 +2162,6 @@ async function resolveCrossWorkspaceProjectContainer(
   }
 }
 
-/** Destination authority is independent of artifact access. All facts are live. */
 export function projectPlacementSql(
   user: { id: string; workspaceId: string },
   projectId: string | RawBuilder<unknown>,
@@ -2316,7 +2212,6 @@ export function projectPlacementSql(
   )`
 }
 
-/** Always read server state, including for an already resolved session authority. */
 export function agentDestinationSql(
   user: { id: string; workspaceId: string },
   authority: Extract<CliAuthority, { kind: 'agent' }>,

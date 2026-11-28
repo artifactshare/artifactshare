@@ -1,11 +1,7 @@
-/** Increment whenever extraction, normalization or token/chunk policy changes.
- * Include a migration INSERT INTO search_index_rebuilds(target) VALUES(new format).
- * Retain old/completed markers: their targets fence rolled-back Workers. */
 export const INDEX_FORMAT_VERSION = 13
 export const BM25_WEIGHTS = [3, 1, 0.5] as const
 export const KATAKANA_WEIGHT = 0.25
 
-/** Auxiliary terms never interrupt the segmented phrase columns. */
 export function katakanaRuns(text: string): string {
   return [...text.normalize('NFKC').matchAll(/[\p{Script=Katakana}ー]{2,}/gu)]
     .flatMap(([run]) => [
@@ -22,7 +18,6 @@ export const COLUMN_BYTES = 128 * 1024
 const encoder = new TextEncoder()
 const segmenter = new Intl.Segmenter('ja', { granularity: 'word' })
 
-/** Shared by ingestion and future query preparation. Never truncate a token. */
 export function normalizeSearchText(text: string): string {
   const tokens: string[] = []
   for (const part of segmenter.segment(text.normalize('NFKC').toLowerCase())) {
@@ -51,7 +46,6 @@ export function* splitUtf8(text: string, limit: number): Generator<string> {
   if (parts.length) yield parts.join('')
 }
 
-/** Pack whole, already byte-bounded tokens, independently for each column. */
 export function packTokens(normalized: string): string[] {
   const chunks: string[] = []
   let tokens: string[] = []
@@ -81,7 +75,6 @@ export function snippet(text: string): string {
   return points.join('')
 }
 
-// Phrase-only evidence at packing boundaries; never contributes BM25 or term counts.
 export function phraseSeam(left: string, right: string): string {
   return left && right
     ? `${left.split(' ').slice(-32).join(' ')} ${right.split(' ').slice(0, 32).join(' ')}`

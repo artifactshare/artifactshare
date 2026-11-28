@@ -128,22 +128,11 @@ export {
 
 type Format = 'html' | 'markdown'
 
-// Mirror the web metadata route's title_override cap so a title set through MCP
-// can't grow past what the viewer / list rendering assumes.
 const MAX_TITLE_OVERRIDE_LENGTH = 200
 
-// Idempotency window: a host's timeout-retry of share_artifact lands within
-// seconds, so this only needs to be long enough to absorb retries — not so long
-// that a deliberate re-publish of the same content reuses the old artifact.
 const IDEMPOTENCY_WINDOW_MS = 10 * 60_000
 const CONNECT_AI_AGENTS_URL = `https://${APEX_HOST}/connect#${CONNECT_AI_AGENTS_ANCHOR}`
 
-// Text content is the universal baseline: every host can render a tool's text
-// result, so the tools speak plain JSON. Successful results also carry
-// `structuredContent` (matching the tool's outputSchema) so hosts that read it
-// can hand the model typed data. Tool-level failures set `isError` and carry a
-// machine code plus a "what / why / next" body so the agent knows whether it
-// can recover itself.
 type ToolTextResult = {
   content: Array<{ type: 'text'; text: string }>
   structuredContent?: Record<string, unknown>
@@ -165,9 +154,6 @@ function mcpOutputField<T extends z.ZodType>(
   })
 }
 
-// Output schemas — declared so hosts advertise the result shape to the model
-// (and the SDK validates what we return). Optional fields are nullable because
-// a best-effort read-back can miss after a committed write.
 const ARTIFACT_OUTPUT_SCHEMA = {
   id: mcpOutputField(z.string(), ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.id),
   share_url: mcpOutputField(
@@ -232,7 +218,6 @@ const LIST_OUTPUT_SCHEMA = {
         z.string(),
         ArtifactsListEntrySchema.shape.updated_at,
       ),
-      // The project the artifact is filed under, or null for the unfiled inbox.
       project_id: mcpOutputField(
         z.string().nullable(),
         ArtifactsListEntrySchema.shape.project_id,
@@ -283,9 +268,6 @@ const COMMENT_THREAD_SCHEMA = mcpOutputField(
     resolved_at: z.string().nullable(),
     created_at: z.string(),
     updated_at: z.string(),
-    // What the thread is attached to. 'artifact' = the whole document;
-    // Text positions are resolved by the viewer. Unchecked and needs-check
-    // positions retain the original quote and map to the legacy orphaned state.
     anchor: z.object({
       kind: z.enum(['artifact', 'text']),
       quoted_text: z.string().nullable(),
@@ -298,13 +280,8 @@ const COMMENT_THREAD_SCHEMA = mcpOutputField(
         })
         .optional(),
       version_id: z.string().nullable().optional(),
-      // PDF page comments (kind 'artifact'): the page open when posting, with
-      // version_id and version_number of the version it was posted on (null
-      // once deleted, or for a version without a number).
       page_number: z.number().int().min(1).max(100_000).optional(),
       version_number: z.number().nullable().optional(),
-      // Text anchors: the page location (static sites: file or route path,
-      // plus a `#/…` or `#!/…` hash route).
       target_path: z.string().optional(),
       ambiguous_at_creation: z.boolean().optional(),
       state: z.enum(['attached', 'orphaned']).nullable(),
@@ -314,12 +291,9 @@ const COMMENT_THREAD_SCHEMA = mcpOutputField(
     }),
     messages: z.array(
       z.object({
-        // The message id, for update_comment / delete_comment.
         message_id: z.string(),
         author_name: z.string().nullable(),
         author_email: z.string(),
-        // The agent name when posted via CLI/MCP on behalf of an agent; null when
-        // the human posted directly.
         agent: z.string().nullable(),
         body: z.string(),
         created_at: z.string(),
@@ -347,23 +321,14 @@ const GET_ARTIFACT_OUTPUT_SCHEMA = {
     z.string(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.content,
   ),
-  // Full stored size of the source in bytes. When `truncated` is true this
-  // exceeds `content`; even when false it differs from content.length for
-  // multibyte text. Use `truncated`, not this, to tell if `content` is whole.
   size_bytes: mcpOutputField(
     z.number(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.size_bytes,
   ),
-  // True when there is more source past this chunk: `content` is a partial
-  // slice (a prefix, or a window starting at the requested offset). Call
-  // get_artifact again with offset set to next_offset to read the rest; never
-  // feed a truncated read back into update_artifact.
   truncated: mcpOutputField(
     z.boolean(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.truncated,
   ),
-  // The offset to pass on the next get_artifact call to continue reading, or
-  // null when truncated is false (this chunk reached the end of the source).
   next_offset: mcpOutputField(
     z.number().nullable(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.next_offset,
@@ -372,9 +337,6 @@ const GET_ARTIFACT_OUTPUT_SCHEMA = {
     z.string().nullable(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.link_expires_at.unwrap(),
   ),
-  // Present only when requested via `include`. versions is the history newest
-  // first. versions_has_more says whether older entries were dropped past the
-  // page cap.
   versions: z.array(VERSION_ITEM_SCHEMA).optional(),
   versions_has_more: ARTIFACT_READ_RESPONSE_SCHEMA.shape.versions_has_more,
 }
@@ -386,10 +348,7 @@ const PREVIEW_OUTPUT_SCHEMA = {
     ARTIFACT_UPLOAD_RESPONSE_SCHEMA.shape.shareUrl,
   ),
   title: z.string().nullable(),
-  // Keep legacy or future kinds renderable; the card falls back to the generic
-  // "Artifact" label when it does not recognize this value.
   artifact_kind: z.string(),
-  // The viewer's locale, so the preview widget can localize its own chrome.
   locale: z.string(),
 }
 
@@ -458,15 +417,10 @@ const PROJECT_EDIT_FIELDS = PROJECT_EDIT_RESPONSE_SCHEMA.shape.project.shape
 const CLI_EDIT_ARTIFACT_FIELDS = CLI_EDIT_RESPONSE_SCHEMA.shape.artifact.shape
 const CLI_EDIT_SHARE_FIELDS = CLI_EDIT_RESPONSE_SCHEMA.shape.share.shape
 
-// Shared project fields across list / create / edit, so the shape an agent sees
-// for a project is identical wherever it surfaces.
 const PROJECT_OUTPUT_FIELDS = {
   id: mcpOutputField(z.string(), PROJECT_CREATE_FIELDS.id),
   name: PROJECT_CREATE_FIELDS.name,
   description: PROJECT_CREATE_FIELDS.description,
-  // A project's sharing scope: 'workspace' = everyone in the workspace can view
-  // its artifacts, 'private' = only the project's audience. The label is the
-  // same wording the project page shows, in the caller's locale.
   base_visibility: ProjectBaseVisibilitySchema,
   base_visibility_label: z.string(),
   file_count: mcpOutputField(
@@ -491,10 +445,7 @@ const EDIT_PROJECT_OUTPUT_SCHEMA = {
     z.number(),
     PROJECT_EDIT_FIELDS.file_count.unwrap(),
   ),
-  // Whether the project is archived (hidden from the active list) after the edit.
   archived: PROJECT_EDIT_FIELDS.archived,
-  // The project's audience after the edit: the emails that can view its
-  // private-scoped artifacts even outside the workspace, sorted.
   audience: PROJECT_EDIT_RESPONSE_SCHEMA.shape.audience,
 }
 
@@ -505,13 +456,8 @@ const EDIT_OUTPUT_SCHEMA = {
     CLI_EDIT_ARTIFACT_FIELDS.url.unwrap().unwrap(),
   ),
   title: CLI_EDIT_RESPONSE_SCHEMA.shape.title,
-  // The scope after the edit. Moving an artifact never widens it: filing a
-  // project-scoped artifact back into the inbox downgrades it to private (the
-  // inbox has no audience to inherit from), unless an explicit visibility was
-  // set in the same call.
   visibility: CLI_EDIT_SHARE_FIELDS.visibility,
   visibility_label: z.string(),
-  // Where the artifact now lives: the project id, or null for the unfiled inbox.
   project_id: z.string().nullable(),
 }
 
@@ -546,8 +492,6 @@ const WHOAMI_OUTPUT_SCHEMA = {
   can_publish: z.boolean(),
 }
 
-// Write tools that can create or change link-visible content are open-world;
-// Comment content and access edits can also reach viewers outside the workspace.
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -567,8 +511,6 @@ const PUBLIC_WRITE_ANNOTATIONS = {
   openWorldHint: true,
 } as const
 
-// Overwrites, access revocation, irreversible messages, and deletes carry
-// destructiveHint so a host can confirm them before the call runs.
 const DESTRUCTIVE_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -599,11 +541,6 @@ export function registerArtifactTools(
   server: McpServer,
   ctx: McpRequestContext,
 ): void {
-  // Resolve the full user from the token once per request, lazily: `tools/list`
-  // and an unknown caller shouldn't pay a D1 read, but every tool that runs
-  // needs the workspace-scoped identity. A rejected read is dropped (not
-  // memoized) so a transient D1 blip on one tool can't poison the others in a
-  // batched request.
   let userPromise: Promise<McpUser | null> | undefined
   const getUser = () => {
     if (!userPromise) {
@@ -744,11 +681,6 @@ export function registerArtifactTools(
       const targetContainerKind: ContainerKind = containerId
         ? 'project'
         : 'inbox'
-      // Naming recipients via grant_emails signals "share with these specific
-      // people", so an omitted visibility resolves to private — otherwise the
-      // container default would paradoxically widen access. With no recipients,
-      // the default tracks the destination: a project follows its own scope,
-      // the inbox falls back to workspace / private by account type.
       const visibility: Visibility =
         args.visibility ??
         (grantEmails.length > 0
@@ -756,9 +688,6 @@ export function registerArtifactTools(
           : defaultVisibilityFor(isOrgWorkspace(user), targetContainerKind))
       const title = args.title?.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH)
 
-      // Idempotency: if the host re-sent this exact publish, return the artifact
-      // it already created instead of a duplicate. The hash pins everything that
-      // defines the artifact, so a changed scope or title is a genuine new post.
       const contentHash = await publishContentHash({
         format,
         visibility,
@@ -773,7 +702,6 @@ export function registerArtifactTools(
         contentHash,
         since: isoMsAgo(IDEMPOTENCY_WINDOW_MS),
       }).catch((err) => {
-        // A lookup failure only risks a duplicate, never a crash — fail open.
         console.error('mcp_idempotency_lookup_failed', err)
         return null
       })
@@ -823,20 +751,10 @@ export function registerArtifactTools(
       }
       await recordFirstArtifactPost(ctx.db, user, {
         channel: 'mcp',
-        // MCP posts have no browser consent signal; measured as first-party.
         sendToGa: true,
         waitUntil: (promise) => ctx.executionContext.waitUntil(promise),
       })
 
-      // The artifact is committed (R2 + D1). Everything below is best-effort:
-      // never let it throw, or the agent would treat a successful publish as
-      // failed and retry into a duplicate. Record the post first (it powers the
-      // audit trail and the idempotency check above), then enrich the title.
-      // `visibility` is authoritative for the output below: we only reach here
-      // after a successful upload, so project_id resolved to a real project
-      // container. It's the only way `visibility` is 'project', so
-      // visibilityForContainer never downgraded it — output matches what was
-      // stored.
       try {
         await recordArtifactPost(ctx.db, {
           shareableId: result.id,
@@ -959,9 +877,6 @@ export function registerArtifactTools(
       }
       if (result.kind !== 'ok') return versionError(result)
 
-      // Record the revision for the audit trail (which client revised what). The
-      // content hash identifies this version's payload; updates aren't deduped,
-      // so a resend creates a new version and retention may prune old versions.
       try {
         await recordArtifactPost(ctx.db, {
           shareableId: args.id,
@@ -978,9 +893,6 @@ export function registerArtifactTools(
         })
       }
 
-      // The new version is committed; the summary read is best-effort. On a miss
-      // report null rather than guessing a scope (update never changes it) — an
-      // absent visibility is safer to surface than a wrong one.
       let summary: OwnedShareableSummary | null = null
       try {
         summary = await getOwnedShareableSummary(ctx.db, user, args.id)
@@ -1326,16 +1238,10 @@ export function registerArtifactTools(
       const user = await getUser()
       if (!user) return unresolvedUserError()
 
-      // Viewer-scoped (same check as get_artifact / commenting): you can open
-      // anything you can view, not just what you own. A non-viewable (or absent)
-      // id refuses without leaking which it was. The card carries metadata only,
-      // so every artifact kind follows the same path.
       const sessionUser = mcpUserAsSessionUser(user)
       const access = await loadCommentAccess(ctx.db, sessionUser, args.id)
       if (!access) return artifactNotViewableError()
 
-      // The title is a nicety for the card; read it best-effort for your own
-      // artifacts. Shared artifacts use the localized kind label instead.
       let title: string | null = null
       if (access.isOwner) {
         try {
@@ -1457,8 +1363,6 @@ export function registerArtifactTools(
         reply_to: CommentPostRequestSchema.shape.reply_to.describe(
           'Reply to this thread (a thread id from list_comments). Omit to start a new thread.',
         ),
-        // MCP accepts unbounded quote/context text; the posting service normalizes
-        // it and returns structured recovery errors. REST limits do not apply here.
         quote: z
           .string()
           .min(1)
@@ -1488,17 +1392,11 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: a comment is a couple of D1 rows with no storage
-      // cost, so it shouldn't draw down the per-workspace storage-write budget
-      // (that guards publish / update). The per-user limit is the spam backstop.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
       if (!user) return unresolvedUserError()
 
-      // postArtifactComment is the shared pipeline with the CLI comments
-      // route: input rules, view check, anchor handling, and failure kinds
-      // stay identical across both agent surfaces.
       const sessionUser = mcpUserAsSessionUser(user)
       const result = await postArtifactComment(
         ctx.db,
@@ -1549,8 +1447,6 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: a comment edit is a couple of D1 rows with no
-      // storage cost, so it stays off the per-workspace budget.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
@@ -1704,8 +1600,6 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: a delete frees a couple of D1 rows, so it stays
-      // off the per-workspace storage-write budget.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
@@ -1760,11 +1654,6 @@ export function registerArtifactTools(
       if (limited) return limited
       const user = await getUser()
       if (!user) return unresolvedUserError()
-      // In-workspace projects only. Projects shared from other workspaces (where
-      // this user is just an audience member) are left out: the token must not
-      // reach outside its own workspace, and they aren't valid publish / move
-      // targets anyway. Returned unpaginated — projects are a small curated set,
-      // unlike artifacts, so there's nothing to page past.
       const projects = await listPlacementProjects(
         ctx.db,
         user.workspaceId,
@@ -1814,8 +1703,6 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: creating a project is a single D1 row with no
-      // storage cost, so it stays off the per-workspace storage-write budget.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
@@ -1896,8 +1783,6 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: project edits are metadata-only D1 writes with no
-      // storage cost, so they stay off the per-workspace storage-write budget.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
@@ -1978,9 +1863,6 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: an edit is metadata-only D1 writes with no storage
-      // cost, so it stays off the per-workspace storage-write budget — same as
-      // post_comment.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
@@ -2026,16 +1908,11 @@ export function registerArtifactTools(
       },
     },
     async (args) => {
-      // Per-caller limit only: a delete frees storage rather than consuming it,
-      // so it stays off the per-workspace storage-write budget.
       const limited = await perUserLimit(ctx)
       if (limited) return limited
       const user = await getUser()
       if (!user) return unresolvedUserError()
 
-      // Owner-scoped: no options are passed, so deleteShareable only takes its
-      // owner path (the manager-delete path is opt-in and stays off here). A
-      // non-owned id is reported as not-found without revealing it exists.
       const result = await deleteShareable(
         ctx.db,
         {
@@ -2071,8 +1948,6 @@ function updateCommentInput(args: {
   }
 }
 
-// ── result shaping ───────────────────────────────────────────────
-
 function textContent(payload: unknown): ToolTextResult['content'] {
   return [{ type: 'text', text: JSON.stringify(payload, null, 2) }]
 }
@@ -2093,12 +1968,6 @@ function toolError(error: {
   return { isError: true, content: textContent({ error }) }
 }
 
-// ── rate limiting ────────────────────────────────────────────────
-
-// Gate one tool call on a limiter. Returns an error result to short-circuit the
-// handler when over budget, or null to proceed. Fail open: a missing limiter
-// (tests / unconfigured binding) or a limiter error never blocks a real call —
-// the limit is an abuse backstop, not a correctness gate.
 async function rateLimitGuard(
   limiter: RateLimiter | null,
   key: string,
@@ -2113,7 +1982,6 @@ async function rateLimitGuard(
   }
 }
 
-// Per-caller limit (the token's `sub`); covers every tool, including reads.
 function perUserLimit(ctx: McpRequestContext): Promise<ToolTextResult | null> {
   return rateLimitGuard(
     ctx.rateLimiters.perUser,
@@ -2121,7 +1989,6 @@ function perUserLimit(ctx: McpRequestContext): Promise<ToolTextResult | null> {
   )
 }
 
-// Per-workspace limit; guards the storage-writing tools (publish / update).
 function perWorkspaceLimit(
   ctx: McpRequestContext,
   workspaceId: string,
@@ -2156,10 +2023,6 @@ function artifactNotFoundError(): ToolTextResult {
   })
 }
 
-// project_id named a container that isn't a usable project in the caller's
-// workspace — a wrong id, another workspace's project, or an archived one.
-// Shared by share_artifact and edit_artifact: both take a project_id and fall
-// back to the unfiled inbox when it's omitted.
 function invalidDestinationError(): ToolTextResult {
   return toolError({
     code: 'invalid-destination',
@@ -2169,9 +2032,6 @@ function invalidDestinationError(): ToolTextResult {
   })
 }
 
-// Map a failed share-settings change (visibility / grants) to an agent-facing
-// error. not-found is owner-scoped (handled like artifactNotFoundError); the
-// rest mirror the upload errors so the wording stays consistent across tools.
 export function editShareError(
   result: Exclude<
     EditShareableSettingsResult,
@@ -2372,11 +2232,6 @@ async function projectEditError(
   }
 }
 
-// Comments use the viewer's workspace-scoped check, not owner-scoping, so the
-// failure case is "you can't view this", not "you don't own this" — keep the
-// wording and hint distinct from artifactNotFoundError. Same 'not-found' code:
-// a non-existent and a non-visible id are indistinguishable to the caller by
-// design (we don't reveal which).
 function artifactNotViewableError(): ToolTextResult {
   return toolError({
     code: 'not-found',
@@ -2386,13 +2241,6 @@ function artifactNotViewableError(): ToolTextResult {
   })
 }
 
-// Map a failed comment write to an agent-facing error. create/reply only ever
-// return invalid-body / invalid-thread / closed-thread / commit-failed; the rest
-// of the shared union can't arise here but are routed through the generic retry
-// so the switch stays exhaustive.
-// Exhaustive over the shared post pipeline's failure kinds so a new kind is a
-// compile error here, like the CLI route's switch, instead of silently falling
-// into a generic bucket.
 function postCommentError(
   result: Exclude<PostArtifactCommentResult, { kind: 'ok' }>,
 ): ToolTextResult {
@@ -2503,9 +2351,6 @@ function quoteNotFoundError(): ToolTextResult {
   })
 }
 
-// A thread id that doesn't exist or isn't on an artifact the caller can view.
-// Same 'not-found' code as the artifact case: non-existent and non-visible are
-// indistinguishable to the caller by design.
 function threadNotFoundError(): ToolTextResult {
   return toolError({
     code: 'not-found',
@@ -2740,7 +2585,6 @@ async function uploadError(
       })
     case 'invalid-container':
       return invalidDestinationError()
-    // MCP publishes never pass a stable key; kept for exhaustiveness.
     case 'key-conflict':
       return toolError({
         code: 'storage-failed',
@@ -2835,13 +2679,6 @@ function versionError(
   })
 }
 
-// ── idempotency ──────────────────────────────────────────────────
-
-// Canonical key for idempotent-resend detection: every input that defines the
-// resulting artifact. Grant emails are sorted so recipient order can't split a
-// resend into two artifacts. Serialize as JSON, not a delimiter-joined string —
-// content and titles carry arbitrary newlines, so a `\n` join would let two
-// different requests collide onto the same key and wrongly dedup.
 export function publishContentHash(args: {
   format: Format
   visibility: Visibility
@@ -2879,9 +2716,6 @@ function mcpPublishPrincipal(
   return actor
 }
 
-// Re-describe an existing artifact in the same shape as a fresh publish, for an
-// idempotent resend. `fallbackVisibility` (the request's resolved scope, which
-// the content hash pinned) keeps the output-schema enum valid if the read misses.
 async function existingArtifactResult(
   ctx: McpRequestContext,
   user: McpUser,
@@ -2908,16 +2742,6 @@ async function existingArtifactResult(
   })
 }
 
-// ── pure helpers (unit-tested) ───────────────────────────────────
-
-// Human-readable share-scope label, in the user's locale. Routes through the
-// i18n catalog (the same keys the viewer chrome uses) so the wording can't
-// drift from the UI. Unknown / null locales fall back to DEFAULT_LOCALE.
-//
-// `visibility` is typed Visibility, but the column has no CHECK constraint, so a
-// legacy / future value could fall outside the catalog. Guard against it so one
-// odd row can't crash the whole listing (an unknown key would make t()
-// dereference undefined); fall back to the raw value.
 export function scopeLabel(visibility: string, locale: string | null): string {
   const lang: Locale = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE
   return isVisibility(visibility)
@@ -2925,10 +2749,6 @@ export function scopeLabel(visibility: string, locale: string | null): string {
     : visibility
 }
 
-// A project's sharing-scope label, in the caller's locale — the same wording the
-// project page's scope chip uses ('workspace' = 社内全員, 'private' = 関係者のみ),
-// routed through the i18n catalog so MCP and UI can't drift. base_visibility is a
-// closed union, so unlike scopeLabel this needs no unknown-value fallback.
 export function projectScopeLabel(
   baseVisibility: ProjectBaseVisibility,
   locale: string | null,
@@ -2942,10 +2762,6 @@ export function projectScopeLabel(
   )
 }
 
-// Tools take a string; `detectArtifactTypeForUpload` keys off file.type /
-// file.name, so the inferred format decides both. A fixed ASCII filename keeps
-// `validateBundlePath` happy regardless of the title (the title is applied
-// separately via title_override / derived from the content).
 export function buildArtifactFile(content: string, format: Format): File {
   const ext = format === 'html' ? 'html' : 'md'
   const type =
@@ -2957,12 +2773,6 @@ export function buildArtifactFile(content: string, format: Format): File {
 
 const FORMAT_SNIFF_WINDOW = 4096
 
-// Markdown legitimately embeds raw HTML (`<img>`, `<table>`, `<a>` …), so a
-// stray tag must NOT flip it to HTML — the markdown renderer would then show the
-// surrounding `#`/`**` syntax literally. Only treat content as HTML on a
-// document-level or executable signal that markdown wouldn't carry. When in
-// doubt, markdown: its renderer passes raw HTML through, so the reverse mistake
-// is the cheaper one. Agents can always set `format` explicitly.
 export function inferFormat(content: string, explicit?: Format): Format {
   if (explicit) return explicit
   const head = content.trimStart().slice(0, FORMAT_SNIFF_WINDOW).toLowerCase()

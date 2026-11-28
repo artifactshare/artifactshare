@@ -1,12 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { computeTextSha256Hex } from '~/lib/sha256'
 
-/*
- * MCP Apps UI resource: a compact artifact card shared by ChatGPT, Claude,
- * Cursor, and other conforming hosts. The full artifact opens in Artifact
- * Share; the widget never frames or fetches artifact content itself.
- */
-
 export const ARTIFACT_PREVIEW_TEMPLATE_URI = 'ui://artifact-preview.html'
 
 // MCP Apps serves UI as HTML with this profile so hosts treat the resource as
@@ -205,7 +199,6 @@ const WIDGET_HTML = `
 </script>
 `.trim()
 
-/** Register the portable artifact card as an MCP Apps UI resource. */
 export function registerArtifactPreviewResource(
   server: McpServer,
   appOrigin: string,
@@ -246,12 +239,8 @@ export async function artifactPreviewResourceContents(
           // Compatibility alias for ChatGPT's dedicated widget origin.
           'openai/widgetDomain': appOrigin,
           ui: {
-            // The card draws its own boundary so hosts should not wrap it in a
-            // second border.
             prefersBorder: false,
             domain: claudeWidgetDomain,
-            // The card loads only the standard MCP Apps client. It never frames
-            // or fetches artifact content, so frameDomains is intentionally absent.
             csp: {
               resourceDomains: ['https://esm.sh'],
               connectDomains: ['https://esm.sh'],

@@ -8,7 +8,6 @@ import { isSameOriginRequest } from '~/lib/same-origin-request'
 import { createDb } from '~/services/db.server'
 import type { ViewerRateLimiter } from './viewer-rate-limit.server'
 
-// Total deadlines for auxiliary telemetry, never renewed by incoming chunks.
 export const REPORT_ADMISSION_MS = 1_000
 export const REPORT_BODY_MS = 2_000
 export const REPORT_MAX_BYTES = 1024
@@ -39,16 +38,13 @@ function unavailable() {
   return reportResponse(503, { error: 'report-unavailable' })
 }
 
-// Never wait for user-controlled cancellation, including synchronous throws.
 export function cancelReportBody(request: Request) {
   cancel(() => request.body?.cancel())
 }
 function cancel(operation: () => Promise<unknown> | undefined) {
   try {
     void operation()?.catch(() => {})
-  } catch {
-    /* Cancellation is best effort. */
-  }
+  } catch {}
 }
 
 export function reportArtifactId(pathname: string): string | null {
@@ -64,8 +60,6 @@ export function reportArtifactId(pathname: string): string | null {
         try {
           return decodeURIComponent(segment)
         } catch {
-          // The router still matches malformed dynamic IDs. Keep them inside
-          // report admission; strict marker validation rejects them afterward.
           return segment
         }
       })
@@ -113,8 +107,6 @@ function deadline(signal: AbortSignal, ms: number, timeout: () => Response) {
   const terminal = new Promise<never>((_, rejectPromise) => {
     reject = rejectPromise
   })
-  // An already-aborted signal can reject before the caller reaches race().
-  // Observe it immediately while preserving the rejected promise for races.
   void terminal.catch(() => {})
   const abort = () => reject(new ReportFailure(invalid()))
   const timer = setTimeout(() => reject(new ReportFailure(timeout())), ms)
@@ -122,7 +114,6 @@ function deadline(signal: AbortSignal, ms: number, timeout: () => Response) {
   if (signal.aborted) abort()
   return {
     race<T>(operation: Promise<T>) {
-      // A previously observed deadline/abort wins over an immediately ready read.
       return Promise.race([terminal, operation])
     },
     close() {
@@ -147,7 +138,6 @@ async function readBody(request: Request): Promise<unknown> {
   try {
     for (let chunks = 0; ; chunks++) {
       if (request.signal.aborted) throw new ReportFailure(invalid())
-      // Yield to deadline/abort tasks even for an endless stream of empty chunks.
       if (chunks > 0 && chunks % 32 === 0)
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       const { done, value } = await clock.race(reader.read())

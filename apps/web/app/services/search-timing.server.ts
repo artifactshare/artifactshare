@@ -10,15 +10,9 @@ import type { SearchIndex, SearchIndexes } from './search.server'
  */
 type Lane = { count: number; busyMs: number; inflight: number; since: number }
 
-/**
- * One index method's fastest and slowest single call. A fast call bounds the
- * round trip to the index, so a slow fastest call points at its location and
- * a fast fastest call with a slow slowest call points at the work inside it.
- */
 type CallRange = { count: number; minMs: number; maxMs: number }
 type IndexMethod = keyof SearchIndex
 
-/** Where one search request spends its time. */
 export type SearchTimings = {
   d1: Lane & { sqlMs: number }
   index: Lane
@@ -81,26 +75,21 @@ function timeStatement(
   return timed
 }
 
-/** Time every statement and batch a search runs on this binding. */
 export function timeD1(
   database: D1Database | undefined,
   timings: SearchTimings,
 ): D1Database | undefined {
-  // Without a binding, withDb falls back to its default database untimed.
   if (!database) return undefined
   return new Proxy(database, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target)
       if (property === 'prepare' && typeof value === 'function')
-        // Forwards the caller's SQL unchanged; the D1 compatibility checks
-        // apply where that SQL is written (Kysely or a literal prepare call).
         return (sql: string) =>
           timeStatement(
             Reflect.apply(value, target, [sql]) as D1PreparedStatement,
             timings,
           )
       if (property === 'batch')
-        // A batch is one round trip, counted by its statements.
         return (statements: D1PreparedStatement[]) =>
           track(timings.d1, statements.length, async () => {
             const result = await target.batch(
@@ -114,7 +103,6 @@ export function timeD1(
   })
 }
 
-/** Time every call a search makes to its workspace indexes. */
 export function timeIndexes(
   indexes: SearchIndexes,
   timings: SearchTimings,
@@ -159,14 +147,12 @@ export function timeIndexes(
   }
 }
 
-/** Busy time so far, including calls still in flight when a search fails. */
 function lanePart(name: string, target: Lane, unit: string, now: number) {
   const busy = target.busyMs + (target.inflight > 0 ? now - target.since : 0)
   const running = target.inflight > 0 ? `, ${target.inflight} running` : ''
   return `${name};dur=${Math.round(busy)};desc="${target.count} ${unit}${running}"`
 }
 
-/** Totals only: the header is visible to the signed-in viewer. */
 export function serverTiming(timings: SearchTimings, totalMs: number) {
   const now = performance.now()
   return [
@@ -181,12 +167,6 @@ export function serverTiming(timings: SearchTimings, totalMs: number) {
   ].join(', ')
 }
 
-/**
- * Run one search request with timed D1 and index access. The breakdown is
- * returned for the Server-Timing header. `expected` turns a known outcome,
- * such as a capacity error, into a value that keeps its breakdown; any other
- * error is logged with the breakdown so slow failures still leave a record.
- */
 export async function withSearchTiming<T, E = never>(
   route: string,
   run: (db: Db, indexes: SearchIndexes) => Promise<T>,

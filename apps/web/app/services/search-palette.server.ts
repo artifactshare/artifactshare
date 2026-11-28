@@ -63,9 +63,6 @@ export async function searchPalette(
     listProjectsForIndex(db, user),
     listSharedProjects(db, user),
   ])
-  // プロジェクトのみ SQL LIMIT でなくメモリ内で filter/sort/slice する。到達可能
-  // 集合の判定 (listProjectsForIndex / listSharedProjects) を SQL に重複させない
-  // ためで、対象は 1 workspace 分のプロジェクト数に留まる
   const lowered = q.toLocaleLowerCase()
   const merged = [...indexed.filter((p) => !p.archivedAt), ...shared]
   const projects = merged
