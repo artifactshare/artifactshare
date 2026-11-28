@@ -8,6 +8,7 @@ import {
   mkdirSync,
   renameSync,
   rmSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs'
@@ -41,11 +42,21 @@ const SCHEMA = join(APP, 'db/schema.sql')
 const STATIC_SITE_FIXTURES = join(ROOT, 'fixtures/static-sites')
 const FIXTURES_BUILD_TIMEOUT_MS = 10 * 60_000
 const FIXTURES_MAX_BUFFER = 64 * 1024 * 1024
-export const STATIC_SITE_FIXTURE_NAMES = [
-  'react-spa',
-  'react-router-prerender',
-  'next-export',
-]
+// The fixture builders are the source of what `pnpm fixtures:build` produces:
+// one output directory per builder package, named after it. Read the builder
+// list instead of restating it, so a new builder is checked for from the first
+// run rather than silently skipped.
+const STATIC_SITE_FIXTURE_BUILDERS = join(
+  ROOT,
+  'tools/static-site-fixtures/builders',
+)
+export const STATIC_SITE_FIXTURE_NAMES = readdirSync(
+  STATIC_SITE_FIXTURE_BUILDERS,
+  { withFileTypes: true },
+)
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort()
 
 export const DEV_SERVICES = [
   {

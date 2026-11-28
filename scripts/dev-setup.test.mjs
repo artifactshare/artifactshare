@@ -590,6 +590,10 @@ test('STATIC_SITE_FIXTURE_NAMES match the fixture builder', () => {
     join(import.meta.dirname, '../tools/static-site-fixtures/build.mjs'),
     'utf8',
   )
+  // The names come from the builder packages, so an empty or file-polluted
+  // read would make every fixture check pass by vacuity.
+  assert.ok(STATIC_SITE_FIXTURE_NAMES.length >= 3)
+  assert.ok(!STATIC_SITE_FIXTURE_NAMES.includes('README.md'))
   for (const name of STATIC_SITE_FIXTURE_NAMES)
     assert.ok(builder.includes(name), `${name} is built`)
 })
