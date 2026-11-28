@@ -8,6 +8,7 @@
     "./markdown-render": "./src/markdown-render.ts",
     "./markdown-renderer": "./src/markdown-renderer.ts",
     "./tanstack-highlight": "./src/tanstack-highlight.ts",
+    "./trusted-html": "./src/trusted-html.ts",
     "./markdown-autolink": "./src/markdown-autolink.ts",
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",

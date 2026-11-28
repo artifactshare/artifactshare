@@ -28,10 +28,15 @@ vi.mock('~/components/app/public-footer', () => ({
   ),
 }))
 
+import { trustedHtmlFixture } from '~/test/trusted-html'
 describe('GuideStaticPage', () => {
   test('renders the full public footer', () => {
     const html = renderToStaticMarkup(
-      <GuideStaticPage html="<p>Privacy</p>" locale="en" path="/privacy" />,
+      <GuideStaticPage
+        html={trustedHtmlFixture('<p>Privacy</p>')}
+        locale="en"
+        path="/privacy"
+      />,
     )
     expect(html).toContain('data-slot="public-footer" data-variant="full"')
   })
@@ -46,7 +51,7 @@ describe('GuideStaticPage', () => {
     (path, guide) => {
       const html = renderToStaticMarkup(
         <GuideStaticPage
-          html="<h1>Guide</h1><p>Body</p>"
+          html={trustedHtmlFixture('<h1>Guide</h1><p>Body</p>')}
           locale="en"
           path={path}
         />,
@@ -64,7 +69,7 @@ describe('GuideStaticPage', () => {
     (path) => {
       const html = renderToStaticMarkup(
         <GuideStaticPage
-          html="<h1>Legal</h1><p>Body</p>"
+          html={trustedHtmlFixture('<h1>Legal</h1><p>Body</p>')}
           locale="en"
           path={path}
         />,

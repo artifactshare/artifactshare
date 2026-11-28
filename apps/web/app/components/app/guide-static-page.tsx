@@ -4,6 +4,7 @@ import {
   GuideShell,
   GuideTopbar,
 } from '~/components/app/guide-shell'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
 import {
@@ -18,7 +19,7 @@ export function GuideStaticPage({
   locale,
   path,
 }: {
-  html: string
+  html: TrustedHtml
   locale: Locale
   path:
     | '/privacy'

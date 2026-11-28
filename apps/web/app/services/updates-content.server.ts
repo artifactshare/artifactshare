@@ -1,4 +1,5 @@
 import { renderMarkdownBody as renderMarkdown } from '~/lib/markdown-renderer.server'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import { getPublicPagePath } from '~/lib/public-pages'
 import type {
   UpdateEntry,
@@ -42,8 +43,8 @@ interface ParsedUpdateFile {
 
 interface LocalizedContent {
   title: string
-  bodyHtml: string
-  summaryHtml: string
+  bodyHtml: TrustedHtml
+  summaryHtml: TrustedHtml
   hasMore: boolean
 }
 

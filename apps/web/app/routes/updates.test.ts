@@ -27,16 +27,19 @@ vi.mock('cloudflare:workers', () => ({
   env: { APP_ENV: 'development' },
 }))
 
+import { trustedHtmlFixture } from '~/test/trusted-html'
 const sampleEntry = {
   slug: '2026-07-02-link-share-ogp',
   title: 'Link shares now show rich previews on social platforms',
   date: '2026-07-02',
   products: ['web'] as UpdateProduct[],
   kind: 'improve' as const,
-  bodyHtml:
+  bodyHtml: trustedHtmlFixture(
     '<p>Shared artifact links now include Open Graph images and descriptions when pasted into chat apps or social feeds.</p>',
-  summaryHtml:
+  ),
+  summaryHtml: trustedHtmlFixture(
     '<p>Shared artifact links now include Open Graph images and descriptions when pasted into chat apps or social feeds.</p>',
+  ),
   hasMore: false,
 }
 

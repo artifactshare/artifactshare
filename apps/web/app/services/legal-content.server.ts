@@ -5,11 +5,12 @@ import termsEnMd from '~/legal/terms.en.md?raw'
 import termsJaMd from '~/legal/terms.ja.md?raw'
 import tokushohoEnMd from '~/legal/tokushoho.en.md?raw'
 import tokushohoJaMd from '~/legal/tokushoho.ja.md?raw'
+import type { TrustedHtml } from '@artifactshare/viewer-kit/trusted-html'
 import type { Locale } from '~/i18n/messages'
 
 interface LegalDoc {
-  en: string
-  ja: string
+  en: TrustedHtml
+  ja: TrustedHtml
 }
 
 const PRIVACY: LegalDoc = {
@@ -27,14 +28,14 @@ const TOKUSHOHO: LegalDoc = {
   ja: renderMarkdown(tokushohoJaMd),
 }
 
-export function privacyHtml(locale: Locale): string {
+export function privacyHtml(locale: Locale): TrustedHtml {
   return PRIVACY[locale] ?? PRIVACY.en
 }
 
-export function termsHtml(locale: Locale): string {
+export function termsHtml(locale: Locale): TrustedHtml {
   return TERMS[locale] ?? TERMS.en
 }
 
-export function tokushohoHtml(locale: Locale): string {
+export function tokushohoHtml(locale: Locale): TrustedHtml {
   return TOKUSHOHO[locale] ?? TOKUSHOHO.en
 }

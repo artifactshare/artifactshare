@@ -2,6 +2,7 @@ import { renderHtml } from '@tanstack/markdown/html'
 import { parseMarkdown } from '@tanstack/markdown/parser'
 
 import { escapeHtml } from './escape-html.js'
+import type { TrustedHtml } from './trusted-html.js'
 import { httpAutolinkExtension } from './markdown-autolink.js'
 import { markdownDisclosureExtension } from './markdown-disclosure.js'
 import {
@@ -16,7 +17,7 @@ export type HeadingIdStrategy = 'legacy' | 'unique'
 export function renderMarkdownBody(
   source: string,
   options: { headingIds?: HeadingIdStrategy } = {},
-): string {
+): TrustedHtml {
   const parsed = parseMarkdown(source, {
     allowHtml: true,
     extensions: markdownExtensions,
@@ -29,7 +30,7 @@ export function renderMarkdownBody(
         extensions: markdownExtensions,
       }),
     ),
-  )
+  ) as TrustedHtml
 }
 
 function uniqueHeadingId(documentUnique: boolean) {

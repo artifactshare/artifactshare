@@ -52,6 +52,7 @@ vi.mock('~/components/ui/button', () => ({
   ),
 }))
 
+import { trustedHtmlFixture } from '~/test/trusted-html'
 import { PrivateMobileDesignHandoffPage } from './private-mobile-design-handoff-page'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -92,7 +93,7 @@ describe('PrivateMobileDesignHandoffPage', () => {
           <PrivateMobileDesignHandoffPage
             locale={locale}
             source={source}
-            html="<h1>Rendered HTML</h1>"
+            html={trustedHtmlFixture('<h1>Rendered HTML</h1>')}
           />,
         )
       })
