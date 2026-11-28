@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import YAML from 'yaml'
+import { PROJECTS as repeatedProjects } from './ci/changed-browser-repetitions.mjs'
+import { lanes as nightlyLanes } from './ci/flaky-runs.mjs'
 
 const workflowPath = '.github/workflows/public-ci.yml'
 const workflow = fs.readFileSync(workflowPath, 'utf8')
@@ -475,6 +477,26 @@ test('every merge gate lane checks out the code under test', () => {
         `${name}: ${checkout.with.ref}`,
       )
   }
+})
+
+test('pull requests and the merge queue leave Firefox to the nightly detector', () => {
+  const mergeQueue = new Set(
+    parsedWorkflow.jobs['browser-validation'].strategy.matrix.include.map(
+      ({ project }) => project,
+    ),
+  )
+  assert.deepEqual([...mergeQueue].sort(), ['chromium', 'webkit'])
+  assert.deepEqual(
+    parsedWorkflow.jobs['changed-browser-repetitions'].strategy.matrix.project,
+    repeatedProjects,
+  )
+  assert.deepEqual(repeatedProjects, ['chromium', 'webkit'])
+  assert.ok(
+    nightlyLanes.some(
+      ({ suite, project }) =>
+        suite === 'behavior-browser' && project === 'firefox',
+    ),
+  )
 })
 
 test('the browser matrix covers every shard of every project', () => {

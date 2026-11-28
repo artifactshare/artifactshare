@@ -1,15 +1,17 @@
 // Runs the browser behavior suite with one Vitest process per engine.
 // The config runs one file at a time (fileParallelism: false), and inside one
 // process that also puts the engines one after another, so a local run took
-// the sum of the three engines. Separate processes share no browser, so the
+// the sum of the engines. Separate processes share no browser, so the
 // run takes as long as the slowest engine. CI already gives each engine its
 // own runner and passes --project, which runs a single process as before.
+// Firefox runs only in the nightly Flaky detector; pass --project=firefox to
+// run it here.
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-const PROJECTS = ['chromium', 'firefox', 'webkit']
+const PROJECTS = ['chromium', 'webkit']
 const vitest = join(
   dirname(createRequire(import.meta.url).resolve('vitest/package.json')),
   'vitest.mjs',

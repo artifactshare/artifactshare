@@ -15,6 +15,9 @@ import {
 
 export const REPETITION_TIMEOUT_MS = 600_000
 export const MAX_PAIRS = 15
+// Firefox runs only in the nightly Flaky detector, so pull requests repeat a
+// changed file in these engines and spend the pair cap on nothing else.
+export const PROJECTS = ['chromium', 'webkit']
 
 export function validateRepetitions(value = '5') {
   if (typeof value !== 'string' || !/^(?:[1-9]|10)$/.test(value))
@@ -194,11 +197,19 @@ export async function buildPlan(
   const discovery = await discover(root)
   try {
     const specifications = await discovery.specifications()
+    if (
+      specifications.some(
+        (spec) => !['chromium', 'firefox', 'webkit'].includes(spec.project),
+      )
+    )
+      throw new Error('Unsupported browser project')
     for (const file of [...selection.selected].sort()) {
       const projects = [
         ...new Set(
           specifications
-            .filter((spec) => spec.file === file)
+            .filter(
+              (spec) => spec.file === file && PROJECTS.includes(spec.project),
+            )
             .map((spec) => spec.project),
         ),
       ].sort()
@@ -213,12 +224,6 @@ export async function buildPlan(
       }
     }
     plan.projects = [...new Set(plan.pairs.map((pair) => pair.project))].sort()
-    if (
-      plan.projects.some(
-        (project) => !['chromium', 'firefox', 'webkit'].includes(project),
-      )
-    )
-      throw new Error('Unsupported browser project')
     return plan
   } finally {
     await discovery.close()
@@ -233,7 +238,7 @@ const runDirectory = (results, index, repetition) =>
 
 export function planForProject(plan, project) {
   if (project === undefined) return plan
-  if (!['chromium', 'firefox', 'webkit'].includes(project))
+  if (!PROJECTS.includes(project))
     throw new Error('Unsupported browser project')
   const pairs = plan.pairs.filter((pair) => pair.project === project)
   return {

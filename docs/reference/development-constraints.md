@@ -45,6 +45,7 @@
 ブラウザ待機、機能判定、lint の適用範囲は [Browser test waits](../../apps/web/app/test/browser-test-waits.md) を参照してください。
 
 - **機械検査で強制済み**: Public CI の `changed-browser-repetitions` ジョブ（チェック名 `Changed browser behavior repetitions`）と `Flaky detector` ワークフロー（`.github/workflows/flaky-detector.yml`）が、反復実行によって不安定なテストを検出します。
+- **機械検査で強制済み**: PR、マージキュー、ローカルの `pnpm test:behavior-browser` は Chromium と WebKit だけでブラウザテストを回します。Firefox は毎晩の `Flaky detector` だけで回します（`scripts/public-ci-contract.test.mjs`）。Firefox で確かめたいときは `pnpm test:behavior-browser --project=firefox` を使います。
 - **人が判断する現行規則**:
   - sheet や dialog の開閉後にフォーカスや開閉状態を検証するときは、マウント・アンマウントとアニメーション完了を待ちます。固定時間の `sleep` は使わず、`[data-slot="sheet-content"]` の出現・消失など観測可能な条件で待ちます。
   - `vi.waitFor` で重い処理（大きな文書、多数のコメント、マイグレーションを再適用する D1 リセット）や既定の 1 秒を超え得る条件を待つ場合は、CI ランナーがローカルの約 2 倍かかることを見込んで明示的な timeout を指定します（短時間で終わる条件は既定値のままで構いません）。重いフィクスチャを使うテストにも同様に明示的な timeout を設定します。D1 スイートのテストとフックの timeout は `apps/web/app/test/vitest.d1.config.ts` を参照します。
