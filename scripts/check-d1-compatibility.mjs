@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
+import { LINT_FIXTURE_DIRECTORY } from './lib/lint-fixture-paths.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const SOURCE_ROOTS = ['apps/web/app', 'apps/web/workers']
@@ -21,8 +22,6 @@ const EXCLUDED_DIRECTORIES = new Set([
   'test',
   'tests',
 ])
-const LINT_FIXTURE_DIRECTORY =
-  /^apps\/web\/app\/(?:(?:analytics|module-boundary|plan-tier)-lint-fixture-[^/]+|modules\/module-boundary-lint-fixture-[^/]+)$/
 const SET_OPERATION_WORDS = new Set(['EXCEPT', 'INTERSECT', 'UNION'])
 const SET_OPERATION_METHODS = new Set([
   'except',

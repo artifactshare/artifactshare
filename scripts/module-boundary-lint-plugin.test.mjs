@@ -9,6 +9,7 @@ import plugin, {
   createModuleBoundaryRule,
   findModuleBoundary,
 } from './module-boundary-lint-plugin.mjs'
+import { lintFixturePrefix } from './lib/lint-fixture-paths.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -155,7 +156,7 @@ const ignoredUnrelated = import('external-package')
 
 test('the configured error rejects violations while public-entry and same-module imports succeed', () => {
   const directory = mkdtempSync(
-    join(root, 'apps/web/app/module-boundary-lint-fixture-'),
+    join(root, lintFixturePrefix('module-boundary')),
   )
   const moduleName = basename(directory)
   const moduleDirectory = join(root, 'apps/web/app/modules', moduleName)
