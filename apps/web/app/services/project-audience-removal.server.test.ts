@@ -193,9 +193,7 @@ async function lists(db: Kysely<DB>) {
       shareableId: row.shareableId,
       addCount: row.addCount,
     })),
-    recent: recent
-      .map((row) => [row.id, Boolean(row.visible)] as const)
-      .sort(),
+    recent: recent.map((row) => [row.id, Boolean(row.visible)] as const).sort(),
     palette: palette.recent.map((row) => row.id).sort(),
   }
 }
@@ -203,9 +201,9 @@ async function lists(db: Kysely<DB>) {
 describe('a guest removed from a project audience', () => {
   test('no longer sees the project artifacts in the activity feed, search palette, or as openable recents', async () => {
     const db = await seed()
-    expect(
-      await joinProject(db, { containerId: 'p', user: guest }),
-    ).toBe('joined')
+    expect(await joinProject(db, { containerId: 'p', user: guest })).toBe(
+      'joined',
+    )
     for (const id of ['memo', 'plan', 'brief'])
       await recordViewerRecency(db, id, guest.id, { now: ADDED_AT })
 
