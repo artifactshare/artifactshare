@@ -143,7 +143,16 @@ export default {
             message: errorMessage(error),
           })
         }
-        if (scheduledJobForCron(controller.cron) === 'slack-notifications') {
+        const job = scheduledJobForCron(controller.cron)
+        if (job === null) {
+          // A cron the deploy config added without a job here. Doing nothing
+          // would lose whichever work that trigger was added for, with no
+          // trace, so say which cron it was and fall back to the daily
+          // reconciliation: its steps are idempotent, and a run too many
+          // costs work rather than correctness.
+          console.error('scheduled_cron_unmapped', { cron: controller.cron })
+        }
+        if (job === 'slack-notifications') {
           const jobs = await Promise.allSettled([
             Promise.resolve().then(() => dispatchWorkspaceSearch(db, env)),
             Promise.resolve().then(() =>

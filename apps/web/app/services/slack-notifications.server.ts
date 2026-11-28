@@ -118,10 +118,23 @@ export async function clearContainerSlackChannel(
     .execute()
 }
 
-export function scheduledJobForCron(
-  cron: string,
-): 'reconciliation' | 'slack-notifications' {
-  return cron === '*/5 * * * *' ? 'slack-notifications' : 'reconciliation'
+export type ScheduledJob = 'reconciliation' | 'slack-notifications'
+
+// 本番の wrangler.production.jsonc の crons と 1 対 1 で対応する表。既定の
+// wrangler.jsonc はローカルとプレビュー用で、*/5 だけを持つ。
+// 「*/5 以外は全部 reconciliation」だと、reconciliation の cron を 0 17 から
+// 0 18 に書き換えてもテストが通ってしまい、cron の打ち間違いも本番で
+// reconciliation として走る。表にない cron は null を返し、呼び出し側に
+// 判断させる。
+// Map, not a plain object: an object lookup answers for every prototype key,
+// so scheduledJobForCron('toString') would return a function instead of null.
+const SCHEDULED_JOB_BY_CRON = new Map<string, ScheduledJob>([
+  ['*/5 * * * *', 'slack-notifications'],
+  ['0 17 * * *', 'reconciliation'],
+])
+
+export function scheduledJobForCron(cron: string): ScheduledJob | null {
+  return SCHEDULED_JOB_BY_CRON.get(cron) ?? null
 }
 
 // D1 の 1 文あたりの bind 変数上限 (100) に収まるよう、1 回の cron で
