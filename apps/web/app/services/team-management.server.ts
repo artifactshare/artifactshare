@@ -24,7 +24,6 @@ import {
   type MembersPageFilters,
   type MembersPageResult,
   type AuditEventsPageResult,
-  type SettingsShellData,
   type TeamContributor,
   type TeamMember,
   type RemovedTeamMember,
@@ -42,7 +41,6 @@ import {
   revokeAllCliRefreshCredentialFamiliesForMember as revokeMemberCliFamilies,
 } from '~/services/cli-refresh-credentials.server'
 import type { DB } from '~/types/db'
-import { planTier } from '~/lib/plan-tier'
 
 export { WORKSPACE_NAME_MAX_LENGTH } from '~/lib/team-management'
 export type {
@@ -83,50 +81,6 @@ const PERSONAL_WORKSPACE_DEFAULTS = {
     : 0,
   ...linkExpiryStartingColumns(),
 } as const
-
-export async function loadSettingsShell(
-  db: Kysely<DB>,
-  user: { id: string; workspaceId: string },
-): Promise<SettingsShellData> {
-  const [workspace, currentMembership] = await Promise.all([
-    db
-      .selectFrom('workspaces')
-      .select([
-        'id',
-        'name',
-        'hd',
-        'plan',
-        'storage_used_bytes',
-        'storage_quota_bytes',
-      ])
-      .where('id', '=', user.workspaceId)
-      .executeTakeFirstOrThrow(),
-    db
-      .selectFrom('workspace_members')
-      .select('role')
-      .where('workspace_id', '=', user.workspaceId)
-      .where('user_id', '=', user.id)
-      .where('status', '=', 'active')
-      .executeTakeFirst(),
-  ])
-
-  const currentUserRole = (currentMembership?.role ??
-    'member') as WorkspaceMemberRole
-
-  return {
-    kind: planTier(workspace.plan) === 'team' ? 'team' : 'upgrade',
-    workspace: {
-      id: workspace.id,
-      name: workspace.name,
-      hd: workspace.hd,
-      plan: workspace.plan,
-      storageUsedBytes: workspace.storage_used_bytes,
-      storageQuotaBytes: workspace.storage_quota_bytes,
-    },
-    currentUserIsAdmin: currentUserRole !== 'member',
-    currentUserRole,
-  }
-}
 
 export function parseMembersPageFilters(
   searchParams: URLSearchParams,
@@ -277,43 +231,6 @@ export async function loadWorkspaceInventoryArtifactsPage(
       sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
       updatedAt: row.updated_at,
     })),
-  }
-}
-
-export interface MembersPageData {
-  membersPage: MembersPageResult
-  removedMembers: RemovedTeamMember[]
-  currentUserRole: WorkspaceMemberRole
-  currentUserIsAdmin: boolean
-}
-
-export async function loadMembersPageData(
-  db: Kysely<DB>,
-  user: { id: string; workspaceId: string },
-  filters: MembersPageFilters,
-): Promise<MembersPageData> {
-  const [membersPage, currentMembership] = await Promise.all([
-    loadWorkspaceMembersPage(db, user.workspaceId, filters),
-    db
-      .selectFrom('workspace_members')
-      .select('role')
-      .where('workspace_id', '=', user.workspaceId)
-      .where('user_id', '=', user.id)
-      .where('status', '=', 'active')
-      .executeTakeFirst(),
-  ])
-  const currentUserRole = (currentMembership?.role ??
-    'member') as WorkspaceMemberRole
-  const currentUserIsAdmin = currentUserRole !== 'member'
-  const removedMembers = currentUserIsAdmin
-    ? await loadRemovedWorkspaceMembers(db, user.workspaceId)
-    : []
-
-  return {
-    membersPage,
-    removedMembers,
-    currentUserRole,
-    currentUserIsAdmin,
   }
 }
 

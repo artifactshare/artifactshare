@@ -34,10 +34,8 @@ import {
   ensureWorkspaceAdmin,
   grantWorkspaceAdmin,
   isRemovedWorkspaceMember,
-  loadMembersPageData,
   loadAuditEventsPage,
   loadRemovedWorkspaceMembers,
-  loadSettingsShell,
   loadWorkspaceOwner,
   loadWorkspaceInventoryArtifactsPage,
   loadWorkspaceMembersPage,
@@ -631,21 +629,15 @@ describe('team-management service', () => {
     expect(await memberships.execute()).toEqual(before)
   })
 
-  test('free workspace shows upgrade state and keeps its recorded members', async () => {
+  test('free workspace keeps its recorded members', async () => {
     seedWorkspace(sqlite, 'free')
     seedUser(sqlite, 'u1')
     seedUser(sqlite, 'u2')
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
-    const shell = await loadSettingsShell(db, user('u1'))
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(shell.kind).toBe('upgrade')
-    expect(data.currentUserIsAdmin).toBe(false)
-    expect(data.membersPage.members).toHaveLength(2)
-    expect(data.membersPage.members.map((member) => member.id).sort()).toEqual([
-      'u1',
-      'u2',
-    ])
+    expect(page.members).toHaveLength(2)
+    expect(page.members.map((member) => member.id).sort()).toEqual(['u1', 'u2'])
     expect(readRole(sqlite, 'u1')).toBe('member')
   })
 
@@ -655,13 +647,9 @@ describe('team-management service', () => {
     seedUser(sqlite, 'u2')
     seedAdmin(sqlite, 'u2')
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
-    const shell = await loadSettingsShell(db, user('u1'))
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(shell.kind).toBe('upgrade')
-    expect(data.currentUserIsAdmin).toBe(false)
-    expect(data.membersPage.members).toHaveLength(2)
-    expect(data.removedMembers).toEqual([])
+    expect(page.members).toHaveLength(2)
   })
 
   test('free admin can transfer admin role to another workspace user', async () => {
@@ -739,12 +727,9 @@ describe('team-management service', () => {
     seedContributor(sqlite, 'u1', '2026-05-26T00:00:00.000Z')
     seedContributor(sqlite, 'u2', '2026-05-25T00:00:00.000Z')
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
-    const shell = await loadSettingsShell(db, user('u1'))
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(shell.kind).toBe('team')
-    expect(data.currentUserIsAdmin).toBe(false)
-    expect(data.membersPage.members).toHaveLength(2)
+    expect(page.members).toHaveLength(2)
   })
 
   test('team workspace lists members without contribution history', async () => {
@@ -755,17 +740,12 @@ describe('team-management service', () => {
     seedMember(sqlite, 'u2')
     seedAdmin(sqlite, 'u1')
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(data.membersPage.members).toHaveLength(2)
-    expect(data.currentUserRole).toBe('admin')
-    expect(data.membersPage.members.some((member) => member.isAdmin)).toBe(
-      false,
-    )
+    expect(page.members).toHaveLength(2)
+    expect(page.members.some((member) => member.isAdmin)).toBe(false)
     expect(readRole(sqlite, 'u1')).toBe('admin')
-    const nonContributor = data.membersPage.members.find(
-      (member) => member.id === 'u2',
-    )
+    const nonContributor = page.members.find((member) => member.id === 'u2')
     expect(nonContributor?.firstContributedAt).toBeNull()
   })
 
@@ -782,9 +762,9 @@ describe('team-management service', () => {
       WHERE workspace_id = 'ws1' AND user_id = 'u2';
     `)
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(data.membersPage.members.map((member) => member.id)).toEqual(['u1'])
+    expect(page.members.map((member) => member.id)).toEqual(['u1'])
   })
 
   test('Members lists users without contribution history', async () => {
@@ -792,14 +772,11 @@ describe('team-management service', () => {
     seedUser(sqlite, 'u1', '2026-05-26T00:00:00.000Z')
     seedUser(sqlite, 'u2', '2026-05-25T00:00:00.000Z')
 
-    const data = await loadMembersPageData(db, user('u1'), filters())
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
 
-    expect(data.currentUserIsAdmin).toBe(false)
-    expect(data.membersPage.members).toHaveLength(2)
+    expect(page.members).toHaveLength(2)
     expect(
-      data.membersPage.members.every(
-        (member) => member.firstContributedAt === null,
-      ),
+      page.members.every((member) => member.firstContributedAt === null),
     ).toBe(true)
   })
 
@@ -2350,10 +2327,11 @@ describe('team-management service', () => {
       id: 'u1',
       email: 'u1@example.com',
     })
-    const data = await loadMembersPageData(db, user('u1'), filters())
-    expect(
-      data.membersPage.members.find((member) => member.id === 'u1'),
-    ).toMatchObject({ role: 'owner', isAdmin: true })
+    const page = await loadWorkspaceMembersPage(db, 'ws1', filters())
+    expect(page.members.find((member) => member.id === 'u1')).toMatchObject({
+      role: 'owner',
+      isAdmin: true,
+    })
     const adminId = await ensureWorkspaceAdmin(
       db,
       'ws1',
