@@ -4,6 +4,7 @@ import type { Visibility } from '~/lib/shareable-types'
 import { DEFAULT_LOCALE, isSupportedLocale, MESSAGES } from '~/i18n/messages'
 import type { DB } from '~/types/db'
 import { escapeSlackText } from '~/lib/slack-escape'
+import { shareableLinkAccessToViewer } from './projects.server'
 
 export async function getContainerSlackChannel(
   db: Kysely<DB>,
@@ -194,9 +195,13 @@ export async function processSlackNotificationOutbox(
       'c.container_id',
       'o.container_id',
     )
-    .innerJoin('shareables as s', 's.id', 'o.shareable_id')
+    .innerJoin('shareables', (join) =>
+      join
+        .onRef('shareables.id', '=', 'o.shareable_id')
+        .onRef('shareables.container_id', '=', 'o.container_id'),
+    )
     .innerJoin('artifact_containers as p', 'p.id', 'o.container_id')
-    .leftJoin('users as u', 'u.id', 's.owner_user_id')
+    .leftJoin('users as u', 'u.id', 'shareables.owner_user_id')
     .select([
       'o.id',
       'o.container_id',
@@ -204,20 +209,27 @@ export async function processSlackNotificationOutbox(
       'o.claim_token',
       'c.channel_id',
       'c.webhook_url',
-      's.derived_title',
-      's.title_override',
-      's.name',
+      'shareables.derived_title',
+      'shareables.title_override',
+      'shareables.name',
       'u.name as owner_name',
       'p.name as project_name',
     ])
     .where('o.claim_token', '=', args.claimToken)
+    .where((eb) =>
+      eb.or([
+        eb('shareables.visibility', 'in', ['workspace', 'project']),
+        shareableLinkAccessToViewer(eb, now),
+      ]),
+    )
     .execute()
 
   const claimedIds = new Set(claimed.map((row) => row.id))
   const joined = rows.filter((row) => claimedIds.has(row.id))
   const joinedIds = new Set(joined.map((row) => row.id))
-  // 紐付け消失で join に落ちた行は明示的な id 列挙で消す。bind 変数の数が
-  // 孤児側 (通常ほぼ 0 件) に比例し、not in の全 claim 分列挙を避けられる。
+  // 紐付け消失や公開範囲の変化で join に落ちた行は明示的な id 列挙で消す。
+  // bind 変数の数が孤児側 (通常ほぼ 0 件) に比例し、not in の全 claim 分
+  // 列挙を避けられる。
   const orphanIds: string[] = []
   for (const row of claimed) {
     if (!joinedIds.has(row.id)) orphanIds.push(row.id)
