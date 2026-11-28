@@ -58,12 +58,30 @@ test.each([
         throw new Error('Missing TCP address')
       return address.port
     }
+    // A host whose kernel has no IPv6 stack refuses the `::1` bind, so the
+    // listener is optional: the policy decision for that spelling stays
+    // observable without one, because an allowed request reaches the transport
+    // instead of coming back as the policy's own 500.
+    const listenOnIpv6 = async (server: typeof local6) => {
+      try {
+        return await listenOn(server, '::1')
+      } catch (error) {
+        const { code } = error as NodeJS.ErrnoException
+        if (
+          ['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EPROTONOSUPPORT'].includes(
+            code ?? '',
+          )
+        )
+          return null
+        throw error
+      }
+    }
     const port4 = await listenOn(local4, '127.0.0.1')
-    const port6 = await listenOn(local6, '::1')
+    const port6 = await listenOnIpv6(local6)
     // `localhost` is requested on the port of the family fetch connects to
     // first: the first address the resolver returns.
     const { family } = await lookup('localhost')
-    const localhostPort = family === 6 ? port6 : port4
+    const localhostPort = family === 6 && port6 !== null ? port6 : port4
     network.listen({ onUnhandledFrame: policy })
     expect(await (await fetch('https://declared.invalid/request')).text()).toBe(
       'handled',
@@ -75,9 +93,11 @@ test.each([
       expect(
         await (await fetch(`http://localhost:${localhostPort}/`)).text(),
       ).toBe('loopback')
-      const ipv6 = new URL(`http://localhost:${port6}/`)
+      const ipv6 = new URL(`http://localhost:${port6 ?? port4}/`)
       ipv6.hostname = '[::1]'
-      expect(await (await fetch(ipv6)).text()).toBe('loopback')
+      if (port6 === null)
+        await expect(fetch(ipv6)).rejects.toThrow('fetch failed')
+      else expect(await (await fetch(ipv6)).text()).toBe('loopback')
     } else {
       const response = await fetch(`http://localhost:${localhostPort}/`)
       expect(response.status).toBe(500)

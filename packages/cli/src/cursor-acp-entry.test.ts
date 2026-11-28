@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { afterEach, test } from 'vitest'
@@ -57,6 +57,11 @@ async function start(
     },
   )
   children.push(child)
+  // A failed launch is only diagnosable with the wrapper's own output.
+  let diagnostics = ''
+  child.stderr!.on('data', (chunk) => {
+    diagnostics += String(chunk)
+  })
   const ready = await new Promise<any>((resolve, reject) => {
     let buffer = ''
     const timer = setTimeout(
@@ -74,7 +79,11 @@ async function start(
     })
     child.once('exit', (code) => {
       clearTimeout(timer)
-      reject(new Error(`Cursor preview exited ${code}.`))
+      reject(
+        new Error(
+          `Cursor preview exited ${code}. ${basename(fixture)} ${diagnostics.slice(-1000)}`,
+        ),
+      )
     })
   })
   return { child, ready }
@@ -92,6 +101,8 @@ test('managed Cursor launcher creates then loads the workspace ACP session', asy
     `#!/usr/bin/env node
 const fs = require('node:fs'); const readline = require('node:readline');
 const log = process.env.FAKE_ACP_LOG; const rl = readline.createInterface({input:process.stdin}); let promptId;
+// The test kills this process to crash the agent at a point it controls.
+if(process.env.FAKE_PID_FILE) fs.writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));
 rl.on('line', line => { const m=JSON.parse(line); fs.appendFileSync(log,line+'\\n');
 if(m.id===998&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:999,method:'session/request_permission',params:{toolCall:{title:'Edit report'},options:[{optionId:'allow-always',kind:'allow_always'},{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}})+'\\n'); return; }
 if(m.id===999&&!m.method){ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:997,method:'cursor/update_todos',params:{toolCallId:'todos-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1'}})+'\\n'); process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:promptId,result:{stopReason:'end_turn'}})+'\\n'); return; }
@@ -102,7 +113,7 @@ if(m.method==='session/load'&&process.env.FAKE_FAIL_LOAD==='1'){ process.stdout.
 if(m.method==='session/load') result={};
 if(m.method==='session/prompt'&&process.env.FAKE_PROMPT_ERROR==='1'){ if(process.env.FAKE_UNRELATED_UPDATE==='1') process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'cursor-session-1',update:{sessionUpdate:'available_commands_update',availableCommands:[]}}})+'\\n'); setTimeout(()=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{message:'prompt failed'}})+'\\n'),50); return; }
 if(m.method==='session/prompt'){ promptId=m.id; if(process.env.FAKE_HOLD_PROMPT==='1') return; process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:998,method:'cursor/ask_question',params:{questions:[{prompt:'Choose unseen option'}]}})+'\\n'); return; }
-process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((m.method==='session/new'||m.method==='session/load')&&process.env.FAKE_EXIT==='1') setTimeout(()=>process.exit(7),500); });
+process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); });
 `,
     { mode: 0o755 },
   )
@@ -297,12 +308,21 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
 
   const crashedFixture = join(root, 'crashed.html')
   writeFileSync(crashedFixture, '<h1>Crashed ACP</h1>')
-  const crashed = await start(root, crashedFixture, log, { FAKE_EXIT: '1' })
+  const agentPidPath = join(root, 'agent.pid')
+  const crashed = await start(root, crashedFixture, log, {
+    FAKE_PID_FILE: agentPidPath,
+  })
+  // Crash the agent once the preview has reported itself ready, so the
+  // wrapper's classification is observed instead of a race with its startup.
+  process.kill(
+    Number.parseInt(readFileSync(agentPidPath, 'utf8'), 10),
+    'SIGKILL',
+  )
   const crashCode = await new Promise((resolve) =>
     crashed.child.once('exit', resolve),
   )
   assert.equal(crashCode, 1)
-}, 15_000)
+})
 
 test('Cursor entry rejects old Node before loading its body or creating state', () => {
   const root = mkdtempSync(join(tmpdir(), 'artifactshare-cursor-runtime-'))
