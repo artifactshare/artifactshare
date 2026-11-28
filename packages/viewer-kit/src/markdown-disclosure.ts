@@ -1,4 +1,5 @@
 import type { MarkdownExtension } from '@tanstack/markdown'
+import { escapeHtml } from './escape-html.js'
 
 const detailsOpening = /^ {0,3}<details( open)?>\s*$/i
 const anyDetailsOpening = /^ {0,3}<details(?:\s[^>]*)?>\s*$/i
@@ -148,13 +149,4 @@ function isOpeningBoundary(lines: string[], index: number) {
 function isClosingBoundary(lines: string[], index: number) {
   const previous = lines[index - 1] ?? ''
   return previous.trim() === '' || detailsClosing.test(previous)
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;')
 }

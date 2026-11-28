@@ -2,6 +2,7 @@ import {
   MARKDOWN_HIGHLIGHT_CSS,
   renderMarkdownBody,
 } from './markdown-renderer.js'
+import { escapeHtml } from './escape-html.js'
 
 // The CSP violation reporter is injected by the response handler, not
 // here — keeping render output bake-free so Workers Cache stays the
@@ -247,15 +248,6 @@ function plainText(value: string) {
         })[entity] ?? entity,
     ),
   )
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#x27;')
 }
 
 // Inlined so the sandbox iframe doesn't pay a stylesheet fetch before first paint.
