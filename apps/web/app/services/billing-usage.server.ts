@@ -158,10 +158,6 @@ function dailyOverageForMonth(
     .execute()
 }
 
-/**
- * Overage is priced per GB-month: the month's daily overage summed and divided
- * by the days in the month, so a day without a snapshot counts as zero.
- */
 function overageGbMonth(month: string, overageGbDays: number): number {
   return Math.round(overageGbDays / daysInUtcMonth(month))
 }
@@ -584,7 +580,6 @@ export async function loadCurrentMonthOverageProjection(
 ): Promise<OverageProjection> {
   const month = utcMonthString(now)
   const days = await dailyOverageForMonth(db, workspaceId, month)
-  // The days after the latest snapshot are projected at its overage.
   const latest = days.at(-1)
   const projectedGbDays = latest
     ? latest.billable_overage_gb *

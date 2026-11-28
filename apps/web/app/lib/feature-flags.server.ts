@@ -15,14 +15,7 @@ export type FlagSource = {
   FLAGS?: Partial<FlagshipFlagsBinding>
 }
 
-/**
- * Every flag the code reads by name, and what it targets. A flag's target
- * decides the Flagship context it is evaluated with, so two callers of the
- * same flag cannot target it differently.
- */
 export const FEATURE_FLAGS = {
-  // Gates bot creation only. Existing bots keep running and stop/reissue
-  // stay available, so turning the flag off cannot break deployed bots.
   'bot-members': { target: 'workspace' },
   maintenance: { target: 'host' },
 } as const satisfies Record<string, { target: FlagTarget }>
@@ -54,11 +47,6 @@ function isDevFlagEnabled(devFlags: string | undefined, flagKey: string) {
   return (devFlags ?? '').split(',').some((key) => key.trim() === flagKey)
 }
 
-/**
- * Evaluates a flag by key and fails closed: a missing binding in production
- * or an evaluation error reads as off. Outside production, a missing binding
- * (local wrangler dev) reads `DEV_FLAGS`.
- */
 export async function isFlagKeyOn(
   source: FlagSource,
   flagKey: string,

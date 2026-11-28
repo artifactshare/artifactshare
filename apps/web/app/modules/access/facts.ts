@@ -10,11 +10,6 @@ function accessSqlValue(value: AccessSqlValue) {
   return typeof value === 'string' ? sql`${value}` : value
 }
 
-/**
- * The live workspace access that an old creator/owner identity may not use.
- * Keep the membership and stopped-bot meanings together so read and write
- * paths cannot drift apart.
- */
 export async function isWorkspaceAccessRevoked(
   db: Kysely<DB>,
   workspaceId: string,
@@ -72,7 +67,6 @@ export function workspaceAccessRevokedSql(
   )`
 }
 
-/** The complete set of inputs consumed by the shared viewer access policy. */
 export type ViewerAccessFacts = {
   visibility: Visibility
   viewerUserId: string | null
@@ -102,11 +96,9 @@ type ViewerAccessFactsRow = ProjectAccessFactsRow & {
 }
 
 export type LoadedViewerAccessFacts = ViewerAccessFacts & {
-  /** Needed by the apex viewer to preserve its suspended-link response. */
   linkSuspended: boolean
 }
 
-/** Database-owned facts needed to decide whether a project belongs in a list. */
 export type ProjectAccessFacts = {
   viewerUserId: string | null
   viewerWorkspaceId: string | null

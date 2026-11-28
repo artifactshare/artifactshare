@@ -81,7 +81,6 @@ export function resolveStripePrices(env: BillingEnv): StripePrices {
 
 export function isBillingConfigured(env: BillingEnv): boolean {
   const prices = resolveStripePrices(env)
-  // env に key 自体が無い環境 (undefined) も fail-closed にするため falsy 判定。
   return Boolean(
     env.STRIPE_SECRET_KEY &&
     prices.plusMonthly &&
@@ -182,11 +181,6 @@ const BILLABLE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
   'incomplete',
 ] satisfies Stripe.Subscription.Status[])
 
-/**
- * Opens Checkout for the first paid subscription. When the customer already
- * has a subscription Stripe can bill, returns the billing portal URL instead,
- * where the owner manages that subscription.
- */
 export async function createCheckoutSession(
   db: Kysely<DB>,
   stripe: Stripe,
@@ -206,15 +200,10 @@ export async function createCheckoutSession(
   const fixedPriceId = fixedPriceIdForPlan(plan, interval, prices)
   if (!fixedPriceId) return { kind: 'invalid' }
 
-  // Two presses at once would both find no open Checkout and no subscription,
-  // and both create a Checkout. The lease lets one request at a time run the
-  // checks below and create the session.
   const leaseToken = await acquireCheckoutLease(db, workspace.id)
   if (!leaseToken) return { kind: 'checkout-in-progress' }
 
   try {
-    // Read the row again under the lease: a request that held it before may
-    // have saved a customer, and a sync may have saved a paid plan.
     const current = await db
       .selectFrom('workspaces')
       .select(['plan', 'stripe_customer_id'])
@@ -222,9 +211,6 @@ export async function createCheckoutSession(
       .executeTakeFirstOrThrow()
     if (isPaidPlan(current.plan)) return { kind: 'already-subscribed' }
 
-    // The customer may already have a subscription the workspace row does not
-    // show yet, or a Checkout still open in another tab. Either way, paying
-    // would start a second subscription, and the sync tracks only one.
     const existingCustomer = current.stripe_customer_id
     if (existingCustomer) {
       const open = await stripe.checkout.sessions.list({
@@ -285,8 +271,6 @@ export async function createCheckoutSession(
   }
 }
 
-// Longer than one checkout request takes. A request that dies holding the
-// lease blocks Upgrade for at most this long.
 const CHECKOUT_LEASE_MS = 60_000
 
 async function acquireCheckoutLease(
@@ -319,8 +303,6 @@ async function releaseCheckoutLease(
   workspaceId: string,
   token: string,
 ): Promise<void> {
-  // Only the holder clears the lease; an expired one may belong to another
-  // request by now. If this fails, the lease runs out on its own.
   try {
     await db
       .updateTable('workspaces')
@@ -340,8 +322,6 @@ export async function createPortalSession(
   origin: string,
 ): Promise<BillingMutationResult> {
   try {
-    // 未指定だとアカウントのデフォルト設定 (他事業と共有、TechTalk ブランド)
-    // に落ちるため、Artifact Share 専用 configuration を常に明示する。
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       configuration: env.STRIPE_PORTAL_CONFIGURATION,
@@ -359,7 +339,6 @@ export type SubscriptionContract = {
   plan: CheckoutPlan
   interval: BillingInterval
   currency: CheckoutCurrency | null
-  /** Fixed price in display units (JPY yen / USD dollars), tax excluded. */
   amount: number | null
   renewsAt: string | null
   cancelAtPeriodEnd: boolean
@@ -377,8 +356,6 @@ export type MonthlyEstimate = {
   overageEnabled: boolean
 }
 
-// 対象月の末日へ clamp する (3/31 の 1 か月前 = 2 月末日、2/29 の 1 年前 = 2/28)。
-// 時刻成分は保持する (0 時 UTC に落とすと負オフセットの TZ 表示で前日になる)。
 function subtractContractInterval(date: Date, interval: BillingInterval): Date {
   const year =
     interval === 'yearly' || date.getUTCMonth() === 0
@@ -420,8 +397,6 @@ export function resolveMonthlyEstimate(
   const start = subtractContractInterval(renewsAt, contract.interval)
   const startInMonth = start.toISOString().slice(0, 7) === month
   const renewsInMonth = renewsAt.toISOString().slice(0, 7) === month
-  // cancel_at_period_end の契約は期間末に更新されないため、更新請求を計上しない。
-  // past_due は今期の請求が失敗している状態なので、請求済みではなく未払いとして出す。
   const planCharge = startInMonth
     ? subscriptionStatus === 'past_due'
       ? 'unpaid'
@@ -530,13 +505,7 @@ export type PlanChangePreview =
   | {
       kind: 'ok'
       currency: CheckoutCurrency | null
-      /**
-       * Sum of the proration lines this change creates (tax excluded), display
-       * units. Negative = credit. Null when the currency is unknown.
-       * 請求書全体でなく調整分だけを返す (更新料金が混ざると倍額に見える)。
-       */
       prorationAmount: number | null
-      /** ISO timestamp of the previewed next invoice, when Stripe reports it. */
       nextInvoiceAt: string | null
     }
   | { kind: 'no-subscription' }
@@ -577,7 +546,6 @@ export async function previewPlanChange(
       subscription: subscription.id,
       subscription_details: {
         items: [{ id: fixedItem.id, price: nextFixedPriceId }],
-        // 差額は先送りせず変更時に精算する (changePlan と揃える)。
         proration_behavior: 'always_invoice',
         proration_date: prorationDate,
       },
@@ -591,7 +559,6 @@ export async function previewPlanChange(
           line.period?.start === prorationDate,
       )
       .reduce((sum, line) => sum + line.amount, 0)
-    // 行がページングで欠けている場合は誤った合計を出さない。
     const linesComplete = invoice.lines.has_more !== true
     const nextInvoiceEpoch = invoice.next_payment_attempt ?? invoice.period_end
     return {
@@ -646,9 +613,7 @@ export async function changePlan(
 
     await stripe.subscriptions.update(subscription.id, {
       items: [{ id: fixedItem.id, price: nextFixedPriceId }],
-      // 差額を先送りせず変更時に精算する。控除は残高として以後の請求に充当される。
       proration_behavior: 'always_invoice',
-      // 即時請求が決済できない場合は変更を適用しない (未払いのままアップグレードさせない)。
       payment_behavior: 'pending_if_incomplete',
     })
 

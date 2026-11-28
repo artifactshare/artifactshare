@@ -64,10 +64,6 @@ export async function revokeWorkspaceMemberCliSessions(
 ): Promise<TeamMutationResult> {
   const authorized = await requireWorkspaceAdmin(db, actor)
   if (authorized.kind !== 'ok') return authorized
-  // Check order matters: after the admin check (so non-admins learn nothing
-  // about bots) and before the member-state check (so a stopped bot reports
-  // bot-revoke-not-supported instead of a generic failure). Bot credentials
-  // are written only by the dedicated stop/reissue paths.
   const target = await db
     .selectFrom('users')
     .select('kind')
@@ -390,8 +386,6 @@ export async function loadWorkspaceMembersPage(
     .innerJoin('users', 'users.id', 'workspace_members.user_id')
     .where('workspace_members.workspace_id', '=', workspaceId)
     .where('users.workspace_id', '=', workspaceId)
-    // Bots live in their own members-page section; the human list keeps its
-    // filter/paging semantics with only this kind condition added.
     .where('users.kind', '=', 'human')
     .where('workspace_members.status', '!=', 'removed')
     .where((eb) => eb.and(memberFilterConditions(filters)))
@@ -621,8 +615,6 @@ export async function searchAssetTransferRecipients(
     .where('workspace_members.workspace_id', '=', workspaceId)
     .where('workspace_members.status', '=', 'active')
     .where('users.workspace_id', '=', workspaceId)
-    // Bots can never receive transferred assets (ownership transfer would
-    // corrupt provenance).
     .where('users.kind', '=', 'human')
   const excludeUserIds = options.excludeUserIds?.filter(Boolean) ?? []
   if (excludeUserIds.length > 0) {
@@ -652,26 +644,23 @@ function removedMemberGuard(
   targetUserId: string,
   actorId: string,
 ) {
-  return (
-    db
-      .selectFrom('workspace_members')
-      .select('user_id')
-      .where('workspace_id', '=', workspaceId)
-      .where('user_id', '=', targetUserId)
-      .where('status', '=', 'removed')
-      // Stopped bots are excluded from removed-member flows entirely.
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom('users')
-            .select('id')
-            .where('id', '=', targetUserId)
-            .where('kind', '=', 'human'),
-        ),
-      )
-      .where(({ exists }) =>
-        exists(workspaceAdminQuery(db, actorId, workspaceId)),
-      )
-  )
+  return db
+    .selectFrom('workspace_members')
+    .select('user_id')
+    .where('workspace_id', '=', workspaceId)
+    .where('user_id', '=', targetUserId)
+    .where('status', '=', 'removed')
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('users')
+          .select('id')
+          .where('id', '=', targetUserId)
+          .where('kind', '=', 'human'),
+      ),
+    )
+    .where(({ exists }) =>
+      exists(workspaceAdminQuery(db, actorId, workspaceId)),
+    )
 }
 
 function eligibleAssetRecipient(
@@ -927,7 +916,6 @@ export async function restoreWorkspaceMember(
     .where('workspace_members.workspace_id', '=', actor.workspaceId)
     .where('workspace_members.user_id', '=', targetUserId)
     .where('workspace_members.status', '=', 'removed')
-    // Stopped bots are never restored; recovery is a new bot.
     .where('users.kind', '=', 'human')
     .executeTakeFirst()
   if (!target) {
@@ -1240,9 +1228,6 @@ export async function removeWorkspaceMember(
     ])
     .where('workspace_members.workspace_id', '=', actor.workspaceId)
     .where('workspace_members.user_id', '=', targetUserId)
-    // Bots cannot be removed here: the personal-workspace creation and
-    // workspace_id move would break every bot authority. Stopping a bot is
-    // the dedicated bot stop path only.
     .where('users.kind', '=', 'human')
     .executeTakeFirst()
 
@@ -1534,7 +1519,6 @@ export async function ensureWorkspaceAdmin(
   const existing = await owner.executeTakeFirst()
   if (existing) return existing.user_id
 
-  // Migration 0133 uses the same owner selection but preserves source timestamps.
   const candidate = db
     .selectFrom('users as u')
     .leftJoin('workspace_members as m', (join) =>
@@ -1599,18 +1583,15 @@ function eligibleAdminTarget(
   actor: { workspaceId: string },
   targetUserId: string,
 ) {
-  return (
-    db
-      .selectFrom('workspace_members')
-      .innerJoin('users', 'users.id', 'workspace_members.user_id')
-      .select('users.id')
-      .where('workspace_members.workspace_id', '=', actor.workspaceId)
-      .where('workspace_members.user_id', '=', targetUserId)
-      .where('users.workspace_id', '=', actor.workspaceId)
-      .where('workspace_members.status', '=', 'active')
-      // Bots can never be promoted to admin or receive ownership.
-      .where('users.kind', '=', 'human')
-  )
+  return db
+    .selectFrom('workspace_members')
+    .innerJoin('users', 'users.id', 'workspace_members.user_id')
+    .select('users.id')
+    .where('workspace_members.workspace_id', '=', actor.workspaceId)
+    .where('workspace_members.user_id', '=', targetUserId)
+    .where('users.workspace_id', '=', actor.workspaceId)
+    .where('workspace_members.status', '=', 'active')
+    .where('users.kind', '=', 'human')
 }
 
 export async function requireWorkspaceAdmin(
@@ -1814,9 +1795,6 @@ async function loadUser(db: Kysely<DB>, userId: string): Promise<TeamMember> {
   return row
 }
 
-/** Whether a human member of this workspace has already been removed. A
- * removal whose response was lost has committed, so a retry of that removal
- * treats this as done and carries on with the asset transfer. */
 export async function isRemovedWorkspaceMember(
   db: Kysely<DB>,
   workspaceId: string,
@@ -1852,7 +1830,6 @@ export async function loadRemovedWorkspaceMembers(
     )
     .where('workspace_members.workspace_id', '=', workspaceId)
     .where('workspace_members.status', '=', 'removed')
-    // Stopped bots stay in the bot section, never in the removed-member list.
     .where('users.kind', '=', 'human')
     .orderBy('users.email', 'asc')
     .execute()
