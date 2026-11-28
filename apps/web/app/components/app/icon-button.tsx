@@ -19,9 +19,11 @@ const iconStrokeWidth = {
   md: 2.2,
 } as const
 
+// IconButton owns iconSize, as it owns size and variant: its icons always
+// carry their own width and height.
 type IconButtonProps = Omit<
   ComponentProps<typeof Button>,
-  'children' | 'size' | 'variant'
+  'children' | 'iconSize' | 'size' | 'variant'
 > & {
   icon: TablerIcon
   size: keyof typeof sizeClassName
@@ -37,15 +39,15 @@ export function IconButton({
     <Button
       variant="ghost"
       size="icon-sm"
+      iconSize="auto"
       className={cn(
-        'text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-auto',
+        'text-muted-foreground hover:bg-accent hover:text-foreground',
         sizeClassName[size],
         className,
       )}
       {...props}
     >
       <Icon
-        className="size-auto"
         size={iconSize[size]}
         strokeWidth={iconStrokeWidth[size]}
         aria-hidden="true"
