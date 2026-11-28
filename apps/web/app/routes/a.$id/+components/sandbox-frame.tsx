@@ -538,7 +538,6 @@ function useSandboxFrameController({
   const isTransitioning = useViewTransitionState(`/a/${shareableId}`)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const wasTransitioningRef = useRef(false)
-  const readyFallbackTimeoutRef = useRef<number | null>(null)
   const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
   const frameDestinationRef = useRef(0)
@@ -725,13 +724,6 @@ function useSandboxFrameController({
     },
   )
 
-  const clearReadyFallback = useCallback(() => {
-    if (readyFallbackTimeoutRef.current !== null) {
-      window.clearTimeout(readyFallbackTimeoutRef.current)
-      readyFallbackTimeoutRef.current = null
-    }
-  }, [])
-
   const reportBlock = useCallback(
     (failureType: 'forbidden' | 'network-error' | 'timeout') => {
       const generation = frameNavigationIdRef.current
@@ -851,7 +843,6 @@ function useSandboxFrameController({
   )
 
   const markFrameReadyFromMessage = useEffectEvent(() => {
-    clearReadyFallback()
     if (reportTimerRef.current !== null) {
       window.clearTimeout(reportTimerRef.current)
       reportTimerRef.current = null
@@ -939,7 +930,6 @@ function useSandboxFrameController({
         securityTokenRef.current = null
         hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
-        clearReadyFallback()
         pendingJumpRef.current = jump
         dispatchFrame({ type: 'navigate', url: destination })
         // The same src would not navigate a document that moved away from it
@@ -959,7 +949,6 @@ function useSandboxFrameController({
         hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
         staticSiteAuthRef.current = Date.now()
-        clearReadyFallback()
         pendingJumpRef.current = jump
         dispatchFrame({ type: 'navigate', url: nextFrameUrl })
       })
@@ -1132,15 +1121,8 @@ function useSandboxFrameController({
     setPendingExternalNavigation(null)
     mermaidRenderChallengeRef.current = null
     requestFrameReady()
-    clearReadyFallback()
     sendHighlights()
-  }, [
-    clearReadyFallback,
-    hashSync,
-    requestFrameReady,
-    sendHighlights,
-    setPdfPage,
-  ])
+  }, [hashSync, requestFrameReady, sendHighlights, setPdfPage])
 
   const handleFrameMessage = useEffectEvent((event: MessageEvent) => {
     const message = sandboxMessageFromFrame(
@@ -1188,7 +1170,6 @@ function useSandboxFrameController({
         )
       }
       markFrameReadyFromMessage()
-      clearReadyFallback()
     } else if (message.kind === 'hash-changed') {
       if (
         !securityTokenRef.current ||
@@ -1427,6 +1408,9 @@ function useSandboxFrameController({
       FRAME_READY_CHECK_INTERVAL_MS,
     )
     const generation = frameNavigationIdRef.current
+    // The ready fallback: a document that never answers a ready-check is
+    // probed instead of waiting forever. The timer belongs to this effect, so
+    // leaving 'loading' or unmounting clears it, and nothing else has to.
     const fallback = window.setTimeout(() => {
       void probe(generation)
     }, 3000)
@@ -1471,10 +1455,6 @@ function useSandboxFrameController({
       window.removeEventListener('pageshow', onPageShow)
     }
   }, [requestFrameReady])
-
-  useEffect(() => {
-    return clearReadyFallback
-  }, [clearReadyFallback])
 
   useEffect(() => {
     if (wasTransitioningRef.current && !isTransitioning) {
