@@ -100,12 +100,12 @@ Assumed:
 - The artifact and its container are in one workspace, and a project's creator is in that workspace. The model does not move users between workspaces.
 - Email matching is exact. `lowerEmail`, `grantMatchEmail`, and the session's `emailVerified` against the database's `email_verified` are one boolean each.
 - Link expiry is one of four classes, read by `activeLinkExpiry`. The string formats behind them are not in the model. Each list and `facts` read expiry with `activeLinkExpiry`, and `checkAnonymousLinkAccess` reads it with `isValidUtcIso` and `Date.parse`.
-- Every caller of `visibleShareableToViewer` in the coverage table applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check other callers. `listFeedEvents` slice `project` is the known exception, see Left out.
+- Every caller of `visibleShareableToViewer` in the coverage table applies `shareables.workspace_id = user.workspaceId`, as its comment demands. The model does not check other callers. `listFeedEvents` slice `project` applies the container's equivalent, `projectContainers.workspace_id = user.workspaceId`.
 
 Left out:
 
 - Anonymous viewers (they open only through `AnonymousLinkAllowed`), agent credential scopes (`agentReadableShareableSql`), bot-specific grants, Slack and the comment and access-request paths that call `viewerDisplayCheck`.
-- `listFeedEvents` slice `project` (project page activity). It applies `visibleShareableToViewerSql` to a viewer with an active `workspace_members` row in the project's workspace, not to `users.workspace_id`. That differs from `sameWs` for a user who holds an active row outside their own workspace, which the model does not represent, and for a removed member of their own workspace, who gets the narrower shared branch instead. A scratch model with such rows breaks it in an initial state, and whether the product can make such a row is unconfirmed.
+- `listFeedEvents` slice `project` (project page activity) and `listProjectViewRanking`. Both now split on `projectContainers.workspace_id = user.workspaceId`, the test `sameWs` describes, but the model has no operator for either. The product does create an active `workspace_members` row outside the holder's own workspace: `reserveContributorSlot` writes one in the host workspace when an external contributor posts into a shared project, so the earlier gate on that row disagreed with `sameWs`. `events.server.test.ts` covers that viewer.
 - The activity feed's relation filter (the `artifact_created`, owner, and recency branches of slice `mine`). Leaving it out makes the model list more than the code, so it cannot hide a breach of `ActivityFeedOpens`.
 - The search palette's own filters and `listRailProjects`. Search index freshness: the model checks the eligibility SQL, not the index.
 - Who may write: the authority checks on visibility, audience, and archive changes. Every write is allowed in the model.

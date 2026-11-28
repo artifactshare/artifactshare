@@ -5,8 +5,10 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 import { sql } from 'kysely'
 import { describe, expect, test } from 'vitest'
 import { localDayKeyFromTimezone } from '~/lib/datetime'
+import { facts } from '~/modules/access'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { mergeFeedRows } from '~/lib/feed-merge'
+import { viewerAccessAllowed } from './access.server'
 import {
   artifactCreatedEventQuery,
   artifactViewedEventQuery,
@@ -2114,6 +2116,45 @@ describe('project slice and ranking', () => {
     expect(result.rows.map((r) => r.shareableId)).toEqual(['p1'])
   })
 
+  test('a removed member of the project workspace sees no rows', async () => {
+    const { db } = await projectFixture()
+    await db
+      .updateTable('workspace_members')
+      .set({ status: 'removed', removed_at: '2026-06-01T00:00:00Z' })
+      .where('workspace_id', '=', 'w1')
+      .where('user_id', '=', 'u1')
+      .execute()
+    await db
+      .insertInto('events')
+      .values(
+        projectEvent({
+          id: 'e-removed',
+          type: 'artifact_viewed',
+          shareableId: 'p1',
+          actorUserId: 'u2',
+          subjectId: null,
+          createdAt: '2026-07-01T10:00:00Z',
+        }),
+      )
+      .execute()
+    const result = await listFeedEvents(db, {
+      user: feedUser,
+      timeZone: 'UTC',
+      slice: 'project',
+      containerId: 'proj1',
+      targetRows: 10,
+      maxRawEvents: 100,
+    })
+    expect(result.rows).toEqual([])
+    expect(
+      await listProjectViewRanking(db, {
+        containerId: 'proj1',
+        now: '2026-07-03T00:00:00Z',
+        user: feedUser,
+      }),
+    ).toEqual([])
+  })
+
   test('ranking counts a 30-day window, caps at five rows, and returns empty without views', async () => {
     const { db } = await projectFixture()
     const now = '2026-07-31T15:00:00Z'
@@ -2492,5 +2533,279 @@ describe('mine participation feed', () => {
       maxRawEvents: 100,
     })
     expect(result.rows.map((r) => r.shareableId)).toEqual(['r-vis'])
+  })
+})
+
+describe('project activity for a cross-workspace contributor', () => {
+  // 外部ワークスペースの contributor が投稿すると、reserveContributorSlot が
+  // 投稿先ワークスペースへ workspace_members(status 'active', pending_uploads 1)
+  // を入れる。users.workspace_id は自分のワークスペースのままなので、
+  // project activity の可視判定は閲覧者自身のワークスペースで絞る。
+  const T = '2026-07-01T10:00:00.000Z'
+  const NOW = '2026-07-03T00:00:00.000Z'
+  const contributor = {
+    id: 'contrib',
+    workspaceId: 'w-ext',
+    email: 'contrib@partner.example',
+    emailVerified: true,
+  }
+
+  async function contributorFixture() {
+    const { db } = createMigratedInMemoryDb()
+    for (const id of ['w-ext', 'w-host'])
+      await db
+        .insertInto('workspaces')
+        .values({
+          id,
+          name: id,
+          hd: null,
+          ms_tenant_id: null,
+          email_domain: null,
+          created_at: T,
+        })
+        .execute()
+    for (const [id, email, workspaceId] of [
+      ['contrib', contributor.email, 'w-ext'],
+      ['host', 'host@example.com', 'w-host'],
+    ] as const)
+      await db
+        .insertInto('users')
+        .values({
+          id,
+          email,
+          name: id,
+          email_verified: 1,
+          image: null,
+          created_at: T,
+          updated_at: T,
+          workspace_id: workspaceId,
+          locale: null,
+        })
+        .execute()
+    await db
+      .insertInto('workspace_members')
+      .values([
+        {
+          workspace_id: 'w-ext',
+          user_id: 'contrib',
+          role: 'member',
+          status: 'active',
+          pending_uploads: 0,
+          first_contributed_at: T,
+          created_at: T,
+          updated_at: T,
+        },
+        {
+          workspace_id: 'w-host',
+          user_id: 'host',
+          role: 'owner',
+          status: 'active',
+          pending_uploads: 0,
+          first_contributed_at: T,
+          created_at: T,
+          updated_at: T,
+        },
+        // reserveContributorSlot が外部投稿者のために入れる行
+        {
+          workspace_id: 'w-host',
+          user_id: 'contrib',
+          role: 'member',
+          status: 'active',
+          pending_uploads: 1,
+          first_contributed_at: null,
+          created_at: T,
+          updated_at: T,
+        },
+      ])
+      .execute()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: 'host-proj',
+        workspace_id: 'w-host',
+        kind: 'project',
+        owner_user_id: null,
+        created_by_id: 'host',
+        name: 'Host project',
+        base_visibility: 'workspace',
+        created_at: T,
+        updated_at: T,
+      })
+      .execute()
+    // contributor がこのプロジェクトへ投稿できる根拠
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'audience-contrib',
+        project_container_id: 'host-proj',
+        email: contributor.email,
+        role: 'contributor',
+        created_by_id: 'host',
+        created_at: T,
+        updated_at: T,
+      })
+      .execute()
+    for (const [id, visibility] of [
+      ['shared-file', 'project'],
+      ['host-only-file', 'workspace'],
+    ] as const) {
+      await db
+        .insertInto('shareables')
+        .values({
+          id,
+          workspace_id: 'w-host',
+          owner_user_id: 'host',
+          name: `Artifact ${id}`,
+          artifact_kind: 'markdown_page',
+          visibility,
+          container_id: 'host-proj',
+          created_at: T,
+          updated_at: T,
+        })
+        .execute()
+      await db
+        .insertInto('versions')
+        .values({
+          id: `${id}-v1`,
+          shareable_id: id,
+          artifact_kind: 'markdown_page',
+          status: 'published',
+          entrypoint_path: '/index.md',
+          r2_key: `${id}-key`,
+          size_bytes: 1,
+          sha256: 'x',
+          created_by_id: 'host',
+          created_at: T,
+          published_at: T,
+        })
+        .execute()
+      for (const [suffix, type, subjectId] of [
+        ['created', 'artifact_created', `${id}-v1`],
+        ['viewed', 'artifact_viewed', null],
+      ] as const)
+        await db
+          .insertInto('events')
+          .values({
+            id: `${id}-${suffix}`,
+            workspace_id: 'w-host',
+            type,
+            shareable_id: id,
+            actor_user_id: 'host',
+            subject_id: subjectId,
+            created_at: T,
+          })
+          .execute()
+    }
+    // feed はコメント本文も載せるので、ワークスペース可視のファイルに 1 件置く
+    await db
+      .insertInto('comment_threads')
+      .values({
+        id: 'host-only-thread',
+        shareable_id: 'host-only-file',
+        status: 'open',
+        created_by_id: 'host',
+        created_at: T,
+        updated_at: T,
+        message_count: 1,
+      })
+      .execute()
+    await db
+      .insertInto('comment_messages')
+      .values({
+        id: 'host-only-comment',
+        thread_id: 'host-only-thread',
+        body: 'host only comment',
+        created_by_id: 'host',
+        created_at: T,
+        updated_at: T,
+      })
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: 'host-only-commented',
+        workspace_id: 'w-host',
+        type: 'comment_posted',
+        shareable_id: 'host-only-file',
+        actor_user_id: 'host',
+        subject_id: 'host-only-comment',
+        created_at: T,
+      })
+      .execute()
+    return db
+  }
+
+  async function canOpen(
+    db: ReturnType<typeof createMigratedInMemoryDb>['db'],
+    shareableId: string,
+  ) {
+    const loaded = await facts(db, {
+      shareableId,
+      viewerUserId: contributor.id,
+      now: NOW,
+    })
+    return Boolean(loaded && viewerAccessAllowed(loaded))
+  }
+
+  async function projectActivity(
+    db: ReturnType<typeof createMigratedInMemoryDb>['db'],
+  ) {
+    const feed = await listFeedEvents(db, {
+      user: contributor,
+      timeZone: 'UTC',
+      slice: 'project',
+      containerId: 'host-proj',
+      targetRows: 20,
+      maxRawEvents: 100,
+    })
+    const ranking = await listProjectViewRanking(db, {
+      containerId: 'host-proj',
+      now: NOW,
+      user: contributor,
+    })
+    return {
+      feedShareableIds: [
+        ...new Set(feed.rows.map((row) => row.shareableId)),
+      ].sort(),
+      feedTitles: [
+        ...new Set(feed.rows.map((row) => row.shareableTitle)),
+      ].sort(),
+      feedCommentBodies: feed.rows
+        .map((row) => row.commentBody)
+        .filter((body) => body !== null),
+      rankingShareableIds: ranking.map((row) => row.shareableId).sort(),
+    }
+  }
+
+  test('feed and ranking hide a workspace-visibility file of the host workspace', async () => {
+    const db = await contributorFixture()
+    // 成果物ページの判定: project 可視は見えて、workspace 可視は見えない
+    expect(await canOpen(db, 'shared-file')).toBe(true)
+    expect(await canOpen(db, 'host-only-file')).toBe(false)
+
+    expect(await projectActivity(db)).toEqual({
+      feedShareableIds: ['shared-file'],
+      feedTitles: ['Artifact shared-file'],
+      feedCommentBodies: [],
+      rankingShareableIds: ['shared-file'],
+    })
+  })
+
+  test('feed and ranking list nothing once the contributor leaves the audience', async () => {
+    const db = await contributorFixture()
+    await db
+      .deleteFrom('project_share_defaults')
+      .where('project_container_id', '=', 'host-proj')
+      .execute()
+
+    expect(await canOpen(db, 'shared-file')).toBe(false)
+    expect(await canOpen(db, 'host-only-file')).toBe(false)
+
+    expect(await projectActivity(db)).toEqual({
+      feedShareableIds: [],
+      feedTitles: [],
+      feedCommentBodies: [],
+      rankingShareableIds: [],
+    })
   })
 })
