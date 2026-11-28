@@ -1,5 +1,5 @@
 import { errorResponse } from '~/lib/api-errors'
-import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
+import { MAX_EMAILS_PER_REQUEST, MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { isExternalPostingEnabledForWorkspace } from '~/lib/project-external-posting.server'
 import {
   PROJECT_SHARE_ROLES,
@@ -17,8 +17,6 @@ import {
 import type { Route } from './+types/api.projects.$id.share-defaults'
 
 export const middleware = [requireUserApiMiddleware]
-
-const MAX_EMAILS_PER_REQUEST = 100
 
 export function loader() {
   return new Response('Method Not Allowed', { status: 405 })

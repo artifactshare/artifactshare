@@ -1,4 +1,5 @@
 import { errorResponse } from '~/lib/api-errors'
+import { MAX_EMAILS_PER_REQUEST } from '~/lib/grant-emails'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { createDb } from '~/services/db.server'
@@ -32,12 +33,10 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   return Response.json({ entries: result.entries })
 }
 
-const LOOKUP_EMAIL_LIMIT = 100
-
 function parseEmails(body: { emails?: unknown } | null): string[] | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
   if (!Array.isArray(body.emails)) return null
-  if (body.emails.length > LOOKUP_EMAIL_LIMIT) return null
+  if (body.emails.length > MAX_EMAILS_PER_REQUEST) return null
   if (body.emails.some((email) => typeof email !== 'string')) return null
   return body.emails
 }
