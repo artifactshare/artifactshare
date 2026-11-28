@@ -76,9 +76,7 @@ export function cursorNotificationRegistration(
           registered_at: now().toISOString(),
         }
       }
-    } catch {
-      /* malformed trusted-local context becomes manual */
-    }
+    } catch {}
     return manual(now)
   }
   if (!environment.CURSOR_AGENT) return null
@@ -126,9 +124,6 @@ export function createCursorAcpAdapter(
             'content-type': 'application/json',
           },
           body: JSON.stringify(event),
-          // The bridge always ends or tears down the ACP prompt before this
-          // request can time out, so a failed dispatch cannot keep running in
-          // Cursor while the UI recommends manual recovery.
           signal: AbortSignal.timeout(CURSOR_ACP_FETCH_TIMEOUT_MS),
         })
         if (response.status === 202) return { status: 'accepted' }

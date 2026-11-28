@@ -54,8 +54,6 @@ export async function cliFetch(
 ): Promise<Response | NetworkFailure> {
   const { insecureLocalhost, ...requested } = init
   const { fetch, Agent, EnvHttpProxyAgent } = await loadUndici()
-  // Tell the server which newer artifact kinds this CLI can parse. Keep the
-  // caller's headers as a plain object with their original names.
   const given = requested.headers as
     | Record<string, string>
     | [string, string][]

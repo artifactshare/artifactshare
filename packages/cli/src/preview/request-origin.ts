@@ -7,7 +7,6 @@ export function mutationOriginAllowed(
   fetchSite?: string | string[],
 ): boolean {
   if (fetchSite !== undefined && typeof fetchSite !== 'string') return false
-  // Reject foreign browser contexts even when Origin was omitted.
   if (fetchSite === 'cross-site' || fetchSite === 'same-site') return false
   // Firefox can serialize the shell's Origin as null under no-referrer.
   // Fetch Metadata is browser-controlled: an opaque sandbox frame sends

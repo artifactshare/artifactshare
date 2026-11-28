@@ -45,7 +45,6 @@ const same = (a: BigIntStats, b: BigIntStats) =>
   a.isDirectory() === b.isDirectory() &&
   a.isFile() === b.isFile()
 
-/** Observed identity checks, not an atomic directory-relative filesystem API. */
 export class WriteBoundary {
   private entries = new Map<string, Entry>()
   private children = new Map<string, Set<string>>()
@@ -154,9 +153,6 @@ export class WriteBoundary {
   }
 
   async check(...paths: string[]) {
-    // Follow only the operation endpoints and guards through their recorded
-    // ancestry. Checking just the immediate parent misses an ancestor redirect
-    // that preserves the identities of the descendants beneath it.
     const selected = new Set<string>()
     for (const target of [
       ...this.guards,
@@ -188,7 +184,6 @@ export class WriteBoundary {
       if (!s || !same(s, entry.stat)) throw new WriteBoundaryError(path)
       const parent = this.entries.get(dirname(path))
       if (parent && !this.trustedParents.has(path)) {
-        // Compare physical parent identity, never normalized path spellings.
         const physical = await (this.dependencies.realpath ?? fs.realpath)(
           path,
         ).catch(() => {
@@ -399,15 +394,12 @@ export class WriteBoundary {
   }
 
   async cleanup() {
-    // Never recursively delete: unknown children and retained originals prevent
-    // removing their containing directory. Verify each created entry separately.
     const retained = (path: string) =>
       this.backupPaths.some(
         (backup) => backup === path || backup.startsWith(`${path}${sep}`),
       )
     for (const [path, entry] of [...this.entries].reverse()) {
       if (!entry.owned || retained(path)) continue
-      // Published entries are deliberately no longer owned by this run.
       await this.before('remove', path)
       if (entry.stat.isDirectory())
         await this.io(path, () => (this.dependencies.rmdir ?? fs.rmdir)(path))
@@ -423,13 +415,9 @@ export class WriteBoundary {
     try {
       await this.check(this.workspace)
       if ((await fs.readdir(this.workspace)).length > 0) return this.workspace
-    } catch {
-      // A substituted or inaccessible path is not a verified recovery location.
-    }
+    } catch {}
   }
 
-  // Displaced originals remain recoverable after successful publication.
-  // cleanup removes only owned entries outside their retained containers.
   async finish() {
     await this.cleanup()
   }

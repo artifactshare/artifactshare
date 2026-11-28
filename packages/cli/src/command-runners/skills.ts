@@ -43,8 +43,6 @@ type SkillScope = 'project' | 'user'
 
 type ScopeTargetConfig = {
   relativePath: string
-  // Directories created by install, innermost first; remove prunes them
-  // when empty but never the tool root (.agents, .cursor, ...).
   pruneDirs: readonly string[]
 }
 
@@ -291,7 +289,6 @@ function targetInspection(target: SkillTarget) {
 async function readTarget(target: SkillTarget) {
   return (await targetInspection(target)).folder.state
 }
-// A missing folder inherits the managed legacy rule's version.
 async function newerInstalledVersion(
   target: SkillTarget,
   bundle: BundledSkills,
@@ -414,7 +411,6 @@ function parseTools(
       tools.push(trimmed)
     }
   }
-  // A blank --tool must not silently widen update/remove to every target.
   if (raws.length > 0 && tools.length === 0) {
     return {
       error: validationError(
@@ -713,10 +709,8 @@ async function recoveryRecommendation(
       try {
         await preflightFolder(target.absolutePath, bundled, true)
         update_command = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
-        // doctor shows no command for an unowned folder; name the collision.
         if (folder.unowned) collision = (first as Error).message
       } catch (error) {
-        // An unowned folder blocked only by user links needs no repair advice.
         if (folder.unowned && error instanceof SkillPathError && error.isLink)
           return { suppressHint: true }
         return {
@@ -1365,7 +1359,6 @@ export async function runSkillsList(
 export async function skillDiagnostics(): Promise<DoctorSkillsData> {
   const bundled = await loadBundledSkills()
   const targets = []
-  // A combined --force would also downgrade a newer legacy-only rule.
   let newerLegacyOnly = false
   for (const target of await groupTargets(allTargets())) {
     if (!availableTarget(target)) {

@@ -1,7 +1,3 @@
-// Generates src/preview/messages.generated.ts from the web app dictionaries.
-// The web en/ja catalogs are the single source of preview UI copy; this
-// script extracts the preview.* subset at build time so the CLI bundle
-// carries no runtime dependency on apps/web.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -31,8 +27,6 @@ if (enKeys.length === 0) {
   console.error('no preview.* keys found in the web catalogs')
   process.exit(1)
 }
-// Emit the repository formatter's shape directly (single quotes, bare
-// identifier keys, trailing commas) so a rebuild never dirties the tree.
 function quote(value) {
   // JSON.stringify already escapes quotes, backslashes, and the line
   // terminators that would otherwise emit an unterminated string literal.
@@ -59,7 +53,6 @@ const body =
   "export type PreviewMessageKey = keyof (typeof PREVIEW_MESSAGES)['en']\n"
 writeFileSync(out, body)
 
-// Normalize to the repository formatter so a rebuild never dirties the tree.
 const repoRoot = join(here, '..', '..', '..')
 const fmt = spawnSync(
   'pnpm',

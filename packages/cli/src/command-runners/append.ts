@@ -86,8 +86,6 @@ export async function runAppend(
         mode,
         1,
       )
-    // A PDF is a .pdf name with the %PDF- header; text that merely starts
-    // with those bytes is still appended.
     if (isPdfFileName(file.name) && (await blobHasPdfMagic(file.blob)))
       return writeFailure(
         command,
@@ -98,7 +96,6 @@ export async function runAppend(
         mode,
         1,
       )
-    // Likewise a video is a .mp4 name with an ftyp box at byte 4.
     if (isMp4FileName(file.name) && (await blobHasMp4Signature(file.blob)))
       return writeFailure(
         command,

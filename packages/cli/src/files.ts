@@ -61,13 +61,10 @@ export async function prepareUploadPayload(
     if (single) {
       kind = artifactKindForFile(single.name)
       if (isPdfFileName(single.name)) {
-        // Classify from the bytes already read through the boundary; the path
-        // is never reopened. A .pdf name without %PDF- magic is not a PDF.
         if (!(await blobHasPdfMagic(single.blob)))
           return { error: notPdfError(single.name) }
         kind = 'pdf'
       } else if (isMp4FileName(single.name)) {
-        // Likewise a .mp4 name needs an ISO base media ftyp box at offset 4.
         if (!(await blobHasMp4Signature(single.blob)))
           return { error: notMp4Error(single.name) }
         kind = 'video'
@@ -137,8 +134,6 @@ export async function prepareDownloadPlan(
       }),
     }
   }
-  // Project preflight already enumerated the tree. Reuse those records, but
-  // still verify every identity instead of treating preflight as a bypass.
   if (treePreflighted) await boundary.checkTree(root)
   else await boundary.tree(root)
   const seen = new Set<string>()
@@ -284,10 +279,8 @@ function artifactKindForFile(path: string): 'html_page' | 'markdown_page' {
 }
 
 export const PDF_CONTENT_TYPE = 'application/pdf'
-// ASCII "%PDF-" at byte zero.
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d] as const
 
-/** A single-file upload is a PDF only with a `.pdf` name (any case) and magic. */
 export function isPdfFileName(name: string): boolean {
   return name.toLowerCase().endsWith('.pdf')
 }
@@ -310,10 +303,8 @@ function notPdfError(name: string): CliError {
 }
 
 export const MP4_CONTENT_TYPE = 'video/mp4'
-// ASCII "ftyp", the type of the ISO base media file's first box, at bytes 4-7.
 const FTYP = [0x66, 0x74, 0x79, 0x70] as const
 
-/** A single-file upload is a video only with a `.mp4` name (any case) and an ftyp box. */
 export function isMp4FileName(name: string): boolean {
   return name.toLowerCase().endsWith('.mp4')
 }

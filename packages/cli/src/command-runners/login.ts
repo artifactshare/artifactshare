@@ -642,8 +642,6 @@ export async function writeProfileConfig(
   tokenStore: TokenStoreKind,
   whoami: WhoamiProfile,
 ) {
-  // Re-read just before writing so a concurrent login for another profile is
-  // not clobbered by a stale snapshot.
   const config = (await readGlobalConfig()) ?? {}
   const profiles = config.profiles ?? {}
   const currentProfile = Object.hasOwn(profiles, profile)
@@ -655,9 +653,6 @@ export async function writeProfileConfig(
     profiles: {
       ...profiles,
       [profile]: {
-        // Rebuild rather than spread so a stale kind:'bot' marker from a
-        // replaced bot profile is dropped: keeping it would route a later
-        // expiry into the bot "ask for reissue" dead end instead of reauth.
         ...(currentProfile
           ? Object.fromEntries(
               Object.entries(currentProfile).filter(([key]) => key !== 'kind'),

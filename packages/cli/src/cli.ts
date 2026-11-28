@@ -726,8 +726,6 @@ const downloadDefinition = define({
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
-      // Optional so `download --project-id <id>` can run without a target;
-      // runDownload validates the two modes' exclusivity itself.
       required: false,
       description:
         'Artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL',
@@ -2050,7 +2048,6 @@ export async function runCli(argv: string[]): Promise<void> {
   })
 }
 
-// The same definitions drive help, parsing and local option validation.
 export function commandOptionCatalog() {
   const catalog = new Map<string, CommandSpec>()
   const visit = (path: string, definition: OptionDefinition) => {

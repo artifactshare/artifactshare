@@ -169,7 +169,6 @@ export interface PreviewStore {
     author: PreviewThreadMessage['author'],
   ): PreviewStoreResult
   reopen(thread: string): PreviewStoreResult
-  /** Removes a draft, resolved or dismissed comment in one saved transaction. */
   discardOrphan(thread: string): PreviewStoreResult
   setAnchorState(
     thread: string,
@@ -243,7 +242,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         for (const batch of record.batches) {
           if (!isBatch(batch)) continue
           const members = batch.members.flatMap((member) => {
-            // Completed generations remain useful history after a reopen.
             if (member.terminal_result !== null) return [member]
             const annotation = retained.get(
               `${member.thread}:${member.generation}`,
@@ -380,14 +378,11 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     try {
       writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
       chmodSync(temp, 0o600)
-      // Rename is the commit point: nothing throwable follows it.
       renameSync(temp, annotationsPath)
     } catch (error) {
       try {
         rmSync(temp, { force: true })
-      } catch {
-        /* Preserve the write error. */
-      }
+      } catch {}
       throw error
     }
   }
@@ -453,7 +448,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         status: 'draft',
         anchor,
         comment,
-        // A rewrite may stand alone; its reason is optional.
         messages: comment || !rewrite ? [message('human', comment)] : [],
         batch_id: null,
         created_at: created,
@@ -670,9 +664,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     recoverInterruptedBatch() {
       const batch = activeBatch()
       if (!batch) return
-      // Runtime registrations and their targets end with the server process.
-      // A fetched batch may still be worked on, but every unclaimed batch must
-      // require explicit pickup rather than inherit a stale queued/failed fact.
       if (batch.state !== 'processing') {
         batch.state = 'manual_required'
         batch.failure_code = null
@@ -704,7 +695,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     discardOrphan(thread) {
       const annotation = find(thread)
       if (!annotation) return { ok: false, reason: 'unknown_thread' }
-      // In-flight comments stay for the agent to report on.
       if (
         annotation.status !== 'draft' &&
         annotation.status !== 'resolved' &&
@@ -734,7 +724,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
           status: annotation.status,
         }
       }
-      // An applied rewrite is not requested again; the reopen asks for more.
       delete annotation.rewrite
       annotation.status = 'draft'
       annotation.generation += 1
@@ -791,8 +780,6 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       return (...args: unknown[]) => {
         const committedAnnotations = annotations
         const committedBatches = batches
-        // Mutate private candidates so callers holding nested records never
-        // observe a failed transaction. All operations here are synchronous.
         annotations = structuredClone(annotations)
         batches = structuredClone(batches)
         try {

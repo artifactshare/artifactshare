@@ -118,8 +118,6 @@ async function resolveTarget(
     typeof parsed.options.session === 'string' ? parsed.options.session : null
   const positional = parsed.positionals[0]
   if (explicitSession !== null && positional !== undefined) {
-    // The two selectors can name different previews, and silently preferring
-    // one would let a stale session id redirect next, done, reply, or stop.
     return {
       error: validationError(
         'Pass a file or --session, not both.',
@@ -173,9 +171,6 @@ async function resolveTarget(
     }
   }
   if (positional) {
-    // The recorded path is the session's identity. A source deleted or renamed
-    // while its server runs must still resolve, or stop and next can never
-    // reach it again.
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
     if (live.state === 'legacy') {
@@ -238,8 +233,6 @@ async function resolveTarget(
     return { target: only }
   }
   if (liveSessions.length === 1 && unverified.length > 0) {
-    // A timed-out probe is inconclusive, so "the only live session" is not
-    // established and picking it could route to the wrong preview.
     return {
       error: validationError(
         'A preview session could not be verified, so the target is ambiguous.',
@@ -256,8 +249,6 @@ async function resolveTarget(
     }
   }
   if (liveSessions.length === 0) {
-    // A probe that timed out proves nothing; reporting "no session" would send
-    // the agent to a human when retrying is the correct next step.
     const wedged = unverified[0]
     if (unverified.length === 1 && wedged !== undefined) {
       return { error: sessionUnverifiedError(wedged.realpath, wedged.legacy) }
@@ -272,8 +263,6 @@ async function resolveTarget(
   }
 }
 
-/** Everything that decides which account a share uploads under: the flags, the
- * environment, and the directory whose config is discovered. */
 function requestedCredentials(
   options: ParsedArgs['options'],
 ): PreviewSessionCredentials {
@@ -333,10 +322,7 @@ async function readAgentProjection(
     ) {
       return agent as unknown as PreviewAgentNotificationProjection
     }
-  } catch {
-    // Reuse already verified the session identity. A transient projection read
-    // must not turn a healthy preview into a duplicate server.
-  }
+  } catch {}
   return fallback
 }
 
@@ -344,8 +330,6 @@ function sessionIdOfPath(input: string): string {
   return sessionIdForPath(previewIdentityPath(input))
 }
 
-/** A start already in flight, reported wherever a second one would otherwise
- * end up sharing the first's annotation store. */
 function startInProgressError(target: string): CliError {
   return cliError({
     code: 'preview_session_unverified',
@@ -358,8 +342,6 @@ function startInProgressError(target: string): CliError {
   })
 }
 
-/** The session answered neither success nor refusal. Retrying is correct;
- * escalating to a human is not. */
 function previewUnreachableError(target: string): CliError {
   return cliError({
     code: 'preview_session_unverified',
@@ -435,16 +417,11 @@ async function agentApi(
         [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
       },
       body: JSON.stringify(payload ?? {}),
-      // A wedged server must not hang the agent forever; long polls get the
-      // requested wait plus slack, everything else a short ceiling.
       signal: AbortSignal.timeout(
         waitSeconds > 0 ? (waitSeconds + 30) * 1000 : 30_000,
       ),
     })
   } catch (error) {
-    // A refused connection proves the server is gone; a timeout or reset only
-    // proves this attempt failed, and telling the agent to escalate would end
-    // a session that is still serving.
     if (isConnectionRefused(error)) {
       return { error: sessionNotFoundError(target.realpath) }
     }
@@ -569,8 +546,6 @@ export async function runPreview(
   const existing = await resolveLiveSession(real.realpath)
   const requestedNotification = previewNotificationForEnvironment()
   if (existing.state === 'legacy' || existing.state === 'unverified') {
-    // Starting a second server here would give two processes the same
-    // annotations file, and each save would discard the other's work.
     return writeFailure(
       command,
       sessionUnverifiedError(real.realpath, existing.session.legacy === true),
@@ -579,9 +554,6 @@ export async function runPreview(
     )
   }
   if (existing.state === 'live') {
-    // The running server still holds the options it started with, so reusing
-    // it under different credentials would share from the wrong account.
-    // Repeating the same flags is the normal case and must still reuse.
     if (
       !sameCredentials(
         existing.session.credentials,
@@ -632,8 +604,6 @@ export async function runPreview(
       },
       mode,
     )
-    // Reusing a session is still a request to look at it, so the browser opens
-    // unless the caller suppressed it — the same rule as a fresh start.
     if (parsed.options.noOpen !== true) {
       await openDeviceAuthorizationUrl(reusedUrl).catch(() => undefined)
     }
@@ -642,8 +612,6 @@ export async function runPreview(
   const sessionId = sessionIdForPath(real.realpath)
   const claim = claimSessionStart(sessionId)
   if (!claim.ok) {
-    // Another `preview` for this file is mid-start. Two servers would share
-    // one annotation store and overwrite each other's saves.
     return writeFailure(command, startInProgressError(real.realpath), mode, 1)
   }
   let server: Awaited<ReturnType<typeof startPreviewServer>>
@@ -680,18 +648,12 @@ export async function runPreview(
       agent_notification: server.notificationRegistration,
     })
   } catch (error) {
-    // A failed start must leave nothing behind: neither the claim (every later
-    // preview would report a start in progress) nor a bound server nobody can
-    // reach, because no session file records it.
     claim.release()
     await started?.close().catch(() => undefined)
     throw error
   }
   claim.release()
   const url = `http://127.0.0.1:${server.port}/`
-  // Install shutdown handling before publishing readiness. A caller can send
-  // Ctrl-C as soon as it reads the ready line, so registering afterward leaves
-  // a race where Node exits without removing the session record.
   const handlers = (['SIGINT', 'SIGTERM'] as const).map((signal) => {
     const handler = (): void => {
       // Handling the signal suppresses Node's default exit, so the
@@ -821,7 +783,6 @@ export async function runPreviewDone(
   return writeSuccess(command, result.body, mode)
 }
 
-/** Reads saved review history from disk; works after the preview has ended. */
 export function runPreviewHistory(parsed: ParsedArgs, mode: OutputMode): void {
   const command = 'preview history'
   const explicitSession =
@@ -915,8 +876,6 @@ export async function runPreviewStop(
   const command = 'preview stop'
   const resolved = await resolveTarget(parsed, true)
   if ('error' in resolved) {
-    // A session whose port neither answers nor refuses cannot be stopped over
-    // HTTP, so --force clears the record instead of leaving the file wedged.
     const explicitSession =
       typeof parsed.options.session === 'string' ? parsed.options.session : null
     if (explicitSession && !isSessionId(explicitSession)) {
@@ -924,9 +883,6 @@ export async function runPreviewStop(
     }
     const positional = parsed.positionals[0]
     if (parsed.options.force === true && !(explicitSession && positional)) {
-      // Clear exactly what the caller named; with both selectors present the
-      // request is ambiguous and clearing either one could untrack a healthy
-      // server.
       const sessionId = explicitSession
         ? explicitSession
         : positional
@@ -935,8 +891,6 @@ export async function runPreviewStop(
       if (sessionId) {
         const record = readSessionFile(sessionId)
         if (record && processAlive(record.pid)) {
-          // The recorded process is still running; untracking it would let a
-          // second server open the same annotation store.
           return writeFailure(
             command,
             sessionUnverifiedError(record.realpath, record.legacy === true),
@@ -945,8 +899,6 @@ export async function runPreviewStop(
           )
         }
         if (!releaseStaleClaim(sessionId)) {
-          // A start is mid-flight and holds the claim; clearing it would let a
-          // second server open the same annotation store.
           return writeFailure(
             command,
             startInProgressError(record?.realpath ?? positional ?? sessionId),
@@ -954,8 +906,6 @@ export async function runPreviewStop(
             1,
           )
         }
-        // --force means "leave no record behind", so it succeeds whether or
-        // not one was still there.
         const cleared = record !== null
         removeSessionFile(sessionId)
         return writeSuccess(

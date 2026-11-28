@@ -477,8 +477,6 @@ async function runWithSkillAutoUpdate(
   )
 }
 
-// A bare parent command would otherwise dispatch to a no-op and exit 0 with
-// empty output, which a JSON consumer cannot tell apart from success.
 export function parentCommandRunner(command: CliCommand) {
   return (ctx: Readonly<CommandContext>): void => {
     const parsed = parsedArgsFromContext(command, ctx)

@@ -1,8 +1,3 @@
-// Preview annotation contract - the single definition shared by the preview
-// server, the injected browser UI, and the CLI verbs. Framework-neutral:
-// no imports outside this module.
-
-/** Anchor of an annotation inside the previewed document. */
 export type PreviewAnchor =
   | { kind: 'artifact' }
   | {
@@ -18,24 +13,18 @@ export type PreviewAnchor =
       textStart: number | null
       textEnd: number | null
       cssPath: string | null
-      /** Screen (URL state) the comment was made on; absent for the default. */
       screen?: string
     }
   | {
       kind: 'element'
       state: 'attached' | 'orphaned'
       selector: string
-      /** Human-readable label, e.g. `button "Submit"`. */
       label: string
-      /** Nearby text captured at creation time, used for re-resolution. */
       contextText: string
-      /** The element's own text and tag, which identify it after an edit far
-       * more reliably than its positional selector. */
       ownText?: string
       ownTextHash?: string
       ownTextExcerpt?: string
       tagName?: string
-      /** Screen (URL state) the comment was made on; absent for the default. */
       screen?: string
     }
 
@@ -63,8 +52,6 @@ export type PreviewAgentFailureCode =
   | 'invalid_response'
   | 'adapter_error'
 
-/** Stored only in the private local session record. `target` is deliberately
- * absent from every browser and CLI projection. */
 export interface PreviewAgentNotificationRegistration {
   provider: string
   transport: string
@@ -109,7 +96,6 @@ export interface PreviewThreadMessage {
 
 export interface PreviewAnnotation {
   thread: string
-  /** Incremented on reopen; stale generations are ignored by done. */
   generation: number
   status: PreviewAnnotationStatus
   anchor: PreviewAnchor
@@ -118,15 +104,10 @@ export interface PreviewAnnotation {
   batch_id: string | null
   created_at: string
   updated_at: string
-  /** Agent-provided summary shown on the thread (from the done note). */
   summary: string | null
-  /** The reader's own wording for the anchored text, for the agent to apply.
-   * Absent on ordinary comments. */
   rewrite?: PreviewRewrite
 }
 
-/** Text the reader rewrote in Preview: the anchored text as captured and the
- * replacement they want. The agent applies it to the source file. */
 export interface PreviewRewrite {
   original: string
   proposed: string
@@ -148,7 +129,6 @@ export function isPreviewRewrite(value: unknown): value is PreviewRewrite {
   )
 }
 
-/** The anchored text a rewrite replaces, or null when the anchor has none. */
 export function rewritableText(anchor: PreviewAnchor): string | null {
   if (anchor.kind === 'text') return anchor.quotedText || null
   if (anchor.kind === 'element') return anchor.ownText || null
@@ -178,8 +158,6 @@ export interface PreviewNextItem {
   anchor: PreviewAnchor
   comment: string
   messages: PreviewThreadMessage[]
-  /** Present when the reader rewrote the text; apply `proposed` in place of
-   * `original` at the anchor. */
   rewrite?: PreviewRewrite
 }
 
@@ -197,7 +175,6 @@ export interface PreviewNextResult {
 export const PREVIEW_MUTATION_HEADER = 'x-artifactshare-preview'
 export const PREVIEW_MUTATION_HEADER_VALUE = '1'
 
-/** Identification endpoint used for stale-session detection and reuse. */
 export const PREVIEW_SESSION_ENDPOINT = '/__preview/session'
 
 export interface PreviewSessionIdentity {
@@ -253,9 +230,6 @@ function isThreadMessage(value: unknown): value is PreviewThreadMessage {
   )
 }
 
-/** A saved annotations file is quarantined rather than trusted, so every entry
- * has to be checked: one malformed record would otherwise crash rendering and
- * delivery with no way back. */
 export function isPreviewAnnotation(
   value: unknown,
 ): value is PreviewAnnotation {
@@ -289,7 +263,6 @@ export function isPreviewAnchor(
   if (record.state !== 'attached' && record.state !== 'orphaned') {
     return false
   }
-  // The URL screen an interactive document showed; omitted for the default.
   if (
     record.screen !== undefined &&
     (typeof record.screen !== 'string' ||

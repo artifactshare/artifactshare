@@ -145,8 +145,6 @@ export function mapApiError(
       isProfileCredentialSource(source) &&
       options.profileCredentialKind !== 'api_token'
     ) {
-      // Bot profiles cannot log in, use presets, or issue API tokens: the
-      // only recovery is a freshly reissued bot token from a workspace admin.
       if (options.botProfile) {
         return botReauthRequiredError(profile)
       }
@@ -720,10 +718,6 @@ export function authRequiredError(baseUrl: string): CliError {
 
 export function botReauthRequiredError(profile: string): CliError {
   return cliError({
-    // Keeps 'auth_required' so the session-rotation path still fires (the
-    // stored 180-day refresh token must be used before giving up); the
-    // device-login fallback is blocked separately by the bot guard in
-    // handleCredentialFailure via details.reauth_reason.
     code: 'auth_required',
     message: 'The bot credential is no longer valid.',
     why: `The saved bot credential for profile "${profile}" is expired, was superseded by a reissue, or the bot was stopped.`,
@@ -1107,7 +1101,6 @@ export function unknownOptionError(
   option: string,
   accepted: string[],
 ): CliError {
-  // Bound both work and suggestions for arbitrary untrusted option names.
   const distance = (left: string, right: string): number => {
     let row = Array.from({ length: right.length + 1 }, (_, index) => index)
     for (let i = 0; i < left.length; i += 1) {

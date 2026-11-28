@@ -1,6 +1,3 @@
-// Share dialog HTTP handler for the local preview server. Serves the dialog
-// page on a dedicated origin and drives snapshot capture, upload, and the
-// device-authorization flow when no credential is available yet.
 import { createHash, randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -51,11 +48,8 @@ import { escapeHtml } from './shell.js'
 export interface ShareDialogHandlerOptions {
   filePath: string
   fileName: string
-  /** Origin of the artifact preview server, used as the postMessage target. */
   artifactOrigin: string
-  /** Reads the previewed file as it is right now. */
   readFileBytes: () => Buffer
-  /** CLI options from preview startup; credential and base-url resolution. */
   cliOptions: CliOptions
 }
 
@@ -84,11 +78,7 @@ export function createShareDialogHandler(
 ): (request: IncomingMessage, response: ServerResponse) => void {
   const snapshots = new Map<string, Snapshot>()
   const pendingAuths = new Map<string, PendingAuth>()
-  // Session token obtained through the dialog's device flow. Held in memory
-  // for this preview process; persisting to a profile is best-effort.
   let memoryToken: string | null = null
-  // Provenance of the token `currentToken` last returned, so a 401 is mapped
-  // against the credential that produced it.
   let tokenProvenance: Partial<ApiErrorOptions> | null = null
 
   const handle = async (
@@ -194,16 +184,12 @@ export function createShareDialogHandler(
     let defaultVisibility =
       resolved && !('error' in resolved) ? resolved.value : null
 
-    // Resolving first lets a profile's own base URL reach requestConfig, which
-    // is what --insecure-localhost is validated against.
     const token = await currentToken(cliOptions)
     const request = requestConfig(cliOptions)
     if (!token.ok || request.error) {
       return sendJson(response, 200, {
         authenticated: false,
         projects: null,
-        // null, never a guess: the dialog disables sharing rather than
-        // publishing to an audience the config did not actually ask for.
         default_visibility: request.error ? null : defaultVisibility,
         file_name: handlerOptions.fileName,
       })
@@ -216,8 +202,6 @@ export function createShareDialogHandler(
       request.init,
     )
     if (projectsResult.error?.code === 'auth_required') {
-      // Without the projects the dialog offers Home only, and the upload's own
-      // refresh comes too late: the destination has to be chosen first.
       const refreshed = await refreshTokenOnce(cliOptions, projectsResult.error)
       if (refreshed !== null) {
         contextToken = refreshed
@@ -236,7 +220,6 @@ export function createShareDialogHandler(
         request.init,
         uploadErrorOptions(baseUrlOf(cliOptions)),
       )
-      // The upload's own sign-in handling covers credential failures.
       defaultVisibility = 'error' in audience ? resolved.value : audience.value
       privateDefault = !('error' in audience) && audience.privateDefault
     }
@@ -255,15 +238,11 @@ export function createShareDialogHandler(
     })
   }
 
-  /** Resolving also adopts a profile's own base URL into `cliOptions`, so it
-   * has to run before `requestConfig` validates `--insecure-localhost`. */
   async function currentToken(
     cliOptions: CliOptions,
   ): Promise<
     { ok: true; token: string } | { ok: false; error: CliError | null }
   > {
-    // memoryToken keeps the provenance recorded when it was obtained, so a
-    // second expiry in the same preview still maps to auth_required.
     if (memoryToken) return { ok: true, token: memoryToken }
     const credential = await resolveCredential(
       cliOptions,
@@ -275,10 +254,6 @@ export function createShareDialogHandler(
     }
     if (!credential.ok) {
       tokenProvenance = null
-      // auth_required only means nothing is stored yet, which the dialog
-      // answers with device authorization. Anything else — `--profile` with
-      // `--token`, for instance — is a conflict only the user can settle, and
-      // signing in would quietly ignore what they asked for.
       return {
         ok: false,
         error:
@@ -294,7 +269,6 @@ export function createShareDialogHandler(
     return { ok: true, token: credential.token }
   }
 
-  /** The profile a later CLI run would resolve for this preview's options. */
   async function effectiveProfileName(cliOptions: CliOptions): Promise<string> {
     const explicit =
       typeof cliOptions.profile === 'string' && cliOptions.profile !== ''
@@ -307,11 +281,6 @@ export function createShareDialogHandler(
     return resolved.profile ?? 'default'
   }
 
-  /** A bot profile can never sign in interactively: a device login would store
-   * a human session under it and strip its bot marker, mis-attributing every
-   * later upload. Report the admin-reissue path instead. The profile config is
-   * consulted directly because a bot whose credential is missing entirely
-   * never produces a resolved credential to read provenance from. */
   async function botProfileBlocked(
     cliOptions: CliOptions,
   ): Promise<CliError | null> {
@@ -338,17 +307,10 @@ export function createShareDialogHandler(
     return botReauthRequiredError(profile)
   }
 
-  /** mapApiError needs the provenance of the token that was actually sent to
-   * turn a 401 into auth_required; describing a different credential would
-   * either lose the refresh path or retry under the wrong account. */
   function uploadErrorOptions(baseUrl: string): ApiErrorOptions {
     return { authenticated: true, baseUrl, ...tokenProvenance }
   }
 
-  /** A saved session token can expire while the preview stays open. Refresh
-   * it once and let the caller retry; if that fails, forget the cached token
-   * so the next share falls back to device authorization instead of repeating
-   * the same rejected upload. */
   async function refreshTokenOnce(
     cliOptions: CliOptions,
     error: CliError,
@@ -361,9 +323,6 @@ export function createShareDialogHandler(
       memoryToken = null
       return null
     }
-    // Only a stored session profile can be refreshed. A bearer token or a PAT
-    // profile has no refresh path, and silently starting device auth for one
-    // would write a profile the caller never asked for.
     if (credential.profileCredentialKind !== 'session') {
       memoryToken = null
       return null
@@ -398,16 +357,12 @@ export function createShareDialogHandler(
       return sendJson(response, 404, { error: 'unknown_snapshot' })
     }
     const cliOptions = options.cliOptions
-    // Resolving first lets a profile's own base URL reach requestConfig, which
-    // is what --insecure-localhost is validated against.
     const token = await currentToken(cliOptions)
     const request = requestConfig(cliOptions)
     if (request.error) {
       return sendCliError(response, request.error)
     }
     if (!token.ok) {
-      // A conflicting credential selection is the user's to settle; signing in
-      // would silently share under a credential they did not choose.
       if (token.error) return sendCliError(response, token.error)
       const blocked = await botProfileBlocked(cliOptions)
       if (blocked) return sendCliError(response, blocked)
@@ -425,9 +380,6 @@ export function createShareDialogHandler(
     if (projectId) {
       visibility = 'project'
     } else if (!visibility) {
-      // Never guess an audience: a config that cannot be read could be hiding
-      // a private default, and publishing that to the workspace is not
-      // recoverable. `share` refuses here too.
       const resolved = await resolveDefaultVisibility(
         'home_audience',
         await resolveSharedProjectConfig(),
@@ -442,7 +394,6 @@ export function createShareDialogHandler(
         request.init,
         uploadErrorOptions(baseUrlOf(cliOptions)),
       )
-      // The upload's own sign-in handling covers credential failures.
       visibility = 'error' in audience ? resolved.value : audience.value
     }
 
@@ -513,7 +464,6 @@ export function createShareDialogHandler(
         tokenProvenance?.credentialSource ?? null,
       )
     }
-    // The share is done; the snapshot has served its purpose.
     snapshots.delete(snapshotId)
     sendJson(response, 200, {
       url: result.body.url,
@@ -589,9 +539,6 @@ export function createShareDialogHandler(
     }
     if (exchange.status === 'success') {
       pendingAuths.delete(authId)
-      // Store under the profile the credential resolver would read back. The
-      // device flow runs precisely when no credential resolved, so provenance
-      // is null here and the effective profile has to be resolved directly.
       const profile = await effectiveProfileName(cliOptions)
       const sessionExpiresAt =
         exchange.token.expires_in === undefined
@@ -599,12 +546,6 @@ export function createShareDialogHandler(
           : new Date(
               Date.now() + exchange.token.expires_in * 1000,
             ).toISOString()
-      // The approval may have come from a different account than the profile
-      // is bound to. Verify before trusting the token, or the share would go
-      // out under the wrong identity.
-      // Confirm the approving account matches the profile before the token is
-      // used for anything: an approval from another account would otherwise
-      // publish under the wrong identity.
       const verified = await verifyProfileTokenAccount(
         profile,
         exchange.token.access_token,
@@ -618,8 +559,6 @@ export function createShareDialogHandler(
           ...(verified ? { error: verified.error } : {}),
         })
       }
-      // Persisting is best effort from here: the account is already confirmed,
-      // and a machine without a token store can still complete this share.
       await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
@@ -722,8 +661,6 @@ function sendCliError(
   error: CliError,
   credentialSource: string | null = null,
 ): void {
-  // The dialog's recovery text depends on where the credential came from: a
-  // profile can be re-logged in, an explicit or environment token cannot.
   sendJson(response, 502, { error, credential_source: credentialSource })
 }
 

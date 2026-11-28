@@ -1,6 +1,3 @@
-// Local review history: what a submitted batch asked for, the document as it
-// was when the batch was sent, and the document as it was when the agent
-// reported. Stored next to the annotation store, never sent anywhere.
 import { createHash, randomUUID } from 'node:crypto'
 import {
   chmodSync,
@@ -22,7 +19,6 @@ import type {
   PreviewThreadMessage,
 } from './contract.js'
 
-/** Larger documents keep their revision and size but not their content. */
 export const PREVIEW_HISTORY_MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 
 export type PreviewHistorySnapshot =
@@ -35,18 +31,13 @@ export interface PreviewHistoryItem {
   generation: number
   comment: string
   anchor: PreviewAnchor
-  /** Thread messages as they were when the batch was submitted. */
   messages: PreviewThreadMessage[]
-  /** The reader's own wording, when they rewrote the text. */
   rewrite?: PreviewRewrite
 }
 
 export interface PreviewHistoryReport {
   reported_at: string
-  /** The document revision when the agent reported these items. */
   revision: string
-  /** `fixed` and `skipped` are the agent's own report. Neither records a
-   * person's approval, and `skipped` does not mean the text was fine. */
   items: Array<{
     thread: string
     generation: number
@@ -64,9 +55,7 @@ export interface PreviewHistoryRecord {
   before_revision: string
   items: PreviewHistoryItem[]
   reports: PreviewHistoryReport[]
-  /** Set when every item in the batch has a report. */
   completed_at: string | null
-  /** Revision at the last report; the "after" document. */
   after_revision: string | null
   snapshots: Record<string, PreviewHistorySnapshot>
 }
@@ -110,7 +99,6 @@ function snapshotOf(document: Buffer | null): PreviewHistorySnapshot {
   if (document.length > PREVIEW_HISTORY_MAX_SNAPSHOT_BYTES)
     return { size: document.length, omitted: 'too_large' }
   const text = document.toString('utf8')
-  // Keep the exact bytes: text that does not round-trip is stored as base64.
   return Buffer.from(text, 'utf8').equals(document)
     ? { size: document.length, encoding: 'utf8', content: text }
     : {
@@ -158,9 +146,7 @@ export function createPreviewHistory(
     } catch (error) {
       try {
         rmSync(temp, { force: true })
-      } catch {
-        /* Preserve the write error. */
-      }
+      } catch {}
       throw error
     }
   }

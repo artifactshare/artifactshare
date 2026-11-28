@@ -29,9 +29,6 @@ export function runInit(parsed: ParsedArgs, mode: OutputMode): Promise<void> {
   const profile = nonEmpty(parsed.options.profile)
   const projectId = nonEmpty(parsed.options.projectId)
 
-  // No config flags: set up this directory by installing the agent skill and
-  // showing the next steps. With --profile/--project-id, save the working
-  // directory defaults instead (the older behavior).
   if (!profile && !projectId) {
     return runInitOnboarding(parsed, mode)
   }
@@ -43,8 +40,6 @@ async function runInitOnboarding(
   mode: OutputMode,
 ): Promise<void> {
   const command = 'init'
-  // Reuse the `skills ensure --tool auto` user-scope path so detection,
-  // the fallback pair, and conflict handling stay identical to skills ensure.
   const skills = await ensureSkills(
     {
       ...parsed,
@@ -57,7 +52,6 @@ async function runInitOnboarding(
       skipBrokenUserSkills: true,
     },
   )
-  // ensureSkills writes the failure JSON itself (with command: "init").
   if (!skills) return
 
   const project = await resolveProjectConfig()
@@ -105,8 +99,6 @@ async function runInitConfig(
 ): Promise<void> {
   const command = 'init'
 
-  // --dry-run only previews the onboarding skill install; rejecting it here
-  // keeps it from silently writing config.local.json on the save path.
   if (parsed.options.dryRun === true) {
     return writeFailure(
       command,
@@ -135,8 +127,6 @@ async function runInitConfig(
         )
       }
       const globalConfig = await readGlobalConfig()
-      // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing
-      // as saved profile names.
       if (!Object.hasOwn(globalConfig?.profiles ?? {}, profile)) {
         return writeFailure(command, profileNotFoundError(profile), mode, 1)
       }
@@ -148,9 +138,7 @@ async function runInitConfig(
         const raw: unknown = JSON.parse(localText)
         if (raw && typeof raw === 'object' && !Array.isArray(raw))
           existing = raw as Record<string, unknown>
-      } catch {
-        /* Preserve the existing malformed-config fallback. */
-      }
+      } catch {}
     }
     const next = {
       ...existing,

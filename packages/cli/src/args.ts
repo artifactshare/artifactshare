@@ -155,12 +155,6 @@ export function createArgumentParser(catalog: Map<string, CommandSpec>) {
     return (catalog.get(command ?? '') ?? catalog.get('')!).options
   }
 
-  // A nanoid id can begin with '-' (about one in 64), so `projects edit <id>`
-  // and every other id positional must accept one. A dash token that matches no
-  // spelling takes the command's next free positional slot, unless it still
-  // reads as an option attempt: '--achive', '-x' and '-json' keep their
-  // unknown-option errors, and a command with no free slot keeps rejecting
-  // every unknown option.
   function dashPositionalIndexes(
     argv: string[],
     command?: CliCommand,
@@ -390,9 +384,6 @@ export function createArgumentParser(catalog: Map<string, CommandSpec>) {
     if (sub !== undefined && SUBCOMMANDS[found.command]?.includes(sub)) {
       return argv
     }
-    // `preview --help` must keep listing the subcommands, and bare `preview`
-    // must keep reporting that one is required, so only insert the default when
-    // the parent actually received a positional to act on.
     if (sub === undefined) return argv
     return [
       ...argv.slice(0, found.index + 1),
@@ -401,8 +392,6 @@ export function createArgumentParser(catalog: Map<string, CommandSpec>) {
     ]
   }
 
-  // Normalize supported camelCase spellings before Gunshi resolves values.
-  // Values and positional arguments after -- must remain byte-for-byte intact.
   function normalizeOptionSpellings(argv: string[]): string[] {
     const options = optionsFor(commandNameFromArgv(argv))
     const result: string[] = []

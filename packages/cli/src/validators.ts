@@ -4,7 +4,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Validate a wire value with the shared public contract without rewriting it. */
 export function isContract<T extends z.ZodType>(
   schema: T,
   value: unknown,
