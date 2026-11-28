@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import type { Visibility } from '~/lib/shareable-types'
 import { DEFAULT_LOCALE, isSupportedLocale, MESSAGES } from '~/i18n/messages'
 import type { DB } from '~/types/db'
+import { escapeSlackText } from '~/lib/slack-escape'
 
 export async function getContainerSlackChannel(
   db: Kysely<DB>,
@@ -126,16 +127,6 @@ export function scheduledJobForCron(
 // D1 の 1 文あたりの bind 変数上限 (100) に収まるよう、1 回の cron で
 // claim する行数を抑える。残りは次回 (5 分後) に回る。
 const CLAIM_LIMIT = 50
-
-// タイトル・投稿者名などの利用者入力を Slack の mrkdwn 制御列 (<!channel>、
-// <@USER>、偽装リンク) として解釈させないためのエスケープ。
-// https://api.slack.com/reference/surfaces/formatting#escaping
-function escapeSlackText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}
 
 export async function processSlackNotificationOutbox(
   db: Kysely<DB>,

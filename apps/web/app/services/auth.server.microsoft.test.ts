@@ -17,7 +17,7 @@ import {
   ensureWorkspace,
   getMicrosoftUserInfo,
   mapMicrosoftProfileToUser,
-  persistGoogleHostedDomainClaimForAccount,
+  resolveOAuthWorkspaceAfterAccountCreate,
 } from './auth.server'
 import { ensureWorkspaceDomainClaim } from './workspace-domain-claims.server'
 
@@ -354,7 +354,7 @@ describe('getMicrosoftUserInfo', () => {
   })
 })
 
-describe('persistGoogleHostedDomainClaimForAccount', () => {
+describe('resolveOAuthWorkspaceAfterAccountCreate for a Google account link', () => {
   test('creates a Google hosted-domain claim for an existing user account link', async () => {
     const { db } = createMigratedInMemoryDb()
     try {
@@ -386,16 +386,18 @@ describe('persistGoogleHostedDomainClaimForAccount', () => {
         })
         .execute()
 
-      const resolvedWorkspaceId =
-        await persistGoogleHostedDomainClaimForAccount(db, {
+      const resolvedWorkspaceId = await resolveOAuthWorkspaceAfterAccountCreate(
+        db,
+        {
+          providerId: 'google',
           userId: 'user-1',
           idToken: createGoogleIdToken({
             email: 'alice@corp.com',
             email_verified: true,
             hd: 'Corp.COM',
           }),
-          now: '2026-06-26T00:00:00.000Z',
-        })
+        },
+      )
       expect(resolvedWorkspaceId).not.toBe('ws-personal')
       expect(
         await db
@@ -461,14 +463,14 @@ describe('persistGoogleHostedDomainClaimForAccount', () => {
         .execute()
 
       await expect(
-        persistGoogleHostedDomainClaimForAccount(db, {
+        resolveOAuthWorkspaceAfterAccountCreate(db, {
+          providerId: 'google',
           userId: 'user-1',
           idToken: createGoogleIdToken({
             email: 'alice@corp.com',
             email_verified: true,
             hd: 'Corp.COM',
           }),
-          now: '2026-06-26T00:00:00.000Z',
         }),
       ).resolves.toBeNull()
 

@@ -107,6 +107,7 @@ import type { CliAuthority } from './cli-authority.server'
 import { isAgentPublishableDestination } from './agent-scope.server'
 import { PAID_TIERS } from '~/lib/plan-tier'
 import { planInTierSql } from '~/lib/plan-tier-sql.server'
+import { chunkArray } from '~/lib/chunk-array'
 
 const MAX_SHAREABLE_ID_ATTEMPTS = 5
 const MAX_STATIC_SITE_FILES = STATIC_SITE_UPLOAD_LIMITS.files
@@ -3078,14 +3079,6 @@ export function staticSiteR2Prefix(
   return `${workspaceId}/${shareableId}/${versionId}/`
 }
 
-function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
-  const chunks: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size))
-  }
-  return chunks
-}
-
 export function staticSiteMimeType(path: string): string | null {
   const extension = path.toLowerCase().match(/\.[^.\\/]+$/)?.[0]
   switch (extension) {
@@ -4361,42 +4354,6 @@ export async function editShareableSettings(
   }
 
   return { kind: 'ok', shareable: after ?? before }
-}
-
-export interface OwnedArtifactRef {
-  artifactKind: ArtifactKind
-  versionId: string | null
-  r2Key: string | null
-}
-
-export async function getOwnedArtifactRef(
-  db: Kysely<DB>,
-  user: { id: string; workspaceId: string },
-  shareableId: string,
-): Promise<OwnedArtifactRef | null> {
-  const row = await db
-    .selectFrom('shareables')
-    .leftJoin('versions', 'versions.id', 'shareables.current_version_id')
-    .select([
-      'shareables.artifact_kind as artifact_kind',
-      'versions.id as version_id',
-      'versions.r2_key as r2_key',
-    ])
-    .where('shareables.id', '=', shareableId)
-    .where('shareables.owner_user_id', '=', user.id)
-    .where(
-      sql<boolean>`NOT ${workspaceAccessRevokedSql(
-        sql.ref('shareables.workspace_id'),
-        user.id,
-      )}`,
-    )
-    .executeTakeFirst()
-  if (!row) return null
-  return {
-    artifactKind: row.artifact_kind as ArtifactKind,
-    versionId: row.version_id ?? null,
-    r2Key: row.r2_key ?? null,
-  }
 }
 
 export interface ArtifactVersionSummary {

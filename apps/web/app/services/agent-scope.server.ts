@@ -92,18 +92,6 @@ export async function authorizeAgentArtifactRead(
   }
 }
 
-export async function isAgentReadableArtifact(
-  db: Kysely<DB>,
-  user: SessionUser,
-  authority: AgentAuthority,
-  artifactId: string,
-) {
-  return (
-    (await authorizeAgentArtifactRead(db, user, authority, artifactId)).kind ===
-    'authorized'
-  )
-}
-
 export async function isAgentPublishableDestination(
   db: Kysely<DB>,
   user: Pick<SessionUser, 'id' | 'workspaceId' | 'email'>,
@@ -117,25 +105,6 @@ export async function isAgentPublishableDestination(
     .select('c.id')
     .where('c.id', '=', containerId)
     .where(agentDestinationSql(user, authority, containerId))
-    .executeTakeFirst()
-  return Boolean(row)
-}
-
-export async function isAgentOwnedArtifact(
-  db: Kysely<DB>,
-  user: Pick<SessionUser, 'id' | 'workspaceId' | 'email'>,
-  authority: Extract<CliAuthority, { kind: 'agent' }>,
-  artifactId: string,
-): Promise<boolean> {
-  const row = await db
-    .selectFrom('shareables')
-    .select('id')
-    .where('id', '=', artifactId)
-    .where('workspace_id', '=', authority.workspaceId)
-    .where(
-      agentDestinationSql(user, authority, sql.ref('shareables.container_id')),
-    )
-    .where('created_by_agent_profile_id', '=', authority.agentProfileId)
     .executeTakeFirst()
   return Boolean(row)
 }

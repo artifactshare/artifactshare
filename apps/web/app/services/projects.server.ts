@@ -46,6 +46,7 @@ import { publisherAuthoritySql } from './publisher-scope.server'
 import type { DB } from '~/types/db'
 import { planInTierSql } from '~/lib/plan-tier-sql.server'
 import { normalizePlan, planTier } from '~/lib/plan-tier'
+import { chunkArray } from '~/lib/chunk-array'
 
 export const INBOX_CONTAINER_NAME = '未整理'
 
@@ -960,7 +961,7 @@ export async function saveProjectShareDefaults(
   )
   if (botRoleChangeTargets.length > 0) {
     const currentBotRows: { email: string }[] = []
-    for (const chunk of chunked(botRoleChangeTargets, 60)) {
+    for (const chunk of chunkArray(botRoleChangeTargets, 60)) {
       currentBotRows.push(
         ...(await db
           .selectFrom('project_share_defaults')
@@ -1149,7 +1150,7 @@ export async function saveProjectShareDefaults(
   // The common guard currently binds at most 24 scalar values plus seven JSON
   // arrays. Sixty email parameters keeps each guarded DELETE comfortably below
   // D1's 100-parameter ceiling even if the authority predicate grows slightly.
-  for (const emails of chunked(ordinaryRemovals, 60)) {
+  for (const emails of chunkArray(ordinaryRemovals, 60)) {
     statements.push(
       db
         .deleteFrom('project_share_defaults')
@@ -1158,7 +1159,7 @@ export async function saveProjectShareDefaults(
         .where(commonGuard),
     )
   }
-  for (const emails of chunked(actorRemovals, 1)) {
+  for (const emails of chunkArray(actorRemovals, 1)) {
     finalAuthorityWrites.push(
       db
         .deleteFrom('project_share_defaults')
@@ -1266,7 +1267,7 @@ export async function saveProjectShareDefaults(
     // different role.
     if (grantWrites.length > 0) {
       const committed: { email: string; role: ProjectShareRole }[] = []
-      for (const chunk of chunked(grantWrites, 60)) {
+      for (const chunk of chunkArray(grantWrites, 60)) {
         committed.push(
           ...(await db
             .selectFrom('project_share_defaults')
@@ -1292,14 +1293,6 @@ export async function saveProjectShareDefaults(
   }
 
   return 'ok'
-}
-
-function chunked<T>(values: ReadonlyArray<T>, size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size))
-  }
-  return chunks
 }
 
 function batchSelectRow<T>(result: unknown): T | null {

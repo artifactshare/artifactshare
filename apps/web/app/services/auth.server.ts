@@ -1490,23 +1490,6 @@ export function decodeGoogleIdTokenPayload(
   return decodeBase64UrlUtf8Json<GoogleIdTokenPayload>(payloadSegment)
 }
 
-export async function persistGoogleHostedDomainClaimForAccount(
-  db: Kysely<DB>,
-  input: { userId: string; idToken: string | null; now: string },
-): Promise<string | null> {
-  const user = await db
-    .selectFrom('users')
-    .select('email')
-    .where('id', '=', input.userId)
-    .executeTakeFirst()
-  if (!user) return null
-  return await resolveOAuthWorkspaceAfterAccountCreate(db, {
-    providerId: 'google',
-    userId: input.userId,
-    idToken: input.idToken,
-  })
-}
-
 export function mapMicrosoftProfileToUser(profile: MicrosoftProfile) {
   if (!profile.tid?.trim() || !profile.oid?.trim()) {
     throw new Error('Microsoft profile missing tid or oid')
